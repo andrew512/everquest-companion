@@ -13,9 +13,11 @@
 //   the shipped-baseline half of this (`BASELINE_K`, your own log beats the frozen file); it said
 //   nothing about your own log from March against your own log from today.
 //   THE OWNER'S OWN CASE, which is what got this built: three resists running on the female vampires
-//   in Hate against a long-run estimate that says magic is ordinary. Some of that is the run
-//   detector next door (`resistLately.ts`); the rest is that a four-week-old cell should not
-//   outvote this evening by four to one just because it is bigger.
+//   in Hate against a long-run estimate that says magic is ordinary. A four-week-old cell should not
+//   outvote this evening by four to one just because it is bigger. (JOS-397 also shipped a separate
+//   run detector that PRINTED such a run as its own verdict; the owner removed it the same day —
+//   JOS-400 — because a second verdict beside the formula is not the formula. This file is the half
+//   that was kept, and it is the half that lives INSIDE the one estimate.)
 //
 // ── THE TWO NUMBERS, AND WHY THEY ARE THESE NUMBERS ────────────────────────────────────────────
 //

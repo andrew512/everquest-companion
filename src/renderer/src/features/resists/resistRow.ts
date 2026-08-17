@@ -8,17 +8,10 @@
 // no caption explaining our own bookkeeping. A row says what the log saw, and where a row has too
 // little it says how little rather than drawing a zero.
 
-import type {
-  ResistAxisBenchmark,
-  ResistEstimate,
-  ResistLately,
-  ResistSpellEvidence,
-  ResistTag,
-} from '@shared/resistTypes'
+import type { ResistAxisBenchmark, ResistEstimate, ResistSpellEvidence } from '@shared/resistTypes'
 // VALUE import, so it is spelled RELATIVELY — the node suite imports this module directly and the
 // `@shared/*` alias is a bundler fact (AGENTS.md; `features/mobs/seenVariants.ts`'s own rule).
 import { RANK_RESIST_ADJ } from '../../../../shared/resistFormula'
-import { LATELY_PREFIX } from '../../../../shared/resistLately'
 
 /**
  * The bar runs 0 to 200 because that is the whole range of the roll: at rc 200 an all-or-nothing
@@ -103,33 +96,6 @@ export function benchmarkRangeText(b: ResistAxisBenchmark): string {
 /** Said when the viewer's own level is unknown, so the benchmark is an even-level reading. */
 export const AT_MOB_LEVEL_NOTE = "at the mob's level"
 
-// ---- what happened lately (JOS-397) -----------------------------------------------------------
-
-/**
- * `lately: 3 of the last 3 resisted` — the run, in the words a player would use about it.
- *
- * `N of the last N` rather than a bare `3 in a row`, because the denominator is the honest half:
- * the app looked at the last few outcomes it has and every one of them went the same way. The word
- * `lately` opens the line for the same reason it fronts the band — this is a SECOND, smaller
- * statement standing next to the estimate, and nothing on the row should let the two be read as one.
- */
-export function latelyText(l: Pick<ResistLately, 'run' | 'outcome'>): string {
-  return `${LATELY_PREFIX}: ${String(l.run)} of the last ${String(l.run)} ${l.outcome}`
-}
-
-/**
- * THE WORD THE ROW AND THE CHIP WEAR when a run is up: `lately resistant`.
- *
- * It REPLACES the scannable word and nothing else (owner's wording, 2026-08-16). `R`, the interval
- * and both landing percentages beside it stay the decayed long-run estimate, so a reader who wants
- * the durable answer still has every number of it — what the run gets is the one word the eye lands
- * on first, which is the only part of the row that can be read in the two seconds a con lasts.
- */
-export function tagText(tag: ResistTag | null, lately: ResistLately | null): string {
-  if (lately) return `${LATELY_PREFIX} ${lately.tag}`
-  return tag ?? ''
-}
-
 /**
  * WHAT A ROW SAYS WHEN THE MODEL DOES NOT FIT (owner review, 2026-08-16).
  *
@@ -151,13 +117,6 @@ export function resistRateText(empirical: { total: number; resisted: number }): 
 
 /** Marks a claim that came from the raw rate rather than from the model. */
 export const FROM_RESIST_RATE_NOTE = 'from resist rate'
-
-/**
- * Marks a chip that earned its place on the con card from the RUN rather than from the band or the
- * rate (JOS-397). Said only where there is no benchmark to print in its place, because a chip that
- * has both should print the numbers.
- */
-export const FROM_LATELY_NOTE = 'from your last few casts'
 
 /**
  * Every observation behind this number was cast by a pet or another creature (owner review).

@@ -31,22 +31,6 @@ const AXES = ['magic', 'fire', 'cold', 'poison', 'disease'] as const
 export const NOTABLE = 'A thunder spirit princess'
 export const NOTABLE_CON = `${NOTABLE} scowls at you, ready to attack -- what would you like your tombstone to say? (Lvl: 53)`
 
-/**
- * THE THIRD CREATURE, and it is the OWNER'S OWN CASE (JOS-397): a mob whose long-run answer is
- * ordinary and whose last three casts were not.
- *
- * `a wan ghoul knight` reads magic R 12 off 421 informative observations in the committed baseline —
- * a plain cast lands every time at a level-50 viewer, so it is a `normal` axis and the JOS-386 cut
- * drops it from the card entirely. Three resists written into the LIVE log make that run a
- * one-in-a-million event under the number the card is printing, which is the whole test: the chip
- * has to come back, carrying the sentence and the `lately resistant` word, with the long-run number
- * beside it untouched. It is the only claim in this feature that spans the fold, the ledger's ring,
- * the estimator and a window over the game, so it cannot be made anywhere but here.
- */
-const LATELY_SPELL = 'Chaotic Feedback'
-/** The minimum run, so the spec is asserting the RULE's own boundary and not a comfortable margin. */
-const LATELY_RUN = 3
-
 function cardText(page: Page): Promise<string> {
   return page.evaluate(
     (sel) => (document.querySelector(sel) as HTMLElement | null)?.innerText.replace(/\s+/g, ' ').trim() ?? '',
@@ -119,7 +103,7 @@ export async function stepNotableChips(card: Page): Promise<void> {
       const word = await textOf(card, `[data-testid="con-chip-tag-${axis}"]`)
       check(
         `the ${axis} chip survived on one of the words that change what you cast`,
-        /^(lately )?(resistant|very resistant)|^resists \d+% of casts/.test(word),
+        /^(resistant|very resistant)|^resists \d+% of casts/.test(word),
         word
       )
     }
@@ -175,62 +159,3 @@ export async function stepResistantChip(
   check('…and the number and its interval and its count are still on the chip', /R \d+ \(\d+-\d+\) n=\d+/.test(text), text.slice(0, 240))
 }
 
-/**
- * A RUN OF THREE, END TO END (JOS-397) — the one claim in this feature no unit test can make.
- *
- * It writes three resists of one spell into the LIVE log and cons the creature, so what is being
- * asserted is the whole chain: the fold remembering your own outcomes in order, the ring surviving
- * into the ledger, the estimator's own printed number being what the run is measured as surprising
- * AGAINST, and the card putting the result on screen over the game.
- *
- * IT SETTLES ON THE CHIP, NEVER ON THE NAME. This creature may already be the card on screen when
- * the step runs, so a settle on the card's name would return before the new payload had arrived and
- * would read the previous answer — which, correctly, has no chip at all.
- */
-export async function stepLatelyChip(
-  card: Page,
-  append: (...messages: readonly string[]) => number,
-  mob: string,
-  conLine: string
-): Promise<void> {
-  if (/spells_us\.txt/.test(await cardText(card))) {
-    note('no client spell data on this machine - the `lately` chip cannot be asserted here')
-    return
-  }
-  const burst: string[] = []
-  for (let i = 0; i < LATELY_RUN; i++) {
-    burst.push(`You begin casting ${LATELY_SPELL}.`, `${mob} resisted your ${LATELY_SPELL}!`)
-  }
-  append(...burst)
-  append(conLine)
-  const line = await settle(
-    () => textOf(card, '[data-testid="con-chip-lately-magic"]'),
-    (t) => t.length > 0,
-    { timeoutMs: 30_000 }
-  ).catch(() => '')
-  const want = `lately: ${String(LATELY_RUN)} of the last ${String(LATELY_RUN)} resisted`
-  if (!check(`three resists in the live log put ${mob}'s magic back on the card`, line === want, line || '(no lately line)')) {
-    note(`card was: ${(await cardText(card)).slice(0, 240)}`)
-    return
-  }
-  // THE WORD IS THE RUN'S, AND EVERYTHING UNDER IT IS STILL THE LONG-RUN ANSWER. That split is the
-  // ruling: the eye gets what just happened, and the numbers a player scales their own case from
-  // stay the estimate's — this creature reads R 12 off four hundred observations and still does.
-  const word = await textOf(card, '[data-testid="con-chip-tag-magic"]')
-  check('…worn as the scannable word, with `lately` in front of it', /^lately (resistant|very resistant)/.test(word), word)
-  const text = await cardText(card)
-  check('…and the long-run number and interval are untouched beside it', /R \d+ \(\d+-\d+\) n=\d+/.test(text), text.slice(0, 240))
-  // AND IT ENDS BY ITSELF. One landing makes the newest outcome a landing, the leading run is one,
-  // and the line is simply not there on the next draw - nothing is cleared, because nothing is kept.
-  append(
-    `You begin casting ${LATELY_SPELL}.`,
-    `You hit ${mob.toLowerCase()} for 30 points of magic damage by ${LATELY_SPELL}.`
-  )
-  append(conLine)
-  const gone = await settle(
-    () => textOf(card, '[data-testid="con-chip-lately-magic"]'),
-    (t) => t.length === 0,
-    { timeoutMs: 30_000 }
-  ).catch(() => 'still there')
-  check('…and one landing after it takes the line away again', gone === '', gone)
-}

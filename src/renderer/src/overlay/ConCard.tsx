@@ -48,18 +48,14 @@ import type { ConCardPayload } from '@shared/conCard'
 import { RESIST_AXIS_WORDS } from '@shared/resistTypes'
 import { lowSamples } from '@shared/resistModel'
 import { RESIST_AXIS_COLORS } from '../features/resists/resistColors'
-import { LATELY_PREFIX } from '@shared/resistLately'
 import {
-  FROM_LATELY_NOTE,
   FROM_RESIST_RATE_NOTE,
   LOW_SAMPLE_NOTE,
   NPC_ONLY_NOTE,
   benchmarkText,
   countText,
   estimateText,
-  latelyText,
-  resistRateText,
-  tagText
+  resistRateText
 } from '../features/resists/resistRow'
 import { CARD_ENTER_MS, CARD_EXIT_MS } from './cardQueue'
 import { CON_CARD_OPEN_HINT, conCardTotalN, notableChips, type ConCardNotableChip } from './conCardRows'
@@ -145,7 +141,6 @@ function Chip({ chip }: { chip: ConCardNotableChip }): JSX.Element {
     <div
       data-testid={`con-chip-${chip.axis}`}
       data-tag={chip.tag}
-      data-lately={chip.lately ? `${LATELY_PREFIX} ${chip.lately.tag}` : undefined}
       style={{
         minWidth: 0,
         padding: '4px 6px',
@@ -165,27 +160,9 @@ function Chip({ chip }: { chip: ConCardNotableChip }): JSX.Element {
         data-testid={`con-chip-tag-${chip.axis}`}
         style={{ color, fontSize: 11, marginTop: 2, overflowWrap: 'anywhere' }}
       >
-        {/* A RUN REPLACES THE WORD AND NOTHING ELSE (JOS-397), on the chip exactly as on the mob
-            page: everything under this line is still the long-run answer. */}
-        {chip.lately
-          ? tagText(chip.tag, chip.lately)
-          : chip.from === 'benchmark'
-            ? chip.tag
-            : resistRateText(chip.empirical)}
+        {chip.from === 'benchmark' ? chip.tag : resistRateText(chip.empirical)}
         {lowSamples(chip.n) && <span style={{ color: DIM }}>{` · ${LOW_SAMPLE_NOTE}`}</span>}
       </div>
-      {/* THE SUB-LINE THE RULING NAMES: what just happened, in the words a player would use about
-          it. It sits directly under the word it explains — a `lately resistant` with no sentence
-          under it would be a verdict with its evidence one click away, on a card that has no
-          clicks. */}
-      {chip.lately && (
-        <div
-          data-testid={`con-chip-lately-${chip.axis}`}
-          style={{ color, fontSize: 10, marginTop: 1, overflowWrap: 'anywhere' }}
-        >
-          {latelyText(chip.lately)}
-        </div>
-      )}
       {/* THE GUIDANCE SENTENCE, under the word (owner ruling, 2026-08-16). The word is what the eye
           picks out of a card over a running game; this is what to do about it, and the two are one
           band read two ways. */}
@@ -209,11 +186,7 @@ function Chip({ chip }: { chip: ConCardNotableChip }): JSX.Element {
           it has a column to print it in; a 9px chip does not. The total still crosses the wire
           (`chip.nTotal`) — a layout decision, not a shorter truth. */}
       <div data-testid={`con-chip-bench-${chip.axis}`} style={{ color: MUTED, fontSize: 10, marginTop: 1 }}>
-        {chip.benchmark
-          ? benchmarkText(chip.benchmark)
-          : chip.from === 'lately'
-            ? FROM_LATELY_NOTE
-            : FROM_RESIST_RATE_NOTE}
+        {chip.benchmark ? benchmarkText(chip.benchmark) : FROM_RESIST_RATE_NOTE}
       </div>
       <div data-testid={`con-chip-detail-${chip.axis}`} style={{ color: DIM, fontSize: 9, marginTop: 1 }}>
         {chip.fit ? `${estimateText(chip.fit)} ${countText(chip.n)}` : countText(chip.n)}

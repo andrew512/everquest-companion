@@ -18,8 +18,7 @@ import { parseEvent } from '../src/main/log/parser'
 import { installCharacterName, installSpellDb } from '../src/main/log/rulesets'
 import { loadSpellDb } from '../src/main/data/spellDb'
 import { ResistFold } from '../src/main/resist/fold'
-import { ResistLedgerStore, rowTotal, type ResistBucket } from '../src/main/resist/ledger'
-import { RESIST_RECENT_CAP } from '../src/shared/resistLately'
+import { ResistLedgerStore, rowTotal } from '../src/main/resist/ledger'
 import { isoWeekKey } from '../src/shared/resistDecay'
 import type { ResistRow } from '../src/shared/resistTypes'
 
@@ -383,23 +382,8 @@ test('THE DEBUFF WINDOW COVERS THE SCENT LINE, not just tash and malo', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
-// JOS-397: the week each row was observed in, and the ring of your own recent outcomes.
-
-/** Fold hand-written lines and hand back the BUCKET, which is where the rings live. */
-function foldToBucket(lines: readonly string[]): ResistBucket {
-  const db = loadSpellDb()
-  installSpellDb(db)
-  installCharacterName('Primitive')
-  const fold = new ResistFold({ spellDb: db })
-  const bucket = fold.beginSource()
-  let seq = 0
-  for (const line of lines) {
-    const ev = parseEvent(line, seq++)
-    if (ev) fold.onEvent(ev)
-  }
-  fold.finish()
-  return bucket
-}
+// JOS-397: the week each row was observed in. (The ring of recent outcomes that arrived with it was
+// removed by JOS-400 — the owner's ruling that the decay stays and the run detector goes.)
 
 /** One line on a named date. The weekday is decoration - the parser reads month, day and year. */
 const on = (date: string, secs: number, text: string): string =>
@@ -431,96 +415,28 @@ test('EVERY ROW CARRIES THE WEEK IT WAS OBSERVED IN, and two weeks are two rows 
   )
 })
 
-test('THE RING REMEMBERS YOUR OWN OUTCOMES IN ORDER, and derives nothing (JOS-397)', () => {
-  const bucket = foldToBucket([
-    AUG_WHO,
-    on('Aug 15', 10, 'You begin casting Scorching Arrow.'),
-    on('Aug 15', 12, 'A lava guardian resisted your Scorching Arrow!'),
-    on('Aug 15', 20, 'You begin casting Scorching Arrow.'),
-    on('Aug 15', 22, 'A lava guardian resisted your Scorching Arrow!'),
-    on('Aug 15', 30, 'You begin casting Scorching Arrow.'),
-    on('Aug 15', 32, 'You hit a lava guardian for 214 points of fire damage by Scorching Arrow.')
-  ])
-  const arrow = bucket.recent().find((r) => r.spellKey === 'scorching arrow')
-  assert.ok(arrow)
-  assert.equal(arrow.mobKey, 'a lava guardian')
-  // OLDEST FIRST (append order), and each entry says only what the LOG printed: the resist
-  // message, or the number. What that number MEANT is a whole-ledger question answered on read.
-  assert.deepEqual(
-    arrow.out.map((e) => (e.resist === true ? 'resist' : (e.dmg ?? 'land'))),
-    ['resist', 'resist', 214]
-  )
-  // The caster's level rides along, because the full-damage reference is keyed by it.
-  assert.deepEqual(new Set(arrow.out.map((e) => e.level)), new Set([50]))
-})
-
-test('the ring never grows past its cap, and the OLDEST entry is the one that leaves', () => {
-  const lines = [AUG_WHO]
-  for (let i = 0; i < RESIST_RECENT_CAP + 4; i++) {
-    lines.push(on('Aug 15', i * 4 + 10, 'You begin casting Scorching Arrow.'))
-    lines.push(
-      on(
-        'Aug 15',
-        i * 4 + 12,
-        `You hit a lava guardian for ${String(100 + i)} points of fire damage by Scorching Arrow.`
-      )
-    )
-  }
-  const arrow = foldToBucket(lines)
-    .recent()
-    .find((r) => r.spellKey === 'scorching arrow')
-  assert.ok(arrow)
-  assert.equal(arrow.out.length, RESIST_RECENT_CAP)
-  // The last ten of the fourteen: 104 through 113, in the order they happened.
-  assert.deepEqual(
-    arrow.out.map((e) => e.dmg),
-    [104, 105, 106, 107, 108, 109, 110, 111, 112, 113]
-  )
-})
-
-test('AND IT IS YOUR OWN CASTS ONLY: no pets, no strangers, no song pulses', () => {
-  // An imp protector throwing fire at another imp protector is ordinary evidence for the ESTIMATE
-  // (JOS-385) and is not `lately`: nothing states what a pet is doing on your behalf, and the
-  // sentence the ring feeds is about what happened when YOU cast.
-  const npc = foldToBucket(readFileSync(NPC_FIXTURE, 'utf8').split(/\r?\n/).filter(Boolean))
-  for (const ring of npc.recent()) {
-    const row = npc.rows().find((r) => r.mobKey === ring.mobKey && r.spellKey === ring.spellKey)
-    assert.equal(row?.casterKind, 'self', `${ring.mobKey}/${ring.spellKey} is not yours`)
-  }
-  // A song pulses every six seconds under the Symphonic Aura, so three in a row is four seconds of
-  // one fight. Songs are folded as evidence and never remembered as a run.
-  const songs = foldToBucket([
-    AUG_WHO,
-    on('Aug 15', 10, "You begin singing Largo's Melodic Binding."),
-    on('Aug 15', 12, "A lava guardian resisted your Largo's Melodic Binding!"),
-    on('Aug 15', 18, "A lava guardian resisted your Largo's Melodic Binding!"),
-    on('Aug 15', 24, "A lava guardian resisted your Largo's Melodic Binding!")
-  ])
-  assert.equal(songs.recent().length, 0, 'a song pulse is never a `lately` outcome')
-})
-
-test('A RE-FOLD DISCARDS THE RINGS TOO, for the reason it discards the rows (JOS-231)', () => {
+test('AND THE FOLD REMEMBERS NOTHING ELSE: counts and weeks, no outcome ring (JOS-400)', () => {
+  // JOS-397 also had the fold keep a per-(mob, spell) ring of your last ten outcomes, for a run
+  // detector that printed its own verdict beside the estimate. The owner removed the detector the
+  // same day, and the ring with it: what a bucket serializes is rows, and only rows.
   const store = new ResistLedgerStore()
   const db = loadSpellDb()
   installSpellDb(db)
   installCharacterName('Primitive')
-  const lines = [
+  const fold = new ResistFold({ spellDb: db })
+  fold.beginSource(store.beginSource('Primitive_freeport'))
+  let seq = 0
+  for (const line of [
     AUG_WHO,
     on('Aug 15', 10, 'You begin casting Scorching Arrow.'),
     on('Aug 15', 12, 'A lava guardian resisted your Scorching Arrow!')
-  ]
-  const once = (): number => {
-    const fold = new ResistFold({ spellDb: db })
-    fold.beginSource(store.beginSource('Primitive_freeport'))
-    let seq = 0
-    for (const line of lines) {
-      const ev = parseEvent(line, seq++)
-      if (ev) fold.onEvent(ev)
-    }
-    fold.finish()
-    return store.recentFor('a lava guardian').reduce((a, r) => a + r.out.length, 0)
+  ]) {
+    const ev = parseEvent(line, seq++)
+    if (ev) fold.onEvent(ev)
   }
-  assert.equal(once(), 1)
-  // Folding the same log twice is a no-op by construction, for the ring exactly as for the counts.
-  assert.equal(once(), 1)
+  fold.finish()
+  const src = store.toLedger().sources.find((s) => s.key === 'Primitive_freeport')
+  assert.ok(src)
+  assert.deepEqual(Object.keys(src).sort(), ['key', 'rows'])
+  assert.ok(!JSON.stringify(store.toLedger()).includes('"recent"'))
 })

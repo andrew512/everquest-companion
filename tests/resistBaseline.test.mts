@@ -92,10 +92,9 @@ test('AND NO ROW IS SPLIT BY WEEK: the freeze re-pools every cell onto that one'
   }
 })
 
-test('and the rings are the USER ledger only - nothing `lately` ships (JOS-397)', () => {
-  // `lately: 3 of the last 3 resisted` is a statement about YOUR last few casts. A run that ended a
-  // month before the app was installed is not one, so the freeze writes no rings at all.
-  assert.equal(LEDGER.sources[0].recent, undefined)
+test('and the run detector left nothing behind on disk (JOS-400)', () => {
+  // JOS-397 wrote a per-(mob, spell) ring of recent outcomes beside the rows. It was removed the
+  // same day at the owner's ruling; the shipped file never carried one and must not start.
   assert.ok(!readFileSync(PATH, 'utf8').includes('"recent"'))
 })
 

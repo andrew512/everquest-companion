@@ -19,12 +19,9 @@ import {
   MAX_DISTINCT_DAMAGE_VALUES,
   RESIST_LEDGER_SCHEMA,
   type ResistLedger,
-  type ResistRecentEntry,
-  type ResistRecentSeries,
   type ResistRow,
   type ResistSource,
 } from '../../shared/resistTypes'
-import { RESIST_RECENT_CAP } from '../../shared/resistLately'
 import { isoWeekKey, laterWeek } from '../../shared/resistDecay'
 
 /** Everything a row is keyed BY. The counts and timestamps are what accretes onto it. */
@@ -81,8 +78,6 @@ export function rowTotal(row: ResistRow): number {
  */
 export class ResistBucket {
   private byKey = new Map<string, ResistRow>()
-  /** (mob|spell) -> the last `RESIST_RECENT_CAP` of YOUR outcomes, oldest first. See `note`. */
-  private rings = new Map<string, ResistRecentSeries>()
 
   get size(): number {
     return this.byKey.size
@@ -90,7 +85,6 @@ export class ResistBucket {
 
   clear(): void {
     this.byKey = new Map()
-    this.rings = new Map()
     this.newest = undefined
   }
 
@@ -148,52 +142,11 @@ export class ResistBucket {
     return [...this.byKey.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map((e) => e[1])
   }
 
-  /**
-   * REMEMBER ONE OF YOUR OWN OUTCOMES (JOS-397). A ring per (mob, spell), capped, oldest dropped
-   * first — see `shared/resistLately.ts` for why the ring is per SPELL rather than per mob, and for
-   * the four rules that decide whether a run of them is ever surfaced.
-   *
-   * It carries no verdict, exactly like a row: `resist`, or the damage number the line printed, or
-   * neither for a plain landing. What that turns out to have MEANT is derived on read.
-   */
-  note(mobKey: string, spellKey: string, entry: ResistRecentEntry): void {
-    const key = mobKey + '|' + spellKey
-    let ring = this.rings.get(key)
-    if (!ring) {
-      ring = { mobKey, spellKey, out: [] }
-      this.rings.set(key, ring)
-    }
-    ring.out.push(entry)
-    if (ring.out.length > RESIST_RECENT_CAP) ring.out.splice(0, ring.out.length - RESIST_RECENT_CAP)
-  }
-
-  /** Sorted for a byte-stable serialization, exactly as `rows()` is. */
-  recent(): ResistRecentSeries[] {
-    return [...this.rings.entries()]
-      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
-      .map((e) => e[1])
-  }
-
-  /** Every ring for one mob. The read side, which is per mob and per draw. */
-  recentFor(mobKey: string): ResistRecentSeries[] {
-    const out: ResistRecentSeries[] = []
-    for (const ring of this.rings.values()) {
-      if (ring.mobKey === mobKey) out.push(ring)
-    }
-    return out
-  }
-
   /** Seed from a persisted bucket (a character you are not folding this run). */
-  seed(rows: readonly ResistRow[], recent?: readonly ResistRecentSeries[]): void {
+  seed(rows: readonly ResistRow[]): void {
     for (const row of rows) {
       this.byKey.set(rowKey(row), { ...row, dmg: { ...row.dmg } })
       this.newest = laterWeek(this.newest, row.week)
-    }
-    for (const ring of recent ?? []) {
-      this.rings.set(ring.mobKey + '|' + ring.spellKey, {
-        ...ring,
-        out: ring.out.slice(-RESIST_RECENT_CAP).map((e) => ({ ...e })),
-      })
     }
   }
 }
@@ -275,18 +228,6 @@ export class ResistLedgerStore {
     return out
   }
 
-  /**
-   * Every ring for one mob, from the USER'S buckets only (JOS-397). The shipped baseline carries
-   * none — `lately` is a statement about your last few casts, and the freeze script writes no rings
-   * — so this needs no source filter to be honest; it simply asks every bucket and gets back what
-   * the user's own logs put there.
-   */
-  recentFor(mobKey: string): ResistRecentSeries[] {
-    const out: ResistRecentSeries[] = []
-    for (const bucket of this.buckets.values()) out.push(...bucket.recentFor(mobKey))
-    return out
-  }
-
   /** The newest week ANY bucket holds: the instant every row's age is measured against. */
   newestWeek(): string | undefined {
     let best: string | undefined
@@ -306,13 +247,7 @@ export class ResistLedgerStore {
   toLedger(): ResistLedger {
     return {
       schema: RESIST_LEDGER_SCHEMA,
-      sources: this.keys().map((key) => {
-        const bucket = this.bucket(key)
-        const recent = bucket.recent()
-        // Omitted rather than written empty: the shipped baseline has no rings and a `"recent":[]`
-        // on every source of it would be 3,887 rows of noise in a committed file.
-        return recent.length > 0 ? { key, rows: bucket.rows(), recent } : { key, rows: bucket.rows() }
-      }),
+      sources: this.keys().map((key) => ({ key, rows: this.bucket(key).rows() })),
     }
   }
 
@@ -331,7 +266,7 @@ export class ResistLedgerStore {
     for (const src of ledger.sources) {
       const rows =
         frozenWeek === undefined ? src.rows : src.rows.map((r) => (r.week === undefined ? { ...r, week: frozenWeek } : r))
-      this.bucket(src.key).seed(rows, src.recent)
+      this.bucket(src.key).seed(rows)
     }
   }
 }

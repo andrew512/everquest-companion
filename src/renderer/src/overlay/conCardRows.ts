@@ -41,32 +41,6 @@ import type { ResistTag } from '@shared/resistTypes'
 export const CON_CARD_NOTABLE_TAGS: readonly ResistTag[] = ['resistant', 'very resistant']
 
 /**
- * AND `lately resistant` IS NOTABLE TOO (JOS-397, owner ruling 2026-08-16).
- *
- * The same two words, read over the last few casts instead of over the whole ledger — so the same
- * cut applies to them, for the same reason: `lately weak` and `lately normal` would not change what
- * you cast, and this card is the two seconds before you pull.
- *
- * IT IS A SECOND WAY ONTO THE CARD, NOT A REPLACEMENT for the first. The owner's case is precisely a
- * chip the long-run band would have dropped — three resists running on a creature whose pooled magic
- * reads ordinary — so a run that only ever decorated an already-notable chip would not have solved
- * the thing it was built for. The chip that arrives this way still prints the long-run number and
- * interval; what earned it its place is on the line underneath.
- */
-export const CON_CARD_NOTABLE_LATELY_TAGS: readonly ResistTag[] = ['resistant', 'very resistant']
-
-/**
- * Does this chip's recent run say something worth a place on the card?
- *
- * The truthy test rather than a compare with null is deliberate: this payload crossed a process
- * boundary from a build that may be older than this one, and an absent field has to read as "no
- * run" rather than as a crash on a card drawn over a running game.
- */
-export function latelyNotable(chip: ConCardChip): boolean {
-  return !!chip.lately && CON_CARD_NOTABLE_LATELY_TAGS.includes(chip.lately.tag)
-}
-
-/**
  * A chip that survived the cut, and WHY it survived.
  *
  *   `benchmark`   the model answered and its band is one of the two above.
@@ -75,11 +49,15 @@ export function latelyNotable(chip: ConCardChip): boolean {
  *                 half of everything must not vanish from the card because the estimator could not
  *                 name a number for it — that is the Eye of Veeshan defect, and it is exactly the
  *                 case where a player most wants the warning.
- *   `lately`      the long-run band is ordinary and the last few casts were not (JOS-397). See
- *                 `CON_CARD_NOTABLE_LATELY_TAGS`.
+ *
+ * THERE IS NO THIRD ROUTE (JOS-400). JOS-397 added one — a run of three recent resists could earn a
+ * chip its place and print `lately resistant` on it — and the owner removed it the same day: a
+ * second verdict beside the formula is not the formula, and the recency the ruling kept is the decay
+ * INSIDE the estimate (`shared/resistDecay.ts`), which reaches this card through `tag` like
+ * everything else.
  */
 export interface ConCardNotableChip extends ConCardChip {
-  from: 'benchmark' | 'resistRate' | 'lately'
+  from: 'benchmark' | 'resistRate'
 }
 
 /** At or above this observed resist rate, a pinned cell earns a chip off the data alone. */
@@ -109,16 +87,11 @@ export function notableChips(chips: readonly ConCardChip[]): ConCardNotableChip[
     if (c.pinned) {
       const { total, resisted } = c.empirical
       if (total > 0 && resisted / total >= RESIST_RATE_NOTABLE_AT) out.push({ ...c, from: 'resistRate' })
-      else if (latelyNotable(c)) out.push({ ...c, from: 'lately' })
       continue
     }
     if (c.tag !== null && c.fit !== null && CON_CARD_NOTABLE_TAGS.includes(c.tag)) {
       out.push({ ...c, from: 'benchmark' })
-      continue
     }
-    // LAST, so a chip that qualifies both ways is still labelled by the durable half. The order is
-    // the card's own priority: what this creature IS, then what it has been doing lately.
-    if (latelyNotable(c)) out.push({ ...c, from: 'lately' })
   }
   return out
 }
