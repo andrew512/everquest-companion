@@ -46,9 +46,11 @@ import {
   estimateText,
   evidenceByFamily,
   evidenceText,
+  latelyText,
   npcCasterSummary,
   songSummary,
   splitText,
+  tagText,
 } from './resistRow'
 
 const BAR_H = 8
@@ -110,6 +112,9 @@ function AxisNotes({ row }: { row: MobResistAxis }): JSX.Element | null {
   const bench = row.benchmark
   const notes = [
     split,
+    // WHAT JUST HAPPENED, beside what is usually true (JOS-397). It leads the notes line because it
+    // is the newest thing on the row and because it is the reason the tag above it says `lately`.
+    row.lately ? latelyText(row.lately) : null,
     // THE INTERVAL IN THE READER'S OWN UNITS (JOS-387). `R 58 (36-102)` is in the number column;
     // this is the same width of not-knowing said as landing chances, which is what the row is for.
     bench ? benchmarkRangeText(bench) : null,
@@ -249,7 +254,10 @@ function AxisRow({ row }: { row: MobResistAxis }): JSX.Element {
                 another -150, a malo another 45), and a band without them is a verdict with its
                 arithmetic hidden. */}
             <Typography variant="caption" sx={{ color, flex: 1, minWidth: 0 }} data-testid={`resist-tag-${row.axis}`}>
-              {row.tag}
+              {/* `lately resistant` REPLACES the word and nothing else (JOS-397): the guidance
+                  sentence and both percentages beside it are still the long-run estimate's, so the
+                  row carries the two windows side by side rather than one overwriting the other. */}
+              {tagText(row.tag, row.lately)}
               {row.benchmark && (
                 <Typography component="span" variant="caption" color="text.secondary" data-testid={`resist-guidance-${row.axis}`}>
                   {` · ${row.benchmark.guidance}`}

@@ -54,7 +54,8 @@ import { parseEvent } from '../src/main/log/parser'
 import { installCharacterName, installSpellDb } from '../src/main/log/rulesets'
 import { loadSpellDb } from '../src/main/data/spellDb'
 import { ResistFold } from '../src/main/resist/fold'
-import { rowTotal } from '../src/main/resist/ledger'
+import { repoolAtWeek, rowTotal } from '../src/main/resist/ledger'
+import { isoWeekKey } from '../src/shared/resistDecay'
 import { parseSpellsUs } from '../src/main/resist/spellsUsParse'
 import { estimate, fullDamageRefs, unobservableSpells } from '../src/shared/resistModel'
 import {
@@ -90,6 +91,23 @@ const MIN_ROW_OBSERVATIONS = Number(process.env.EQ_RESIST_MIN_ROW ?? '5')
  * `gen-message-overlay.ts` follows, and the one `tests/foldDeterminism.test.mts` exists to keep).
  */
 const FROZEN_AT = '2026-08-16T00:00:00.000Z'
+
+/**
+ * EVERY BASELINE ROW CARRIES THE WEEK OF `frozenAt` (JOS-397), and the fold's own week buckets are
+ * re-pooled onto it before anything else happens.
+ *
+ * The file is a SNAPSHOT, not a diary. Its rows have carried `firstTs: 0` since JOS-382 for the
+ * reason the block below states — one player's itinerary is not a fact about a creature — and the
+ * decay ages the whole file from `frozenAt` for the same reason: what a reader needs to know is how
+ * stale the SHIPPED DATA is relative to their own play, not which Tuesday in July a particular cast
+ * happened on.
+ *
+ * MEASURED, and this is why the re-pool is not optional: the owner's log spans four weeks, so
+ * leaving the fold's buckets alone splits every cell into up to four rows, and the
+ * `MIN_ROW_OBSERVATIONS` floor below then drops the pieces that a whole cell would have cleared. A
+ * smaller file that knows less is the opposite of the trade this ticket is making.
+ */
+const BASELINE_WEEK = isoWeekKey(Date.parse(FROZEN_AT))
 
 async function foldLog(fold: ResistFold, path: string): Promise<number> {
   let seq = 0
@@ -334,18 +352,30 @@ async function main(): Promise<void> {
   installCharacterName('Primitive')
 
   const fold = new ResistFold({ spellDb: loadSpellDb() })
-  const kept: ResistRow[] = []
   const all: ResistRow[] = []
   let lines = 0
   for (const path of paths) {
     fold.beginSource()
     lines += await foldLog(fold, path)
     fold.finish()
-    for (const row of fold.rows()) {
-      all.push(row)
-      if (rowTotal(row) >= MIN_ROW_OBSERVATIONS) kept.push(row)
-    }
+    all.push(...fold.rows())
   }
+  // RE-POOL FIRST, FILTER SECOND. See `BASELINE_WEEK`: the floor is a statement about how much a
+  // CELL has been observed, and applying it to week-sized fragments would throw away cells that
+  // clear it several times over. `--compare` and `--cells` below keep the week-split rows, because
+  // those two modes are reading the owner's live ledger rather than the snapshot that ships.
+  const pooled = repoolAtWeek(all, BASELINE_WEEK)
+  const kept = pooled.filter((row) => rowTotal(row) >= MIN_ROW_OBSERVATIONS)
+  // THE MEASUREMENT BEHIND THE RE-POOL, printed on every mine so the decision stays checkable
+  // rather than remembered: how much of this log the week buckets would have cost the shipped file.
+  const unpooled = all.filter((row) => rowTotal(row) >= MIN_ROW_OBSERVATIONS)
+  const obs = (rows: readonly ResistRow[]): number => rows.reduce((a, r) => a + rowTotal(r), 0)
+  console.log(
+    `[weeks] ${String(all.length)} week-split rows -> ${String(pooled.length)} pooled at ` +
+      `${BASELINE_WEEK}. Past the ${String(MIN_ROW_OBSERVATIONS)}-observation floor: ` +
+      `${String(kept.length)} rows / ${String(obs(kept))} observations pooled, against ` +
+      `${String(unpooled.length)} rows / ${String(obs(unpooled))} observations unpooled`
+  )
 
   if (compare || cells) {
     // The CLIENT's table, read straight rather than through the app's worker + cache: this is a dev
@@ -363,8 +393,14 @@ async function main(): Promise<void> {
   // player fought it in and at what hour on what evening are his itinerary, not facts about the
   // creature, and nothing downstream reads either. Same argument as the message overlay's
   // "no chat, no character name": the file records observations, and an observation is a count.
+  //
+  // AND SO IS THE WEEK, for a different reason and with no loss (JOS-397): every row of this file
+  // carries the SAME week (see `BASELINE_WEEK`), so writing it four thousand times is 80 kB to say
+  // a thing `frozenAt` already says once. `ResistLedgerStore.seed` fills it back in from that stamp
+  // as the file is read, which is also what makes the shipped baseline age against a user's own log
+  // rather than against a date nobody recorded.
   const rows = kept
-    .map(({ zone: _zone, source: _source, ...row }) => ({ ...row, firstTs: 0, lastTs: 0 }))
+    .map(({ zone: _zone, source: _source, week: _week, ...row }) => ({ ...row, firstTs: 0, lastTs: 0 }))
     .sort((a, b) =>
       a.mobKey === b.mobKey
         ? a.spellKey === b.spellKey

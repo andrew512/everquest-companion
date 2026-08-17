@@ -19,9 +19,13 @@ import {
   MAX_DISTINCT_DAMAGE_VALUES,
   RESIST_LEDGER_SCHEMA,
   type ResistLedger,
+  type ResistRecentEntry,
+  type ResistRecentSeries,
   type ResistRow,
   type ResistSource,
 } from '../../shared/resistTypes'
+import { RESIST_RECENT_CAP } from '../../shared/resistLately'
+import { isoWeekKey, laterWeek } from '../../shared/resistDecay'
 
 /** Everything a row is keyed BY. The counts and timestamps are what accretes onto it. */
 export type RowSpec = Omit<ResistRow, 'resist' | 'land' | 'dmg' | 'firstTs' | 'lastTs'>
@@ -38,6 +42,11 @@ export type RowSpec = Omit<ResistRow, 'resist' | 'land' | 'dmg' | 'firstTs' | 'l
  * than a special case scattered through the estimator: it contributes to `rc` only when overchannel
  * was up, so keying on it unconditionally would split every ordinary row in the shipped baseline on
  * a value that changes nothing about them.
+ *
+ * AND THE WEEK IS IN IT (JOS-397), which is the one term that is not about `rc` at all. It is about
+ * AGE: recent evidence weighs more (`shared/resistDecay.ts`), and a row that pooled March into this
+ * evening would have no age to weigh. Weekly rather than daily because a 21-day half-life cannot use
+ * a finer resolution and a day bucket would multiply the ledger by seven to say the same thing.
  */
 export function rowKey(row: RowSpec): string {
   return [
@@ -51,6 +60,7 @@ export function rowKey(row: RowSpec): string {
     row.rank,
     row.overchannel === null ? '?' : row.overchannel ? 'oc' : '-',
     row.overchannel === true ? (row.casterClasses ?? 0) : '',
+    row.week ?? '',
   ].join('|')
 }
 
@@ -71,6 +81,8 @@ export function rowTotal(row: ResistRow): number {
  */
 export class ResistBucket {
   private byKey = new Map<string, ResistRow>()
+  /** (mob|spell) -> the last `RESIST_RECENT_CAP` of YOUR outcomes, oldest first. See `note`. */
+  private rings = new Map<string, ResistRecentSeries>()
 
   get size(): number {
     return this.byKey.size
@@ -78,9 +90,25 @@ export class ResistBucket {
 
   clear(): void {
     this.byKey = new Map()
+    this.rings = new Map()
+    this.newest = undefined
+  }
+
+  /**
+   * THE NEWEST WEEK THIS BUCKET HOLDS, maintained as rows arrive rather than scanned for.
+   *
+   * The read side asks for it on EVERY card draw (it is the instant every row's age is measured
+   * against — shared/resistDecay.ts), and the alternative is a pass over four thousand rows per
+   * draw to re-derive a maximum the writer already knew.
+   */
+  private newest: string | undefined
+
+  newestWeek(): string | undefined {
+    return this.newest
   }
 
   row(spec: RowSpec, ts: number): ResistRow {
+    this.newest = laterWeek(this.newest, spec.week)
     const key = rowKey(spec)
     let row = this.byKey.get(key)
     if (!row) {
@@ -120,10 +148,94 @@ export class ResistBucket {
     return [...this.byKey.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map((e) => e[1])
   }
 
-  /** Seed from a persisted bucket (a character you are not folding this run). */
-  seed(rows: readonly ResistRow[]): void {
-    for (const row of rows) this.byKey.set(rowKey(row), { ...row, dmg: { ...row.dmg } })
+  /**
+   * REMEMBER ONE OF YOUR OWN OUTCOMES (JOS-397). A ring per (mob, spell), capped, oldest dropped
+   * first — see `shared/resistLately.ts` for why the ring is per SPELL rather than per mob, and for
+   * the four rules that decide whether a run of them is ever surfaced.
+   *
+   * It carries no verdict, exactly like a row: `resist`, or the damage number the line printed, or
+   * neither for a plain landing. What that turns out to have MEANT is derived on read.
+   */
+  note(mobKey: string, spellKey: string, entry: ResistRecentEntry): void {
+    const key = mobKey + '|' + spellKey
+    let ring = this.rings.get(key)
+    if (!ring) {
+      ring = { mobKey, spellKey, out: [] }
+      this.rings.set(key, ring)
+    }
+    ring.out.push(entry)
+    if (ring.out.length > RESIST_RECENT_CAP) ring.out.splice(0, ring.out.length - RESIST_RECENT_CAP)
   }
+
+  /** Sorted for a byte-stable serialization, exactly as `rows()` is. */
+  recent(): ResistRecentSeries[] {
+    return [...this.rings.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+      .map((e) => e[1])
+  }
+
+  /** Every ring for one mob. The read side, which is per mob and per draw. */
+  recentFor(mobKey: string): ResistRecentSeries[] {
+    const out: ResistRecentSeries[] = []
+    for (const ring of this.rings.values()) {
+      if (ring.mobKey === mobKey) out.push(ring)
+    }
+    return out
+  }
+
+  /** Seed from a persisted bucket (a character you are not folding this run). */
+  seed(rows: readonly ResistRow[], recent?: readonly ResistRecentSeries[]): void {
+    for (const row of rows) {
+      this.byKey.set(rowKey(row), { ...row, dmg: { ...row.dmg } })
+      this.newest = laterWeek(this.newest, row.week)
+    }
+    for (const ring of recent ?? []) {
+      this.rings.set(ring.mobKey + '|' + ring.spellKey, {
+        ...ring,
+        out: ring.out.slice(-RESIST_RECENT_CAP).map((e) => ({ ...e })),
+      })
+    }
+  }
+}
+
+/**
+ * RE-POOL A SET OF ROWS ONTO ONE WEEK (JOS-397), merging every row whose key then collides.
+ *
+ * It exists for the shipped baseline and nothing else. That file is a SNAPSHOT rather than a diary:
+ * its rows have carried `firstTs: 0` since JOS-382 because one player's itinerary is not a fact
+ * about a creature, and its whole content is aged from `frozenAt` for the same reason. Left split by
+ * their real weeks, the owner's four weeks would fragment every cell into four buckets and the
+ * freeze script's five-observation floor would then drop most of them — a smaller file that knows
+ * less, which is the opposite of the trade.
+ */
+export function repoolAtWeek(rows: readonly ResistRow[], week: string): ResistRow[] {
+  const byKey = new Map<string, ResistRow>()
+  for (const row of rows) {
+    const moved: ResistRow = { ...row, week, dmg: { ...row.dmg } }
+    const key = rowKey(moved)
+    const held = byKey.get(key)
+    if (!held) {
+      byKey.set(key, moved)
+      continue
+    }
+    held.resist += moved.resist
+    held.land += moved.land
+    for (const [value, count] of Object.entries(moved.dmg)) {
+      held.dmg[value] = (held.dmg[value] ?? 0) + count
+    }
+    if (moved.variable === true) held.variable = true
+    if (moved.firstTs < held.firstTs) held.firstTs = moved.firstTs
+    if (moved.lastTs > held.lastTs) held.lastTs = moved.lastTs
+    // THE HISTOGRAM CAP IS THE BUCKET'S OWN RULE and merging must not smuggle a row past it: four
+    // weeks of a variable-damage proc could otherwise arrive with 128 distinct values in a file
+    // whose whole point is to stay small. Same give-up, same meaning (see `addDamage`).
+    if (held.variable !== true && Object.keys(held.dmg).length > MAX_DISTINCT_DAMAGE_VALUES) {
+      held.variable = true
+      for (const count of Object.values(held.dmg)) held.land += count
+      held.dmg = {}
+    }
+  }
+  return [...byKey.values()]
 }
 
 /** Every bucket, keyed by source. The whole ledger the app holds in memory. */
@@ -163,6 +275,25 @@ export class ResistLedgerStore {
     return out
   }
 
+  /**
+   * Every ring for one mob, from the USER'S buckets only (JOS-397). The shipped baseline carries
+   * none — `lately` is a statement about your last few casts, and the freeze script writes no rings
+   * — so this needs no source filter to be honest; it simply asks every bucket and gets back what
+   * the user's own logs put there.
+   */
+  recentFor(mobKey: string): ResistRecentSeries[] {
+    const out: ResistRecentSeries[] = []
+    for (const bucket of this.buckets.values()) out.push(...bucket.recentFor(mobKey))
+    return out
+  }
+
+  /** The newest week ANY bucket holds: the instant every row's age is measured against. */
+  newestWeek(): string | undefined {
+    let best: string | undefined
+    for (const bucket of this.buckets.values()) best = laterWeek(best, bucket.newestWeek())
+    return best
+  }
+
   /** Distinct mob keys anything has been observed about. */
   mobKeys(): Set<string> {
     const out = new Set<string>()
@@ -175,18 +306,32 @@ export class ResistLedgerStore {
   toLedger(): ResistLedger {
     return {
       schema: RESIST_LEDGER_SCHEMA,
-      sources: this.keys().map((key) => ({ key, rows: this.bucket(key).rows() })),
+      sources: this.keys().map((key) => {
+        const bucket = this.bucket(key)
+        const recent = bucket.recent()
+        // Omitted rather than written empty: the shipped baseline has no rings and a `"recent":[]`
+        // on every source of it would be 3,887 rows of noise in a committed file.
+        return recent.length > 0 ? { key, rows: bucket.rows(), recent } : { key, rows: bucket.rows() }
+      }),
     }
   }
 
   /**
-   * A LEDGER OF ANY OTHER SCHEMA IS DISCARDED, NOT MIGRATED (JOS-387 bumped this to 2). A schema-1
-   * row pooled its counts across upgrade ranks and across invocation states, and no migration can
-   * un-pool them — so the honest upgrade is the re-fold this app performs from the log on every
-   * launch anyway.
+   * A LEDGER OF ANY OTHER SCHEMA IS DISCARDED, NOT MIGRATED (JOS-387 bumped this to 2, JOS-397 to
+   * 3). A schema-1 row pooled its counts across upgrade ranks and across invocation states, and a
+   * schema-2 row pooled them across WEEKS; no migration can un-pool either — so the honest upgrade
+   * is the re-fold this app performs from the log on every launch anyway.
    */
   seed(ledger: ResistLedger | null | undefined): void {
     if (ledger?.schema !== RESIST_LEDGER_SCHEMA) return
-    for (const src of ledger.sources) this.bucket(src.key).seed(src.rows)
+    // THE SHIPPED BASELINE'S AGE IS ITS FREEZE STAMP (JOS-397). Its rows omit the week because they
+    // all share one and the file already states it once; this is where the one becomes the four
+    // thousand, so that everything downstream sees a row with a week on it and no special case.
+    const frozenWeek = ledger.frozenAt === undefined ? undefined : isoWeekKey(Date.parse(ledger.frozenAt))
+    for (const src of ledger.sources) {
+      const rows =
+        frozenWeek === undefined ? src.rows : src.rows.map((r) => (r.week === undefined ? { ...r, week: frozenWeek } : r))
+      this.bucket(src.key).seed(rows, src.recent)
+    }
   }
 }

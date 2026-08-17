@@ -38,6 +38,7 @@ import {
   type MobResistProfile,
   type ResistAxis,
   type ResistAxisBenchmark,
+  type ResistLately,
   type ResistTag
 } from './resistTypes'
 // TYPE-ONLY, so the cycle it closes (types.ts names this file's config blob) is erased at compile
@@ -215,6 +216,14 @@ export interface ConCardChip {
   /** The estimate and its interval, present exactly when `tag` is. Wide at a low `n`, which is the
    *  honest display of a thin cell rather than a reason to withhold it. */
   fit: { R: number; lo: number; hi: number } | null
+  /**
+   * A RUN OF RECENT OUTCOMES THE ESTIMATE DID NOT PREDICT (JOS-397), or null — which is the answer
+   * on almost every chip. It carries the card's sub-line (`lately: 3 of the last 3 resisted`) and
+   * the `lately resistant` band worn in front of it, and it can EARN a chip a place on the card
+   * that the long-run band would not (conCardRows.ts). Everything else on the chip — the band, the
+   * interval, both percentages — stays the decayed long-run answer.
+   */
+  lately: ResistLately | null
 }
 
 /**
@@ -277,7 +286,8 @@ function blankChip(axis: ResistAxis): ConCardChip {
     npcOnly: false,
     n: 0,
     nTotal: 0,
-    fit: null
+    fit: null,
+    lately: null
   }
 }
 
@@ -298,7 +308,11 @@ function chipFor(axis: ResistAxis, row: MobResistAxis | undefined): ConCardChip 
     // surfaces disagreeing about how much this app knows (JOS-385).
     n: row.nInformative,
     nTotal: row.n,
-    fit: row.tag === null ? null : { R: est.R, lo: est.lo, hi: est.hi }
+    fit: row.tag === null ? null : { R: est.R, lo: est.lo, hi: est.hi },
+    // Straight off the row, like everything else here: the run is derived once, in main, from the
+    // same rings and the same spell table the mob page reads, so the chip and the row can never
+    // disagree about what happened lately (JOS-397).
+    lately: row.lately
   }
 }
 

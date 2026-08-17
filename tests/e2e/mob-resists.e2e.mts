@@ -155,6 +155,29 @@ async function stepNumbers(page: Page): Promise<void> {
 }
 
 /**
+ * NOTHING SHIPPED IS `lately` ANYTHING (JOS-397), and this is the guard that says so.
+ *
+ * The run detector reads the ring of YOUR OWN recent outcomes, and the shipped baseline carries no
+ * rings at all — a run that ended a month before the app was installed is not `lately`. So on a page
+ * whose every observation came out of the committed file, the secondary line must be absent and the
+ * tag must be the plain band. The failure this catches is the loud one: a detector that fired off
+ * pooled counts would put `lately resistant` on every row in the app at once.
+ *
+ * THE POSITIVE PATH IS THE CON CARD'S (`conCardChipSteps.mts stepLatelyChip`), which writes three
+ * resists into the live log and watches an ordinary axis come back — the two surfaces read one
+ * derivation, so the sentence and the word are pinned there and here is where their absence is.
+ */
+async function stepNothingIsLatelyYet(page: Page): Promise<void> {
+  const card = await textOf(page, CARD)
+  check('no row claims a recent run off the shipped baseline alone', !card.includes('lately'), card.slice(0, 240))
+  for (const axis of AXES) {
+    const tag = await textOf(page, `[data-testid="resist-tag-${axis}"]`)
+    if (tag === '') continue
+    check(`  the ${axis} row wears its own band, not a run's`, !tag.startsWith('lately'), tag)
+  }
+}
+
+/**
  * THE TWO STATES A ROW CAN BE IN THAT ARE NOT A FULL ANSWER (owner ruling, 2026-08-16, JOS-383).
  *
  * The card used to refuse a number under five observations and print "not enough data (n=2)". It
@@ -348,6 +371,7 @@ async function main(): Promise<void> {
       } else {
         await stepFiveRows(page)
         await stepNumbers(page)
+        await stepNothingIsLatelyYet(page)
         await stepThinRow(page)
         await stepDoesNotFit(page)
         await stepEvidence(page)
