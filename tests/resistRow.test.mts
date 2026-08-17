@@ -11,7 +11,10 @@ import {
   AT_MOB_LEVEL_NOTE,
   BAR_MAX,
   DIFFERS_NOTE,
+  FROM_LATELY_NOTE,
   FROM_RESIST_RATE_NOTE,
+  latelyText,
+  tagText,
   NPC_ONLY_NOTE,
   bandFraction,
   barFraction,
@@ -378,4 +381,29 @@ test('the evidence line carries the rank and the invocation (JOS-387 acceptance)
   // A spell with neither says neither: no line grows a clause it has no number for.
   const plain = evidenceText(ev({ spellKey: 'scorching arrow', casts: 5 }))
   assert.equal(plain, 'Scorching Arrow: 5 casts')
+})
+
+test('WHAT A RUN SAYS, in the words a player would use about it (JOS-397)', () => {
+  // `N of the last N`, because the denominator is the honest half: the app looked at the last few
+  // outcomes it has and every one of them went the same way.
+  assert.equal(
+    latelyText({ run: 3, outcome: 'resisted' }),
+    'lately: 3 of the last 3 resisted',
+    "the owner's own sentence, verbatim"
+  )
+  assert.equal(latelyText({ run: 5, outcome: 'landed' }), 'lately: 5 of the last 5 landed')
+
+  // THE WORD, AND ONLY THE WORD. `lately resistant` replaces the scannable band and nothing else -
+  // the guidance sentence, both percentages and the interval beside it stay the long-run estimate's
+  // on the row and on the chip, which is what keeps the two windows from being read as one answer.
+  const run = { run: 3, outcome: 'resisted' as const, tag: 'resistant' as const, guidance: 'needs overchannel' as const, probability: 0.027 }
+  assert.equal(tagText('normal', run), 'lately resistant')
+  assert.equal(tagText('normal', null), 'normal', 'and with no run it is simply the band')
+  assert.equal(tagText(null, null), '', 'an empty cell has no word at all')
+  assert.equal(tagText(null, run), 'lately resistant', 'a run can speak where the model would not')
+
+  // The con card's own marker, for a chip whose place was earned by the run and which therefore has
+  // no benchmark percentages to print in its place.
+  assert.equal(FROM_LATELY_NOTE, 'from your last few casts')
+  assert.ok(!/[A-Z]{2,}/.test(FROM_LATELY_NOTE), 'no acronyms, on any surface')
 })

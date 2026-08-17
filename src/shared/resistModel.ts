@@ -42,6 +42,16 @@
 // And when both sides are well populated (n >= 30 each) with 95% intervals that do not overlap,
 // `differsFromShipped` goes true: that is the patch detector, and it is a statement about the
 // DATA, never an automatic correction of it.
+//
+// ---------------------------------------------------------------------------------------------
+// AND RECENT EVIDENCE BEATS OLD EVIDENCE, WHOSEVER IT IS (owner, 2026-08-16 — JOS-397). A second
+// weight rides every term: `max(0.15, 0.5 ^ (ageDays / 21))`, aged in whole weeks from the newest
+// observation the LEDGER holds rather than from the wall clock, so a paused log does not decay
+// itself. It MULTIPLIES the baseline down-weighting above rather than replacing it — "the shipped
+// file counts less because you have your own data" and "it counts less because it is old" are two
+// different statements and a row that is both should pay for both. The argument for the half-life
+// and for the floor is in `shared/resistDecay.ts`; the run detector that reports what three recent
+// resists say WITHOUT touching the number is in `shared/resistLately.ts`.
 
 import {
   LOW_SAMPLE_BELOW,
@@ -62,6 +72,7 @@ import {
   isInformativeSpell,
 } from './resistFormula'
 import { type DamageRef, damageKind, damageRefKey, fullDamageRefs, splitDamage } from './resistDamage'
+import { decayWeight, newestWeekOf } from './resistDecay'
 import { type Term, empiricalOf, fitTerms, priorLog, rowTerm, termN } from './resistTerms'
 
 /** Baseline down-weighting: one baseline observation weighs K/(K + nUser). */
@@ -162,6 +173,19 @@ export interface EstimateOpts {
    * four hits would be asked to establish a reference the rest of the ledger already knows.
    */
   modes?: ReadonlyMap<string, DamageRef>
+  /**
+   * THE NEWEST WEEK ANYTHING IN THE LEDGER WAS OBSERVED IN — the reference every row's age is
+   * measured against (JOS-397, `shared/resistDecay.ts`).
+   *
+   * WHOLE-LEDGER, like `unobservable` and `modes`, and for a sharper reason than either: age has to
+   * be measured against the same instant for every cell, or a creature nobody has fought in months
+   * would report itself as freshly observed simply because its own newest row is its own newest row.
+   * Omitted, the estimator falls back to the newest week among `rows` — right for a unit test, and
+   * too narrow for a mob page.
+   *
+   * AND IT IS A WEEK RATHER THAN A WALL CLOCK on purpose: a paused log must not decay itself.
+   */
+  newestWeek?: string
 }
 
 /** One term, with the two things about its ROW the estimate has to report on afterwards. */
@@ -348,6 +372,7 @@ function prepare(rows: readonly ResistRow[], spells: SpellResistTable, opts: Est
   // are deliberately about the LEDGER rather than about this cell — see their own headers.
   const blind = opts.unobservable ?? unobservableSpells(rows)
   const modes = opts.modes ?? fullDamageRefs(rows)
+  const newest = opts.newestWeek ?? newestWeekOf(rows)
   for (const row of rows) {
     const info = spells[row.spellKey]
     if (!rowIsEvidence(row, info, opts.axis)) continue
@@ -365,7 +390,12 @@ function prepare(rows: readonly ResistRow[], spells: SpellResistTable, opts: Est
     const informative = isInformativeSpell(info.resistAdj)
     if (informative) prep.nInformative += termN(term)
     prep.terms.push({
-      term,
+      // RECENT EVIDENCE WEIGHS MORE (JOS-397). The weight is the row's own decay and nothing else
+      // here; the baseline's down-weighting is a SECOND factor applied once, in `estimate` below,
+      // so the two compose by multiplication and neither can quietly swallow the other. Nothing
+      // about the COUNTS moves: `termN` and `empiricalOf` are weight-blind, so `n`, the low-samples
+      // caveat and the hard data rule all still speak in observations a player could count.
+      term: { ...term, weight: term.weight * decayWeight(row.week, newest) },
       source: row.source === 'baseline' ? 'baseline' : 'user',
       informative,
       casterKind: row.casterKind,
@@ -416,9 +446,14 @@ export function estimate(
   const fromBaseline = baseTerms.reduce((a, t) => a + termN(t), 0)
 
   const baselineWeight = fromYou >= USER_ONLY_AT ? 0 : BASELINE_K / (BASELINE_K + fromYou)
+  // TWO WEIGHTINGS, MULTIPLIED (JOS-397). The term already carries its own decay; this MULTIPLIES
+  // the baseline's down-weighting onto it rather than overwriting it, which is the difference
+  // between "the shipped file counts less because you have your own data" and "the shipped file
+  // counts less because it is old". Both are true, they are different statements, and a shipped
+  // observation that is both should pay for both.
   const weighted: Term[] = [
     ...userTerms,
-    ...baseTerms.map((t) => ({ ...t, weight: baselineWeight })),
+    ...baseTerms.map((t) => ({ ...t, weight: t.weight * baselineWeight })),
   ]
   const merged = fitTerms(weighted, priorLog(opts.axis, mobLevel))
   const userFit = fromYou > 0 ? fitFrom(userTerms, opts.axis, mobLevel) : null

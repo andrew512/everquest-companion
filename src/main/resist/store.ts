@@ -21,18 +21,29 @@ import { app } from 'electron'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError } from '../errorLog'
-import { BASELINE_SOURCE_KEY, type ResistLedger, type ResistRow } from '../../shared/resistTypes'
+import {
+  BASELINE_SOURCE_KEY,
+  type ResistLedger,
+  type ResistRecentSeries,
+  type ResistRow,
+} from '../../shared/resistTypes'
 import { ResistLedgerStore, type ResistBucket } from './ledger'
 import type { ResistLedgerSeam } from './module'
 // Inlined committed baseline (bundled into the main build, like spells.json).
 import baselineJson from '../data/resistBaseline.json'
 
-/** Bump to invalidate every user ledger in the field. The baseline carries its own schema. */
-export const RESIST_LEDGER_VERSION = 1
+/**
+ * Bump to invalidate every user ledger in the field. The baseline carries its own schema.
+ *
+ * VERSION 2 (JOS-397): rows carry the ISO week they were observed in, and a source carries the
+ * recent-outcome rings beside them. A version-1 row pooled its counts ACROSS weeks and no migration
+ * can un-pool them — the honest upgrade is the re-fold this app does from the log on every launch.
+ */
+export const RESIST_LEDGER_VERSION = 2
 
 interface UserLedgerFile {
   version: number
-  sources: { key: string; rows: ResistRow[] }[]
+  sources: { key: string; rows: ResistRow[]; recent?: ResistRecentSeries[] }[]
 }
 
 /** The committed baseline, typed. Read-only, re-seeded from the bundle on every launch. */
@@ -44,7 +55,7 @@ function userLedgerPath(): string {
   return join(app.getPath('userData'), 'resist-ledger.json')
 }
 
-function loadUserSources(): { key: string; rows: ResistRow[] }[] {
+function loadUserSources(): UserLedgerFile['sources'] {
   try {
     const file = JSON.parse(readFileSync(userLedgerPath(), 'utf8')) as UserLedgerFile
     if (file.version !== RESIST_LEDGER_VERSION || !Array.isArray(file.sources)) return []
@@ -82,7 +93,7 @@ export function resistLedger(): ResistLedgerStore {
   if (existing) return existing
   const created = new ResistLedgerStore()
   created.seed(baselineLedger())
-  for (const src of loadUserSources()) created.bucket(src.key).seed(src.rows)
+  for (const src of loadUserSources()) created.bucket(src.key).seed(src.rows, src.recent)
   store = created
   return created
 }

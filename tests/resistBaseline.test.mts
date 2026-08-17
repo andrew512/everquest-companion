@@ -17,7 +17,8 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { estimate, fullDamageRefs } from '../src/shared/resistModel'
 import { resistBenchmark } from '../src/shared/resistFormula'
-import { rowTotal } from '../src/main/resist/ledger'
+import { ResistLedgerStore, rowKey, rowTotal } from '../src/main/resist/ledger'
+import { isoWeekKey } from '../src/shared/resistDecay'
 import { localMobEntry } from '../src/main/mobLookupLocal'
 import { parseSpellsUs } from '../src/main/resist/spellsUsParse'
 import {
@@ -54,13 +55,48 @@ function rowsFor(mob: string): ResistRow[] {
   return ROWS.filter((r) => r.mobKey === mob)
 }
 
-test('the file is one baseline source at schema 1, stamped with when it was frozen', () => {
+test('the file is one baseline source at the current schema, stamped with when it was frozen', () => {
   assert.equal(LEDGER.schema, RESIST_LEDGER_SCHEMA)
   assert.equal(LEDGER.sources.length, 1)
   assert.equal(LEDGER.sources[0].key, BASELINE_SOURCE_KEY)
   // PINNED, not `new Date()`: a re-run on an unchanged log has to diff to nothing, or the file
   // churns on every regeneration and a real new observation is invisible in the diff.
   assert.match(LEDGER.frozenAt ?? '', /^\d{4}-\d{2}-\d{2}T/)
+})
+
+test('THE FILE IS A SNAPSHOT, SO ITS AGE IS SAID ONCE (JOS-397)', () => {
+  // No row carries a week. They all share one — the week of `frozenAt` — and four thousand copies
+  // of one string is 80 kB to say what the stamp above already says. The store fills it in as the
+  // file is read, and this is the assertion that the two halves of that arrangement still agree.
+  for (const row of ROWS) assert.equal(row.week, undefined)
+
+  const store = new ResistLedgerStore()
+  store.seed(LEDGER)
+  const week = isoWeekKey(Date.parse(LEDGER.frozenAt ?? ''))
+  assert.equal(store.newestWeek(), week)
+  const seeded = store.rowsFor(ROWS[0].mobKey, BASELINE_SOURCE_KEY)
+  assert.ok(seeded.length > 0)
+  for (const row of seeded) assert.equal(row.week, week)
+})
+
+test('AND NO ROW IS SPLIT BY WEEK: the freeze re-pools every cell onto that one', () => {
+  // The fold buckets by week, so a four-week log arrives as up to four rows per cell. Left that
+  // way the five-observation floor below would drop the fragments a whole cell clears several
+  // times over, and the shipped file would know LESS than it does today. `repoolAtWeek` in the
+  // freeze script is where that is undone; this is the shape of it, checked on the artifact.
+  const seen = new Set<string>()
+  for (const row of ROWS) {
+    const key = rowKey({ ...row, week: 'x' })
+    assert.ok(!seen.has(key), `${row.mobKey} / ${row.spellKey} appears twice`)
+    seen.add(key)
+  }
+})
+
+test('and the rings are the USER ledger only - nothing `lately` ships (JOS-397)', () => {
+  // `lately: 3 of the last 3 resisted` is a statement about YOUR last few casts. A run that ended a
+  // month before the app was installed is not one, so the freeze writes no rings at all.
+  assert.equal(LEDGER.sources[0].recent, undefined)
+  assert.ok(!readFileSync(PATH, 'utf8').includes('"recent"'))
 })
 
 test('it is big enough to be worth shipping and small enough to inline', () => {

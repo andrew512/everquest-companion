@@ -18,7 +18,9 @@ import { parseEvent } from '../src/main/log/parser'
 import { installCharacterName, installSpellDb } from '../src/main/log/rulesets'
 import { loadSpellDb } from '../src/main/data/spellDb'
 import { ResistFold } from '../src/main/resist/fold'
-import { ResistLedgerStore, rowTotal } from '../src/main/resist/ledger'
+import { ResistLedgerStore, rowTotal, type ResistBucket } from '../src/main/resist/ledger'
+import { RESIST_RECENT_CAP } from '../src/shared/resistLately'
+import { isoWeekKey } from '../src/shared/resistDecay'
 import type { ResistRow } from '../src/shared/resistTypes'
 
 const FIXTURE = join(import.meta.dirname, 'fixtures', 'r1-kodiak-fight.log')
@@ -378,4 +380,147 @@ test('THE DEBUFF WINDOW COVERS THE SCENT LINE, not just tash and malo', () => {
   ])
   const arrow = rows.find((r) => r.spellKey === 'scorching arrow')
   assert.equal(arrow?.debuffs, 'scent of terris', 'the Scent window was open when the arrow rolled')
+})
+
+// ---------------------------------------------------------------------------------------------
+// JOS-397: the week each row was observed in, and the ring of your own recent outcomes.
+
+/** Fold hand-written lines and hand back the BUCKET, which is where the rings live. */
+function foldToBucket(lines: readonly string[]): ResistBucket {
+  const db = loadSpellDb()
+  installSpellDb(db)
+  installCharacterName('Primitive')
+  const fold = new ResistFold({ spellDb: db })
+  const bucket = fold.beginSource()
+  let seq = 0
+  for (const line of lines) {
+    const ev = parseEvent(line, seq++)
+    if (ev) fold.onEvent(ev)
+  }
+  fold.finish()
+  return bucket
+}
+
+/** One line on a named date. The weekday is decoration - the parser reads month, day and year. */
+const on = (date: string, secs: number, text: string): string =>
+  `[Xxx ${date} 16:${String(50 + Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')} 2026] ${text}`
+
+const AUG_WHO = on('Aug 15', 1, '[50 PAL/MNK/ENC] Primitive (Dark Elf)  ZONE: East Freeport (freporte)  ')
+
+test('EVERY ROW CARRIES THE WEEK IT WAS OBSERVED IN, and two weeks are two rows (JOS-397)', () => {
+  const rows = foldLines([
+    AUG_WHO,
+    on('Jul 20', 10, 'You begin casting Scorching Arrow.'),
+    on('Jul 20', 12, 'A lava guardian resisted your Scorching Arrow!'),
+    on('Aug 15', 10, 'You begin casting Scorching Arrow.'),
+    on('Aug 15', 12, 'A lava guardian resisted your Scorching Arrow!')
+  ])
+  const arrows = rows.filter((r) => r.spellKey === 'scorching arrow')
+  // Identical in every other term of `rc`, and still two rows: the week is in the key, which is
+  // what gives a count an age to be weighed by (shared/resistDecay.ts).
+  assert.equal(arrows.length, 2)
+  assert.deepEqual(
+    arrows.map((r) => r.week).sort(),
+    [isoWeekKey(Date.parse('Jul 20 2026 16:50:12')), isoWeekKey(Date.parse('Aug 15 2026 16:50:12'))].sort()
+  )
+  for (const row of arrows) assert.equal(row.resist, 1)
+  // The key is the log's own clock rendered as an ISO week, and it is always well formed.
+  assert.equal(
+    rows.every((r) => /^\d{4}-W\d{2}$/.test(r.week)),
+    true
+  )
+})
+
+test('THE RING REMEMBERS YOUR OWN OUTCOMES IN ORDER, and derives nothing (JOS-397)', () => {
+  const bucket = foldToBucket([
+    AUG_WHO,
+    on('Aug 15', 10, 'You begin casting Scorching Arrow.'),
+    on('Aug 15', 12, 'A lava guardian resisted your Scorching Arrow!'),
+    on('Aug 15', 20, 'You begin casting Scorching Arrow.'),
+    on('Aug 15', 22, 'A lava guardian resisted your Scorching Arrow!'),
+    on('Aug 15', 30, 'You begin casting Scorching Arrow.'),
+    on('Aug 15', 32, 'You hit a lava guardian for 214 points of fire damage by Scorching Arrow.')
+  ])
+  const arrow = bucket.recent().find((r) => r.spellKey === 'scorching arrow')
+  assert.ok(arrow)
+  assert.equal(arrow.mobKey, 'a lava guardian')
+  // OLDEST FIRST (append order), and each entry says only what the LOG printed: the resist
+  // message, or the number. What that number MEANT is a whole-ledger question answered on read.
+  assert.deepEqual(
+    arrow.out.map((e) => (e.resist === true ? 'resist' : (e.dmg ?? 'land'))),
+    ['resist', 'resist', 214]
+  )
+  // The caster's level rides along, because the full-damage reference is keyed by it.
+  assert.deepEqual(new Set(arrow.out.map((e) => e.level)), new Set([50]))
+})
+
+test('the ring never grows past its cap, and the OLDEST entry is the one that leaves', () => {
+  const lines = [AUG_WHO]
+  for (let i = 0; i < RESIST_RECENT_CAP + 4; i++) {
+    lines.push(on('Aug 15', i * 4 + 10, 'You begin casting Scorching Arrow.'))
+    lines.push(
+      on(
+        'Aug 15',
+        i * 4 + 12,
+        `You hit a lava guardian for ${String(100 + i)} points of fire damage by Scorching Arrow.`
+      )
+    )
+  }
+  const arrow = foldToBucket(lines)
+    .recent()
+    .find((r) => r.spellKey === 'scorching arrow')
+  assert.ok(arrow)
+  assert.equal(arrow.out.length, RESIST_RECENT_CAP)
+  // The last ten of the fourteen: 104 through 113, in the order they happened.
+  assert.deepEqual(
+    arrow.out.map((e) => e.dmg),
+    [104, 105, 106, 107, 108, 109, 110, 111, 112, 113]
+  )
+})
+
+test('AND IT IS YOUR OWN CASTS ONLY: no pets, no strangers, no song pulses', () => {
+  // An imp protector throwing fire at another imp protector is ordinary evidence for the ESTIMATE
+  // (JOS-385) and is not `lately`: nothing states what a pet is doing on your behalf, and the
+  // sentence the ring feeds is about what happened when YOU cast.
+  const npc = foldToBucket(readFileSync(NPC_FIXTURE, 'utf8').split(/\r?\n/).filter(Boolean))
+  for (const ring of npc.recent()) {
+    const row = npc.rows().find((r) => r.mobKey === ring.mobKey && r.spellKey === ring.spellKey)
+    assert.equal(row?.casterKind, 'self', `${ring.mobKey}/${ring.spellKey} is not yours`)
+  }
+  // A song pulses every six seconds under the Symphonic Aura, so three in a row is four seconds of
+  // one fight. Songs are folded as evidence and never remembered as a run.
+  const songs = foldToBucket([
+    AUG_WHO,
+    on('Aug 15', 10, "You begin singing Largo's Melodic Binding."),
+    on('Aug 15', 12, "A lava guardian resisted your Largo's Melodic Binding!"),
+    on('Aug 15', 18, "A lava guardian resisted your Largo's Melodic Binding!"),
+    on('Aug 15', 24, "A lava guardian resisted your Largo's Melodic Binding!")
+  ])
+  assert.equal(songs.recent().length, 0, 'a song pulse is never a `lately` outcome')
+})
+
+test('A RE-FOLD DISCARDS THE RINGS TOO, for the reason it discards the rows (JOS-231)', () => {
+  const store = new ResistLedgerStore()
+  const db = loadSpellDb()
+  installSpellDb(db)
+  installCharacterName('Primitive')
+  const lines = [
+    AUG_WHO,
+    on('Aug 15', 10, 'You begin casting Scorching Arrow.'),
+    on('Aug 15', 12, 'A lava guardian resisted your Scorching Arrow!')
+  ]
+  const once = (): number => {
+    const fold = new ResistFold({ spellDb: db })
+    fold.beginSource(store.beginSource('Primitive_freeport'))
+    let seq = 0
+    for (const line of lines) {
+      const ev = parseEvent(line, seq++)
+      if (ev) fold.onEvent(ev)
+    }
+    fold.finish()
+    return store.recentFor('a lava guardian').reduce((a, r) => a + r.out.length, 0)
+  }
+  assert.equal(once(), 1)
+  // Folding the same log twice is a no-op by construction, for the ring exactly as for the counts.
+  assert.equal(once(), 1)
 })

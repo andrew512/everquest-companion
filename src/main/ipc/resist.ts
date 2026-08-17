@@ -15,7 +15,7 @@
 
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
-import { RESIST_AXES, type ResistAxis, type ResistRow } from '../../shared/resistTypes'
+import { RESIST_AXES, type ResistAxis, type ResistRecentSeries, type ResistRow } from '../../shared/resistTypes'
 import { BASELINE_SOURCE_KEY } from '../../shared/resistTypes'
 import { mobKey } from '../../shared/mobKey'
 import { resolveMobIdentity } from '../mobAliases'
@@ -44,6 +44,16 @@ function rowsForIdentity(display: string): ResistRow[] {
   if (!id.aliased) return ledger.rowsFor(mobKey(display), BASELINE_SOURCE_KEY)
   const out: ResistRow[] = []
   for (const key of id.keys) out.push(...ledger.rowsFor(key, BASELINE_SOURCE_KEY))
+  return out
+}
+
+/** The recent-outcome rings for every spelling of the creature, for the same reason the rows are. */
+function recentForIdentity(display: string): ResistRecentSeries[] {
+  const ledger = resistLedger()
+  const id = resolveMobIdentity(display)
+  if (!id.aliased) return ledger.recentFor(mobKey(display))
+  const out: ResistRecentSeries[] = []
+  for (const key of id.keys) out.push(...ledger.recentFor(key))
   return out
 }
 
@@ -100,6 +110,11 @@ export function resistProfileDeps(): ProfileDeps {
     // the one place the answer is consulted, which is what makes the switch free to flip.
     includeNpcCasters: () => getResistPrefs().includeNpcCasters,
     spellStatus: () => spellTableStatus(),
+    recentFor: recentForIdentity,
+    // NOT CACHED, and it does not need to be (JOS-397): the buckets maintain their own maximum as
+    // rows arrive, so this is a walk over a handful of sources rather than over the ledger. The two
+    // caches above exist because their answers cost a pass over every row; this one does not.
+    newestWeek: () => resistLedger().newestWeek(),
   }
 }
 
