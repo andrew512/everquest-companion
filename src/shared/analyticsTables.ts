@@ -283,6 +283,32 @@ export function parseBundle(text: string): { bundle: ExportBundle; table: Analyt
 }
 
 /**
+ * Split a table's rows into parts, each under `maxBytes` of serialized JSON.
+ *
+ * IT LIVES HERE, WITH THE KEY LAYOUT, because the two are one decision: a table is split when it
+ * is too big, and a split table is what makes the `.partNN` half of `exportKey` appear. Keeping
+ * them together also keeps them TESTABLE — the export handler itself pulls in the AWS SDK and a
+ * postgres driver at module scope, and the format is worth pinning without either.
+ *
+ * A single oversized row still gets its own part rather than being dropped: the threshold bounds
+ * the common case, it does not police the data.
+ */
+export function splitParts(rows: readonly ExportRow[], maxBytes: number): ExportRow[][] {
+  const parts: ExportRow[][] = [[]]
+  let bytes = 0
+  for (const row of rows) {
+    const size = JSON.stringify(row).length + 1
+    if (bytes + size > maxBytes && parts[parts.length - 1].length > 0) {
+      parts.push([])
+      bytes = 0
+    }
+    parts[parts.length - 1].push(row)
+    bytes += size
+  }
+  return parts
+}
+
+/**
  * The S3 key one part lands under. Single-part tables get the plain
  * `exports/<table>/<YYYY-MM-DD>.json.gz` the runbook documents; a table big enough to split
  * grows a `.partNN` before the extension, so the plain name never means "part of a table".

@@ -53,6 +53,7 @@ import {
   exportKey,
   manifestKey,
   serializeBundle,
+  splitParts,
   type AnalyticsTable,
   type ExportRow,
 } from '../../src/shared/analyticsTables'
@@ -139,22 +140,6 @@ async function readTable(client: PgClient, table: AnalyticsTable): Promise<Expor
     rows.push(...page.rows)
     if (page.rows.length < PAGE) return rows
   }
-}
-
-/** Split a table's rows into parts, each under `MAX_PART_BYTES` of serialized JSON. */
-export function splitParts(rows: ExportRow[], maxBytes: number): ExportRow[][] {
-  const parts: ExportRow[][] = [[]]
-  let bytes = 0
-  for (const row of rows) {
-    const size = Buffer.byteLength(JSON.stringify(row), 'utf8') + 1
-    if (bytes + size > maxBytes && parts[parts.length - 1].length > 0) {
-      parts.push([])
-      bytes = 0
-    }
-    parts[parts.length - 1].push(row)
-    bytes += size
-  }
-  return parts
 }
 
 interface PartRecord {
