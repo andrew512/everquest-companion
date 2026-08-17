@@ -36,6 +36,7 @@ import { LevelingModule } from './leveling'
 import { ProgressionModule } from './progression'
 import { CharacterModule } from './character'
 import { OutputFilesModule } from './outputFiles'
+import { SpellSetsModule } from './spellSets'
 import { ItemTiersModule } from './itemTiers'
 import { AlertsModule } from './alerts'
 import { BuffsModule } from './buffs'
@@ -101,6 +102,7 @@ export interface ModuleWiring {
   leveling: LevelingModule
   character: CharacterModule
   outputFiles: OutputFilesModule
+  spellSets: SpellSetsModule
   itemTiers: ItemTiersModule
   alerts: AlertsModule
   buffs: BuffsModule
@@ -175,6 +177,11 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   // rule needs, folded from `Outputfile Complete: <file>`. Surface-free: main reads it directly
   // when it loads a dump, nothing in the renderer subscribes.
   const outputFiles = new OutputFilesModule()
+  // WHAT IS IN YOUR GEMS (JOS-391) — the memorized bar and the CURRENT definition of each named
+  // spell set. Beside `outputFiles` because it is the same kind of fact: the player operating
+  // their own client, not the world acting on them. It reads three event kinds nothing else reads
+  // and no other module reads its state, so its position is free.
+  const spellSets = new SpellSetsModule()
   // Observed item levels (Task #60): character-scoped, epoch-aware per-item tier state.
   const itemTiers = new ItemTiersModule()
   // The alerts extension (Task #18): evaluates event/raw triggers on LIVE events only. Its defs
@@ -244,6 +251,7 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
     leveling,
     character,
     outputFiles,
+    spellSets,
     itemTiers,
     alerts,
     buffs,
@@ -277,6 +285,10 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
       // client's own bookkeeping. Position is otherwise free — it folds one line kind that no
       // other module reads and it emits no delta.
       outputFiles,
+      // Beside `outputFiles` for the same reason it sits beside `character`: the client's own
+      // bookkeeping, one more level of it. Free position — three event kinds nobody else folds,
+      // and no module reads its state within a delivery.
+      spellSets,
       itemTiers,
       alerts,
       buffs,

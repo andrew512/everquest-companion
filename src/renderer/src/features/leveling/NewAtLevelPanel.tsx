@@ -53,6 +53,7 @@ import { useComboSnap } from '../profiles/ClassComboData'
 import { UnlockList } from './UnlockList'
 import { LANDING_PULSE_SX, useFocusLanding } from './useFocusLanding'
 import { useCurrentComboClasses, useLevelUnlocks } from './useLevelUnlocks'
+import { useSpellSets } from './useSpellSets'
 
 /** The band the stepper walks. 1..63 is what the DB states; the ceiling leaves room to grow. */
 const LEVEL_MIN = 1
@@ -151,6 +152,9 @@ export function NewAtLevelPanel({
 }: NewAtLevelPanelProps): JSX.Element {
   const data = useLevelUnlocks()
   const combo = useCurrentComboClasses()
+  // The live spell bar (JOS-391) — read here rather than inside the row so one subscription
+  // serves both lists, and so a list with no spell rows costs nothing.
+  const sets = useSpellSets()
   // The same OPEN interval `useCurrentComboClasses` reduces to strings — kept whole here for the
   // one thing the strings drop: where the loadout came from.
   const current = useComboSnap().current
@@ -192,6 +196,12 @@ export function NewAtLevelPanel({
       <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.75 }}>
         <Typography variant="subtitle2">New at this level</Typography>
         <LevelStepper level={level} onChange={(n) => setPicked(n)} />
+        {/* ONE QUIET WORD, ONCE (JOS-391, AGENTS.md's caveat diet). The row figures are base
+            values with no crits, focus or recast in them; that is a property of the whole panel,
+            said here in a word rather than footnoted on twelve rows. */}
+        <Typography variant="caption" color="text.disabled" data-testid="new-at-level-directional">
+          directional
+        </Typography>
         {picked !== null && currentLevel !== null && picked !== currentLevel && (
           <Chip
             size="small"
@@ -212,12 +222,14 @@ export function NewAtLevelPanel({
             title="Spells"
             rows={unlocks.spells}
             resolved={resolved}
+            sets={sets}
             empty={`no new spells at level ${String(level)} for this loadout`}
           />
           <UnlockList
             title="Skills, disciplines & innates"
             rows={unlocks.skills}
             resolved={resolved}
+            sets={sets}
             empty={`no new skills at level ${String(level)} for this loadout`}
           />
         </Stack>

@@ -20,6 +20,12 @@ import type { ConsiderFaction } from './considerFaction'
 // `@shared/logEvents`, and the union below carries the three new members.
 import type { CoinEvent, ItemReceivedEvent, PurchaseEvent } from './acquireEvents'
 
+// WHAT IS IN YOUR GEMS (JOS-391) — the memorize / forget / spell-set shapes, out in
+// ./gemEvents for the same file-mass reason as the two imports above. Re-exported verbatim.
+import type { SpellForgetEvent, SpellMemorizeEvent, SpellSetEvent } from './gemEvents'
+
+export type { SpellForgetEvent, SpellMemorizeEvent, SpellSetEvent } from './gemEvents'
+
 export type { ConsiderFaction }
 export type {
   Coins,
@@ -1472,6 +1478,12 @@ export type LogEvent =
   | OfflineGapEvent
   | StanceChangeEvent
   | InvocationChangeEvent
+  // WHAT IS IN YOUR GEMS (JOS-391). Beside the stance/invocation pair because it is the same
+  // level of statement — the player operating their own character sheet — and, like them,
+  // MEASURED `{kind:'unknown'}` before it existed (4,321 + 4,285 + 4,232 + 474 lines).
+  | SpellMemorizeEvent
+  | SpellForgetEvent
+  | SpellSetEvent
   | SelfWhoEvent
   | SkillUpEvent
   | SpecialAttackEvent
