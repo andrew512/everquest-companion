@@ -30,9 +30,10 @@ import {
   spellClassLine,
   spellEffectClassLabels,
   spellFactsAreForLine,
-  spellLineageLine,
+  spellLineageLine,
   spellStatRows
 } from '@shared/spellDetail'
+import { spellMetricsParts } from '@shared/spellMetrics'
 import { CARD_LABEL, CARD_MONO, CARD_TEXT, CardSection, LABEL_STYLE, MoreLine, TEXT_STYLE } from './hoverCards'
 import { Tooltip } from './Tooltip'
 
@@ -92,6 +93,32 @@ function StatRows({ detail }: { detail: SpellDetail }): JSX.Element | null {
         </div>
       ))}
     </div>
+  )
+}
+
+/**
+ * WHAT IT IS WORTH — the row's own figures, on the card (JOS-392, owner addition).
+ *
+ * `dmg 143 · dps 48 · 2.1 dmg/mana`, `heal 250 · hps 83 · 3.6 heal/mana`, and the `over 24s` a DoT
+ * or HoT earns: the SAME `spellMetricsParts` the unlock row prints, over metrics MAIN read off the
+ * effect list. Nothing here re-reads an effect string — two formatters would be two opinions about
+ * what `2.1` means, and two readers would be two answers.
+ *
+ * The level is stated in the label because a ramp's numbers mean nothing without one, and because
+ * this is the card: the panel's one quiet `directional` covers the caveat, and this covers the
+ * WHERE. It sits above the effect list, which is the sentence these numbers were read out of.
+ */
+function Figures({ detail }: { detail: SpellDetail }): JSX.Element | null {
+  if (detail.metrics === undefined) return null
+  const parts = spellMetricsParts(detail.metrics)
+  if (parts.length === 0) return null
+  const at = detail.metricsLevel === undefined ? '' : ` at level ${String(detail.metricsLevel)}`
+  return (
+    <CardSection label={`Worth${at}:`}>
+      <div style={TEXT_STYLE} data-testid="spell-card-figures">
+        {parts.join(' · ')}
+      </div>
+    </CardSection>
   )
 }
 
@@ -224,6 +251,7 @@ export function SpellCard({ name }: { name: string }): JSX.Element {
       )}
       {data && <EffectClasses detail={data} />}
       {data && <StatRows detail={data} />}
+      {data && <Figures detail={data} />}
       {data && <Effects effects={data.effects} />}
       {data && <Lineage detail={data} />}
       {data && <Messages detail={data} />}

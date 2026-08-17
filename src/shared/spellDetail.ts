@@ -25,6 +25,8 @@
 // See the report on JOS-293 for the cross-line half (overwrite/stacking), which the committed data
 // does not state at all.
 
+import type { SpellMetrics } from './spellMetrics'
+
 /** A rank of one line, and which source named it. */
 export interface SpellRankMember {
   /** display name exactly as its source spells it ("Lay on Hands IX"). */
@@ -74,6 +76,21 @@ export interface SpellDetail {
   instrumentEnhanced?: string
   /** the wiki's numbered effect list, VERBATIM and in page order (SpellEntry.effects). */
   effects?: string[]
+  /**
+   * WHAT IT IS WORTH (JOS-392, owner addition) — the SAME figures the unlock row prints, read by
+   * the SAME reader (`shared/spellMetrics.ts`) in MAIN, off the effect list above.
+   *
+   * The card and the row must never disagree about a number, and the way to guarantee that is one
+   * reader running once per record rather than a renderer re-reading the effect strings it happens
+   * to have. It also makes the figures reachable where no row exists: hovering the spell a row
+   * SAYS IT REPLACES opens that spell's card, which is the whole point of the comparison.
+   */
+  metrics?: SpellMetrics
+  /**
+   * The level `metrics` were read at — the lowest level any class gains the line, the same rule the
+   * unlock dataset uses. Stated because a ramp's numbers mean nothing without it.
+   */
+  metricsLevel?: number
   /** per-class entry levels for the LINE (never for the rank - the DB has no per-rank levels). */
   classLevels: { cls: string; level: number }[]
   msgCastOnYou?: string

@@ -49,9 +49,10 @@
 import { type JSX } from 'react'
 import { Box, Chip, Stack, Typography } from '@mui/material'
 import type { ClassAbbr } from '@shared/classCombo'
-import { ownershipPhrase, replacesPhrase, type UnlockRow } from '@shared/levelUnlocks'
+import { ownershipPhrase, replacesEntries, replacesPhrase, type UnlockRow } from '@shared/levelUnlocks'
 import { spellMetricsParts } from '@shared/spellMetrics'
-import { memorizedPhrase, type SpellSetsSnap } from '@shared/spellSets'
+import { memorizedClause, type SpellSetsSnap } from '@shared/spellSets'
+import { classLevelLabel } from '@shared/unlockSearch'
 import { Tooltip } from '../../lib/Tooltip'
 import { SpellTooltip } from '../../lib/SpellCard'
 
@@ -72,17 +73,34 @@ const KIND_COLOR: Record<UnlockRow['kind'], string> = {
   innate: '#d9b25f'
 }
 
-/** The class chips: FILLED for a class we know is in the loadout, outlined for a candidate. */
-function ClassChips({ classes, resolved }: { classes: ClassAbbr[]; resolved: ReadonlySet<string> }): JSX.Element {
+/**
+ * The class chips: FILLED for a class we know is in the loadout, outlined for a candidate.
+ *
+ * A SEARCH ROW'S CHIPS CARRY THE LEVEL (JOS-392, `row.levels`) — `CLR 24 · PAL 30` said as chips,
+ * because that row is drawn at no level and a bare `CLR` would be a fact withheld. A LEVEL row's
+ * chips stay bare: the level is stated once, for the whole panel, by the stepper.
+ */
+function ClassChips({
+  row,
+  resolved
+}: {
+  row: UnlockRow
+  resolved: ReadonlySet<string>
+}): JSX.Element {
+  const chips: { cls: ClassAbbr; label: string }[] =
+    row.levels === undefined
+      ? row.classes.map((c) => ({ cls: c, label: c }))
+      : row.levels.map((p) => ({ cls: p.cls, label: classLevelLabel(p) }))
   return (
     <>
-      {classes.map((c) => (
+      {chips.map((c) => (
         <Chip
-          key={c}
+          key={c.cls}
           size="small"
-          label={c}
+          label={c.label}
           data-testid="unlock-class-chip"
-          variant={resolved.has(c) ? 'filled' : 'outlined'}
+          data-class={c.cls}
+          variant={resolved.has(c.cls) ? 'filled' : 'outlined'}
           color="secondary"
           sx={{ height: 17, fontSize: 10, '& .MuiChip-label': { px: 0.6 } }}
         />
@@ -94,14 +112,73 @@ function ClassChips({ classes, resolved }: { classes: ClassAbbr[]; resolved: Rea
 /** One clause of the detail line. `dim` is for the ones that are context rather than the answer. */
 function Note({ text, testid, dim }: { text: string; testid: string; dim?: boolean }): JSX.Element {
   return (
+    <NoteLine testid={testid} dim={dim}>
+      {text}
+    </NoteLine>
+  )
+}
+
+/** The same clause, when part of it is a hover target rather than a string (see `NoteSpell`). */
+function NoteLine({
+  children,
+  testid,
+  dim
+}: {
+  children: React.ReactNode
+  testid: string
+  dim?: boolean
+}): JSX.Element {
+  return (
     <Typography
       variant="caption"
       data-testid={testid}
       sx={{ fontSize: 10.5, color: dim === true ? 'text.disabled' : 'text.secondary' }}
       noWrap
     >
-      {text}
+      {children}
     </Typography>
+  )
+}
+
+/**
+ * A spell NAME inside a note, as a hover target (JOS-392, owner addition).
+ *
+ * The `replaces` and `memorized` clauses both name a spell that is not this row's — the rung below
+ * it, and where that rung currently sits — and a player choosing whether to buy the upgrade wants
+ * to read BOTH cards without leaving the panel. So the name inside the sentence gets the same
+ * `SpellTooltip` the row's own name has. The rest of the sentence stays plain text: `(CLR)` is a
+ * class and `is memorized now` is a state, and neither is a thing to open.
+ */
+function NoteSpell({ name }: { name: string }): JSX.Element {
+  return (
+    <SpellTooltip name={name} placement="top">
+      <Box component="span" data-testid="unlock-note-spell" sx={{ textDecoration: 'underline dotted', cursor: 'help' }}>
+        {name}
+      </Box>
+    </SpellTooltip>
+  )
+}
+
+/**
+ * `replaces Minor Healing (CLR)`, with the replaced NAME hoverable.
+ *
+ * The sentence is `shared/levelUnlocks.ts`'s (`replacesEntries` — the same list `replacesPhrase`
+ * joins), so the words here and the words a test pins cannot drift; this only decides which span
+ * of it opens a card.
+ */
+function ReplacesNote({ row }: { row: UnlockRow }): JSX.Element | null {
+  const entries = replacesEntries(row)
+  if (entries.length === 0) return null
+  return (
+    <NoteLine testid="unlock-replaces" dim>
+      replaces{' '}
+      {entries.map((e, i) => (
+        <Box component="span" key={`${e.name}|${e.cls}`}>
+          {i > 0 && ', '}
+          <NoteSpell name={e.name} /> ({e.cls})
+        </Box>
+      ))}
+    </NoteLine>
   )
 }
 
@@ -111,9 +188,16 @@ function Note({ text, testid, dim }: { text: string; testid: string; dim?: boole
  * The replaced spell is the one this row's own classes retire — a trio row can carry two, and the
  * first is the one the note is about, because the alternative is a sentence that names two bars.
  */
-function memorizedNote(row: UnlockRow, sets: SpellSetsSnap): string | null {
+function MemorizedNote({ row, sets }: { row: UnlockRow; sets: SpellSetsSnap }): JSX.Element | null {
   const mine = (row.spell?.replaces ?? []).find((r) => row.classes.includes(r.cls))
-  return mine === undefined ? null : memorizedPhrase(sets, mine.name)
+  const clause = mine === undefined ? null : memorizedClause(sets, mine.name)
+  if (mine === undefined || clause === null) return null
+  return (
+    <NoteLine testid="unlock-memorized" dim>
+      <NoteSpell name={mine.name} />
+      {clause}
+    </NoteLine>
+  )
 }
 
 /**
@@ -140,9 +224,9 @@ function RowDetail({
   const metrics = row.spell?.metrics
   const figures = metrics === undefined ? [] : spellMetricsParts(metrics)
   const owned = ownershipPhrase(row, resolved)
-  const replaces = replacesPhrase(row)
-  const memorized = memorizedNote(row, sets)
-  if (figures.length === 0 && owned === null && replaces === null && memorized === null) return null
+  const replaces = <ReplacesNote row={row} />
+  const memorized = <MemorizedNote row={row} sets={sets} />
+  if (figures.length === 0 && owned === null && replacesPhrase(row) === null) return null
   return (
     <Stack
       direction="row"
@@ -155,8 +239,8 @@ function RowDetail({
     >
       {figures.length > 0 && <Note text={figures.join(' · ')} testid="unlock-figures" />}
       {owned !== null && <Note text={owned} testid="unlock-already-yours" />}
-      {replaces !== null && <Note text={replaces} testid="unlock-replaces" dim />}
-      {memorized !== null && <Note text={memorized} testid="unlock-memorized" dim />}
+      {replaces}
+      {memorized}
     </Stack>
   )
 }
@@ -217,7 +301,7 @@ function Row({
           />
         </Tooltip>
       )}
-      <ClassChips classes={row.classes} resolved={resolved} />
+      <ClassChips row={row} resolved={resolved} />
     </Stack>
       <RowDetail row={row} resolved={resolved} sets={sets} />
     </Box>
@@ -234,7 +318,8 @@ export function UnlockList({
   rows,
   resolved,
   empty,
-  sets
+  sets,
+  count
 }: {
   title: string
   rows: UnlockRow[]
@@ -242,11 +327,17 @@ export function UnlockList({
   empty: string
   /** The live gem/spell-set state, for the "is what this replaces loaded right now" clause. */
   sets: SpellSetsSnap
+  /**
+   * What the heading counts, when that is not the number of rows drawn — the search results are
+   * CAPPED (JOS-392), and a heading that counted the mounted rows would quietly restate the cap as
+   * the answer. Absent everywhere else, where the two numbers are the same by construction.
+   */
+  count?: number
 }): JSX.Element {
   return (
     <Box sx={{ flex: 1, minWidth: 0 }} data-testid="unlock-list">
       <Typography variant="caption" color="text.secondary" sx={{ mb: 0.25 }}>
-        {title} ({rows.length})
+        {title} ({count ?? rows.length})
       </Typography>
       <Box>
         {rows.length === 0 ? (

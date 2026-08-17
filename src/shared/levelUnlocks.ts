@@ -45,6 +45,18 @@ export interface UnlockSpell {
   /** parsed duration in ms; absent for instants and unparseable formulas */
   durationMs?: number
   /**
+   * THE SEARCH SURFACE (JOS-392) — name + the three message texts, lowercased and apostrophe-folded
+   * by `searchTextFor`, the SAME function the alerts catalog is built with.
+   *
+   * It rides this dataset rather than a second channel because this dataset is already every spell
+   * the DB places, already carries the figures a result row prints, and is already pulled ONCE per
+   * renderer session and cached — so the search box filters in the renderer and asks main nothing
+   * per keystroke. Measured cost of carrying it: 329 kB → 461 kB on the one pull.
+   */
+  searchText?: string
+  /** the DB's illusion flag, so `type:illusion` can be answered here too */
+  illusion?: boolean
+  /**
    * WHAT THE SPELL IS WORTH (JOS-391), read off the effect lines MAIN-SIDE at the LOWEST level
    * any class gains it (`shared/spellMetrics.ts`).
    *
@@ -162,6 +174,15 @@ export interface UnlockRow {
    * ascending — the `already yours` claim. Empty/absent when no class in the loadout has it yet.
    */
   earlier?: { cls: ClassAbbr; level: number }[]
+  /**
+   * EVERY class the DB places this spell for, with the level each gets it at (JOS-392) — present
+   * only on SEARCH rows, where the answer is about the game rather than about one level.
+   *
+   * A level row is drawn AT a level, so its chips need no numbers: `level` says it once for the
+   * whole row. A search row is drawn at no level at all, so a bare `CLR` chip would be a fact
+   * withheld — `CLR 24 · PAL 30` is the `spellClassLine` shape the spell card already prints.
+   */
+  levels?: { cls: ClassAbbr; level: number }[]
 }
 
 /** Everything a level gives a loadout, split the way the panel draws it. */
@@ -249,6 +270,11 @@ function earlierClasses(
  *
  * The `also` arm is deliberately quiet: the chips already state that two classes gain it here, so
  * this only names the OTHER ones, and only when there is no stronger `already yours` to print.
+ *
+ * AND ON A SEARCH ROW THE `also` ARM IS SILENT (JOS-392). It exists because a level row's chips
+ * carry no numbers; a search row's chips carry every class AND its level, so the same sentence
+ * would restate a chip two inches to its left. The `already yours` arm still prints — it is a claim
+ * about THIS character that no chip makes.
  */
 export function ownershipPhrase(row: UnlockRow, resolved: ReadonlySet<string>): string | null {
   const earlier = row.earlier ?? []
@@ -257,7 +283,7 @@ export function ownershipPhrase(row: UnlockRow, resolved: ReadonlySet<string>): 
     const parts = earlier.map((e) => `${e.cls} ${String(e.level)}`)
     return `${uncertain ? '~' : ''}already yours (${parts.join(', ')})`
   }
-  if (row.classes.length < 2) return null
+  if (row.levels !== undefined || row.classes.length < 2) return null
   const [, ...rest] = row.classes
   return `also ${rest.map((c) => `${c} ${String(row.level)}`).join(', ')}`
 }
@@ -321,18 +347,30 @@ export function unlocksAtLevel(
  * honest shape for a trio that gains the same upgrade from two ladders at once.
  */
 export function replacesPhrase(row: UnlockRow): string | null {
-  const all = row.spell?.replaces ?? []
-  const mine = all.filter((r) => row.classes.includes(r.cls))
-  if (mine.length === 0) return null
+  const parts = replacesEntries(row).map((r) => `${r.name} (${r.cls})`)
+  return parts.length === 0 ? null : `replaces ${parts.join(', ')}`
+}
+
+/**
+ * The same answer, unjoined — the (spell, class) pairs the phrase is built from.
+ *
+ * IT EXISTS BECAUSE THE NAME IN THAT SENTENCE IS A THING YOU CAN LOOK AT (JOS-392, owner
+ * addition): the panel hangs the spell card off each replaced NAME, so a player deciding whether to
+ * buy the upgrade can read what they are giving up without leaving the tab. A joined string cannot
+ * carry a hover target, and a renderer re-splitting one on ` (` would be a second parser for a
+ * sentence this file already knows the parts of.
+ */
+export function replacesEntries(row: UnlockRow): { name: string; cls: ClassAbbr }[] {
+  const mine = (row.spell?.replaces ?? []).filter((r) => row.classes.includes(r.cls))
   const seen = new Set<string>()
-  const parts: string[] = []
+  const out: { name: string; cls: ClassAbbr }[] = []
   for (const r of mine) {
     const key = `${r.name}|${r.cls}`
     if (seen.has(key)) continue
     seen.add(key)
-    parts.push(`${r.name} (${r.cls})`)
+    out.push({ name: r.name, cls: r.cls })
   }
-  return `replaces ${parts.join(', ')}`
+  return out
 }
 
 /** The two headline numbers: distinct spells, distinct skill-ish things. */

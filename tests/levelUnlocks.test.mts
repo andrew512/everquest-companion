@@ -20,6 +20,7 @@ import {
   comboClassesOf,
   levelUpSubtitle,
   ownershipPhrase,
+  replacesEntries,
   replacesPhrase,
   unlockCounts,
   unlockLevels,
@@ -376,6 +377,16 @@ test('the replaces phrase is scoped to the row own classes, and dedupes', () => 
   )
   // A row with no line says nothing.
   assert.equal(replacesPhrase({ kind: 'spell', name: 'X', classes: ['CLR'], level: 1 }), null)
+
+  // THE SAME ANSWER UNJOINED (JOS-392): the panel hangs the spell card off each replaced NAME, so
+  // the parts are exported and the phrase is COMPOSED from them. Same scoping, same dedupe, same
+  // order — a renderer re-splitting the sentence on ` (` would be a second parser for it.
+  assert.deepEqual(replacesEntries(row), [{ name: 'Light Healing', cls: 'CLR' }])
+  assert.deepEqual(replacesEntries({ ...row, classes: ['CLR', 'SHM'] }), [
+    { name: 'Light Healing', cls: 'CLR' },
+    { name: 'Light Healing', cls: 'SHM' }
+  ])
+  assert.deepEqual(replacesEntries({ kind: 'spell', name: 'X', classes: ['CLR'], level: 1 }), [])
 })
 
 /** The committed dataset's row for a spell, which must exist for the assertions beneath it. */
