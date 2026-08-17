@@ -33,10 +33,10 @@ the runbook.
 | `api.tf` | HTTP API `eqcompanion-api`, `$default` stage, `POST /v1/feedback` + `POST /v1/telemetry`, stage + per-route throttles, access logging |
 | `lambda.tf` | `eqcompanion-feedback-submit` and `eqcompanion-telemetry-ingest` (both Node 22, arm64, 256 MB, 10 s), their log groups at 14-day retention |
 | `dsql.tf` | the Aurora DSQL cluster (deletion protection + `prevent_destroy`) and the endpoint/ingest-role locals |
-| `schema.sql` | the tables, indexes, config seed and the two ingest **database roles** — applied by the CLI, not by Terraform (see step 2.5) |
+| `schema.sql` | the tables, the two **merge views** (JOS-394), indexes, config seed and the two ingest **database roles** — applied by the CLI, not by Terraform (see step 2.5) |
 | `s3.tf` | `eqcompanion-logs-<random hex>` + all four Block-Public-Access flags + SSE-S3 + versioning off + 90-day lifecycle + `prevent_destroy` |
 | `iam.tf` | the two ingest roles (`dsql:DbConnect` only; telemetry has no S3 at all) and `EqCompanionFeedbackTriageRole` (`dsql:DbConnectAdmin`) |
-| `alarms.tf` | `EqCompanionOpsAlerts` SNS topic + email sub + 8 alarms + a $10 monthly budget |
+| `alarms.tf` | `EqCompanionOpsAlerts` SNS topic + email sub + 9 alarms (the OCC one is metric math over a RATIO since JOS-394) + the monthly budget |
 | `dashboard.tf` | `eqcompanion-telemetry` CloudWatch dashboard, fed by the ingest handler's EMF documents |
 | `outputs.tf` | `api_url`, `telemetry_api_url`, `cluster_endpoint`, `bucket_name`, `triage_role_arn`, both `*_role_arn`s, log group names |
 | `build.mjs` | esbuild bundles of `lambda/submit.ts` and `lambda/telemetry.ts` → **deterministic** `dist/submit.zip` + `dist/telemetry.zip` |
@@ -64,7 +64,7 @@ Two identities, and the difference matters:
 | Who | IAM action | Database role | Can do |
 | --- | --- | --- | --- |
 | the submit Lambda | `dsql:DbConnect` | `feedback_ingest` | `INSERT` on `report`; read config/profile; read+write+delete the three counter tables |
-| the telemetry Lambda | `dsql:DbConnect` | `telemetry_ingest` | read `feedback_config`; UPSERT `usage_daily`, `usage_funnel_daily`, `analytics_install`. **No privilege at all on `report`, no `install_profile`, no DELETE anywhere.** |
+| the telemetry Lambda | `dsql:DbConnect` | `telemetry_ingest` | read `feedback_config`; UPSERT `usage_daily_sharded`, `perf_daily_sharded`, `usage_funnel_daily`, `error_report`, `analytics_install`. **No privilege at all on `report`, no `install_profile`, no DELETE anywhere — and no SELECT on the merged views, which only the admin-connected triage side reads.** |
 | the triage CLI | `dsql:DbConnectAdmin` | `admin` | everything — it applies the schema and it is the deletion path for `forget`/`wipe`/`analytics wipe` |
 
 §8.5's promise — *the ingest path can create and count; it cannot read the corpus
@@ -411,6 +411,111 @@ install's span covers that day, `user` otherwise. Days the owner shared with a r
 folded into `user`. That is the honest limit, and it is the reason the split is a KEY from the
 swap onward rather than a filter applied at read time.
 
+## PENDING: sharded counters (JOS-394) — schema, then readers, then ONE apply
+
+The OCC-conflict alarm (`eqcompanion-feedback-dsql-occ-conflicts`) fired all day. **Measured on
+the live stack 2026-08-16:** ~1,350 telemetry requests per 5 min (4.5 RPS, flat, 3-4 concurrent
+Lambdas), 60-90 OCC conflicts per 5 min (~5% of writes, all on the `counters` transaction), a
+retry ladder over two hours of 1,634 first-attempt conflicts → 104 second → 6 third → **zero
+exhausted**, zero API 5xx, and 4xx at 2-12 per 5 min. Nothing was being lost. The cause is
+structural: every install increments the SAME rows, and DSQL is optimistic.
+
+The fix is a `shard` column (32 ways, **random per request — never a hash of the analyticsId**),
+two new tables, two merge views, a full-jitter retry, a rescoped alarm pair and route headroom.
+`infra/schema.sql` carries the reasoning at the tables; this is the runbook.
+
+**Nothing is dropped and there is no backfill.** `usage_daily` and `perf_daily` freeze at
+cutover with every row they hold, and `usage_daily_all` / `perf_daily_all` add them back to
+every read. The cutover DAY lands half in each table, which is exactly what the views are for.
+
+**REHEARSED ON A REAL DSQL CLUSTER** (an ephemeral one, created and deleted for the ticket —
+prod was not touched): DSQL accepts `CREATE VIEW` over a grouped `UNION ALL`, accepts
+`CREATE OR REPLACE VIEW` and `DROP VIEW`, answers a repeat `CREATE VIEW` with `42P07` (so the
+plain form in `schema.sql` is idempotent under `migrate`), and pushes `WHERE day >= $1 ORDER BY
+day LIMIT $2` through the view. The real ingest handler, connected as `telemetry_ingest`,
+answered `202` and left 112 sharded rows across 8 distinct shards; the view returned
+`11 frozen + 8 sharded = 19` for one counter, as a JS number. Eight concurrent writers × 12
+upserts: **64 conflicts on one hot row, 8 with the 32-way shard.**
+
+### 1. Schema first — it is additive, and the readers below need the views
+
+```bash
+npx tsx scripts/triage-feedback.mts migrate --profile <profile>
+```
+
+Applies, all idempotent (`exists` on a re-run):
+
+```sql
+CREATE TABLE IF NOT EXISTS usage_daily_sharded (…, PRIMARY KEY (shard, day, cohort, metric, dim));
+CREATE TABLE IF NOT EXISTS perf_daily_sharded  (…, PRIMARY KEY (shard, day, cohort, window_mode, machine_class, locked, stall_bucket, tail_bucket));
+CREATE VIEW usage_daily_all AS SELECT …, SUM(n)::bigint AS n FROM (usage_daily UNION ALL usage_daily_sharded) …;
+CREATE VIEW perf_daily_all  AS …;
+GRANT SELECT, INSERT, UPDATE ON usage_daily_sharded TO telemetry_ingest;
+GRANT SELECT, INSERT, UPDATE ON perf_daily_sharded  TO telemetry_ingest;
+```
+
+**Why first:** the new bundle's `INSERT` names the sharded tables unconditionally, so deploying
+it against a cluster without them (or without the grants) is `42P01`/`42501` on **every batch**,
+instantly, with the endpoint open — the same trap the perf-cube and inventory sections above
+document. `SUM(n)::bigint` is not decoration: an uncast `SUM(bigint)` is NUMERIC, which no type
+parser covers, and the readouts would silently render every counter as 0.
+
+**No `DELETE` in the grants, and no grant on the views.** The Lambda only adds; the only reader
+of the merged views is the triage side, which connects as `admin`.
+
+### 2. The readers are already switched — and they were safe to switch first
+
+`src/main/triage/usageStore.ts` reads `usage_daily_all` / `perf_daily_all`, which every other
+reader (`triage-feedback analytics digest`, the Analytics tab, `smoke-feedback verify-telemetry`)
+goes through. **A view equals the old table until the Lambda cuts over**, so this half can ship
+in any order — and after step 1 it is what proves the views answer before anything depends on
+them. A cluster that has not run step 1 answers `42P01` naming `usage_daily_all`, which the CLI
+and the tab already render as "this cluster is not migrated" rather than as a crash.
+
+`scripts/analyticsBackfill.mts` deliberately still names the physical tables: it is the one-off
+cohort re-key, and its whole job is to copy, verify and swap a TABLE. Pointing it at a view
+would be meaningless.
+
+### 3. Bundle and Terraform, in one apply
+
+```bash
+cd infra
+node build.mjs                     # BOTH zips FIRST — the plan hashes them
+terraform plan  -var triage_principal_arn=arn:aws:iam::<acct>:user/<you>
+terraform apply -var triage_principal_arn=arn:aws:iam::<acct>:user/<you>
+```
+
+**What the plan should show — six changes and no destroys:**
+
+| Resource | Change |
+| --- | --- |
+| `aws_lambda_function.telemetry` | `source_code_hash` only (the sharded `INSERT`s + the shard) |
+| `aws_lambda_function.submit` | `source_code_hash` only (it bundles `db.ts`, which gained the retry metric) |
+| `aws_cloudwatch_metric_alarm.dsql_occ_conflicts` | **in-place update**: `metric_query` blocks replace the single metric — conflicts / telemetry invocations > 0.25 over 3 × 5-min periods |
+| `aws_cloudwatch_metric_alarm.telemetry_db_retry_exhausted` | **new** — `EQCompanion/Telemetry` `DbRetryExhausted >= 1` |
+| `aws_apigatewayv2_stage.default` | throttles: stage 5 → 15 rps / burst 10 → 30, `/v1/telemetry` 5 → 10 rps / burst 10 → 20 |
+| everything else | no change |
+
+If the plan wants to **replace** the DSQL cluster, the S3 bucket, or any IAM role, stop: nothing
+in this change touches them.
+
+### 4. Confirm
+
+```bash
+aws logs tail "$(cd infra && terraform output -raw telemetry_log_group)" --since 5m
+npx tsx scripts/triage-feedback.mts analytics digest --cohort all --profile <profile>
+```
+
+The log's `telemetry.accepted` lines are unchanged (they carry counts, never a shard). The
+digest is the real check that the views merge: it reads through `usage_daily_all`, so the
+numbers must be continuous across the cutover — a drop to "today only" would mean a reader is
+still on a frozen table. Watch `OccConflicts` for the following hour; the ratio should fall from
+~5% toward ~0.2%, and the alarm should leave ALARM within three periods.
+
+**Rollback** is the bundle, not the schema: `terraform apply` an earlier zip and the handler
+writes `usage_daily` again, which the views still merge. The sharded rows written meanwhile stay
+readable through the views. Nothing needs to be dropped or copied in either direction.
+
 ## PENDING: the perf cube (JOS-372) — two steps, in this order, and NO client step
 
 `usage_daily` carries one dimension per row, so it can count stalls and can never say whether
@@ -615,7 +720,7 @@ the kill switch rides in the submit response.
 | Data | Retention | Mechanism |
 | --- | --- | --- |
 | Report row | indefinite — it *is* the backlog | none |
-| `usage_daily` / `usage_funnel_daily` | indefinite | none — they are anonymous daily sums with no id in them, and the whole point of the aggregates-on-arrival design (plan T6) is that there is no per-user trail to expire |
+| `usage_daily(_sharded)` / `perf_daily(_sharded)` / `usage_funnel_daily` | indefinite | none — they are anonymous daily sums with no id in them, and the whole point of the aggregates-on-arrival design (plan T6) is that there is no per-user trail to expire. The `shard` column (JOS-394) is a random integer drawn per request, not a function of any id, and readers see it summed away by `usage_daily_all` / `perf_daily_all` |
 | `analytics_install` | indefinite; deleted on request | `triage-feedback analytics wipe --id`. One row per analyticsId, and the only per-id row this feature has |
 | Log object | 90 days | **S3 lifecycle — unchanged**; `triage-feedback forget <id>` deletes one on request |
 | Quota counters (3 d), idempotency keys (7 d), dedupe probes (2 d) | lazy | swept by the ingest handler |
@@ -683,8 +788,12 @@ Lambda/DSQL, under the $10 budget and alarmed within five minutes.
   `bigint` column that is a real 64-bit integer would need its own handling.
 - **Retry is part of the contract.** DSQL takes no locks; a write that raced is
   aborted at commit with SQLSTATE `40001`. Every write in the handler and the CLI
-  goes through a bounded, jittered retry. Code that talks to this database
-  directly must do the same.
+  goes through a bounded retry — **full jitter** since JOS-394,
+  `sleep(random(0, 25 * 2^attempt))` over five attempts, because a fixed step
+  re-synchronises exactly the two callers that just collided. Code that talks to
+  this database directly must do the same. **And a conflict COUNT is not a health
+  signal**: what the alarms watch is conflicts per invocation (pathology) and
+  `DbRetryExhausted` (a ladder that actually ran out, i.e. a lost write).
 - **Alarm dimensions are not interchangeable.** DSQL's usage (DPU) metrics key on
   `ResourceId`; its observability metrics key on `ClusterId`. The wrong one gives
   an alarm that sits in `INSUFFICIENT_DATA` forever and never fires.

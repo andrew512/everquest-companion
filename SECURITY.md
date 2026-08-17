@@ -124,7 +124,7 @@ default**. Everything below is checkable rather than promised:
 
 | Data | Kept |
 | --- | --- |
-| `usage_daily`, `usage_funnel_daily` — the day-by-day counters | **indefinitely**, and they are anonymous by construction: a day, a metric name, a fixed dimension value, and a number. There is no id in these tables and nothing in them can be traced to an install. |
+| `usage_daily`, `usage_funnel_daily` — the day-by-day counters | **indefinitely**, and they are anonymous by construction: a day, a metric name, a fixed dimension value, and a number. There is no id in these tables and nothing in them can be traced to an install. The counter rows now also carry a **shard number**, which is a random integer drawn per request purely so that concurrent writes stop colliding on one row: it is never derived from your anonymous id, and it says nothing about who sent the count. |
 | `analytics_install` — first seen, last seen, days seen, version, channel | one row per anonymous id, kept while the id is in use. **This is the entire per-id footprint of the whole feature**, and deleting the row is the whole deletion path (`analytics wipe --id`). |
 | The ingest function's own log | **14 days**, counts only — it never logs an analytics id, and the counters it reports cannot reconstruct a batch. |
 | API gateway access logs, which include your source IP | **14 days**, exactly as for feedback below, and never joined to anything. |
