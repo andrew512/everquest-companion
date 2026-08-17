@@ -17,6 +17,9 @@
  * belong to an e2e for a second reason on top of the three below — they are claims about SEPARATE
  * RENDERER PROCESSES agreeing, which no assertion in one process can make.
  *
+ * AND SINCE JOS-407 IT OWNS THE OVERLAYS' TRANSPARENCY TOO (./overlayBgAlphaSteps.mts), for the
+ * same reason and in the same section — which the section's own name now says out loud.
+ *
  *   3. "…before the first paint" is the half no test can watch directly (there is no frame to
  *      inspect in a window that is never shown). What IS assertable is that the window is already
  *      at the stored size the first time the renderer can be asked at all, with nothing in this
@@ -53,6 +56,16 @@ import {
   stepSurvivesTheSwitch,
   stepWindowMovesShared
 } from './overlayTextSizeSteps.mjs'
+// …and the overlays' TRANSPARENCY (JOS-407), which lives in the same Preferences section under its
+// OWN switch. It runs after the size steps deliberately: they leave their switch on, so the very
+// first thing the transparency steps can measure is that one row is half live.
+import {
+  stepAlphaSurvivesTheSwitch,
+  stepBgAlphaCard,
+  stepIndependentAlpha,
+  stepSharedAlphaAppliesLive,
+  stepWindowMovesSharedAlpha
+} from './overlayBgAlphaSteps.mjs'
 import { launchOnFixture, stageFixture } from './logFixture.mjs'
 import { UI_SCALE_DEFAULT, UI_SCALE_STEPS, uiScalePercent } from '../../src/shared/uiScale'
 
@@ -312,6 +325,16 @@ async function main(): Promise<void> {
       await stepPinnedMeterFollows(page, fight)
       const own = await stepIndependent(page, fight, overall)
       await stepSurvivesTheSwitch(page, fight, overall, own)
+
+      // ---- AND THE TRANSPARENCY (JOS-407) ----
+      // The same section, the same two meters, and a switch of its own. The card step runs first
+      // because it is the one that can see the two switches disagreeing — the size's is ON when
+      // it starts, left that way by the step directly above.
+      await stepBgAlphaCard(page)
+      await stepSharedAlphaAppliesLive(page, fight, overall)
+      await stepWindowMovesSharedAlpha(page, fight, overall)
+      const ownAlpha = await stepIndependentAlpha(page, fight, overall)
+      await stepAlphaSurvivesTheSwitch(page, fight, overall, ownAlpha)
     }
     if (failures.length) await dumpArtifacts(page, 'text-size-FAIL-restart')
   } finally {

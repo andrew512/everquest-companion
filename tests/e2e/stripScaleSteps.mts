@@ -24,7 +24,7 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ElectronApplication, Page } from 'playwright-core'
-import { ARTIFACTS, check, note, settle } from './appHarness.mjs'
+import { ARTIFACTS, check, countOf, note, settle } from './appHarness.mjs'
 
 export interface Bounds {
   x: number
@@ -177,4 +177,83 @@ export async function stepStripScalesWithText(
     back !== null && Math.abs((back as Bounds).width - b.width) <= SLACK,
     `${String((back as Bounds | null)?.width)} vs ${String(b.width)}`
   )
+}
+
+/** What a strip's CARD is painted with: the alpha of `rgba(15,17,21,a)`, read off the real
+ *  document rather than off the store — the store could be perfect and nothing repainted. */
+function cardAlpha(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const found = new Set<number>()
+    for (const el of Array.from(document.querySelectorAll('div'))) {
+      const m = /^rgba\(15, ?17, ?21, ?([\d.]+)\)$/.exec(getComputedStyle(el).backgroundColor)
+      if (m) found.add(Number(m[1]))
+    }
+    // The drag frame paints a FIXED 0.65 of the same colour, so the card's alpha is the one that
+    // is not it — which is also, deliberately, a shape that fails loudly if the frame ever starts
+    // following the setting.
+    const card = [...found].filter((a) => Math.abs(a - 0.65) > 0.001)
+    return card.length === 1 ? card[0] : NaN
+  })
+}
+
+/** Set a strip's transparency through the overlay's own config door — the one its `bg` slider
+ *  writes through (BgAlphaSlider's `patch`), because a hidden window has no pointer to drag with. */
+function setOverlayBgAlpha(page: Page, bgAlpha: number): Promise<unknown> {
+  return page.evaluate(
+    (a) =>
+      (
+        window as unknown as { eqOverlay: { setConfig: (p: { bgAlpha: number }) => Promise<unknown> } }
+      ).eqOverlay.setConfig({ bgAlpha: a }),
+    bgAlpha
+  )
+}
+
+/**
+ * THE STRIP HAS A `bg` SLIDER NOW, AND IT REPAINTS THE CARD (JOS-407).
+ *
+ * The three strips had NO transparency control anywhere until this ticket: their 0.72 was written
+ * into the defaults and there was nothing on screen — no footer, no Preferences row — that could
+ * move it. It lives in the drag frame beside the A− / A+, for the reason the text size does: a
+ * window that renders nothing most of the time has no other chrome, and "Move it" is the whole
+ * route to every knob it owns.
+ *
+ * SHARED BETWEEN THE THREE SPECS, like `stepStripScalesWithText` above and for its reason: one rule
+ * for all three, and three copies of it would be three rules. It PUTS BACK what it found — the lock
+ * state and the alpha — because it runs in the middle of three long specs and a step that left a
+ * strip unlocked would silently change what every step after it is looking at.
+ */
+export async function stepStripBgSlider(strip: Page, frameTestId: string, label: string): Promise<void> {
+  const wasLocked = await strip.evaluate(async () => {
+    const eq = window as unknown as {
+      eqOverlay: { getConfig: () => Promise<{ locked?: boolean }>; setLocked: (v: boolean) => void }
+    }
+    const locked = (await eq.eqOverlay.getConfig()).locked === true
+    eq.eqOverlay.setLocked(false)
+    return locked
+  })
+  const frame = `[data-testid="${frameTestId}"]`
+  const shown = await settle(() => countOf(strip, frame), (n) => n === 1, { timeoutMs: 15_000 }).catch(() => 0)
+  const restore = async (): Promise<void> => {
+    await strip.evaluate(
+      (v) => (window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(v),
+      wasLocked
+    )
+  }
+  if (!check(`the ${label}'s drag frame appears when it is unlocked`, shown === 1)) return restore()
+  const slider = `${frame} [data-testid="overlay-bg-alpha"]`
+  check(`…carrying a bg slider — the first transparency control this kind has ever had`,
+    (await countOf(strip, slider)) === 1)
+
+  const before = await cardAlpha(strip)
+  if (!check(`the ${label} paints a card background to measure against`, Number.isFinite(before), String(before))) {
+    return restore()
+  }
+  const want = Math.abs(before - 0.3) < 0.001 ? 0.9 : 0.3
+  await setOverlayBgAlpha(strip, want)
+  const after = await settle(() => cardAlpha(strip), (a) => Math.abs(a - want) < 0.001, { timeoutMs: 15_000 })
+    .catch(() => NaN)
+  check(`…and moving it repaints the ${label}, live`, Math.abs(after - want) < 0.001,
+    `${String(before)} -> ${String(after)}`)
+  await setOverlayBgAlpha(strip, before)
+  await restore()
 }

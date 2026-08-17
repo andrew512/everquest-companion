@@ -85,6 +85,7 @@ import {
   stepResizeRecordsLayoutBox,
   stepWindowScalesWithText
 } from './conCardScaleSteps.mjs'
+import { stepStripBgSlider } from './stripScaleSteps.mjs'
 import {
   stepClickOpensTheMobPage,
   stepCloseDoesNotNavigate,
@@ -682,6 +683,9 @@ async function main(): Promise<void> {
       const columns = await stepChipGridWraps(app, card)
       await stepWindowScalesWithText(app, card, columns)
       await stepResizeRecordsLayoutBox(app, card)
+      // …and the drag frame's OTHER new knob (JOS-407): this kind's transparency, which until now
+      // was a 0.72 nobody could reach. It puts the lock and the alpha back before it returns.
+      await stepStripBgSlider(card, 'con-card-drag-frame', 'mob card')
       await stepBackToTheLich(log, card)
       // THE LINK (JOS-390), on the lich's card, which is the one on screen: a click opens its page
       // in the app and leaves the card up; unlocked, the same click navigates nothing.
