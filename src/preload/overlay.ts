@@ -14,6 +14,7 @@ import type {
 } from '../shared/types'
 import { OVERLAY_KINDS } from '../shared/types'
 import type { ScopeSelection } from '../shared/scopeSelection'
+import type { BuffAllowPrefs } from '../shared/buffAllow'
 import type { ToastPayload } from '../shared/toast'
 import type { AlertBannerPayload } from '../shared/alertBanner'
 import type { ConCardPayload } from '../shared/conCard'
@@ -150,6 +151,25 @@ const overlayApi = {
     const listener = (_e: unknown, s: ScopeSelection): void => cb(s)
     ipcRenderer.on(IPC.onScopeSelection, listener)
     return () => ipcRenderer.removeListener(IPC.onScopeSelection, listener)
+  },
+
+  // ---- the buff/debuff TRACKING ALLOW-LIST (JOS-168) ----
+  // TWO of the three members the app bridge carries (preload/buffAllow.ts), under the SAME names,
+  // for the fight-selection trio's reason: one fact, one name, two windows, and ONE renderer hook
+  // (`useBuffAllow`) driving the Buffs tab's controls and this window's filter alike.
+  //
+  // THE SETTER IS DELIBERATELY ABSENT. The controls are on the Buffs tab — a checkbox on the card
+  // you just cast, and a checkbox on a searchable stats row — and a floating window over the game
+  // has none of them. A bridge member nothing calls is a door somebody later walks through, and
+  // "an overlay may not edit which spells it draws" is worth being structurally true.
+  /** The persisted allow-list, for hydrating this window on mount. */
+  getBuffAllow: (): Promise<BuffAllowPrefs> => ipcRenderer.invoke(IPC.buffAllowGet),
+  /** Subscribe to changes made in the app. Payload is the whole preference — this is what makes a
+   *  box checked on the tab reach a window that is already on screen. */
+  onBuffAllow: (cb: (p: BuffAllowPrefs) => void): (() => void) => {
+    const listener = (_e: unknown, p: BuffAllowPrefs): void => cb(p)
+    ipcRenderer.on(IPC.onBuffAllow, listener)
+    return () => ipcRenderer.removeListener(IPC.onBuffAllow, listener)
   },
 
   /** Set locked (click-through) vs interactive for this kind. Persisted + applied to the window. */

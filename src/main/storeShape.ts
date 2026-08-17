@@ -15,6 +15,7 @@ import type { ProcessPriorityPrefs } from '../shared/processPriority'
 import type { ResistPrefs } from '../shared/resistPrefs'
 import type { GraphicsPrefs } from '../shared/graphicsPrefs'
 import type { BuffTrustPrefs } from '../shared/buffTrust'
+import type { BuffAllowPrefs } from '../shared/buffAllow'
 import type { RespawnPrefs } from '../shared/respawn'
 import type { SoundPackPrefs } from '../shared/soundPacks'
 import type { WindowBounds } from './store'
@@ -212,6 +213,17 @@ export interface StoreShape {
    * that predates the feature.
    */
   buffTrust?: BuffTrustPrefs
+  /**
+   * WHICH buffs and debuffs the two timer overlay windows may draw (JOS-168;
+   * shared/buffAllow.ts): the opt-in mode switch, and the per-spell-line tri-state behind it.
+   *
+   * ABSENT MEANS THE SHIPPED BEHAVIOUR — default mode, no verdicts, every spell drawn — so it is
+   * another additive optional key on the `buffTrust` carve-out directly above: no schema bump and
+   * no migration, because `normalizeBuffAllowPrefs` reads a missing key as exactly the behaviour
+   * every build before this one had. A store written here still opens in a build that predates the
+   * feature (electron-store rewrites the whole parsed object, so the key round-trips untouched).
+   */
+  buffAllow?: BuffAllowPrefs
   /**
    * Which mobs get a respawn clock, and the numbers the user typed for them (JOS-194;
    * shared/respawn.ts). ABSENT MEANS THE SHIPPED DEFAULT — no watches at all, because tracking is

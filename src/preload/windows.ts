@@ -15,6 +15,7 @@ import { IPC } from '../shared/ipc'
 import type { ToastRequest } from '../shared/toast'
 import type { AlertBannerPayload } from '../shared/alertBanner'
 import type { ScopeSelection } from '../shared/scopeSelection'
+import type { BuffAllowPatch, BuffAllowPrefs } from '../shared/buffAllow'
 import type { CloseToTrayPrefs } from '../shared/closeToTray'
 import type { OverlayConfig, OverlayKind } from '../shared/types'
 
@@ -98,6 +99,27 @@ export const windowsApi = {
     const listener = (_e: unknown, s: ScopeSelection): void => cb(s)
     ipcRenderer.on(IPC.onScopeSelection, listener)
     return () => ipcRenderer.removeListener(IPC.onScopeSelection, listener)
+  },
+
+  // ---- the buff/debuff TRACKING ALLOW-LIST (JOS-168) ----
+  // WHICH of your spells the two timer overlays may draw: the opt-in mode switch that lives on the
+  // Buffs tab, and the tri-state verdict per spell line behind it. It lives in THIS slice for the
+  // scope selection's reason directly above — it is a CROSS-WINDOW fact, main holds it precisely so
+  // two renderer processes can agree about it, and the overlay bridge carries the same READERS
+  // under the same names so ONE renderer hook (`useBuffAllow`) drives the tab's checkboxes and the
+  // windows' filter alike. The difference from the two facts above it: this one is PERSISTED, since
+  // which spells you track is not a thing you re-choose every launch.
+  /** The persisted allow-list. Default mode with no verdicts — everything draws — until set. */
+  getBuffAllow: (): Promise<BuffAllowPrefs> => ipcRenderer.invoke(IPC.buffAllowGet),
+  /** Apply a PARTIAL: the mode, some verdicts, or both. Resolves to what was ACTUALLY stored, and
+   *  main fans the result out — so a box checked here reaches an already-open overlay window. */
+  setBuffAllow: (patch: BuffAllowPatch): Promise<BuffAllowPrefs> =>
+    ipcRenderer.invoke(IPC.buffAllowSet, patch),
+  /** Subscribe to changes made anywhere. Payload is the whole preference. */
+  onBuffAllow: (cb: (p: BuffAllowPrefs) => void): (() => void) => {
+    const listener = (_e: unknown, p: BuffAllowPrefs): void => cb(p)
+    ipcRenderer.on(IPC.onBuffAllow, listener)
+    return () => ipcRenderer.removeListener(IPC.onBuffAllow, listener)
   },
 
   // ---- celebration toasts (docs/plans/celebration-toasts.md) ----

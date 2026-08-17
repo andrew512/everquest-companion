@@ -681,6 +681,32 @@ export const IPC = {
   // Returns what was stored.
   buffTrustSet: 'buffTrust:set',
 
+  // ---- the buff/debuff TRACKING ALLOW-LIST (JOS-168 — shared/buffAllow.ts) ---------------
+  //
+  // WHICH of your spells the two timer OVERLAY windows may draw: a mode switch that lives on the
+  // Buffs tab, and a tri-state verdict per spell line behind it. It is a DISPLAY filter over those
+  // two windows and nothing else — the model, the Buffs tab list and its header count are
+  // untouched (JOS-215's law).
+  //
+  // IT IS IPC RATHER THAN RENDERER STATE FOR ONE REASON: the window that SETS it (the Buffs tab,
+  // in the main window) is not the window that OBEYS it (the buffs/debuffs overlays, separate
+  // BrowserWindows with their own localStorage). Main is the only process that can reach both,
+  // which is the fight-selection/scope-selection argument — except that this one is PERSISTED,
+  // because a choice about which spells you track is not a thing you re-make every launch.
+  //
+  // renderer(any window) -> main: the persisted allow-list, for hydrating a window that mounted
+  // after the last change. Returns BuffAllowPrefs.
+  buffAllowGet: 'buffAllow:get',
+  // renderer(main app) -> main: a PARTIAL — the mode, some verdicts, or both. Each control sets
+  // what it touches and no more, so a checkbox never has to restate the mode. REBUILT AT THE
+  // HANDLER through the same normalizer the store reader uses (`applyBuffAllowPatch`), persisted,
+  // and fanned out. Returns what was stored.
+  buffAllowSet: 'buffAllow:set',
+  // main -> the main window + the two timer overlays: the allow-list changed. Payload is the whole
+  // `BuffAllowPrefs`. This is the half that makes a checkbox reach an ALREADY-OPEN overlay within
+  // one delta rather than at the next launch.
+  onBuffAllow: 'buffAllow:changed',
+
   // ---- respawn clocks (JOS-194 — shared/respawn.ts) -------------------------------------
   //
   // WHICH MOBS GET A CLOCK. The clocks themselves are log-derived and ride the generic module
