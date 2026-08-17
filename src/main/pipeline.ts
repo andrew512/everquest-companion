@@ -25,6 +25,9 @@ import { SessionDetector } from './log/sessionDetector'
 import { baselineOverlay, loadUserSources } from './data/overlayPersistence'
 import { BASELINE_SOURCE } from './data/messageOverlay'
 import { spellCorrectionsReport, spellPlaceholdersReport, spellRemovalsReport } from './data/spellDb'
+// The era join's own census (JOS-393). It reports from `spellEra.ts` rather than from the loader
+// beside its three siblings because the pass has two callers over one catalog — see that file.
+import { spellEraReport } from './data/spellEra'
 import { CombatEngine } from './combat/engine'
 import { ModuleRegistry } from './modules/registry'
 import { createModules } from './modules/wiring'
@@ -227,6 +230,18 @@ logInfo(
     const which = p.rows.map((r) => `${r.spell}/${r.field}`).join(', ')
     logInfo(
       `[everquest-companion] Spell placeholders: ${p.nulled} stub message${p.nulled === 1 ? '' : 's'} read as absent${which ? ` (${which})` : ''}.`
+    )
+  }
+}
+// The ERA JOIN (JOS-393) — the wiki's own out-of-era verdict for each spell's page, joined from the
+// era sidecar at load. `silent` is the number worth watching: it counts rows the sidecar has NO
+// answer for, so a re-scrape of spells.json that outran the page-era scrape shows up here as a jump
+// rather than as spells quietly reappearing on level rows.
+{
+  const e = spellEraReport()
+  if (e) {
+    logInfo(
+      `[everquest-companion] Spell era: ${e.marked} row${e.marked === 1 ? '' : 's'} the wiki badges out of era, ${e.silent} with no verdict (of ${e.table} in the sidecar).`
     )
   }
 }

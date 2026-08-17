@@ -31,6 +31,13 @@ import { applySpellCorrections } from './spellCorrections'
 // nothing. Invigor reached three of his levels (PAL 22, SHM 24, RNG 30) that way. Applied BEFORE
 // the corrections overlay, the load order `spellDb.ts` states.
 import { applySpellRemovals } from './spellRemovals'
+// The ERA JOIN (JOS-393), applied here for the reason this module applies the other two: every row
+// here becomes a CARD telling the player what this level just gave them, and `Sloths Healing` —
+// `{{Kunark Era}}`, `Shaman - Level 50+` — is not a spell a level-50 shaman can go and buy on a
+// server that has not opened Kunark. The verdict rides the row (`UnlockSpell.outOfEra`) rather than
+// removing it: the row is real and the SEARCH still answers for it (shared/levelUnlocks.ts folds it
+// out of the level lists only).
+import { applySpellEra } from './spellEra'
 // THE SEARCH SURFACE (JOS-392), built by the function the alerts catalog is built with. Two
 // datasets searched by one matcher (`shared/spellSearch.ts`) must be folded by one surface builder,
 // or the box goes quietly deaf on one of them — the same argument `searchTextFor`'s own header
@@ -175,10 +182,13 @@ function replacesFor(name: string, at: readonly { cls: ClassAbbr }[]): UnlockSpe
 function unlockSpells(): UnlockSpell[] {
   const file = spellsJson as SpellDbFile
   const out: UnlockSpell[] = []
-  for (const s of applySpellCorrections(applySpellRemovals(file.spells).spells).spells) {
+  for (const s of applySpellCorrections(applySpellEra(applySpellRemovals(file.spells).spells).spells).spells) {
     const at = parseSpellClasses(s.classes)
     if (at.length === 0) continue
     const spell: UnlockSpell = { name: s.name, at }
+    // `true` or absent, never `false` — the field's own law (`SpellEntry.outOfEra`), carried across
+    // the wire unchanged so the renderer has nothing to decide.
+    if (s.outOfEra === true) spell.outOfEra = true
     if (typeof s.castTimeMs === 'number') spell.castTimeMs = s.castTimeMs
     if (typeof s.mana === 'number') spell.mana = s.mana
     if (s.targetType) spell.targetType = s.targetType

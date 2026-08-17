@@ -178,5 +178,9 @@ function statedFields(e: SpellEntry): Partial<SpellDetail> {
   if (e.msgCastOnYou !== undefined) out.msgCastOnYou = e.msgCastOnYou
   if (e.msgCastOnOther !== undefined) out.msgCastOnOther = e.msgCastOnOther
   if (e.msgWearsOff !== undefined) out.msgWearsOff = e.msgWearsOff
+  // The era verdict is DERIVED rather than scraped (`spellEra.ts` joins it at load), but it obeys
+  // the same rule as every line above it: copied across only when it is a positive claim, so the
+  // card has nothing to interpret and cannot print "in era" over a page nobody has classified.
+  if (e.outOfEra === true) out.outOfEra = true
   return out
 }

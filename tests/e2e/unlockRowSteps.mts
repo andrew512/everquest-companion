@@ -46,6 +46,10 @@ const CLASS_CHIP = '[data-testid="unlock-class-chip"]'
 const NOTE_SPELL = '[data-testid="unlock-note-spell"]'
 const SPELL_CARD = '[data-testid="spell-hover-card"]'
 const CARD_FIGURES = '[data-testid="spell-card-figures"]'
+// JOS-393: the era verdict, on a search row and on the card that row opens.
+const SPELL_NAME = '[data-testid="unlock-spell-name"]'
+const ERA_CHIP = '[data-testid="unlock-out-of-era"]'
+const CARD_ERA = '[data-testid="spell-card-out-of-era"]'
 
 /** How far up the stepper to walk looking for a row that carries figures. */
 const WALK_LEVELS = 40
@@ -322,4 +326,44 @@ export async function stepUnlockSearch(page: Page): Promise<void> {
   check('…on the level it was left on', (await textOf(page, LEVEL_VALUE)) === levelBefore, `${levelBefore} → ${await textOf(page, LEVEL_VALUE)}`)
   const live = await page.evaluate((s) => document.querySelector(s)?.getAttribute('data-dimmed') ?? '', STEPPER)
   check('…and the stepper is live again', live === 'false', live)
+}
+
+/**
+ * 6e. THE ERA VERDICT ON A SPELL (JOS-393) — the owner's own report, typed into the real panel.
+ *
+ * WHY THE SEARCH AND NOT THE LEVEL LIST. The fold is asserted over the committed data by
+ * `tests/spellEra.test.mts` at every level of a CLR/DRU/SHM trio; what no unit test can see is the
+ * seam — that main joins the era sidecar onto the catalog at load, ships the flag across the
+ * `spells:catalog` IPC on the unlock dataset, and that the panel draws it. The level list cannot
+ * carry that assertion here because the loadout comes from whatever `/who` this machine's real log
+ * produced, and a shaman is not guaranteed; the SEARCH answers whether or not a loadout is known,
+ * which makes this the one deterministic route to the same flag.
+ *
+ * TWO SPELLS, ONE LINE APART, and that is the whole point of the pair: `Sloths Healing` and
+ * `Snails Healing` are the same shaman heal-over-time ladder and differ only in era. A chip on both
+ * would mean the join is marking everything; a chip on neither would mean it is marking nothing.
+ */
+export async function stepUnlockEra(page: Page): Promise<void> {
+  if ((await typeQuery(page, 'sloths healing')) !== 1) {
+    check('a search for an out-of-era spell returns the results body', false)
+    return
+  }
+  const named = await page.evaluate((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '', SPELL_NAME)
+  check('the search finds a spell the wiki badges out of era rather than hiding it', named === 'Sloths Healing', named)
+  check('…and the row says so', (await countOf(page, ERA_CHIP)) === 1, `${String(await countOf(page, ERA_CHIP))} chips`)
+
+  // The card behind the same name carries the same verdict — the surface that has no row to chip.
+  if (check('the badged spell name is reachable to hover', await hoverAt(page, SPELL_NAME, 0.5, 0.5))) {
+    await settleCount(page, SPELL_CARD, 1, { timeoutMs: 8_000 })
+    check('…and its card wears the same words', (await countOf(page, CARD_ERA)) === 1)
+    // Closed and WAITED FOR: a MUI popper left open grows the document and fails `stepPageScroll`.
+    await page.mouse.move(2, 2)
+    await settleGone(page, SPELL_CARD, { timeoutMs: 5_000 })
+  }
+
+  await typeQuery(page, 'snails healing')
+  const inEra = await page.evaluate((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '', SPELL_NAME)
+  check('its in-era sibling is found the same way', inEra === 'Snails Healing', inEra)
+  check('…and wears nothing at all, because the wiki says nothing about it', (await countOf(page, ERA_CHIP)) === 0)
+  await typeQuery(page, '')
 }

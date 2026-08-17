@@ -30,6 +30,12 @@
 // and the height budget is not zero. The tooltip stays anyway: this is a chip's provenance, which
 // is what the tooltip diet is FOR.
 //
+// AND WHAT THIS SERVER HAS NOT OPENED IS NOT NEW AT THIS LEVEL (JOS-393). The spell list folds the
+// rows eqlwiki badges out of era behind a `+N out of era` disclosure — the drops precedent, the same
+// phrase — so a level-50 shaman is no longer told `Sloths Healing` (`{{Kunark Era}}`) is his. The
+// SEARCH below is untouched by the fold and marks those rows instead: a search is a question the
+// player asked, and the honest answer to it includes the spell and says what it is.
+//
 // AND THE LISTS BELOW ARE AS TALL AS THEY NEED TO BE (JOS-289). `UnlockList` was a 120px windowed
 // porthole — the surface the owner named as cramped — and is now plain rows at their honest
 // height, with the full `SpellTooltip` card behind every spell name.
@@ -264,6 +270,7 @@ export function NewAtLevelPanel({
           <UnlockList
             title="Spells"
             rows={unlocks.spells}
+            outOfEra={unlocks.outOfEraSpells}
             resolved={resolved}
             sets={sets}
             empty={`no new spells at level ${String(level)} for this loadout`}

@@ -104,6 +104,16 @@ export interface SpellDetail {
   effectClasses: string[]
   /** null when the name carries no numeral AND no source names any other rank of its line. */
   lineage: SpellLineage | null
+  /**
+   * THE WIKI BADGES THIS SPELL'S PAGE OUT OF ERA (JOS-393) — `true` or absent, never `false`, the
+   * law `SpellEntry.outOfEra` states in full.
+   *
+   * It rides the record so the card wears the same chip the item card wears, wherever the card is
+   * opened from: a folded level row, a search result, or the name inside a `replaces` clause — that
+   * last one being the case no list can cover, since the spell a row says it replaces has no row of
+   * its own on screen.
+   */
+  outOfEra?: boolean
 }
 
 /** One drawn row of the card's stat block. */

@@ -55,6 +55,21 @@ test('both wiki spellings of the Shadow Knight resolve to SHD', () => {
   assert.deepEqual(parseSpellClasses('* Shadowknight - Level 9'), [{ cls: 'SHD', level: 9 }])
 })
 
+test('a trailing `+` on the level is read as the level, not dropped with the bullet (JOS-393)', () => {
+  // `Sloths Healing` states `* Shaman - Level 50+` and is the ONE row in the committed DB that
+  // writes the form (measured 2026-08-16) — which is exactly why it is pinned: a parse that
+  // dropped the segment would take the spell out of the level join silently, and the era fold
+  // beside it would then have nothing to fold. The `+` itself carries no claim we can use (the
+  // wiki means "and above", which is where every spell already stays), so it is IGNORED rather
+  // than interpreted, the same way `(Autogranted)` is.
+  assert.deepEqual(parseSpellClasses('* Shaman - Level 50+'), [{ cls: 'SHM', level: 50 }])
+  assert.equal(spellLevelFor('* Shaman - Level 50+', 'SHM'), 50)
+  assert.deepEqual(scanSpellClasses('* Shaman - Level 50+').dropped, [])
+  const sloths = spells.find((s) => s.name === 'Sloths Healing')
+  assert.ok(sloths, 'the committed DB no longer carries Sloths Healing')
+  assert.deepEqual(parseSpellClasses(sloths.classes), [{ cls: 'SHM', level: 50 }])
+})
+
 test('a class stated twice keeps the LOWEST level, never a duplicate chip', () => {
   assert.deepEqual(parseSpellClasses('* Druid - Level 44 * Druid - Level 12'), [
     { cls: 'DRU', level: 12 }

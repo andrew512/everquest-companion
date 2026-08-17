@@ -45,9 +45,21 @@
 //
 // NO CAVEATS PER ROW (AGENTS.md, the tooltip and caveat diet). The word `directional` is said ONCE
 // in the panel header and nowhere else; no row footnotes where its number came from.
+//
+// AND THE ERA VERDICT IS DRAWN THE WAY THE MOB PAGE DRAWS IT (JOS-393). eqlwiki badges a link to
+// `Sloths Healing` — `{{Kunark Era}}`, `Shaman - Level 50+` — out of era, and this list offered it
+// to a level-50 shaman as a spell newly his. Two treatments, one rule:
+//   A LEVEL LIST folds them behind a `+N out of era` disclosure — `outOfEraLabel`, the mob page's
+//   own phrase, IMPORTED rather than re-typed so the two surfaces cannot drift — because a level
+//   list answers "what is new for me now" and an unopened expansion is not part of that answer.
+//   A SEARCH RESULT is shown plainly with an `out of era` chip, because a search answers the
+//   question the player typed and hiding the row would answer a different one.
+// A spell the era sidecar has no verdict for wears nothing and is folded nowhere: silence is not a
+// verdict (law 1), and the drops list made the same call for the same reason.
 
-import { type JSX } from 'react'
-import { Box, Chip, Stack, Typography } from '@mui/material'
+import { type JSX, useState } from 'react'
+import { Box, Chip, Collapse, Stack, Typography } from '@mui/material'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import type { ClassAbbr } from '@shared/classCombo'
 import { ownershipPhrase, replacesEntries, replacesPhrase, type UnlockRow } from '@shared/levelUnlocks'
 import { spellMetricsParts } from '@shared/spellMetrics'
@@ -55,6 +67,9 @@ import { memorizedClause, type SpellSetsSnap } from '@shared/spellSets'
 import { classLevelLabel } from '@shared/unlockSearch'
 import { Tooltip } from '../../lib/Tooltip'
 import { SpellTooltip } from '../../lib/SpellCard'
+// ONE PHRASE FOR "+N out of era", owned by the surface that first drew it (JOS-377) and imported
+// here the way `CurrentMobCard` imports it — a second copy would be a second wording.
+import { outOfEraLabel } from '../mobs/dropEra'
 
 /** Row height in px — fixed, which is what keeps a scanned list on a rhythm. */
 const ROW_H = 26
@@ -301,9 +316,82 @@ function Row({
           />
         </Tooltip>
       )}
+      {/* THE ERA CHIP — the item card's own label and colour (`PlannerChips.EraChip`'s warning
+          outline), on the rows that are drawn rather than folded: every search result, and the
+          level rows once the disclosure has been opened. */}
+      {row.spell?.outOfEra === true && (
+        <Tooltip title="The wiki marks this spell's page out of era: it belongs to an expansion this server has not opened.">
+          <Chip
+            size="small"
+            label="out of era"
+            data-testid="unlock-out-of-era"
+            color="warning"
+            variant="outlined"
+            sx={{ height: 17, fontSize: 10, '& .MuiChip-label': { px: 0.6 } }}
+          />
+        </Tooltip>
+      )}
       <ClassChips row={row} resolved={resolved} />
     </Stack>
       <RowDetail row={row} resolved={resolved} sets={sets} />
+    </Box>
+  )
+}
+
+/**
+ * THE DISCLOSURE (JOS-393) — `+N out of era`, and the rows behind it.
+ *
+ * `MobDropsSection.OutOfEraDrops`'s shape, deliberately: same phrase, same one-click cost, same
+ * chevron, because a player who has learned what that line means on a mob page has learned it here
+ * too. A DISCLOSURE AND NOT A DELETION — the wiki states these spells at this level and that stays
+ * sayable; what stops happening is a level list quietly promising a trip to the vendor.
+ *
+ * Nothing folded ⇒ nothing drawn, never an empty disclosure.
+ */
+function OutOfEraRows({
+  rows,
+  resolved,
+  sets
+}: {
+  rows: UnlockRow[]
+  resolved: ReadonlySet<string>
+  sets: SpellSetsSnap
+}): JSX.Element | null {
+  const [open, setOpen] = useState(false)
+  if (rows.length === 0) return null
+  return (
+    <Box>
+      <Stack
+        direction="row"
+        alignItems="center"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') setOpen(!open)
+        }}
+        data-testid="unlock-era-toggle"
+        sx={{
+          display: 'inline-flex',
+          cursor: 'pointer',
+          color: 'text.secondary',
+          '&:hover': { color: 'primary.main' }
+        }}
+      >
+        <Typography variant="caption" sx={{ fontSize: 10.5 }}>
+          {outOfEraLabel(rows.length)}
+        </Typography>
+        <ExpandMoreIcon
+          fontSize="inherit"
+          sx={{ transition: 'transform 120ms', transform: open ? 'rotate(180deg)' : undefined }}
+        />
+      </Stack>
+      <Collapse in={open} unmountOnExit>
+        {rows.map((r) => (
+          <Row key={`${r.kind}:${r.name}`} row={r} resolved={resolved} sets={sets} />
+        ))}
+      </Collapse>
     </Box>
   )
 }
@@ -319,7 +407,8 @@ export function UnlockList({
   resolved,
   empty,
   sets,
-  count
+  count,
+  outOfEra = []
 }: {
   title: string
   rows: UnlockRow[]
@@ -333,6 +422,15 @@ export function UnlockList({
    * the answer. Absent everywhere else, where the two numbers are the same by construction.
    */
   count?: number
+  /**
+   * Rows the wiki badges OUT OF ERA, folded behind the disclosure (JOS-393). Absent on every list
+   * that has no such rows — the search results, where the chip does the same job in place, and the
+   * skills list, which the era join says nothing about.
+   *
+   * The heading counts the SHOWN rows; the disclosure counts its own. Two numbers because they are
+   * two claims, and a heading of `Spells (4)` over three visible rows would be neither.
+   */
+  outOfEra?: UnlockRow[]
 }): JSX.Element {
   return (
     <Box sx={{ flex: 1, minWidth: 0 }} data-testid="unlock-list">
@@ -340,13 +438,17 @@ export function UnlockList({
         {title} ({count ?? rows.length})
       </Typography>
       <Box>
-        {rows.length === 0 ? (
+        {/* THE DISJUNCTION MATTERS (the mob page's own): a level whose every spell is out of era
+            has spells, so the empty sentence must not claim otherwise — the disclosure is what it
+            has to say. */}
+        {rows.length === 0 && outOfEra.length === 0 ? (
           <Typography variant="caption" color="text.disabled">
             {empty}
           </Typography>
         ) : (
           rows.map((r) => <Row key={`${r.kind}:${r.name}`} row={r} resolved={resolved} sets={sets} />)
         )}
+        <OutOfEraRows rows={outOfEra} resolved={resolved} sets={sets} />
       </Box>
     </Box>
   )
