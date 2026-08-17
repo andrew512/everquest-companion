@@ -26,10 +26,13 @@ import assert from 'node:assert/strict'
 import spellsJson from '../src/main/data/spells.json' with { type: 'json' }
 import type { SpellDbFile } from '../src/shared/types.ts'
 import {
+  clientDurationTicks,
+  clientHpMagnitudeAt,
   parseHpLine,
   spellMetricsAt,
   spellMetricsParts,
   ticksOf,
+  type ClientHpFacts,
   type HpLine,
   type SpellMetrics,
   type SpellMetricsInput
@@ -272,4 +275,149 @@ test('R8 the row parts read the way the panel prints them, with no em dash', () 
   for (const p of [...dmg, ...heal, ...dot]) assert.ok(!/[—–]/.test(p), p)
   // Nothing at all for a spell with no hitpoint line.
   assert.deepEqual(spellMetricsParts({}), [])
+})
+
+// ── JOS-396 — THE CLIENT'S SLOTS, WHERE THE WIKI'S SLOT TABLE IS MISSING A LINE ────────────────
+//
+// Every client row below is transcribed VERBATIM from the owner's `spells_us.txt` on 2026-08-16,
+// with the spell it came from named beside it, for the reason tests/spellsUsParse.test.mts states:
+// the file is Daybreak's and is never committed here, so a transcription with a name on it is the
+// only honest way to pin a reader against it.
+
+/** Odium, id 4093: slot 2 is `0|-217|0|103|325`, duration formula 7 capped at 5 ticks. */
+const ODIUM_CLIENT: ClientHpFacts = {
+  hp: [{ base: -217, max: 325, calc: 103, perTick: true }],
+  hpDuration: { formula: 7, value: 5 }
+}
+/** What the wiki page states for Odium — one curse-counter line and no hitpoint line at all. */
+const ODIUM_WIKI: SpellMetricsInput = {
+  effects: ['Increase Curse Counter by 8'],
+  mana: 409,
+  castTimeMs: 3000,
+  durationMs: 30_000
+}
+
+test('R9 a client magnitude is |base| + step x level, capped — and Odium is the pin', () => {
+  const odium = ODIUM_CLIENT.hp?.[0]
+  assert.ok(odium)
+  // calc 103 is two points a level ON THE MAGNITUDE. Reading `base + 2L` off a negative base would
+  // give 43 -> -131, which is the wrong number and the wrong sign.
+  assert.deepEqual(clientHpMagnitudeAt(odium, 43), { amount: 303, formulaUnknown: false })
+  assert.deepEqual(clientHpMagnitudeAt(odium, 50), { amount: 317, formulaUnknown: false })
+  assert.deepEqual(clientHpMagnitudeAt(odium, 54), { amount: 325, formulaUnknown: false })
+  assert.deepEqual(clientHpMagnitudeAt(odium, 60), { amount: 325, formulaUnknown: false }, 'capped at max')
+
+  // calc 100 is flat at every level (Bolt of Karana, `1|0|-200|0|100|200`).
+  const flat = { base: -200, max: 200, calc: 100, perTick: false }
+  assert.equal(clientHpMagnitudeAt(flat, 1).amount, 200)
+  assert.equal(clientHpMagnitudeAt(flat, 60).amount, 200)
+
+  // calc 101 is HALF a point a level, and the division is the client's — integer (Monkey Stun,
+  // `2|0|-200|0|101|0`; max 0 means no cap at all).
+  const half = { base: -200, max: 0, calc: 101, perTick: false }
+  assert.equal(clientHpMagnitudeAt(half, 40).amount, 220)
+  assert.equal(clientHpMagnitudeAt(half, 43).amount, 221, 'floored, not 221.5')
+
+  // A calc this reader does not model answers the BASE and says so, rather than guessing a curve
+  // (Soul Bond, `3|0|1|0|4005|0` — the one such spell in the committed catalog).
+  assert.deepEqual(clientHpMagnitudeAt({ base: 1, max: 0, calc: 4005, perTick: true }, 60), {
+    amount: 1,
+    formulaUnknown: true
+  })
+})
+
+test('R10 a client duration is a formula and a cap, and the permanent kinds answer null', () => {
+  // Odium: formula 7 is `level`, capped at 5. Five ticks at every level a shaman has it.
+  assert.equal(clientDurationTicks({ formula: 7, value: 5 }, 43), 5)
+  assert.equal(clientDurationTicks({ formula: 7, value: 5 }, 60), 5)
+  // …and BELOW the cap the formula wins (`Cancelling of Life`, formula 7 capped at 10).
+  assert.equal(clientDurationTicks({ formula: 7, value: 10 }, 8), 8)
+
+  // Illusion: Iksar, formula 3 (`level x 30`) capped at 360 — 600 at L20, so the cap answers.
+  assert.equal(clientDurationTicks({ formula: 3, value: 360 }, 20), 360)
+  // Assiduous Vision, formula 3 capped at 1950: uncapped at L36.
+  assert.equal(clientDurationTicks({ formula: 3, value: 1950 }, 36), 1080)
+
+  // PERMANENT (50 and 51), instant (0) and every code this reader does not name answer null, which
+  // the fold reads as "a rate with no length".
+  assert.equal(clientDurationTicks({ formula: 50, value: 0 }, 49), null)
+  assert.equal(clientDurationTicks({ formula: 51, value: 0 }, 49), null)
+  assert.equal(clientDurationTicks({ formula: 0, value: 0 }, 49), null)
+  assert.equal(clientDurationTicks({ formula: 99_999, value: 0 }, 49), null)
+})
+
+test('R11 THE TICKET: Odium reads off the client and prints the way the row does', () => {
+  // Before: the page states no hitpoint line, so there are no figures — the owner's report.
+  assert.equal(spellMetricsAt(ODIUM_WIKI, 43), undefined)
+
+  // After: 303 a tick x 5 ticks = 1515, over 409 mana, over a 3s cast plus 30s of ticks.
+  const m = spellMetricsAt(ODIUM_WIKI, 43, ODIUM_CLIENT)
+  assert.deepEqual(m, {
+    damage: 1515,
+    damagePerMana: 3.7,
+    dps: 45.9,
+    dot: true,
+    overSec: 30,
+    source: 'client'
+  })
+  assert.deepEqual(spellMetricsParts(m ?? {}), [
+    'dmg 1515',
+    'dps 46',
+    '3.7 dmg/mana',
+    'over 30s'
+  ])
+  // The ramp is read at the evaluation level like every other figure in this file.
+  assert.equal(spellMetricsAt(ODIUM_WIKI, 50, ODIUM_CLIENT)?.damage, 1585)
+  assert.equal(spellMetricsAt(ODIUM_WIKI, 54, ODIUM_CLIENT)?.damage, 1625)
+})
+
+test('R12 the wiki stays primary — the client is consulted only when the page yields nothing', () => {
+  // Anarchy states its own ramp. Handing the reader a client row that disagrees changes NOTHING,
+  // which is the whole of acceptance 3: no spell that had figures moves.
+  const loud: ClientHpFacts = { hp: [{ base: -9999, max: 0, calc: 100, perTick: false }] }
+  assert.deepEqual(metrics(entry('Anarchy'), 39), spellMetricsAt(entry('Anarchy'), 39, loud))
+  assert.equal(spellMetricsAt(entry('Anarchy'), 39, loud)?.source, undefined)
+
+  // No client facts at all is the pre-ticket behaviour, unchanged.
+  assert.equal(spellMetricsAt(ODIUM_WIKI, 43, undefined), undefined)
+  assert.equal(spellMetricsAt(ODIUM_WIKI, 43, {}), undefined)
+  assert.equal(spellMetricsAt(ODIUM_WIKI, 43, { hp: [] }), undefined)
+})
+
+test('R13 the client fold: a flat nuke, a heal, an unknown formula, and a rate with no length', () => {
+  // A FLAT NUKE — Bolt of Karana, `1|0|-200|0|100|200`, formula 0. One hit, no ticks, no `over`.
+  const bolt = spellMetricsAt(
+    { effects: ['Decrease HP when cast by 200'], mana: 0, castTimeMs: 15_000 },
+    1,
+    { hp: [{ base: -200, max: 200, calc: 100, perTick: false }] }
+  )
+  assert.deepEqual(bolt, { damage: 200, dps: 13.3, source: 'client' })
+
+  // A HEAL — Envenomed Heal, `2|0|173|0|100|0`. A POSITIVE base lands on the heal side.
+  const heal = spellMetricsAt({ effects: ['Increase HP when cast by 150'] }, 1, {
+    hp: [{ base: 173, max: 0, calc: 100, perTick: false }]
+  })
+  assert.deepEqual(heal, { heal: 173, source: 'client' })
+
+  // AN UNKNOWN FORMULA still produces a figure — the base — and flags itself (Soul Bond).
+  const bond = spellMetricsAt(
+    { effects: ['Ticks in order 5,10,15,20,25,30 (total 105)'], mana: 360, castTimeMs: 7000, targetType: 'Lifetap' },
+    1,
+    { hp: [{ base: 1, max: 0, calc: 4005, perTick: true }], hpDuration: { formula: 2, value: 5 } }
+  )
+  assert.equal(bond?.formulaUnknown, true)
+  assert.equal(bond?.damage, 5, 'base 1 a tick over the five ticks the client states')
+  // …AND A LIFETAP'S CLIENT SLOT IS DAMAGE WHATEVER ITS SIGN. The wiki path drops a lifetap's
+  // increase line because the page states the transfer twice; the client states it once, so
+  // dropping it would throw away the only statement there is.
+  assert.equal(bond?.heal, undefined)
+
+  // A RATE WITH NO LENGTH — Lich, `1|0|-22|0|100|0` with duration formula 50 (permanent). The
+  // client says 22 a tick and never says how many ticks, so there is no total to state. This is
+  // what keeps the twelve shapeshift self-buffs out of the fifteen.
+  const lich = spellMetricsAt({ effects: ['Increase Mana by 10'], mana: 0, castTimeMs: 6000 }, 49, {
+    hp: [{ base: -22, max: 0, calc: 100, perTick: true }],
+    hpDuration: { formula: 50, value: 0 }
+  })
+  assert.equal(lich, undefined)
 })

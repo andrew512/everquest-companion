@@ -444,23 +444,45 @@ function clientMetricsAt(
   const slots = client.hp ?? []
   if (slots.length === 0) return undefined
   const lifetap = spell.targetType === 'Lifetap'
-  const ticks = client.hpDuration ? clientDurationTicks(client.hpDuration, level) : 0
+  const ticks = client.hpDuration ? (clientDurationTicks(client.hpDuration, level) ?? 0) : 0
   const dmg: Side = { total: 0, overTime: false }
   const heal: Side = { total: 0, overTime: false }
   let unknownFormula = false
   for (const slot of slots) {
-    const read = clientHpMagnitudeAt(slot, level)
-    if (read.formulaUnknown) unknownFormula = true
-    if (read.amount <= 0) continue
-    const direction: HpLine['direction'] = lifetap || slot.base < 0 ? 'down' : 'up'
-    const line: HpLine = { amount: read.amount, direction, perTick: slot.perTick }
-    foldLine(direction === 'down' ? dmg : heal, line, ticks ?? 0)
+    const line = clientLine(slot, level, lifetap)
+    if (!line) continue
+    if (line.formulaUnknown) unknownFormula = true
+    foldLine(line.direction === 'down' ? dmg : heal, line, ticks)
   }
-  const out = assemble(dmg, heal, spell, ticks ?? 0)
+  const out = assemble(dmg, heal, spell, ticks)
   if (!out) return undefined
   out.source = 'client'
   if (unknownFormula) out.formulaUnknown = true
   return out
+}
+
+/**
+ * ONE CLIENT SLOT, read into the same shape a wiki line reads into — which is what lets both paths
+ * share `foldLine` — or null when the slot states no magnitude at all.
+ *
+ * The SIGN OF `base` picks the side, except on a lifetap where everything is damage (see above).
+ * `formulaUnknown` is reported only for a slot that CONTRIBUTES: a zero-magnitude slot under an
+ * unread calc changes no figure, so flagging it would put a caveat on a number it never touched.
+ */
+function clientLine(
+  slot: ClientHpSlot,
+  level: number,
+  lifetap: boolean
+): (HpLine & { formulaUnknown: boolean }) | null {
+  const read = clientHpMagnitudeAt(slot, level)
+  if (read.amount <= 0) return null
+  const direction: HpLine['direction'] = lifetap || slot.base < 0 ? 'down' : 'up'
+  return {
+    amount: read.amount,
+    direction,
+    perTick: slot.perTick,
+    formulaUnknown: read.formulaUnknown
+  }
 }
 
 /** One side's three derived figures: the total, per mana, per second. */
