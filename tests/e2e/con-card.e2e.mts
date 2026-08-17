@@ -392,10 +392,15 @@ async function stepWindowFitsCard(app: ElectronApplication, card: Page): Promise
       (big as Bounds).height > (b as Bounds).height &&
         Math.abs((big as Bounds).height - fittedTo(bigger.want)) <= FIT_SLACK,
       `${String((b as Bounds).height)} -> ${String((big as Bounds).height)} (card+padding ${String(bigger.want)})`)
-    // THE POSITION NEVER GIVES. Only the height is the app's to change.
-    check('…while x, y and width stayed exactly where they were',
-      (big as Bounds).x === (b as Bounds).x && (big as Bounds).y === (b as Bounds).y &&
-        (big as Bounds).width === (b as Bounds).width,
+    // THE TOP EDGE NEVER GIVES — and since JOS-406 that is the ONLY half of this that still holds.
+    // This check used to read "x, y and width stayed exactly where they were", because a text scale
+    // moved nothing but the height: the window kept the width chosen at 100% while the card zoomed
+    // inside it, which is exactly the defect the owner reported ("that doesn't look good" on the
+    // 200% card). The window is the card now, so the WIDTH is the layout box times the scale and
+    // `x` re-centres around the middle it had. The full arithmetic is asserted next door
+    // (conCardScaleSteps.mts); what is kept here is the one thing that is still nobody's to move.
+    check('…while the TOP EDGE stayed exactly where it was',
+      (big as Bounds).y === (b as Bounds).y,
       `${JSON.stringify(b)} -> ${JSON.stringify(big)}`)
     // NOTHING IS CUT OFF SIDEWAYS EITHER. The height is what main re-fits; the WIDTH is fixed, and
     // `zoom` reflows rather than magnifying, so the honest question at 200% is whether the card
