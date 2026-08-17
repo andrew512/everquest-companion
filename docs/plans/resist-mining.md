@@ -416,8 +416,8 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
   / 239 at levels 46 / 47 / 48-up, which are the game's own tiers. Cost of the fix, on the shipped
   baseline: a zol ghoul knight's cold falls from R 60 [40,84] to R 26 [10,50] as 23 partials become
   5, and the "provably cold-resistant" claim that stood on them is withdrawn.
-- **Recent evidence weighs more, and a run of three says so out loud** (owner, 2026-08-16 -
-  SHIPPED in JOS-397). Two halves of one ruling, deliberately different in kind.
+- **Recent evidence weighs more** (owner, 2026-08-16 - SHIPPED in JOS-397; its second half removed
+  the same day by JOS-400, see the end of this bullet).
 
   THE WEIGHT. Rows carry the ISO WEEK they were observed in, in the pooling key (schema 3; a
   schema-2 row pooled its counts across weeks and nothing can un-pool them, so the bump is a
@@ -442,27 +442,14 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
   real weeks, 4,164 rows carrying 58,368 do - a bigger file that knows less. Omitting the field
   saves 80 kB of one repeated string.
 
-  THE RUN. A ring of the last 10 of YOUR OWN outcomes per (mob, spell) rides the user's ledger and
-  never the baseline. Per SPELL rather than per mob because the fold cannot know an axis (it never
-  reads `spells_us.txt`) and no spell can contribute more than ten to the last ten, so merging the
-  rings on read returns exactly the true last ten. Three or more identical outcomes in a row, AND
-  a run under 10% likely under the estimate the surface is already printing, surface
-  `lately: 3 of the last 3 resisted` and a band computed through the SAME benchmark, worn as
-  `lately resistant`. It replaces the scannable word and nothing else: `R`, the interval and both
-  percentages stay the decayed long-run answer, on the mob page and on the con card alike. A
-  partial breaks both a run of resists and a run of landings - the roll went against you on a
-  spell that cannot be refused. Songs are excluded (the Symphonic Aura re-pulses every six
-  seconds, so three pulses is four seconds of one fight); pets and other players are excluded
-  because the sentence is about what happened when YOU cast. Nothing is stored and nothing is
-  cleared: a landing makes the leading run one, and the line is not there on the next draw.
+  THE DECAY ABOVE IS ALL OF IT, AND IT STAYS AS DESCRIBED: recent evidence weighs more inside the
+  one formula, with every modifier - rank, overchannel, debuffs - still applied.
 
-  THE CON CARD gains a third way onto the card - a run whose band is `resistant` or
-  `very resistant` earns a chip the long-run cut would have dropped, which is exactly the owner's
-  own case (three resists running on the female vampires in Hate, whose pooled magic reads
-  ordinary). A run of PLAIN casts can imply at most `resistant`, and the arithmetic says why: `rc`
-  tops out at 200 and overchannel is worth -150, so a plain cast always beats the 60% line. What
-  reaches the top band is a run on casts that were already helped by the spell's own resist
-  adjust, which is carried into the inversion for the same reason the estimator carries it.
+  THE RUN DETECTOR THAT SHIPPED BESIDE IT WAS REMOVED THE SAME DAY (owner ruling, JOS-400). It
+  tracked orthogonal outcomes without the modifiers and printed a second verdict - a `lately` line
+  and a `lately resistant` word - next to the real one, which is a verdict outside the formula. The
+  ring, the `lately` fields on the profile and the con-card wire, and the third route onto the card
+  all went with it; a card says one thing about a creature.
 - Presentation: **no acronyms**. Every axis is shown as its word (magic, fire, cold, poison,
   disease) with a stable colour per axis; the colour and the word always appear together.
 
