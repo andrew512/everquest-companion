@@ -103,6 +103,16 @@ async function main(): Promise<void> {
       // The whole user journey, in the clicks a person makes.
       await page.click(OPEN)
       await page.waitForSelector('[data-testid="combo-class-picker"]', { timeout: 20_000 })
+      // THE PICKER SPEAKS IN CLASS NAMES (JOS-402), while its testid — and everything it writes —
+      // stays the /who code. Asked before the clicks because it is the words a user picks BY.
+      const shdChip = await page.evaluate(
+        () => document.querySelector('[data-testid="combo-class-SHD"]')?.textContent?.trim() ?? ''
+      )
+      check(
+        'the class picker offers whole class names, not /who codes',
+        shdChip === 'Shadow Knight',
+        `the SHD chip reads ${shdChip}`
+      )
       for (const cls of MINE) await page.click(`[data-testid="combo-class-${cls}"]`)
       const count = await page.evaluate(
         () => document.querySelector('[data-testid="loadout-override-count"]')?.textContent ?? ''
