@@ -31,13 +31,18 @@ import { RESIST_AXIS_WORDS } from '@shared/resistTypes'
 import { RESIST_AXIS_COLORS, RESIST_UNKNOWN_COLOR } from './resistColors'
 import { lowSamples } from '@shared/resistModel'
 import {
+  AT_MOB_LEVEL_NOTE,
   DIFFERS_NOTE,
   LOW_SAMPLE_NOTE,
   NO_DATA_TEXT,
+  NPC_ONLY_NOTE,
   USER_ONLY_NOTE,
   bandFraction,
   barFraction,
+  benchmarkRangeText,
+  benchmarkText,
   countText,
+  doesNotFitText,
   estimateText,
   evidenceByFamily,
   evidenceText,
@@ -102,7 +107,17 @@ function AxisNotes({ row }: { row: MobResistAxis }): JSX.Element | null {
   const est = row.estimate
   if (!est) return null
   const split = splitText(est)
-  const notes = [split, est.userOnly && est.fromBaseline > 0 ? USER_ONLY_NOTE : null, est.differsFromShipped ? DIFFERS_NOTE : null]
+  const bench = row.benchmark
+  const notes = [
+    split,
+    // THE INTERVAL IN THE READER'S OWN UNITS (JOS-387). `R 58 (36-102)` is in the number column;
+    // this is the same width of not-knowing said as landing chances, which is what the row is for.
+    bench ? benchmarkRangeText(bench) : null,
+    bench?.atMobLevel === true ? AT_MOB_LEVEL_NOTE : null,
+    est.npcOnly ? NPC_ONLY_NOTE : null,
+    est.userOnly && est.fromBaseline > 0 ? USER_ONLY_NOTE : null,
+    est.differsFromShipped ? DIFFERS_NOTE : null,
+  ]
   const text = notes.filter((n): n is string => n !== null).join(' · ')
   if (!text) return null
   return (
@@ -158,8 +173,21 @@ function EvidencePanel({ row }: { row: MobResistAxis }): JSX.Element {
       )}
       {est.droppedNoLevel > 0 && (
         <Quiet>
-          {est.droppedNoLevel} observation{est.droppedNoLevel === 1 ? '' : 's'} from other players, whose level the
-          log never stated - counted here, not in the number.
+          <span data-testid={`resist-nolevel-${row.axis}`}>
+            {est.droppedNoLevel} observation{est.droppedNoLevel === 1 ? '' : 's'} whose caster level the log never
+            stated - counted here, not in the number.
+          </span>
+        </Quiet>
+      )}
+      {/* JOS-387. Your own casts from before the log said which invocation was up: real casts, with
+          an unknown -150 on them, which is not something a number can be fitted through. */}
+      {est.droppedUnknownInvocation > 0 && (
+        <Quiet>
+          <span data-testid={`resist-noinvocation-${row.axis}`}>
+            {est.droppedUnknownInvocation} of your own cast
+            {est.droppedUnknownInvocation === 1 ? '' : 's'} from before the log stated your invocation - counted
+            here, not in the number.
+          </span>
         </Quiet>
       )}
     </Box>
@@ -194,7 +222,14 @@ function AxisRow({ row }: { row: MobResistAxis }): JSX.Element {
         <Typography variant="body2" sx={{ color, width: 62, flex: '0 0 auto' }}>
           {RESIST_AXIS_WORDS[row.axis]}
         </Typography>
-        {empty || !est ? (
+        {/* THREE STATES, AND THEY ARE THREE DIFFERENT ANSWERS (JOS-387). "nothing has ever been
+            cast at this on this axis" is not "the model could not fit what was cast", and neither
+            is an estimate — so each has its own testid and its own sentence. */}
+        {est !== null && est.pinned ? (
+          <Typography variant="caption" color="warning.main" data-testid={`resist-nofit-${row.axis}`} sx={{ flex: 1 }}>
+            {doesNotFitText(est.empirical)}
+          </Typography>
+        ) : empty || !est ? (
           <Typography variant="caption" color="text.disabled" data-testid={`resist-empty-${row.axis}`} sx={{ flex: 1 }}>
             {NO_DATA_TEXT}
           </Typography>
@@ -209,11 +244,17 @@ function AxisRow({ row }: { row: MobResistAxis }): JSX.Element {
             <Typography variant="caption" color="text.secondary" sx={{ width: 148, flex: '0 0 auto' }}>
               {countText(est.nInformative, est.n)}
             </Typography>
-            {/* The tag and its caveat share one cell, because they are one sentence: the caveat
-                qualifies the tag and would be a different claim sitting anywhere else. The count is
-                already in the column to the left, so it is not repeated here. */}
-            <Typography variant="caption" sx={{ color, width: 96, flex: '0 0 auto' }} data-testid={`resist-tag-${row.axis}`}>
+            {/* The band, its two percentages and the thin-cell caveat are ONE sentence and share one
+                cell: the numbers are what a player scales their own case from (a rank-10 spell is
+                another -150, a malo another 45), and a band without them is a verdict with its
+                arithmetic hidden. */}
+            <Typography variant="caption" sx={{ color, flex: 1, minWidth: 0 }} data-testid={`resist-tag-${row.axis}`}>
               {row.tag}
+              {row.benchmark && (
+                <Typography component="span" variant="caption" color="text.secondary" data-testid={`resist-bench-${row.axis}`}>
+                  {` · ${benchmarkText(row.benchmark)}`}
+                </Typography>
+              )}
               {lowSamples(est.nInformative) && (
                 <Typography component="span" variant="caption" color="text.disabled" data-testid={`resist-low-${row.axis}`}>
                   {` · ${LOW_SAMPLE_NOTE}`}

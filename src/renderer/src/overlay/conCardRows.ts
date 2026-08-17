@@ -46,22 +46,33 @@ import { foldSeenVariants, perceivedDropRate } from '../features/mobs/seenVarian
  * that the window now literally wears. So the card keeps the axes where the answer would CHANGE
  * WHAT YOU CAST, and the card's own empty state carries the rest of the meaning.
  *
- * `resistant` is the cut, and it is the estimator's own boundary rather than a number invented
- * here: `resistTag()` (shared/resistModel.ts) calls R >= 45 resistant, and everything below that is
- * `normal` or `weak`. Reusing the tag is what keeps the card and the page from disagreeing about
- * what "resistant" means — the same reason the chip's colour and word are imported rather than
- * spelled twice.
+ * THE CUT IS THE BENCHMARK'S OWN BOUNDARY (JOS-387, which replaced the R bands with three
+ * viewer-relative guidance bands). `should land` is the answer a player would have assumed and it
+ * leaves the card; the two bands that change what you cast — `needs overchannel` and `may not land
+ * even with overchannel` — stay. Reusing the band is what keeps the card and the page from
+ * disagreeing, the same reason the chip's colour and word are imported rather than spelled twice.
  */
-export const CON_CARD_NOTABLE_TAGS: readonly ResistTag[] = ['resistant', 'very resistant', 'nearly immune']
+export const CON_CARD_NOTABLE_TAGS: readonly ResistTag[] = [
+  'needs overchannel',
+  'may not land even with overchannel'
+]
 
 /**
- * A chip that survived the cut. The nulls are gone by construction — `notableChips` is the only
- * way to make one — so the component that draws it has no absent-answer branch left to get wrong.
+ * A chip that survived the cut, and WHY it survived.
+ *
+ *   `benchmark`   the model answered and its band is one of the two above.
+ *   `resistRate`  the fit did not fit (`pinned`) and the raw observations carried the chip instead:
+ *                 at least half of the informative casts were resisted. A creature that resists
+ *                 half of everything must not vanish from the card because the estimator could not
+ *                 name a number for it — that is the Eye of Veeshan defect, and it is exactly the
+ *                 case where a player most wants the warning.
  */
 export interface ConCardNotableChip extends ConCardChip {
-  tag: ResistTag
-  fit: { R: number; lo: number; hi: number }
+  from: 'benchmark' | 'resistRate'
 }
+
+/** At or above this observed resist rate, a pinned cell earns a chip off the data alone. */
+export const RESIST_RATE_NOTABLE_AT = 0.5
 
 /**
  * The chips the card draws, in the order they arrived (RESIST_AXES order — magic, fire, cold,
@@ -77,14 +88,23 @@ export interface ConCardNotableChip extends ConCardChip {
  * interval and the `low samples` note are the honest display.
  */
 export function notableChips(chips: readonly ConCardChip[]): ConCardNotableChip[] {
-  // `nTotal`, not `n` (JOS-385): the question here is "has anything ever been observed on this
-  // axis", and `n` is now the narrower count of casts that could have been RESISTED. An axis whose
-  // every cast was a -250 proc has been observed plenty; what it lacks is evidence, which is what
-  // the `low samples` caveat on the surviving chip says.
-  return chips.filter(
-    (c): c is ConCardNotableChip =>
-      c.nTotal > 0 && c.tag !== null && c.fit !== null && CON_CARD_NOTABLE_TAGS.includes(c.tag)
-  )
+  const out: ConCardNotableChip[] = []
+  for (const c of chips) {
+    // `nTotal`, not `n` (JOS-385): the question here is "has anything ever been observed on this
+    // axis", and `n` is now the narrower count of casts that could have been RESISTED. An axis
+    // whose every cast was a -250 proc has been observed plenty; what it lacks is evidence, which
+    // is what the `low samples` caveat on the surviving chip says.
+    if (c.nTotal <= 0) continue
+    if (c.pinned) {
+      const { total, resisted } = c.empirical
+      if (total > 0 && resisted / total >= RESIST_RATE_NOTABLE_AT) out.push({ ...c, from: 'resistRate' })
+      continue
+    }
+    if (c.tag !== null && c.fit !== null && CON_CARD_NOTABLE_TAGS.includes(c.tag)) {
+      out.push({ ...c, from: 'benchmark' })
+    }
+  }
+  return out
 }
 
 /**

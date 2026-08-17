@@ -17,6 +17,7 @@
 
 import {
   MAX_DISTINCT_DAMAGE_VALUES,
+  RESIST_LEDGER_SCHEMA,
   type ResistLedger,
   type ResistRow,
   type ResistSource,
@@ -25,7 +26,19 @@ import {
 /** Everything a row is keyed BY. The counts and timestamps are what accretes onto it. */
 export type RowSpec = Omit<ResistRow, 'resist' | 'land' | 'dmg' | 'firstTs' | 'lastTs'>
 
-/** The pooling key: every term of `rc` except R itself. See resistTypes.ts for the argument. */
+/**
+ * The pooling key: every term of `rc` except R itself. See resistTypes.ts for the argument.
+ *
+ * THE RANK AND THE INVOCATION ARE IN IT (JOS-387) because both are resist adjust: a rank is -15
+ * each and overchannel is -150 plus -15 per non-hybrid caster class, so two casts of the same spell
+ * at different ranks — or one in overchannel and one out of it — rolled against different numbers
+ * and may not be pooled.
+ *
+ * THE CLASS COUNT IS IN IT ONLY WHERE IT MATTERS, which is a size decision made once here rather
+ * than a special case scattered through the estimator: it contributes to `rc` only when overchannel
+ * was up, so keying on it unconditionally would split every ordinary row in the shipped baseline on
+ * a value that changes nothing about them.
+ */
 export function rowKey(row: RowSpec): string {
   return [
     row.mobKey,
@@ -35,6 +48,9 @@ export function rowKey(row: RowSpec): string {
     row.casterLevel ?? '',
     row.mobLevel ?? '',
     row.debuffs,
+    row.rank,
+    row.overchannel === null ? '?' : row.overchannel ? 'oc' : '-',
+    row.overchannel === true ? (row.casterClasses ?? 0) : '',
   ].join('|')
 }
 
@@ -158,13 +174,19 @@ export class ResistLedgerStore {
 
   toLedger(): ResistLedger {
     return {
-      schema: 1,
+      schema: RESIST_LEDGER_SCHEMA,
       sources: this.keys().map((key) => ({ key, rows: this.bucket(key).rows() })),
     }
   }
 
+  /**
+   * A LEDGER OF ANY OTHER SCHEMA IS DISCARDED, NOT MIGRATED (JOS-387 bumped this to 2). A schema-1
+   * row pooled its counts across upgrade ranks and across invocation states, and no migration can
+   * un-pool them — so the honest upgrade is the re-fold this app performs from the log on every
+   * launch anyway.
+   */
   seed(ledger: ResistLedger | null | undefined): void {
-    if (ledger?.schema !== 1) return
+    if (ledger?.schema !== RESIST_LEDGER_SCHEMA) return
     for (const src of ledger.sources) this.bucket(src.key).seed(src.rows)
   }
 }

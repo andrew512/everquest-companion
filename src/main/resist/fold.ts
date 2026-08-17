@@ -90,7 +90,8 @@
 // keys that are people's names, in a file this repo publishes. NPC casters would have made it a
 // flood, because mobs cast on the player's group constantly.
 
-import { idKey, spellCanonKey } from '../log/parseCommon'
+import { idKey, spellCanonKey, spellRank } from '../log/parseCommon'
+import { casterClassCount } from '../../shared/resistFormula'
 import { mobKey } from '../../shared/mobKey'
 import type { LogEvent } from '../../shared/logEvents'
 import type { SpellDb } from '../data/spellDb'
@@ -117,6 +118,12 @@ export const CAST_JOIN_MS = 10_000
 
 /** How long a deferred emote-landing waits to see whether a damage line cancels it. */
 export const LAND_DEFER_MS = 3_000
+
+/**
+ * The invocation name (as the parser lowercases it) that carries the -150 resist adjust. The other
+ * eight are mutually exclusive with it, so reciting any of them turns it OFF.
+ */
+export const OVERCHANNEL_INVOCATION = 'overchannel'
 
 /** Bound on the display-name -> key cache. Cleared wholesale rather than evicted one at a time. */
 const MAX_KEY_CACHE = 4_096
@@ -145,6 +152,10 @@ interface Armed {
   ts: number
   kind: ResistCasterKind
   level: number | null
+  /** The upgrade rank the cast line printed, 0 when it printed none (JOS-387). */
+  rank: number
+  /** The invocation state AT THE MOMENT OF THE CAST, which is the moment that decides the roll. */
+  overchannel: boolean | null
   /**
    * Mobs this cast has already printed a DAMAGE line for. One cast is ONE roll, and a spell that
    * both damages and emotes prints both for it — so the emote must not also be counted.
@@ -171,6 +182,10 @@ interface Observation {
   /** The CASTER's level, or null when nothing has stated it. */
   level: number | null
   ts: number
+  /** The spell upgrade rank this observation was made at. -15 of resist adjust each (JOS-387). */
+  rank: number
+  /** Whether the overchannel invocation was up. See `ResistRow.overchannel` for the three states. */
+  overchannel: boolean | null
 }
 
 interface Deferred {
@@ -179,6 +194,8 @@ interface Deferred {
   ts: number
   kind: ResistCasterKind
   level: number | null
+  rank: number
+  overchannel: boolean | null
 }
 
 export interface ResistFoldDeps {
@@ -194,6 +211,31 @@ export class ResistFold {
   private readonly songs: SongFold
   private zone: string | undefined
   private selfLevel: number | null = null
+  /**
+   * THE INVOCATION STATE, and it is a state machine rather than a per-cast fact (JOS-387).
+   *
+   * `null` until the log's first `You begin reciting the <name> invocation.` line, and NEVER
+   * assumed from there: a character who logged in already overchannelling prints nothing, so an
+   * app that guessed `false` would model a -150 offset as absent on every cast of the session. The
+   * nine invocations are mutually exclusive, so reciting any other one turns overchannel off.
+   *
+   * A RELOG CARRIES IT AND WE CANNOT SEE THAT, which is why nothing here resets on a zone line or a
+   * session boundary: the character keeps the invocation across a camp, and forgetting it would
+   * throw away a fact the log did state in favour of one it never will.
+   */
+  private overchannel: boolean | null = null
+  /**
+   * How many non-hybrid caster classes the character runs, from its own `/who` row — the -15-each
+   * half of the overchannel adjust. Zero until a row is seen, which is the honest floor: the
+   * `-150` is certain and the rest is not, and the surfaces say so.
+   */
+  private selfCasterClasses = 0
+  /**
+   * SONG SPELL KEY -> the last upgrade rank seen for it. Songs are the one family whose observations
+   * do not come through an armed cast (under the Symphonic Aura there is no cast line at all), so a
+   * pulse's rank has to be remembered from whichever line last printed one for that song.
+   */
+  private songRanks = new Map<string, number>()
   private armed: Armed[] = []
   private dotSeen = new Set<string>()
   private deferred: Deferred | null = null
@@ -268,6 +310,9 @@ export class ResistFold {
     this.songs.reset()
     this.zone = undefined
     this.selfLevel = null
+    this.overchannel = null
+    this.selfCasterClasses = 0
+    this.songRanks = new Map()
     this.armed = []
     this.dotSeen = new Set()
     this.deferred = null
@@ -295,6 +340,12 @@ export class ResistFold {
         return true
       case 'selfWho':
         this.selfLevel ??= ev.level
+        // The ONE line in the game that states the loadout, and therefore the only thing that can
+        // answer "how many non-hybrid caster classes" for the overchannel adjust.
+        this.selfCasterClasses = casterClassCount(ev.classes)
+        return true
+      case 'invocationChange':
+        this.overchannel = ev.invocation === OVERCHANNEL_INVOCATION
         return true
       case 'consider':
         this.onConsider(ev.mob, ev.level)
@@ -444,22 +495,78 @@ export class ResistFold {
   private fileSong(mobDisplay: string, songKey: string, ts: number): ResistRow | null {
     if (!isMobTarget(mobDisplay)) return null
     this.remember(mobDisplay)
-    return this.rowFor({ mob: mobDisplay, spellKey: songKey, family: 'song', kind: 'self', level: this.selfLevel, ts })
+    return this.rowFor({
+      mob: mobDisplay,
+      spellKey: songKey,
+      family: 'song',
+      kind: 'self',
+      level: this.selfLevel,
+      ts,
+      rank: this.songRanks.get(songKey) ?? 0,
+      // A SONG IS NOT A CAST SPELL, so the wiki's -150 does not reach it (JOS-387). If the owner's
+      // log ever shows a song's resist rate moving with the invocation state, that is a finding to
+      // report, not a term to model.
+      overchannel: false,
+    })
   }
 
   private onCastBegin(spell: string, ts: number, sung: boolean): void {
     const key = spellCanonKey(spell)
+    const rank = spellRank(spell)
     if (sung) this.songs.noteSung(key, ts)
+    if (rank > 0) this.songRanks.set(key, rank)
     // A fresh cast re-arms the "first tick counts as a landing" memory for this spell.
     for (const seen of [...this.dotSeen]) {
       if (seen.endsWith(SEP + key)) this.dotSeen.delete(seen)
     }
-    this.arm({ spellKey: key, display: spell, ts, kind: 'self', level: this.selfLevel, damaged: new Set() })
+    this.arm({
+      spellKey: key,
+      display: spell,
+      ts,
+      kind: 'self',
+      level: this.selfLevel,
+      rank,
+      overchannel: this.overchannel,
+      damaged: new Set(),
+    })
   }
 
   private onOtherCast(caster: string, spell: string, ts: number): void {
     if (this.casters.kindOf(caster) !== 'pc') return
-    this.arm({ spellKey: spellCanonKey(spell), display: spell, ts, kind: 'pc', level: null, damaged: new Set() })
+    this.arm({
+      spellKey: spellCanonKey(spell),
+      display: spell,
+      ts,
+      kind: 'pc',
+      level: null,
+      rank: spellRank(spell),
+      // Nothing states a stranger's invocation, ever. Unknowable, and never assumed.
+      overchannel: null,
+      damaged: new Set(),
+    })
+  }
+
+  /**
+   * THE INVOCATION AS THIS OBSERVATION SAW IT, and the proc rule with it (JOS-387).
+   *
+   * The wiki's -150 is on CAST SPELLS, so a proc must not carry it — and the log has no field that
+   * says "this was a proc". What it has is the CAST LINE: a proc prints none (measured on the
+   * owner's log — 19,874 Smiting Strike hits and 0 `You begin casting Smiting Strike`, and the same
+   * for Condemnation of Nife, the resistable adjust-0 proc that carries most of the informative
+   * evidence on some mobs). So joining an armed cast IS the test for "a cast spell", and an
+   * observation that joins none answers `false`.
+   *
+   * THE RESIDUAL, stated: a DoT's first tick can arrive after `CAST_JOIN_MS` and would then be
+   * filed as though no invocation was up. It is rare (ticks start about six seconds in) and it
+   * costs a -150 the row really had, which reads the mob as slightly weaker than it is on those
+   * rows alone.
+   */
+  private invocationFor(kind: ResistCasterKind, cast: Armed | null): boolean | null {
+    // Nothing states another player's or a creature's invocation, so their rows are unknowable and
+    // say so. (They are held out of the fit for a DIFFERENT reason — see resistModel.ts: a `pc` row
+    // has no level either, and an `npc` is not a Legends character reciting invocations at all.)
+    if (kind !== 'self') return null
+    return cast ? cast.overchannel : false
   }
 
   /** The most recent armed cast this line can belong to, WITHOUT consuming it. */
@@ -513,7 +620,15 @@ export class ResistFold {
     if (cast.damaged.has(key)) return
     // DEFERRED: a damage line for the same mob and spell cancels it (see the header).
     this.flushDeferred(Number.POSITIVE_INFINITY)
-    this.deferred = { mobDisplay, spellKey: cast.spellKey, ts, kind: cast.kind, level: cast.level }
+    this.deferred = {
+      mobDisplay,
+      spellKey: cast.spellKey,
+      ts,
+      kind: cast.kind,
+      level: cast.level,
+      rank: cast.rank,
+      overchannel: this.invocationFor(cast.kind, cast),
+    }
   }
 
   private flushDeferred(now: number): void {
@@ -523,7 +638,16 @@ export class ResistFold {
     // Only YOUR emote-landings are attributable. A stranger's sentence names no caster, and an
     // npc's cast is never armed in the first place (see the header).
     if (d.kind !== 'self') return
-    this.rowFor({ mob: d.mobDisplay, spellKey: d.spellKey, family: 'cast', kind: d.kind, level: d.level, ts: d.ts }).land += 1
+    this.rowFor({
+      mob: d.mobDisplay,
+      spellKey: d.spellKey,
+      family: 'cast',
+      kind: d.kind,
+      level: d.level,
+      ts: d.ts,
+      rank: d.rank,
+      overchannel: d.overchannel,
+    }).land += 1
   }
 
   private cancelDeferred(mobDisplay: string, spellKey: string): void {
@@ -540,10 +664,34 @@ export class ResistFold {
     if (!isMobTarget(ev.target)) return
     const kind = this.casters.kindOf(ev.caster)
     const spellKey = spellCanonKey(ev.spell)
+    // The resist line is the one outcome line that PRINTS the rank (719 of the owner's 3,304 do),
+    // so it beats the armed cast rather than falling back to it.
+    const lineRank = spellRank(ev.spell)
+    if (lineRank > 0 && kind === 'self') this.songRanks.set(spellKey, lineRank)
     this.remember(ev.target)
     if (this.songs.onResist(ev.target, spellKey, kind, ev.ts)) return
     const level = this.casterLevel(kind, ev.caster)
-    this.rowFor({ mob: ev.target, spellKey, family: 'cast', kind, level, ts: ev.ts }).resist += 1
+    const cast = this.castOf(kind, spellKey, ev.ts)
+    this.rowFor({
+      mob: ev.target,
+      spellKey,
+      family: 'cast',
+      kind,
+      level,
+      ts: ev.ts,
+      rank: lineRank > 0 ? lineRank : (cast?.rank ?? 0),
+      overchannel: this.invocationFor(kind, cast),
+    }).resist += 1
+  }
+
+  /**
+   * The armed cast this outcome may read its rank and invocation off — THIS CASTER's, never
+   * another's. `peekArmed` matches on the spell alone (its own reader only wants to mark a mob as
+   * damaged), and a charmed pet throwing the same spell as you must not inherit your rank.
+   */
+  private castOf(kind: ResistCasterKind, spellKey: string, ts: number): Armed | null {
+    const cast = this.peekArmed(spellKey, ts)
+    return cast && cast.kind === kind ? cast : null
   }
 
   /**
@@ -589,7 +737,20 @@ export class ResistFold {
     this.cancelDeferred(ev.target, spellKey)
     this.peekArmed(spellKey, ev.ts)?.damaged.add(this.keyOf(ev.target))
     const level = this.casterLevel(kind, attacker)
-    const row = this.rowFor({ mob: ev.target, spellKey, family: 'cast', kind, level, ts: ev.ts })
+    // A damage line almost never prints the rank (four lines in two million, all Harm Touch), so
+    // the armed cast is the ordinary source and the line is the exception that beats it.
+    const lineRank = spellRank(ev.skill)
+    const cast = this.castOf(kind, spellKey, ev.ts)
+    const row = this.rowFor({
+      mob: ev.target,
+      spellKey,
+      family: 'cast',
+      kind,
+      level,
+      ts: ev.ts,
+      rank: lineRank > 0 ? lineRank : (cast?.rank ?? 0),
+      overchannel: this.invocationFor(kind, cast),
+    })
     if (ev.dtype === 'dot') this.onDotTick(row, ev.target, spellKey)
     else this.fileHit(row, ev)
   }
@@ -626,7 +787,11 @@ export class ResistFold {
       casterLevel: obs.level,
       mobLevel: level?.level ?? null,
       debuffs: this.debuffs.active(key, obs.ts),
+      rank: obs.rank,
+      overchannel: obs.overchannel,
     }
+    // Only where it changes rc, which is what keeps it out of the key on every ordinary row.
+    if (obs.overchannel === true) spec.casterClasses = this.selfCasterClasses
     if (this.zone !== undefined) spec.zone = this.zone
     if (level && level.lo !== level.hi) {
       spec.mobLevelLo = level.lo

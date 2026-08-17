@@ -56,16 +56,18 @@ import { loadSpellDb } from '../src/main/data/spellDb'
 import { ResistFold } from '../src/main/resist/fold'
 import { rowTotal } from '../src/main/resist/ledger'
 import { parseSpellsUs } from '../src/main/resist/spellsUsParse'
-import { estimate, unobservableSpells } from '../src/shared/resistModel'
+import { estimate, fullDamageRefs, unobservableSpells } from '../src/shared/resistModel'
 import {
   BASELINE_SOURCE_KEY,
   RESIST_AXES,
+  RESIST_LEDGER_SCHEMA,
   type ResistAxis,
   type ResistFit,
   type ResistLedger,
   type ResistRow,
   type SpellResistTable,
 } from '../src/shared/resistTypes'
+import { resistBenchmark } from '../src/shared/resistFormula'
 
 const DEFAULT_LOG =
   'C:/Users/Public/Daybreak Game Company/Installed Games/EverQuest Legends/Logs/eqlog_Primitive_freeport.txt'
@@ -243,9 +245,84 @@ function reportCompare(cells: CompareCell[]): void {
   )
 }
 
+// ---------------------------------------------------------------- `--cells` and the invocation
+//                                                                   census (JOS-387)
+
+/**
+ * WHAT THE INVOCATION TRACKING ACTUALLY SAW, printed on every mine.
+ *
+ * Two numbers the ticket asks for by name, and they are the honest audit of a state machine that
+ * cannot be tested against ground truth: how much of your own evidence was gathered with the
+ * overchannel invocation up, and how much of it predates the log's first invocation line and is
+ * therefore counted but never weighed.
+ */
+function reportInvocations(rows: readonly ResistRow[]): void {
+  const tally = { on: 0, off: 0, unknown: 0 }
+  let ranked = 0
+  const ranks = new Map<number, number>()
+  for (const row of rows) {
+    const total = rowTotal(row)
+    if (row.rank > 0) {
+      ranked += total
+      ranks.set(row.rank, (ranks.get(row.rank) ?? 0) + total)
+    }
+    if (row.casterKind !== 'self') continue
+    if (row.overchannel === null) tally.unknown += total
+    else if (row.overchannel) tally.on += total
+    else tally.off += total
+  }
+  const self = tally.on + tally.off + tally.unknown
+  console.log(
+    `[invocations] self observations ${String(self)}: ${String(tally.on)} in overchannel, ` +
+      `${String(tally.off)} out of it, ${String(tally.unknown)} before the log's first invocation line.`
+  )
+  const spread = [...ranks.entries()].sort((a, b) => a[0] - b[0]).map(([r, n]) => `${String(r)}:${String(n)}`)
+  console.log(`[ranks] ${String(ranked)} observations carry an upgrade rank (rank:observations ${spread.join(' ')})`)
+}
+
+/** The cells the ticket and the owner review name, so a before/after is one command. */
+const REPORT_CELLS: readonly { mob: string; axis: ResistAxis }[] = [
+  { mob: 'a thunder spirit princess', axis: 'magic' },
+  { mob: 'a thunder spirit princess', axis: 'fire' },
+  { mob: 'lord nagafen', axis: 'magic' },
+  { mob: 'eye of veeshan', axis: 'poison' },
+  { mob: 'eye of veeshan', axis: 'magic' },
+  { mob: 'a dracoliche', axis: 'disease' },
+  { mob: 'a dracoliche', axis: 'poison' },
+]
+
+/** The viewer the report benchmarks at: the owner's own level. */
+const REPORT_VIEWER_LEVEL = 50
+
+function reportCells(rows: readonly ResistRow[], spells: SpellResistTable): void {
+  const blind = unobservableSpells(rows)
+  const refs = fullDamageRefs(rows)
+  for (const { mob, axis } of REPORT_CELLS) {
+    const mobRows = rows.filter((r) => r.mobKey === mob)
+    const mobLevel = mobLevelOf(mobRows)
+    const est = estimate(mobRows, spells, { axis, mobLevel, unobservable: blind, modes: refs })
+    const b = resistBenchmark(Math.max(0, est.R), REPORT_VIEWER_LEVEL, mobLevel)
+    const tag = est.pinned
+      ? `DOES NOT FIT (${String(est.empirical.resisted)}/${String(est.empirical.total)} resisted)`
+      : est.resistsAlmostEverything
+        ? 'may not land even with overchannel (hard rule)'
+        : b.tag
+    console.log(
+      `${mob} / ${axis}: R ${String(Math.max(0, est.R))} (${String(Math.max(0, est.lo))}-${String(Math.max(0, est.hi))}) ` +
+        `n=${String(est.nInformative)} informative / ${String(est.n)} total, mobLevel ${String(mobLevel)} -> ${tag} ` +
+        `· lands ${String(Math.round(b.pPlain * 100))}% · with overchannel ${String(Math.round(b.pOver * 100))}%` +
+        `${est.npcOnly ? ' · from pets and other creatures only' : ''}` +
+        `${est.droppedNoLevel > 0 ? ` · ${String(est.droppedNoLevel)} dropped for no caster level` : ''}` +
+        `${est.droppedUnknownInvocation > 0 ? ` · ${String(est.droppedUnknownInvocation)} dropped for unknown invocation` : ''}` +
+        `${est.droppedUnobservable > 0 ? ` · ${String(est.droppedUnobservable)} dropped as unobservable` : ''}`
+    )
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const compare = args.includes('--compare')
+  const cells = args.includes('--cells')
   const logs = args.filter((a) => !a.startsWith('-'))
   const paths = logs.length > 0 ? logs : [DEFAULT_LOG]
 
@@ -268,13 +345,15 @@ async function main(): Promise<void> {
     }
   }
 
-  if (compare) {
+  if (compare || cells) {
     // The CLIENT's table, read straight rather than through the app's worker + cache: this is a dev
     // script on the dev machine, and 38 MB read once is cheaper than the plumbing.
     const spellsPath = process.env.EQ_SPELLS_US ?? DEFAULT_SPELLS_US
     const spells = parseSpellsUs(readFileSync(spellsPath, 'utf8'))
-    console.log(`[compare] ${String(lines)} lines -> ${String(all.length)} rows, spell table ${spellsPath}`)
-    reportCompare(compareCells(all, spells))
+    console.log(`[${compare ? 'compare' : 'cells'}] ${String(lines)} lines -> ${String(all.length)} rows, spell table ${spellsPath}`)
+    reportInvocations(all)
+    if (compare) reportCompare(compareCells(all, spells))
+    else reportCells(all, spells)
     return
   }
 
@@ -292,9 +371,11 @@ async function main(): Promise<void> {
         : a.mobKey.localeCompare(b.mobKey)
     )
 
+  reportInvocations(all)
+
   const mtime = spellsUsMtime()
   const ledger: ResistLedger = {
-    schema: 1,
+    schema: RESIST_LEDGER_SCHEMA,
     frozenAt: FROZEN_AT,
     ...(mtime === null ? {} : { spellsUsMtime: mtime }),
     sources: [{ key: BASELINE_SOURCE_KEY, rows }],

@@ -23,7 +23,13 @@
 // it. Everything here is a type, a constant or a total function, so `npm test` exercises every rule.
 
 import { isPlayerShapedName } from './playerShape'
-import { RESIST_AXES, type MobResistProfile, type ResistAxis, type ResistTag } from './resistTypes'
+import {
+  RESIST_AXES,
+  type MobResistProfile,
+  type ResistAxis,
+  type ResistAxisBenchmark,
+  type ResistTag
+} from './resistTypes'
 // TYPE-ONLY, so the cycle it closes (types.ts names this file's config blob) is erased at compile
 // time. `shared/buffTimers.ts` takes the same shape for the same reason: the knob-applier belongs
 // beside the kind's own vocabulary, not inside a store module at its factoring ceiling.
@@ -166,8 +172,23 @@ export function conCardHoldMs(cfg: ConCardOverlayConfig): number {
  */
 export interface ConCardChip {
   axis: ResistAxis
-  /** The plain-language tag, or null only when nothing at all has been observed on this axis. */
+  /**
+   * The guidance band. Null when nothing at all has been observed on this axis — and, since
+   * JOS-387, also when the fit is PINNED: a posterior that slid off the end of the grid is the
+   * model saying it cannot answer, and a card that printed a band anyway would be inventing one.
+   */
   tag: ResistTag | null
+  /**
+   * The two landing chances behind the band, at the viewer's level. Present exactly when `tag` is;
+   * the chip prints both numbers under the band so a player can scale their own case.
+   */
+  benchmark: ResistAxisBenchmark | null
+  /** The fit ran out of grid: no number, no band, and the raw resist rate instead (JOS-387). */
+  pinned: boolean
+  /** What the informative observations said, with no model in the way: total, and how many resisted. */
+  empirical: { total: number; resisted: number }
+  /** Every observation behind this axis came from a pet or another creature. The chip says so. */
+  npcOnly: boolean
   /**
    * OBSERVATIONS THAT COULD HAVE GONE EITHER WAY (JOS-385): the count the chip prints and the count
    * its low-samples caveat keys off. It is `ResistEstimate.nInformative`, not `n`, and the two are
@@ -262,6 +283,10 @@ export function conCardChips(profile: MobResistProfile): ConCardChip[] {
     return {
       axis,
       tag,
+      benchmark: row?.benchmark ?? null,
+      pinned: est?.pinned === true,
+      empirical: est?.empirical ?? { total: 0, resisted: 0 },
+      npcOnly: est?.npcOnly === true,
       // THE SAME TWO NUMBERS THE MOB PAGE PRINTS, and taken off the same estimate rather than
       // recomputed: a chip that counted a -250 proc's casts and a row that did not would be two
       // surfaces disagreeing about how much this app knows (JOS-385).
