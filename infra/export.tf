@@ -63,11 +63,11 @@ locals {
 # night before. Two contradictory retention policies cannot live in one bucket,
 # so they live in two.
 #
-# The name carries the account id, which is the AWS-conventional uniqueness
-# suffix. It never lands in git: it is read from `aws_caller_identity` at apply
-# time, exactly like the alarms' topic policy already does.
+# The name carries the SAME random suffix as the logs bucket (s3.tf) rather than
+# the account id: s3.tf chose the random suffix so a bucket name is never
+# guessable from the account, and one convention beats two.
 resource "aws_s3_bucket" "archive" {
-  bucket = "${var.name_prefix}-analytics-archive-${data.aws_caller_identity.current.account_id}"
+  bucket = "${var.name_prefix}-analytics-archive-${random_id.bucket_suffix.hex}"
 
   # The whole reason this bucket exists is that data can be lost. A
   # `terraform destroy` that could take the backups with it would be the exact
