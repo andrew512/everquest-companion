@@ -5,14 +5,17 @@
 // (tests/e2e/con-card.e2e.mts). Everything below runs with no Electron.
 //
 // The claims are grouped the way the ticket states them: the kind and where it opens, the two
-// refusals (a player, and a re-con after a close), the five chips, the drop lines, and the one
-// knob.
+// refusals (a player, and a re-con after a close), the chips it keeps, and the one knob.
+//
+// THE DROP CLAIMS ARE GONE (JOS-390), not moved: the card no longer carries a drop table at all —
+// it carries a CLICK to the mob page, which has always owned the fold, the ranking and the
+// perceived rate (and whose own tests, tests/mobDropVariants.test.mts, never depended on this
+// surface). What replaced them here is the auto-hide's new number and the payload staying narrow.
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   CON_CARD_MAX_AUTO_HIDE_MS,
-  CON_CARD_MAX_DROPS,
   CON_CARD_MIN_AUTO_HIDE_MS,
   CON_CARD_NEVER_HIDES,
   CON_CARD_REOPEN_SUPPRESS_MS,
@@ -27,7 +30,7 @@ import {
 } from '../src/shared/conCard'
 import {
   CON_CARD_NOTABLE_TAGS,
-  conCardDropLines,
+  CON_CARD_OPEN_HINT,
   conCardTotalN,
   notableChips
 } from '../src/renderer/src/overlay/conCardRows'
@@ -363,78 +366,49 @@ test('THE CHIP COUNTS WHAT COULD HAVE BEEN RESISTED, and carries the total besid
   assert.equal(conCardTotalN(allUninformative), 40, 'and the profile has plainly seen something')
 })
 
-// ---- the drops --------------------------------------------------------------------------
+// ---- what the card is NOT (JOS-390) -------------------------------------------------------
 
 function payload(spec: Partial<ConCardPayload> = {}): ConCardPayload {
   return { id: 'a lava guardian', ts: 1, name: 'A lava guardian', chips: [], spellData: true, ...spec }
 }
 
-test('the wiki table leads, YOUR corroboration ranks it, and your extras come last and say so', () => {
-  const { lines, more } = conCardDropLines(
-    payload({
-      dropsWiki: [
-        { item: 'Molten Cloak', rarity: 'Rare' },
-        { item: 'Lava Rock' },
-        { item: 'Cinder Bracer' }
-      ],
-      dropsSeen: [
-        { item: 'Lava Rock', count: 6, lastTs: 20 },
-        { item: 'Molten Cloak', count: 1, lastTs: 30 },
-        { item: 'Charred Tooth', count: 2, lastTs: 10 }
-      ],
-      kills: 24
-    }),
-    CON_CARD_MAX_DROPS
+test('THE PAYLOAD CARRIES NO DROPS, NO KILLS AND NO RESPAWN — the card is a lily pad', () => {
+  // The narrowing is a WIRE fact, not only a layout one: main stopped looking any of it up
+  // (main/conCard.ts's second pass is the spell table and nothing else), so a payload that grew one
+  // of these keys back would be a lookup nobody asked for riding a `/con`.
+  const p = payload({ level: 51, zone: 'Lower Guk', rare: true })
+  assert.deepEqual(
+    Object.keys(p).sort(),
+    ['chips', 'id', 'level', 'name', 'rare', 'spellData', 'ts', 'zone'],
+    'the header, the chips, and the two flags — nothing else crosses'
   )
-  assert.deepEqual(lines.map((l) => l.item), ['Lava Rock', 'Molten Cloak', 'Cinder Bracer', 'Charred Tooth'])
-  assert.equal(more, 0)
-  assert.equal(lines[0].seen, 6, 'most-looted first, inside the page’s own list')
-  assert.equal(lines[0].perKill, 6 / 24, 'the perceived rate, over YOUR recorded kills')
-  assert.equal(lines[2].seen, undefined, 'a listed drop you have never had says nothing about counts')
-  assert.equal(lines[2].perKill, null, 'and never a zero rate (JOS-78)')
-  assert.equal(lines[3].yoursOnly, true, 'the item only your history knows is marked')
-  assert.equal(lines[1].rarity, 'Rare', 'the page’s verbatim rarity survives')
+  for (const gone of ['dropsWiki', 'dropsSeen', 'kills', 'respawn', 'knowledgeIn']) {
+    assert.ok(!(gone in p), `${gone} left the card with the drops`)
+  }
 })
 
-test('a `+N` family is ONE line with the folded count - the mob page’s own fold', () => {
-  const { lines } = conCardDropLines(
-    payload({
-      dropsWiki: [{ item: 'Sphinx Claw' }],
-      dropsSeen: [
-        { item: 'Sphinx Claw', count: 1, lastTs: 1 },
-        { item: 'Sphinx Claw +1', count: 1, lastTs: 2 },
-        { item: 'Sphinx Claw +2', count: 1, lastTs: 3 }
-      ],
-      kills: 10
-    }),
-    CON_CARD_MAX_DROPS
-  )
-  assert.equal(lines.length, 1, 'three loots of one item are one line')
-  assert.equal(lines[0].seen, 3, 'and the count is their sum, not any one of them')
-  assert.equal(lines[0].perKill, 0.3)
-})
-
-test('past the cap the card COUNTS what it is not showing rather than truncating in silence', () => {
-  const wiki = Array.from({ length: 9 }, (_, i) => ({ item: `Item ${String(i)}` }))
-  const { lines, more } = conCardDropLines(payload({ dropsWiki: wiki }), CON_CARD_MAX_DROPS)
-  assert.equal(lines.length, CON_CARD_MAX_DROPS)
-  assert.equal(more, 4)
-})
-
-test('no knowledge yet is not the same as no drops - the card is handed neither list', () => {
-  const { lines, more } = conCardDropLines(payload(), CON_CARD_MAX_DROPS)
-  assert.deepEqual(lines, [])
-  assert.equal(more, 0)
+test('the hint the card wears is ONE sentence, said as a destination rather than an instruction', () => {
+  // It names where the click GOES, which is the repo's state-never-process rule. It is the card's
+  // accessible NAME and never a `title` — the brief asked for a native tooltip on the grounds that
+  // this bundle is popper-free, and a popper-free bundle is exactly where the 2026-08-16 ruling
+  // came from (JOS-358: an always-on-top window can strand a native tooltip over the game).
+  // tests/overlayTooltipPolicy.test.mts is the sweep that enforces it across the whole directory.
+  assert.equal(CON_CARD_OPEN_HINT, 'Open in the app')
+  assert.ok(!/click/i.test(CON_CARD_OPEN_HINT), 'a hint describes the destination, not the gesture')
 })
 
 // ---- the one knob -----------------------------------------------------------------------
 
-test('the auto-hide clamps, defaults to FIVE seconds, and ZERO survives as "never"', () => {
+test('the auto-hide clamps, defaults to THREE seconds, and ZERO survives as "never"', () => {
   assert.deepEqual(normalizeConCardConfig(undefined), DEFAULT_CON_CARD_CONFIG)
   assert.equal(DEFAULT_CON_CARD_CONFIG.autoHideMs, DEFAULT_CON_CARD_AUTO_HIDE_MS)
-  // JOS-388, and the number is the whole ticket: an untouched store and a fresh install both read
+  // JOS-390, and the number is half the ticket: an untouched store and a fresh install both read
   // THIS, so it is asserted literally rather than through the constant it is compared to above.
-  assert.equal(DEFAULT_CON_CARD_AUTO_HIDE_MS, 5_000, 'the owner’s default (2026-08-16: was 20 s)')
+  assert.equal(DEFAULT_CON_CARD_AUTO_HIDE_MS, 3_000, 'the owner’s default (2026-08-16: was 5 s)')
+  // AND IT IS EXACTLY THE FLOOR, which is one statement read twice: three seconds is the least a
+  // card can be read in, and the shipped hold is that. A default BELOW its own floor would be a
+  // number no store could ever hold.
+  assert.equal(DEFAULT_CON_CARD_AUTO_HIDE_MS, CON_CARD_MIN_AUTO_HIDE_MS, 'the default IS the floor')
   // …and it is a value the knob can actually express, above the floor and below the cap, so nobody
   // arrives at Preferences to find the control showing a duration it does not offer.
   assert.ok(

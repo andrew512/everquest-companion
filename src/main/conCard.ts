@@ -12,11 +12,19 @@
 //
 // IT ARRIVES IN TWO PASSES, AND THE SECOND IS NOT A CORRECTION. The whole point of this card is the
 // two seconds before you decide to fight, so pass 1 goes out the instant the line is parsed with
-// everything that needs no lookup: the name, the level the game just stated, the zone, and the five
-// resist chips off the ledger. Pass 2 follows when `lookupMob` answers — the drop table, your own
-// looted counts, the respawn — and refreshes the SAME queue id, which the overlay treats as the
-// card it already has getting fuller rather than a second card. A lookup that never answers simply
-// leaves pass 1 on screen, which is the honest state (world-model law 1).
+// everything that needs no lookup: the name, the level the game just stated, the zone, and the
+// resist chips off whatever the ledger can already answer. Pass 2 follows when the client's own
+// `spells_us.txt` has been read (once per launch, on a worker thread) and refreshes the SAME queue
+// id with the chips filled in, which the overlay treats as the card it already has getting fuller
+// rather than a second card. A read that never answers simply leaves pass 1 on screen, which is the
+// honest state (world-model law 1).
+//
+// THE MOB-KNOWLEDGE LOOKUP IS GONE FROM BOTH PASSES (JOS-390). The card used to carry the drop
+// table, your looted counts, your kills and the respawn, and pass 2 was `lookupMob` — a cache-first
+// call that for a wiki mob rides a politely-spaced network queue. The owner narrowed the card to
+// its header, its resist chips and a CLICK that opens the mob page, so all of that is now fetched by
+// the page that always owned it. What is left here is local: the ledger, and a spell table this
+// process was reading anyway.
 //
 // THE THREE REFUSALS, all of them the owner's scope:
 //   * NEVER FOR A PLAYER. `/con` on another character prints the same shape as `/con` on a mob, so
@@ -33,23 +41,17 @@ import { IPC } from '../shared/ipc'
 import { logError } from './errorLog'
 import { getOverlayConfig } from './store'
 import { getOverlayWindow } from './windows'
-import { killsFor } from '../shared/kills'
 import { mobKey } from '../shared/mobKey'
 import {
-  CON_CARD_WIRE_DROPS,
   cappedName,
   conCardChips,
   conCardIsPlayer,
   conCardSuppressed,
-  type ConCardPayload,
-  type ConCardSeenDrop,
-  type ConCardWikiDrop
+  type ConCardPayload
 } from '../shared/conCard'
 import type { ConsiderEvent } from '../shared/logEvents'
-import type { MobKnowledge } from '../shared/types'
-import { localMobEntry, lookupMob } from './mobLookup'
-import { wikiRespawnFor } from './modules/respawn'
-import { considerModule, killsModule } from './pipeline'
+import { localMobEntry } from './mobLookup'
+import { considerModule } from './pipeline'
 import { resistProfileDeps } from './ipc/resist'
 import { mobResistProfile } from './resist/profile'
 import { spellTable } from './resist/spellTable'
@@ -66,8 +68,8 @@ export function looksLikePlayer(name: string): boolean {
   return conCardIsPlayer(name, (n) => localMobEntry(n) !== null)
 }
 
-/** Which mob the card on screen is about, so a late lookup for a mob that has been replaced by a
- *  newer `/con` is dropped instead of overwriting the newer card. */
+/** Which mob the card on screen is about, so a late second pass for a mob that has been replaced by
+ *  a newer `/con` is dropped instead of overwriting the newer card. */
 let showing: string | null = null
 
 /**
@@ -96,26 +98,7 @@ function chipsFor(display: string): { chips: ConCardPayload['chips']; spellData:
   return { chips: conCardChips(profile), spellData: profile.spellDataAvailable }
 }
 
-/** The wiki drop table, trimmed to what a card can carry. */
-function wireWikiDrops(k: MobKnowledge): ConCardWikiDrop[] {
-  return (k.dropsWiki ?? []).slice(0, CON_CARD_WIRE_DROPS).map((d) => {
-    const row: ConCardWikiDrop = { item: d.item }
-    if (d.rarity !== undefined) row.rarity = d.rarity
-    return row
-  })
-}
-
-/** What YOUR log has looted off it, trimmed the same way. The `+N` fold happens in the overlay,
- *  through the mob page's own `foldSeenVariants` — one fold, two surfaces. */
-function wireSeenDrops(k: MobKnowledge): ConCardSeenDrop[] {
-  return (k.dropsSeen ?? []).slice(0, CON_CARD_WIRE_DROPS).map((d) => ({
-    item: d.item,
-    count: d.count,
-    lastTs: d.lastTs
-  }))
-}
-
-/** The card as the log line alone can describe it, before any lookup has answered. */
+/** The card as the log line alone can describe it, before the spell table has been read. */
 function firstPass(ev: ConsiderEvent, zone: string | undefined, key: string): ConCardPayload {
   const display = cappedName(ev.mob)
   const { chips, spellData } = chipsFor(display)
@@ -123,28 +106,6 @@ function firstPass(ev: ConsiderEvent, zone: string | undefined, key: string): Co
   if (ev.level !== undefined) payload.level = ev.level
   if (zone !== undefined) payload.zone = zone
   if (ev.rare) payload.rare = true
-  // The respawn is LOCAL — a committed table, keyed by the same name — so it costs nothing to
-  // answer now rather than waiting for the network half of the knowledge lookup.
-  const respawn = wikiRespawnFor(key)
-  if (respawn) payload.respawn = respawn.text
-  return payload
-}
-
-/**
- * The card once the knowledge has landed: everything pass 1 said, plus what it drops and how often
- * YOU have had it. `knowledgeIn` is what lets the overlay tell "this mob drops nothing we know of"
- * from "we are still asking" — two different sentences, and only one of them is true at a time.
- */
-function secondPass(base: ConCardPayload, k: MobKnowledge): ConCardPayload {
-  const payload: ConCardPayload = { ...base, knowledgeIn: true }
-  const wiki = wireWikiDrops(k)
-  const seen = wireSeenDrops(k)
-  if (wiki.length > 0) payload.dropsWiki = wiki
-  if (seen.length > 0) payload.dropsSeen = seen
-  // The perceived rate's DENOMINATOR — your own recorded kills of this mob, which is the number
-  // the mob page divides by and states beside every rate it prints (features/mobs/MobDropRow.tsx).
-  const kills = killsFor(killsModule.snapshot().state.mobs, base.name)?.count
-  if (kills !== undefined && kills > 0) payload.kills = kills
   return payload
 }
 
@@ -172,23 +133,29 @@ export function noteConsider(ev: ConsiderEvent, zone: string | undefined, now = 
 }
 
 /**
- * The second pass, off the event path. `spellTable()` is awaited alongside the lookup because the
- * client's own table is read once per launch on a worker thread — so the FIRST con of a session
- * draws its chips from whatever was already loaded (usually nothing, i.e. five honest "not enough
- * data" chips) and this pass fills them in a moment later, exactly as it fills in the drops.
+ * The second pass, off the event path, and since JOS-390 it is about ONE thing: the resist chips.
  *
- * `lookupMob` is the app's ONE door to mob knowledge and is cache-first: a catalog mob is answered
- * with no network at all, and a wiki mob rides the same politely-spaced queue every other surface
- * shares. Nothing here re-implements a lookup, and nothing here fabricates one that failed.
+ * `spellTable()` is awaited because the client's own table is read once per launch on a worker
+ * thread — so the FIRST con of a session draws its chips from whatever was already loaded (usually
+ * nothing, i.e. an honest "no notable resists · nothing seen yet") and this pass fills them in a
+ * moment later. Every con after that resolves an already-settled promise, so this is a microtask
+ * and a re-send rather than a second round trip.
+ *
+ * IT IS STILL A SEPARATE PASS RATHER THAN AN AWAIT ON THE EVENT PATH, and that is the whole design:
+ * the card exists to be on screen the instant the line is parsed, and a payload that waited for a
+ * 38 MB table would be a card that appeared late for the two seconds it is for.
  */
 function enrich(base: ConCardPayload, key: string): void {
-  void Promise.all([spellTable(), lookupMob(base.name)])
-    .then(([, knowledge]) => {
+  void spellTable()
+    .then(() => {
       // The player has conned something else since, or closed this card. Either way the newer
       // state is the true one and this answer is stale.
       if (showing !== key) return
       const { chips, spellData } = chipsFor(base.name)
-      sendToConCardOverlay(secondPass({ ...base, chips, spellData }, knowledge))
+      // Nothing to say when the table changed nothing — the first con of a launch is the case this
+      // pass exists for, and a re-send restarts the card's hold (cardQueue `fresh`).
+      if (spellData === base.spellData && JSON.stringify(chips) === JSON.stringify(base.chips)) return
+      sendToConCardOverlay({ ...base, chips, spellData })
     })
     .catch((err: unknown) => {
       logError('main:conCard', err)

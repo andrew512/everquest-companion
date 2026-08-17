@@ -1,33 +1,19 @@
-// conCardRows — WHAT THE CON CARD ACTUALLY PUTS ON SCREEN: which resist chips survive, and which
-// five drops it shows (JOS-383, narrowed by JOS-386).
+// conCardRows — WHAT THE CON CARD ACTUALLY PUTS ON SCREEN: which resist chips survive (JOS-383,
+// narrowed by JOS-386, narrowed again by JOS-390).
 //
-// PURE, and imported by relative path in the tests, because this repo has no jsdom: the ranking is
+// PURE, and imported by relative path in the tests, because this repo has no jsdom: the rules are
 // unit-tested here (`tests/conCard.test.mts`) and the JSX is asserted by the e2e against the real
 // app. Same split as `features/resists/resistRow.ts` and `features/mobs/dropEra.ts`.
 //
-// IT REUSES THE MOB PAGE'S FOLD RATHER THAN COUNTING AGAIN. `foldSeenVariants` (JOS-196) is the one
-// statement in this tree about what a `+N` variant is, and a card that added its own would report a
-// different number from the page one click away: three `1x` loots of `Sphinx Claw`, `Sphinx Claw
-// +1` and `Sphinx Claw +2` are ONE line saying `3x`, here exactly as there.
-//
-// THE ORDER IS AN AUTHORITY CLAIM, and it is the mob page's, narrowed to five lines:
-//   1. The wiki drop table leads — it is what the creature CAN drop, and it is the definitive
-//      source (main/mobLookup.ts states this as a law, not a layout preference).
-//   2. Inside it, the rows YOUR OWN LOG has corroborated come first, most-looted first. On a page
-//      with thirty entries and room for five, "the ones you have actually had off this thing" is
-//      the only ranking with evidence behind it; page order is the fallback, never a guess at
-//      rarity (the rarity field is free text the wiki writes three different ways).
-//   3. Items only your history knows come LAST and are marked, which is exactly what the page does
-//      with its "also looted by you" block.
-// Anything past the cap is COUNTED rather than dropped silently: `+7 more` is a true statement
-// about a list, and a truncated list that says nothing is not.
+// IT USED TO RANK THE DROPS TOO, and that half is GONE rather than moved (JOS-390, owner ruling
+// 2026-08-16): the card is the mob's header, its resist chips, and the click that opens the mob
+// page — where the drop table, the fold over `+N` variants and the perceived rate already live and
+// always did (`features/mobs/MobDropsSection.tsx` over `seenVariants.ts`). Deleting the card's copy
+// is the point: two rankings of one drop table is exactly the drift this file's old header warned
+// about, and the surviving one is the surface with room to explain itself.
 
-import type { ConCardChip, ConCardPayload } from '@shared/conCard'
+import type { ConCardChip } from '@shared/conCard'
 import type { ResistTag } from '@shared/resistTypes'
-// VALUE imports are spelled relatively so the node suite can import this module directly —
-// `features/mobs/seenVariants.ts`'s own rule, which is repo law.
-import { itemCountKey } from '../lib/itemName'
-import { foldSeenVariants, perceivedDropRate } from '../features/mobs/seenVariants'
 
 // ---- the resist chips the card keeps (JOS-386) -------------------------------------------
 
@@ -115,63 +101,22 @@ export function conCardTotalN(chips: readonly ConCardChip[]): number {
   return chips.reduce((sum, c) => sum + (Number.isFinite(c.nTotal) ? c.nTotal : 0), 0)
 }
 
-/** One drop line on the card. */
-export interface ConCardDropLine {
-  /** What the line calls the item — the wiki's spelling when it has one, else the folded name. */
-  item: string
-  /** The page's verbatim rarity, when it stated one. Never normalized into a scale we invented. */
-  rarity?: string
-  /** How many YOU have looted (every `+N` variant folded), when your log has any. */
-  seen?: number
-  /** Your perceived rate, when there is a kill count to divide by. NULL, never zero (JOS-78). */
-  perKill: number | null
-  /** True for a line only your own history knows — the page's "also looted by you" state. */
-  yoursOnly: boolean
-}
-
-export interface ConCardDrops {
-  lines: ConCardDropLine[]
-  /** How many known drops did not fit. Zero when the whole list is on screen. */
-  more: number
-}
-
 /**
- * The card's drop lines: the wiki table ranked by your own corroboration, then your own extras,
- * capped.
+ * WHAT THE CARD IS, said once, for the reader who cannot see the underline.
  *
- * `kills` is the rate's DENOMINATOR and the payload carries it separately for the reason the mob
- * page states it in a tooltip: a rate without its denominator is a claim rather than a measurement.
+ * IT IS AN `aria-label`, AND IT MUST NEVER BECOME A `title` (JOS-358, owner ruling of 2026-08-16 —
+ * *let's drop tooltips in the overlays, even in the title bar*). JOS-390's brief asked for a native
+ * `title` on the card body on the grounds that this bundle is popper-free, which it is; what that
+ * reasoning misses is that a popper-free bundle is exactly where the ruling came FROM. An overlay is
+ * always-on-top over a running game and a native tooltip is drawn by the widget rather than by the
+ * page, so the pointer can walk off and strand it over EverQuest — the release-blocking report
+ * behind JOS-358, and `tests/overlayTooltipPolicy.test.mts` is a DERIVED sweep of this whole
+ * directory that fails the moment any file here hands the DOM a tooltip attribute. (It reads the
+ * SOURCE, comments included, which is why this paragraph does not spell the attribute out.) So the
+ * card takes the title bar's own remedy: its controls are NAMED, never hovered.
+ *
+ * The words are a DESTINATION rather than an instruction ("Open in the app", never "click to
+ * open"): the repo's UI law is state, never process. The SEEING reader's hint is the name wearing a
+ * link's underline, which draws no popup and cannot be stranded.
  */
-export function conCardDropLines(payload: ConCardPayload, cap: number): ConCardDrops {
-  const groups = foldSeenVariants(payload.dropsSeen ?? [])
-  const byKey = new Map(groups.map((g) => [g.key, g]))
-  const wiki = payload.dropsWiki ?? []
-  const claimed = new Set<string>()
-
-  const listed: { line: ConCardDropLine; count: number; at: number }[] = wiki.map((d, at) => {
-    const key = itemCountKey(d.item)
-    const seen = byKey.get(key)
-    if (seen) claimed.add(key)
-    const line: ConCardDropLine = { item: d.item, perKill: null, yoursOnly: false }
-    if (d.rarity !== undefined) line.rarity = d.rarity
-    if (seen) {
-      line.seen = seen.count
-      line.perKill = perceivedDropRate(seen.count, payload.kills)
-    }
-    return { line, count: seen?.count ?? 0, at }
-  })
-  // Corroborated first (most-looted, then page order); everything else keeps the page's own order.
-  listed.sort((a, b) => b.count - a.count || a.at - b.at)
-
-  const yours: ConCardDropLine[] = groups
-    .filter((g) => !claimed.has(g.key))
-    .map((g) => ({
-      item: g.item,
-      seen: g.count,
-      perKill: perceivedDropRate(g.count, payload.kills),
-      yoursOnly: true
-    }))
-
-  const all = [...listed.map((l) => l.line), ...yours]
-  return { lines: all.slice(0, cap), more: Math.max(0, all.length - cap) }
-}
+export const CON_CARD_OPEN_HINT = 'Open in the app'

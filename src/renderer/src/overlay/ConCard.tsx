@@ -1,19 +1,34 @@
-// ConCard — ONE card for one `/con` (JOS-383).
+// ConCard — ONE card for one `/con` (JOS-383, narrowed to a LILY PAD by JOS-390).
 //
 // MUI-FREE BY LAW (AGENTS.md: the overlay bundle is plain React + inline styles), tooltip-shaped
-// and semi-transparent, over the game. It is a CARD rather than a line because the question it
-// answers has parts: what is it, how hard does it resist what I cast, what does it drop, when does
-// it come back.
+// and semi-transparent, over the game. It answers the two questions you have in the two seconds
+// before you pull — what is it, and how hard does it resist what I cast — and it is the CLICK that
+// answers everything else.
+//
+// THE WHOLE CARD IS A LINK (owner ruling, 2026-08-16). A click anywhere on it except the × opens
+// that creature's page in the app, over the SAME deep link the celebration toast's card has always
+// used (`eqOverlay.focusMob` → main's `focusView` → `applyDeepLink` → `openMob`). That is why the
+// drops and the respawn left this file: the page one click away has the drop table, the fold over
+// `+N` variants, the perceived rate, the kills, the quests and all five resist rows, with room to
+// explain each — and a card over a running game does not.
+//
+// AND IT IS A LINK ONLY WHILE THE OVERLAY IS LOCKED. Unlocked is positioning mode: the window wears
+// a drag region and a click there is the user moving the card, so navigating would fight the drag.
+// The hint follows the same gate — the name reads as a link, the cursor is a pointer and the card
+// carries its accessible NAME exactly when a click would actually do something. Never a `title`:
+// this bundle draws no tooltips at all, and the ruling behind that is at `CON_CARD_OPEN_HINT`.
+//
+// CLICKING DOES NOT CLOSE IT, deliberately: the app comes forward, the card is still up behind it,
+// and the next con or the auto-hide takes it. "I read it" is the × and nothing else — which is the
+// same statement main's re-con suppression rests on.
 //
 // EVERY SENTENCE ON IT IS SOMEBODY ELSE'S DERIVATION, deliberately:
 //   * the axis WORD and its COLOUR come from `@shared/resistTypes` + `features/resists/
 //     resistColors.ts`, which says in its own header that this overlay imports it — an axis that is
 //     purple on the mob page and blue here is two axes to the person reading them;
 //   * `R 126 (110-144)`, `n=32` and `not enough data (n=2)` come from `features/resists/
-//     resistRow.ts`, the same three functions the mob page's rows print;
-//   * the drop lines come from `conCardRows.ts`, which folds `+N` variants through the mob page's
-//     own `foldSeenVariants` and states the perceived rate through its own `perceivedDropRate`.
-// Nothing here computes anything about the world. It lays five chips out and draws what it is told.
+//     resistRow.ts`, the same three functions the mob page's rows print.
+// Nothing here computes anything about the world. It lays the chips out and draws what it is told.
 //
 // NO ACRONYMS, EVER (owner ruling, 2026-08-16). A chip carries the colour AND the word AND the tag,
 // in that fixed order, every time — magic, fire, cold, poison, disease — so the eye learns the
@@ -28,8 +43,8 @@
 // keeps all five rows and is one click away, and when nothing qualifies this card says so in one
 // quiet line rather than going silent.
 
-import { type CSSProperties, type JSX, useEffect, useState } from 'react'
-import { CON_CARD_MAX_DROPS, type ConCardPayload } from '@shared/conCard'
+import { type CSSProperties, type JSX, type MouseEvent, useEffect, useState } from 'react'
+import type { ConCardPayload } from '@shared/conCard'
 import { RESIST_AXIS_WORDS } from '@shared/resistTypes'
 import { lowSamples } from '@shared/resistModel'
 import { RESIST_AXIS_COLORS } from '../features/resists/resistColors'
@@ -42,20 +57,15 @@ import {
   estimateText,
   resistRateText
 } from '../features/resists/resistRow'
-import { formatDropsPerKill } from '../lib/formatRate'
 import { CARD_ENTER_MS, CARD_EXIT_MS } from './cardQueue'
-import {
-  conCardDropLines,
-  conCardTotalN,
-  notableChips,
-  type ConCardDropLine,
-  type ConCardNotableChip
-} from './conCardRows'
+import { CON_CARD_OPEN_HINT, conCardTotalN, notableChips, type ConCardNotableChip } from './conCardRows'
 
 const MUTED = '#a8b0c6'
 const DIM = '#7c8397'
 const GOLD = '#d9b25f'
 const BUTTON_PX = 20
+/** The × — named once, because the card-wide click reads it back to exclude itself (JOS-390). */
+const CLOSE_TESTID = 'con-card-close'
 
 /** The enter/exit transition, as a style — the banner's, so two cards over one game move alike. */
 function motionStyle(entering: boolean, exiting: boolean): CSSProperties {
@@ -69,8 +79,16 @@ function motionStyle(entering: boolean, exiting: boolean): CSSProperties {
   }
 }
 
-/** The identity line: what it is, what level the game just said it is, and where you are. */
-function Identity({ payload }: { payload: ConCardPayload }): JSX.Element {
+/**
+ * The identity line: what it is, what level the game just said it is, and where you are.
+ *
+ * THE NAME IS THE HINT (JOS-390). When a click would open the mob page the name wears a link's
+ * underline — quiet, in the card's own gold, at the one place the eye is already reading. That is
+ * the whole affordance: no button, no "click to open" instruction, and nothing at all in the mode
+ * where a click means drag. NOT a `title`: this bundle draws no tooltips at all (the ruling and the
+ * argument are at `CON_CARD_OPEN_HINT`), so the words go on the card as its accessible NAME.
+ */
+function Identity({ payload, linked }: { payload: ConCardPayload; linked: boolean }): JSX.Element {
   const facts = [
     payload.level === undefined ? null : `Level ${String(payload.level)}`,
     payload.rare === true ? 'rare creature' : null,
@@ -80,7 +98,22 @@ function Identity({ payload }: { payload: ConCardPayload }): JSX.Element {
     <div style={{ minWidth: 0 }}>
       <div
         data-testid="con-card-name"
-        style={{ color: '#e6ebf5', fontSize: 15, fontWeight: 700, lineHeight: 1.25, overflowWrap: 'anywhere' }}
+        data-linked={linked ? 'true' : 'false'}
+        style={{
+          color: '#e6ebf5',
+          fontSize: 15,
+          fontWeight: 700,
+          lineHeight: 1.25,
+          overflowWrap: 'anywhere',
+          ...(linked
+            ? {
+                textDecoration: 'underline',
+                textDecorationColor: `${GOLD}88`,
+                textDecorationThickness: 1,
+                textUnderlineOffset: 3
+              }
+            : {})
+        }}
       >
         {payload.name}
       </div>
@@ -211,65 +244,23 @@ function Chips({ payload }: { payload: ConCardPayload }): JSX.Element {
   )
 }
 
-/** One drop line: the item, whatever the page said about it, and what YOUR log has had. */
-function DropLine({ line }: { line: ConCardDropLine }): JSX.Element {
-  const rate = line.perKill === null ? null : formatDropsPerKill(line.perKill)
-  return (
-    <div
-      data-testid="con-card-drop"
-      style={{ display: 'flex', gap: 6, alignItems: 'baseline', minWidth: 0, padding: '1px 0' }}
-    >
-      <span style={{ color: '#cfd6e6', fontSize: 11, minWidth: 0, overflowWrap: 'anywhere' }}>{line.item}</span>
-      {line.rarity !== undefined && <span style={{ color: DIM, fontSize: 10, flexShrink: 0 }}>{line.rarity}</span>}
-      <span style={{ flex: '1 1 auto' }} />
-      {line.seen !== undefined && (
-        <span style={{ color: '#7fc99a', fontSize: 10, flexShrink: 0 }}>
-          {`seen by you: ${String(line.seen)}x`}
-          {rate !== null && ` · ${rate}`}
-          {line.yoursOnly && ' · your log only'}
-        </span>
-      )}
-    </div>
-  )
-}
-
-/**
- * The drops block. "Still asking" and "nothing known" are DIFFERENT and are said differently:
- * `knowledgeIn` is main telling us the lookup has answered, so a card that draws no drops before it
- * lands says so rather than claiming the creature drops nothing.
- */
-function Drops({ payload }: { payload: ConCardPayload }): JSX.Element {
-  const { lines, more } = conCardDropLines(payload, CON_CARD_MAX_DROPS)
-  if (lines.length === 0) {
-    return (
-      <div data-testid="con-card-drops" style={{ color: DIM, fontSize: 10 }}>
-        {payload.knowledgeIn === true ? 'No drops known for this one.' : 'Looking up what it drops...'}
-      </div>
-    )
-  }
-  return (
-    <div data-testid="con-card-drops">
-      {lines.map((l) => (
-        <DropLine key={`${l.item}-${String(l.yoursOnly)}`} line={l} />
-      ))}
-      {more > 0 && (
-        <div style={{ color: DIM, fontSize: 10, paddingTop: 1 }}>{`+${String(more)} more`}</div>
-      )}
-    </div>
-  )
-}
-
 export function ConCard({
   payload,
   exiting,
   bgAlpha,
+  linked,
   onHover,
+  onOpen,
   onDismiss
 }: {
   payload: ConCardPayload
   exiting: boolean
   bgAlpha: number
+  /** The overlay is LOCKED, so a click on this card is a link rather than the start of a drag. */
+  linked: boolean
   onHover: (over: boolean) => void
+  /** "Open this creature's page in the app." Called for a click anywhere but the × — see header. */
+  onOpen: () => void
   onDismiss: () => void
 }): JSX.Element {
   const [entering, setEntering] = useState(true)
@@ -278,12 +269,34 @@ export function ConCard({
     return () => cancelAnimationFrame(id)
   }, [])
 
+  /**
+   * ONE handler on the whole card, and the × excluded by ANCESTRY rather than by
+   * `stopPropagation` on the button.
+   *
+   * That is the difference between a rule and a coincidence: `closest` asks "did this click land
+   * inside the close control", so anything the button ever grows inside it (an icon, a focus ring)
+   * is excluded for free, and a future control that must not navigate opts out by saying so in one
+   * place. A `stopPropagation` in the button would put the same rule somewhere it cannot be read
+   * from here.
+   */
+  const openUnlessClose = (e: MouseEvent<HTMLDivElement>): void => {
+    if (!linked) return
+    if ((e.target as HTMLElement).closest(`[data-testid="${CLOSE_TESTID}"]`)) return
+    onOpen()
+  }
+
   return (
     <div
       data-testid="con-card"
       data-mob={payload.id}
+      data-linked={linked ? 'true' : 'false'}
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
+      onClick={openUnlessClose}
+      /* NAMED, NEVER HOVERED — the title bar's own remedy under the 2026-08-16 tooltip ruling, and
+         the reason there is no `title` anywhere in this bundle (see CON_CARD_OPEN_HINT). Only while
+         the click means something: an unlocked card is a thing you drag, not a link. */
+      aria-label={linked ? CON_CARD_OPEN_HINT : undefined}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -294,11 +307,12 @@ export function ConCard({
         background: `rgba(15,17,21,${String(bgAlpha)})`,
         backdropFilter: 'blur(6px)',
         boxShadow: '0 6px 18px rgba(0,0,0,0.45)',
+        cursor: linked ? 'pointer' : 'default',
         ...motionStyle(entering, exiting)
       }}
     >
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-        <Identity payload={payload} />
+        <Identity payload={payload} linked={linked} />
         <span style={{ flex: '1 1 auto' }} />
         {/* EVERY CARD CLOSES (the celebration card's JOS-83 rule, kept twice over): this window is
             always-on-top over a game, and a user who wants it gone must not have to find
@@ -306,7 +320,7 @@ export function ConCard({
             back up (ConCardOverlay.tsx). */}
         <button
           type="button"
-          data-testid="con-card-close"
+          data-testid={CLOSE_TESTID}
           aria-label="Close this mob card"
           onClick={onDismiss}
           style={{
@@ -327,14 +341,8 @@ export function ConCard({
         </button>
       </div>
       <Chips payload={payload} />
-      <Drops payload={payload} />
-      {payload.respawn !== undefined && (
-        <div data-testid="con-card-respawn" style={{ color: MUTED, fontSize: 10 }}>
-          {`Respawn: ${payload.respawn}`}
-        </div>
-      )}
       {/* THE FACTION SLOT (JOS-94). Deliberately EMPTY and deliberately here: the ticket that owns
-          faction-on-con lands its standing read in this exact position, under the respawn, and a
+          faction-on-con lands its standing read in this exact position, under the resists, and a
           slot reserved in the layout is the difference between that being an insertion and a
           redesign. Nothing is drawn, because nothing is known — the con line states a faction RUNG,
           which is a fact about standing this card does not yet claim to report. */}
