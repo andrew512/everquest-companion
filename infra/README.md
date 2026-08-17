@@ -33,13 +33,15 @@ the runbook.
 | `api.tf` | HTTP API `eqcompanion-api`, `$default` stage, `POST /v1/feedback` + `POST /v1/telemetry`, stage + per-route throttles, access logging |
 | `lambda.tf` | `eqcompanion-feedback-submit` and `eqcompanion-telemetry-ingest` (both Node 22, arm64, 256 MB, 10 s), their log groups at 14-day retention |
 | `dsql.tf` | the Aurora DSQL cluster (deletion protection + `prevent_destroy`) and the endpoint/ingest-role locals |
-| `schema.sql` | the tables, the two **merge views** (JOS-394), indexes, config seed and the two ingest **database roles** — applied by the CLI, not by Terraform (see step 2.5) |
+| `schema.sql` | the tables, the two **merge views** (JOS-394), indexes, config seed and the **three** database roles — two ingest, one read-only export (JOS-398) — applied by the CLI, not by Terraform (see step 2.5) |
 | `s3.tf` | `eqcompanion-logs-<random hex>` + all four Block-Public-Access flags + SSE-S3 + versioning off + 90-day lifecycle + `prevent_destroy` |
 | `iam.tf` | the two ingest roles (`dsql:DbConnect` only; telemetry has no S3 at all) and `EqCompanionFeedbackTriageRole` (`dsql:DbConnectAdmin`) |
 | `alarms.tf` | `EqCompanionOpsAlerts` SNS topic + email sub + 9 alarms (the OCC one is metric math over a RATIO since JOS-394) + the monthly budget |
+| `backup.tf` | **JOS-398** — AWS Backup vault + plan (daily 35 d, monthly 12 mo) + selection on the cluster ARN + the service role + a job-failure alarm |
+| `export.tf` | **JOS-398** — `eqcompanion-analytics-archive-<acct>` (versioned, BPA, SSE, lifecycle, encryption-deny policy), `eqcompanion-analytics-export` + its role and log group, the 09:30 UTC EventBridge rule, and two alarms |
 | `dashboard.tf` | `eqcompanion-telemetry` CloudWatch dashboard, fed by the ingest handler's EMF documents |
-| `outputs.tf` | `api_url`, `telemetry_api_url`, `cluster_endpoint`, `bucket_name`, `triage_role_arn`, both `*_role_arn`s, log group names |
-| `build.mjs` | esbuild bundles of `lambda/submit.ts` and `lambda/telemetry.ts` → **deterministic** `dist/submit.zip` + `dist/telemetry.zip` |
+| `outputs.tf` | `api_url`, `telemetry_api_url`, `cluster_endpoint`, `bucket_name`, `triage_role_arn`, all three `*_role_arn`s, log group names, `archive_bucket_name`, `backup_vault_name` |
+| `build.mjs` | esbuild bundles of `lambda/submit.ts`, `lambda/telemetry.ts` and `lambda/export.ts` → **deterministic** `dist/submit.zip` + `dist/telemetry.zip` + `dist/export.zip` |
 
 Each handler imports its validator from `src/shared/` — `validateSubmit` from
 `feedback.ts`, `validateTelemetryBatch` from `telemetryValidate.ts` — so the server runs the
@@ -65,6 +67,7 @@ Two identities, and the difference matters:
 | --- | --- | --- | --- |
 | the submit Lambda | `dsql:DbConnect` | `feedback_ingest` | `INSERT` on `report`; read config/profile; read+write+delete the three counter tables |
 | the telemetry Lambda | `dsql:DbConnect` | `telemetry_ingest` | read `feedback_config`; UPSERT `usage_daily_sharded`, `perf_daily_sharded`, `usage_funnel_daily`, `error_report`, `analytics_install`. **No privilege at all on `report`, no `install_profile`, no DELETE anywhere — and no SELECT on the merged views, which only the admin-connected triage side reads.** |
+| the export Lambda | `dsql:DbConnect` | `analytics_export` | **SELECT on every table, and no INSERT, UPDATE or DELETE anywhere.** The widest read in the cluster and the narrowest write — and the one identity with **no public trigger at all**: EventBridge invokes it, nothing else can. No grant on the two merge views, because an export copies TABLES (a restore has to put a row back where it came from, and a view hands back a sum whose legs cannot be told apart) |
 | the triage CLI | `dsql:DbConnectAdmin` | `admin` | everything — it applies the schema and it is the deletion path for `forget`/`wipe`/`analytics wipe` |
 
 §8.5's promise — *the ingest path can create and count; it cannot read the corpus
@@ -411,6 +414,105 @@ install's span covers that day, `user` otherwise. Days the owner shared with a r
 folded into `user`. That is the honest limit, and it is the reason the split is a KEY from the
 swap onward rather than a filter applied at read time.
 
+## PENDING: never lose the data (JOS-398) — **apply FIRST, then migrate**
+
+Owner ruling 2026-08-16: the analytics data must never be lost. Two layers, both additive, and
+they fail differently on purpose — `backup.tf` takes AWS Backup recovery points of the whole
+cluster, `export.tf` writes a nightly row-level dump to S3 that anybody can read with `gunzip`.
+The operational half (list, restore, drill) is the **Backup** section further down; this is the
+deploy.
+
+> **THIS ONE STEP ORDER IS THE REVERSE OF EVERY OTHER SECTION ON THIS PAGE, AND IT HAS TO BE.**
+> Everywhere else the rule is *schema first, then the bundle that names it*, because a handler
+> naming a column that does not exist is `42703` on every request. Here the schema statement is
+> `AWS IAM GRANT analytics_export TO '${EXPORT_LAMBDA_ROLE_ARN}'`, and that ARN **does not exist
+> until the apply creates the role** — `migrate` substitutes it from a Terraform output and stops
+> with "run with `--refresh`" if it is missing. The reversal is safe here for a reason that does
+> not generalise: the only thing that names the new database role is a function with **no public
+> trigger**, whose first invocation is at 09:30 UTC, and whose failure is one alarm rather than an
+> outage. Nothing user-facing changes in either order.
+
+### 1. Build and apply
+
+```bash
+cd infra
+node build.mjs                     # THREE zips now — submit, telemetry, export
+terraform plan  -var triage_principal_arn=arn:aws:iam::<acct>:user/<you>
+terraform apply -var triage_principal_arn=arn:aws:iam::<acct>:user/<you>
+```
+
+**What the plan must show — 23 resources to ADD, and NOTHING to change or destroy:**
+
+| From | Added |
+| --- | --- |
+| `backup.tf` (7) | `aws_iam_role.backup`, its two managed-policy attachments, `aws_backup_vault.analytics`, `aws_backup_plan.analytics`, `aws_backup_selection.analytics`, `aws_cloudwatch_metric_alarm.backup_failed` |
+| `export.tf` — bucket (6) | `aws_s3_bucket.archive` + `public_access_block` + `server_side_encryption_configuration` + `versioning` + `lifecycle_configuration` + `bucket_policy` |
+| `export.tf` — identity (3) | `aws_iam_role.export`, `aws_iam_role_policy.export`, `aws_iam_role_policy_attachment.export_basic` |
+| `export.tf` — function (2) | `aws_cloudwatch_log_group.export`, `aws_lambda_function.export` |
+| `export.tf` — schedule (3) | `aws_cloudwatch_event_rule.export_nightly`, `aws_cloudwatch_event_target.export_nightly`, `aws_lambda_permission.export_events` |
+| `export.tf` — alarms (2) | `aws_cloudwatch_metric_alarm.export_failed`, `aws_cloudwatch_metric_alarm.export_stale` |
+| outputs | five new: `export_lambda_role_arn`, `archive_bucket_name`, `export_function_name`, `export_log_group`, `backup_vault_name` |
+
+**`aws_lambda_function.submit` and `.telemetry` must show NO CHANGE AT ALL.** Nothing either of
+them bundles was touched, and the zip is byte-deterministic, so `source_code_hash` is identical.
+A plan that wants to redeploy either of them means a shared file moved and the diff is worth
+reading before applying. Likewise: if the plan wants to **replace** the DSQL cluster, the logs
+bucket, or any existing IAM role, stop — nothing in this change touches them.
+
+### 2. Then the schema
+
+```bash
+npx tsx scripts/triage-feedback.mts migrate --profile <profile> --refresh
+```
+
+`--refresh` is not optional here: there is a **new Terraform output**
+(`export_lambda_role_arn`), and `.triage/stack.json` is a cache that is read back without
+re-validating. Without it, `migrate` finds the unsubstituted `${EXPORT_LAMBDA_ROLE_ARN}` and stops
+saying exactly this. It applies, all idempotent:
+
+```sql
+CREATE ROLE analytics_export WITH LOGIN;
+AWS IAM GRANT analytics_export TO '<the export function's role ARN>';
+GRANT SELECT ON feedback_config      TO analytics_export;   -- and twelve more, one per table
+```
+
+**SELECT and nothing else, on every table, with no `DELETE` and no grant on the two merge views.**
+An export copies TABLES: a restore has to put a row back where it came from, and `usage_daily_all`
+would hand back a sum whose two legs can no longer be told apart.
+
+### 3. Confirm
+
+```bash
+# The export, on demand rather than waiting for 09:30 UTC.
+aws lambda invoke --function-name "$(cd infra && terraform output -raw export_function_name)" /dev/null
+aws logs tail "$(cd infra && terraform output -raw export_log_group)" --since 5m
+aws s3 ls "s3://$(cd infra && terraform output -raw archive_bucket_name)/exports/" --recursive | head -20
+
+# The backup, after the first 09:00 UTC run.
+aws backup list-recovery-points-by-backup-vault \
+  --backup-vault-name "$(cd infra && terraform output -raw backup_vault_name)" \
+  --query 'RecoveryPoints[].[CreationDate,Status,BackupSizeInBytes]' --output table
+```
+
+The log's `export.table` lines carry a row count per table and never a row. The
+`eqcompanion-analytics-export-stale` alarm sits in **ALARM until the first export emits
+`ExportRows`** — that is correct rather than a misconfiguration, because until then there has not
+been one.
+
+**Rehearsed end to end on a real, EPHEMERAL DSQL cluster** (`sruag4muogppcljre5lmjsyu2q`, created
+and deleted for the ticket — prod was not touched), with a throwaway bucket carrying this
+policy: the schema applied (46 statements), the handler exported **13 tables / 14 objects**
+connecting as `analytics_export`, every counter and the backlog were then DELETED, and
+`analytics import` restored `usage_daily_all SUM(n)` to **exactly 65**, its pre-wipe value, with
+the frozen and sharded rows folded into 5 sharded rows. A second import changed nothing. The
+read-only role answered `42501 permission denied` to INSERT, UPDATE, DELETE and to a SELECT on
+`usage_daily_all`. A `PutObject` without the encryption header was refused with *"explicit deny in
+a resource-based policy"*; the same put with `AES256` succeeded.
+
+**Rollback** is `terraform destroy -target` on the new resources, and it is not needed for
+anything: nothing in this change alters an existing resource, an existing bundle, or an existing
+grant. The `analytics_export` role can be left in place — a role nothing logs in as does nothing.
+
 ## PENDING: sharded counters (JOS-394) — schema, then readers, then ONE apply
 
 The OCC-conflict alarm (`eqcompanion-feedback-dsql-occ-conflicts`) fired all day. **Measured on
@@ -708,12 +810,148 @@ triage tab shows it above the slice.
 | Tighten the daily quota | `UPDATE feedback_config SET max_per_install_per_day = N` — deploy-free |
 | Deletion request | `triage-feedback forget <reportId>` (the slice) / `wipe --install <id>` (everything) |
 | Schema change | edit `schema.sql`, then `triage-feedback migrate` |
+| **Data is wrong / a migration went bad** | the **Backup** section above — path A restores the cluster, path B reloads rows with `analytics import`. Do the dry run first |
+| **Prove the backup still works** | the drill in the Backup section, against an ephemeral cluster. Never against prod |
 | Read the handler's logs | `aws logs tail "$(terraform output -raw lambda_log_group)" --follow` |
 | Who hit us | `aws logs tail "$(terraform output -raw api_access_log_group)"` (source IPs, 14-day retention, incident-only) |
 
 The kill switch and the quota live in the database precisely so that answering
 abuse never requires a release. The app fetches no configuration at any point —
 the kill switch rides in the submit response.
+
+## Backup — what runs, how to read it, how to restore, and the drill
+
+Two layers. **Neither is a substitute for the other**, and the split is the design:
+
+| | AWS Backup (`backup.tf`) | The nightly export (`export.tf`) |
+| --- | --- | --- |
+| What it holds | the WHOLE cluster, as a recovery point | every table's rows, as gzipped JSON |
+| When | **09:00 UTC** daily (kept 35 days) and the **1st of the month** (kept 12 months) | **09:30 UTC** daily |
+| Where | vault `eqcompanion-analytics` | `s3://eqcompanion-analytics-archive-<acct>/exports/<table>/<YYYY-MM-DD>.json.gz` + `exports/_manifest/<day>.json` |
+| Restores | to a **NEW cluster** — AWS Backup cannot restore DSQL in place, which is also why it is safe | into any cluster, one table or all of them, with `analytics import` |
+| Answers | "the cluster is wrong and I want yesterday's, all of it" | "one table is wrong", "I want to look without standing up a cluster", "the recovery point is the thing that is missing" |
+| Alarms | `eqcompanion-backup-jobs-failed` | `…-analytics-export-failed` (it ran and broke) and `…-analytics-export-stale` (it never ran) |
+
+**What each protects against, stated plainly.** DSQL's own multi-AZ durability answers a disk
+dying and always did. It faithfully replicates a **bad migration**, a `scripts/analyticsBackfill.mts`
+run against the wrong table, a fat-fingered `DROP`, and an account-level event. Those are what
+these two are for.
+
+### Look before you touch
+
+```bash
+export AWS_PROFILE=<profile>
+VAULT=$(cd infra && terraform output -raw backup_vault_name)
+ARCHIVE=$(cd infra && terraform output -raw archive_bucket_name)
+
+# Recovery points, newest first.
+aws backup list-recovery-points-by-backup-vault --backup-vault-name "$VAULT" \
+  --query 'reverse(sort_by(RecoveryPoints,&CreationDate))[].[CreationDate,Status,RecoveryPointArn]' \
+  --output table
+
+# Last night's export, and what it contained.
+aws s3 ls "s3://$ARCHIVE/exports/" --recursive | tail -20
+aws s3 cp "s3://$ARCHIVE/exports/_manifest/$(date -u +%F).json" - | head -40
+```
+
+The manifest is the index: per table, the object keys, the row count and the compressed size. It
+is the fastest way to answer "did last night's export actually contain the backlog" without
+downloading anything.
+
+### Restore path A — AWS Backup, to a NEW cluster
+
+Use this when the whole cluster is suspect. It cannot damage the live one: AWS Backup restores
+DSQL to a **new** cluster with a **new identifier**, so nothing is overwritten and the decision to
+switch over stays yours.
+
+```bash
+RP=<the RecoveryPointArn from the listing above>
+
+# The metadata keys a DSQL restore takes are read from the recovery point rather than guessed —
+# AWS documents this call for exactly that reason, and the set has changed before.
+aws backup get-recovery-point-restore-metadata --backup-vault-name "$VAULT" --recovery-point-arn "$RP"
+
+aws backup start-restore-job \
+  --recovery-point-arn "$RP" \
+  --iam-role-arn "arn:aws:iam::<acct>:role/eqcompanion-backup-role" \
+  --resource-type DSQL \
+  --metadata '<the keys the call above returned, with deletionProtectionEnabled true>'
+
+aws backup describe-restore-job --restore-job-id <id>       # until Status is COMPLETED
+```
+
+**Then point the readers at it.** `cluster_endpoint` is derived from the cluster identifier
+(`dsql.tf`), and every reader — the triage CLI, the app's Analytics tab, `analytics digest` —
+resolves it through the **cache** `.triage/stack.json`, which is gitignored and is a cache rather
+than a contract. So:
+
+1. Edit `cluster_endpoint` in `.triage/stack.json` to `<new-identifier>.dsql.us-east-1.on.aws`.
+2. `npx tsx scripts/triage-feedback.mts analytics digest --cohort all --profile <profile>` and read
+   the numbers. **Verify before adopting.**
+3. Only then decide whether to adopt it permanently, which is a Terraform decision (import the new
+   cluster over `aws_dsql_cluster.feedback`, or move the rows across with path B) and not
+   something to do at the same time as reading the data.
+
+The two Lambdas still point at the OLD cluster until an apply moves them — deliberately. A restore
+that silently redirected the public ingest endpoints would be a second incident.
+
+### Restore path B — reload from S3
+
+Use this when one table is wrong, when the damage is recent and narrow, or when there is no usable
+recovery point. It writes into whatever cluster `.triage/stack.json` names, so **check that
+first**.
+
+```bash
+DAY=2026-08-16
+mkdir -p .triage/restore
+
+# Everything from that night...
+aws s3 sync "s3://$ARCHIVE/exports/" .triage/restore --exclude "*" --include "*$DAY*"
+# ...or exactly one table.
+aws s3 cp "s3://$ARCHIVE/exports/usage_daily_sharded/$DAY.json.gz" .triage/restore/
+
+# Read, parse and fold everything; write nothing.
+npx tsx scripts/triage-feedback.mts analytics import .triage/restore --dry-run --profile <profile>
+npx tsx scripts/triage-feedback.mts analytics import .triage/restore --profile <profile>
+```
+
+Three properties worth knowing before you run it:
+
+- **It is idempotent.** Rows are folded in memory and written by ASSIGNMENT, so running the same
+  directory in twice converges instead of doubling a counter. A restore that dies halfway is safe
+  to simply run again.
+- **The frozen counters move.** `usage_daily` / `perf_daily` rows land in the `_sharded` twins
+  under shard 0 — one live table per counter instead of two — and `usage_daily_all` /
+  `perf_daily_all` make that invisible to every reader. Nothing is written back to the frozen
+  tables.
+- **The kill switches come back CLOSED**, whatever the export held. `triage-feedback closed off`
+  and `analytics open` are the two deliberate commands that reopen the endpoints once you have
+  looked at the data.
+
+### The drill — run it against an ephemeral cluster, not against prod
+
+A backup nobody has restored is a hypothesis. This is the whole loop, and it is what was run to
+land JOS-398 (cluster `sruag4muogppcljre5lmjsyu2q`, created and deleted for the ticket).
+
+1. **Stand one up.** `aws dsql create-cluster --no-deletion-protection-enabled --tags Ephemeral=true`
+   — note the identifier, and wait for `aws dsql get-cluster --identifier <id> --query status` to
+   read `ACTIVE`.
+2. **Point a COPY of the cache at it.** `cp .triage/stack.json .triage/stack.prod.json` first, then
+   edit `cluster_endpoint`. Getting this backwards is the one way this drill can touch production,
+   so do it before anything else and read the file back.
+3. **Migrate.** `npx tsx scripts/triage-feedback.mts migrate --profile <profile>` — expect ~46
+   applied on a fresh cluster.
+4. **Pull last night down.** `aws s3 sync "s3://$ARCHIVE/exports/" .triage/drill --exclude "*" --include "*$(date -u -d yesterday +%F)*"`
+5. **Dry run, then import.** The dry run must name every table you expected and refuse nothing.
+6. **Read it back.** `npx tsx scripts/triage-feedback.mts analytics digest --cohort all --days 30 --profile <profile>`
+   against the drill cluster. The numbers must match what the same command prints against
+   production for the same window — that comparison **is** the drill's pass condition, and it is
+   the only step that proves the export is complete rather than merely present.
+7. **Tear it down and put the cache back.** `aws dsql delete-cluster --identifier <id>`, confirm
+   `status` reads `DELETING`, then `mv .triage/stack.prod.json .triage/stack.json`.
+
+Do it after any change to `schema.sql`, to `src/shared/analyticsTables.ts`, or to either half of
+the pair — and note the date here when you do.
 
 ## Retention, and the one thing DSQL does not do
 
@@ -725,6 +963,9 @@ the kill switch rides in the submit response.
 | Log object | 90 days | **S3 lifecycle — unchanged**; `triage-feedback forget <id>` deletes one on request |
 | Quota counters (3 d), idempotency keys (7 d), dedupe probes (2 d) | lazy | swept by the ingest handler |
 | Lambda / API access logs | 14 days | CloudWatch retention |
+| **Nightly export objects** (JOS-398) | indefinite, GLACIER_IR after 30 days; superseded versions 365 days | S3 lifecycle on `eqcompanion-analytics-archive-<acct>`. They are anonymous daily sums with no id in them, and "the series starts 2026-08-04 and there will never be earlier data" is what makes an old copy worth keeping |
+| **`exports/report/`** — the ONE prefix that expires | **90 days** | The same window the attached log slice already has, and it exists because `report` is the only table holding human-written text: a versioned archive with no expiry would turn SECURITY.md's deletion promise into "the live row goes and a copy of your words stays forever" |
+| **AWS Backup recovery points** | daily 35 days, monthly 12 months | `backup.tf`. They hold the whole cluster, so a deleted report can survive in a monthly point for up to a year. That is inherent to having backups at all; SECURITY.md **states** it rather than leaving it to be discovered |
 
 **DynamoDB had TTL. DSQL has nothing.** So the three counter tables are swept by
 the ingest path itself (`infra/lambda/db.ts`), immediately after a submit clears
@@ -741,12 +982,14 @@ parts than the problem deserves.
 
 ## Teardown
 
-`terraform destroy` **will fail**, twice over and on purpose: the bucket and the
-cluster both carry `lifecycle { prevent_destroy = true }`, and the cluster also
-has service-side `deletion_protection_enabled`. A teardown cannot take
-user-submitted evidence and the whole backlog with it. Undoing both is the
+`terraform destroy` **will fail**, four times over and on purpose: the logs
+bucket, the **archive bucket**, the **backup vault** and the cluster all carry
+`lifecycle { prevent_destroy = true }`, and the cluster also has service-side
+`deletion_protection_enabled`. A teardown cannot take user-submitted evidence,
+the whole backlog, **or the backups of both** with it. Undoing them is the
 deliberate act that makes a real teardown possible. Do it in a commit, not in a
-panic.
+panic — and note that the archive bucket and the vault are the two whose whole
+reason for existing is that the rest of this stack can be lost.
 
 ## Cost shape
 
@@ -761,9 +1004,20 @@ Lambda/DSQL, under the $10 budget and alarmed within five minutes.
 
 ## Gotchas
 
-- **Build before you plan.** `source_code_hash` reads `dist/submit.zip` and
-  `dist/telemetry.zip`. Both are guarded by `fileexists()` so `terraform validate` works on a
-  clean checkout, but a plan without a build deploys nothing useful.
+- **Build before you plan.** `source_code_hash` reads `dist/submit.zip`,
+  `dist/telemetry.zip` and `dist/export.zip`. All three are guarded by `fileexists()` so
+  `terraform validate` works on a clean checkout, but a plan without a build deploys nothing
+  useful.
+- **A DELETION REQUEST IS TRUE IN THE DATABASE IMMEDIATELY AND EVERYWHERE WITHIN 90 DAYS.**
+  `forget` / `wipe` remove the live row and the S3 object, as they always have — but since
+  JOS-398 a copy of the `report` row also sits in each nightly export, and the whole cluster sits
+  in a monthly recovery point. `exports/report/` therefore expires at 90 days (the one lifecycle
+  carve-out in the archive bucket), and SECURITY.md states both windows in the user's own words.
+  Raising `archive_backlog_retention_days` is a change to a published promise, not a tuning knob.
+- **The export role can read everything, and that is the point of it having no trigger.**
+  `analytics_export` holds SELECT on every table — the only identity in the cluster that can read
+  both the counters and the backlog. What bounds it is not its grants but its reachability: no
+  route, no API, no presign, one EventBridge rule. Never attach it to anything that answers HTTP.
 - **A NEW OUTPUT MEANS A STALE `.triage/stack.json`.** The cache is read back without
   re-validating (it is a cache, not a contract), so a stack.json written before
   `telemetry_lambda_role_arn` existed simply has no value for it. `migrate` catches that on the
