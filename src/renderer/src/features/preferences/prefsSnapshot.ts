@@ -24,6 +24,7 @@ import { normalizeUiScale } from '../../../../shared/uiScale'
 import { normalizeAlertBannerConfig } from '../../../../shared/alertBanner'
 import { normalizeConCardConfig } from '../../../../shared/conCard'
 import { normalizeOverlayTextSize } from '../../../../shared/overlayTextScale'
+import { normalizeOverlayBgAlpha } from '../../../../shared/overlayBgAlpha'
 import type { AlertBannerOverlayConfig } from '@shared/alertBanner'
 import type { ConCardOverlayConfig } from '@shared/conCard'
 import type { BuffTrustPrefs } from '@shared/buffTrust'
@@ -32,6 +33,7 @@ import type { GraphicsEnvironment } from '@shared/wineDetect'
 import type { CursorRingPrefs, OverlayAutoHidePrefs } from '@shared/presencePrefs'
 import type { OverlaySnapPrefs } from '@shared/overlaySnap'
 import type { OverlayTextSizePrefs } from '@shared/overlayTextScale'
+import type { OverlayBgAlphaPrefs } from '@shared/overlayBgAlpha'
 import type { CloseToTrayPrefs } from '@shared/closeToTray'
 import type { PerfHudPrefs, StartupProfile } from '@shared/perf'
 import type { ProcessPriorityPrefs } from '@shared/processPriority'
@@ -106,6 +108,20 @@ export interface PrefsSnapshot {
    * row that states the wrong one for a frame is this gate's whole subject.
    */
   overlayTextScales: Record<OverlayKind, number>
+  /**
+   * Text size & transparency — the OVERLAYS' background alpha (JOS-407): the shared value and
+   * whether it is in force.
+   *
+   * Here for the `overlayTextSize` reason next door, with one of its own: this preference's
+   * `independent` is the first switch in the pane whose stored value is decided by a MIGRATION, so
+   * an install that comes up independent would watch its switch paint OFF and rise — which is the
+   * JOS-340 defect on the one control that has to be believed.
+   */
+  overlayBgAlpha: OverlayBgAlphaPrefs
+  /** …and every kind's OWN alpha, for the same twelve-row list, on the `overlayTextScales`
+   *  argument: a row states a value, and one that states the wrong one for a frame is this gate's
+   *  whole subject. */
+  overlayBgAlphas: Record<OverlayKind, number>
   /** Window — what the X does (JOS-139). OFF by default (owner reversal, 2026-08-16), and it has
    *  TWO other controls (the tray menu's checkbox and the title bar's overlay-menu row), so this
    *  entry is kept current by main's pushes as well as by the card's own writes — see App.tsx. */
@@ -163,6 +179,8 @@ export interface PrefsReader {
   getOverlaySnap: () => Promise<OverlaySnapPrefs>
   getOverlayTextSize: () => Promise<OverlayTextSizePrefs>
   getOverlayTextScales: () => Promise<Record<OverlayKind, number>>
+  getOverlayBgAlpha: () => Promise<OverlayBgAlphaPrefs>
+  getOverlayBgAlphas: () => Promise<Record<OverlayKind, number>>
   getCloseToTray: () => Promise<CloseToTrayPrefs>
   getOverlayState: () => Promise<Record<OverlayKind, boolean>>
   getToastConfig: () => Promise<OverlayConfig>
@@ -199,6 +217,8 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     overlaySnap,
     overlayTextSize,
     overlayTextScales,
+    overlayBgAlpha,
+    overlayBgAlphas,
     closeToTray,
     overlayState,
     toastConfig,
@@ -224,6 +244,8 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     eq.getOverlaySnap(),
     eq.getOverlayTextSize(),
     eq.getOverlayTextScales(),
+    eq.getOverlayBgAlpha(),
+    eq.getOverlayBgAlphas(),
     eq.getCloseToTray(),
     eq.getOverlayState(),
     eq.getToastConfig(),
@@ -253,6 +275,10 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     // the cache can never hold a shared size that is not a legal one.
     overlayTextSize: normalizeOverlayTextSize(overlayTextSize),
     overlayTextScales,
+    // …and through its own normalizer, for the same reason: the cache can never hold a shared
+    // alpha the slider could not express.
+    overlayBgAlpha: normalizeOverlayBgAlpha(overlayBgAlpha),
+    overlayBgAlphas,
     closeToTray,
     toast: { open: overlayState.toast, locked: toastConfig.locked },
     // The knobs go through the same normalizer main's store reads with, so the cache can never

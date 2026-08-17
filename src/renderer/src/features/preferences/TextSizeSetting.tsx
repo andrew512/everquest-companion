@@ -31,9 +31,12 @@ import { Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/materia
 import FormatSizeIcon from '@mui/icons-material/FormatSize'
 import { UI_SCALE_STEPS, normalizeUiScale, uiScalePercent } from '@shared/uiScale'
 import { recordPref, usePrefsSeed } from './prefsHydration'
-// The OVERLAYS' size and the per-overlay list (JOS-405), which are items in THIS section: someone
-// who came here to fix their meters has to find them without leaving the card they landed on.
-import { OverlayTextSizeSetting, PerOverlayTextSizeSetting } from './OverlayTextSizeSetting'
+// The OVERLAYS' size, their TRANSPARENCY and the per-overlay list (JOS-405, JOS-407), which are
+// items in THIS section: someone who came here to fix their meters has to find them without leaving
+// the card they landed on.
+import { OverlayTextSizeSetting } from './OverlayTextSizeSetting'
+import { OverlayBgAlphaSetting } from './OverlayBgAlphaSetting'
+import { PerOverlaySetting } from './PerOverlaySetting'
 import type { PrefSection } from './PreferencesView'
 
 /**
@@ -92,10 +95,20 @@ const OVERLAY_WORDS =
   'overlay overlays meter card con mob toast banner independent separate each individually unpin ' +
   'window windows floating pinned locked strip popup timers respawn xp healing'
 
+/** …and the words for the overlays' BACKGROUND (JOS-407) — again what the reporter SEES (a card
+ *  they cannot read through, a meter that hides the game) rather than the field's name. */
+const ALPHA_WORDS =
+  'transparency transparent opacity opaque see-through solid background bg dim darker lighter faded'
+
+/**
+ * THE SECTION IS NAMED FOR BOTH SETTINGS NOW (JOS-407), and the `textsize` id is deliberately
+ * unchanged: it is what the rail's testid, the deep link and every existing e2e step address it by,
+ * and renaming an id to match a label is how a working route breaks for a cosmetic reason.
+ */
 export function textSizeSection(): PrefSection {
   return {
     id: 'textsize',
-    label: 'Text size',
+    label: 'Text size & transparency',
     icon: <FormatSizeIcon fontSize="small" />,
     items: [
       {
@@ -112,11 +125,19 @@ export function textSizeSection(): PrefSection {
         keywords: `${SIZE_WORDS} ${OVERLAY_WORDS}`,
         content: <OverlayTextSizeSetting />
       },
+      // JOS-407: the same story one field over — and for the three strips, the first transparency
+      // control they have ever had.
       {
-        id: 'overlay-text-per-kind',
-        label: 'Per-overlay sizes',
-        keywords: `${SIZE_WORDS} ${OVERLAY_WORDS}`,
-        content: <PerOverlayTextSizeSetting />
+        id: 'overlay-bg-alpha',
+        label: 'Overlay transparency',
+        keywords: `${ALPHA_WORDS} ${OVERLAY_WORDS}`,
+        content: <OverlayBgAlphaSetting />
+      },
+      {
+        id: 'overlay-per-kind',
+        label: 'Per-overlay size & transparency',
+        keywords: `${SIZE_WORDS} ${ALPHA_WORDS} ${OVERLAY_WORDS}`,
+        content: <PerOverlaySetting />
       }
     ]
   }
@@ -153,7 +174,8 @@ export function TextSizeSetting(): JSX.Element {
 
       <Typography variant="caption" color="text.secondary" data-testid="pref-text-size-note">
         This sizes the whole window, meters and numbers included, and it stays this way next time
-        you open the app. The floating overlays have their own size, right below this.
+        you open the app. The floating overlays have their own size and transparency, right below
+        this.
       </Typography>
     </Stack>
   )

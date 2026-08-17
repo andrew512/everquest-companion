@@ -142,9 +142,12 @@ test('ONE SCALE FOR EVERY OVERLAY IS NOW A ROUTE, NOT A FAN-OUT (JOS-405)', () =
   // The rule is now the DEFAULT of a switch: while synced the press moves the SHARED preference
   // and touches no kind, and every open window is pushed the new prefs.
   const ipc = src('../src/main/ipc/windowControls.ts')
+  // JOS-407 gave `bgAlpha` the same two modes, so the routing moved into one function that lifts
+  // whichever shared field the patch names out of it. The CLAIM is unchanged and is still spelled
+  // here as source: the test, the setter and the broadcast, in that order.
   assert.match(
     ipc,
-    /if \(p\.textScale !== undefined && !getOverlayTextSize\(\)\.independent\) \{[\s\S]*?setOverlayTextSize\(\{ shared: p\.textScale \}\)[\s\S]*?broadcastOverlayTextSize\(prefs\)/,
+    /if \(p\.textScale !== undefined && !getOverlayTextSize\(\)\.independent\) \{[\s\S]*?broadcastOverlayTextSize\(setOverlayTextSize\(\{ shared: p\.textScale \}\)\)/,
     'a synced textScale write routes to the shared preference and broadcasts it'
   )
   // THE FAN-OUT IS GONE, and its absence is the claim: a loop that still wrote every kind would
@@ -159,8 +162,9 @@ test('ONE SCALE FOR EVERY OVERLAY IS NOW A ROUTE, NOT A FAN-OUT (JOS-405)', () =
     assert.doesNotMatch(body, /setOverlayConfig\(/, 'a per-kind loop may read and send, never write')
   }
   // …and the independent path is the ordinary per-kind write the field's own shape always said
-  // it was: this kind stored, this window echoed.
-  assert.match(ipc, /const next = setOverlayConfig\(kind, p\)/)
+  // it was: this kind stored, this window echoed. `rest` is the patch minus whatever was routed
+  // away above, which for an independent press is the whole of it.
+  assert.match(ipc, /const next = setOverlayConfig\(kind, rest\)/)
 })
 
 test('THE BROADCAST REACHES A PINNED WINDOW, which has no control of its own to press', () => {
@@ -332,8 +336,10 @@ test('EXACTLY ONE function decides what a window draws at, and every surface ask
   // different number from the window beside it.
   const chrome = code('../src/renderer/src/overlay/useOverlayChrome.ts')
   assert.match(chrome, /effectiveOverlayTextScale\(textSize, cfg\?\.textScale\)/)
-  const card = code('../src/renderer/src/features/preferences/OverlayTextSizeSetting.tsx')
-  assert.match(card, /effectiveOverlayTextScale\(prefs, scales\[kind\]\)/)
+  // The twelve-row list moved to its own file in JOS-407, because each row now carries a size AND
+  // a transparency and belongs to neither setting alone.
+  const rows = code('../src/renderer/src/features/preferences/PerOverlaySetting.tsx')
+  assert.match(rows, /effectiveOverlayTextScale\(sizePrefs, scales\[kind\]\)/)
   // …and nobody re-derives it with a ternary of their own.
   for (const path of [...Object.values(SURFACES), FLOOR, SCALE]) {
     assert.doesNotMatch(code(path), /independent\s*\?/, `${path} decides the rule for itself`)

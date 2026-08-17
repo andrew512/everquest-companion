@@ -8,19 +8,14 @@
 // moves to where they went looking for it — beside the window's own Text size — and the control
 // on the overlay stays exactly where it is, writing the same value.
 //
-// THREE CONTROLS, AND THE MIDDLE ONE CHANGES WHAT THE OTHER TWO MEAN:
+// TWO CONTROLS HERE, AND A THIRD NEXT DOOR:
 //
 //   Overlay text size          the ONE size, and what every overlay uses unless told otherwise.
 //   Independent sizes          off by default — the 2026-08-05 rule, now a default rather than a
 //                              law (shared/overlayTextScale.ts carries the argument).
-//   Per-overlay sizes          all twelve, ALWAYS RENDERED. While synced each row is disabled and
-//                              shows the SHARED value, because a row states what is true now.
-//
-// THE ROWS SHOW WHAT IS IN FORCE, NEVER WHAT IS REMEMBERED. That is the one design decision in
-// here worth defending: while synced, every window genuinely draws at the shared size, and a row
-// that printed a remembered 150% next to a meter drawing 100% would be a lie told twelve times.
-// The remembered values are not lost — nothing writes them while synced — they are simply not
-// what is happening, and the switch is one click away from making them true again.
+//   Per-overlay rows           all twelve, ALWAYS RENDERED — in ./PerOverlaySetting.tsx, because
+//                              since JOS-407 each row carries a size AND a transparency and the
+//                              list belongs to neither setting alone.
 //
 // STATE, NEVER PROCESS, AND THE CAVEAT DIET (AGENTS.md): each caption is one sentence about what
 // the overlays DO. Nothing here mentions routing, broadcasts, or which process stores the number.
@@ -29,7 +24,7 @@
 // Stacks.
 
 import { type JSX, useCallback, useEffect, useState } from 'react'
-import { Box, FormControlLabel, IconButton, Stack, Switch, Typography } from '@mui/material'
+import { FormControlLabel, IconButton, Stack, Switch, Typography } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import RemoveIcon from '@mui/icons-material/Remove'
 import {
@@ -37,19 +32,17 @@ import {
   TEXT_SCALE_MIN,
   TEXT_SCALE_STEP,
   clampTextScale,
-  effectiveOverlayTextScale,
   type OverlayTextSizePrefs
 } from '@shared/overlayTextScale'
-import { OVERLAY_KIND_LABEL, OVERLAY_LABEL_ORDER, OVERLAY_STRIP_KINDS } from '@shared/overlayLabels'
-import type { OverlayKind } from '@shared/types'
-// THE app's Tooltip, never MUI's (owner rule 2026-08-04, pinned by tests/tooltipCursor.test.mts):
-// anything wearing a tooltip shows the hand, and a DISABLED anchor keeps `not-allowed` — which is
-// exactly the state every row below is in while the overlays share one size.
-import { Tooltip } from '../../lib/Tooltip'
 import { recordPref, usePrefsSeed } from './prefsHydration'
 
 /** The percentage, which is the vocabulary the window's own ladder already taught this pane. */
 const pct = (scale: number): string => `${String(Math.round(scale * 100))}%`
+
+/** What a disabled row's hover says. One sentence: what is true, and what would change it.
+ *  Lives here rather than with the rows because it is this switch's own explanation. */
+export const SYNCED_SIZE_TOOLTIP =
+  'All overlays share one text size. Turn on Independent sizes per overlay to set this one by itself.'
 
 /**
  * The prefs blob, SEEDED from the pane's hydration snapshot (JOS-340) and kept current by main's
@@ -60,7 +53,7 @@ const pct = (scale: number): string => `${String(Math.round(scale * 100))}%`
  * pane left open while somebody scales their fight meter would otherwise print a stale
  * percentage. Same arrangement as `closeToTray`, which has three.
  */
-function useOverlayTextSize(): [OverlayTextSizePrefs, (patch: Partial<OverlayTextSizePrefs>) => void] {
+export function useOverlayTextSize(): [OverlayTextSizePrefs, (patch: Partial<OverlayTextSizePrefs>) => void] {
   const [prefs, setPrefs] = useState<OverlayTextSizePrefs>(usePrefsSeed().overlayTextSize)
 
   useEffect(() => {
@@ -89,7 +82,7 @@ function useOverlayTextSize(): [OverlayTextSizePrefs, (patch: Partial<OverlayTex
  * the overlay windows' own stepper stops at — this is the same control in a different frame, not a
  * second opinion about how big an overlay may be.
  */
-function ScaleStepper({
+export function ScaleStepper({
   scale,
   onStep,
   disabled,
@@ -185,111 +178,3 @@ export function OverlayTextSizeSetting(): JSX.Element {
   )
 }
 
-/** What a disabled row's hover says. One sentence: what is true, and what would change it. */
-const SYNCED_TOOLTIP =
-  'All overlays share one text size. Turn on Independent sizes per overlay to set this one by itself.'
-
-/**
- * One overlay's row. The label, and a stepper that is EITHER this kind's own value (independent)
- * or the shared value, disabled and explained (synced).
- *
- * THE TOOLTIP NEEDS THE SPAN. MUI attaches its listeners to the child, and a disabled button fires
- * no pointer events at all — so a Tooltip on one is a tooltip that never shows. The wrapping span
- * is the repo's existing answer (UpgradeOffers.tsx), and it is applied to the whole stepper rather
- * than to each button so hovering the percentage explains it too.
- */
-function OverlayRow({
-  kind,
-  scale,
-  synced,
-  onStep
-}: {
-  kind: OverlayKind
-  scale: number
-  synced: boolean
-  onStep: (next: number) => void
-}): JSX.Element {
-  const stepper = (
-    <ScaleStepper
-      scale={scale}
-      onStep={onStep}
-      disabled={synced}
-      name={OVERLAY_KIND_LABEL[kind]}
-      testid={`pref-overlay-text-size-${kind}`}
-    />
-  )
-  return (
-    <Stack direction="row" alignItems="center" spacing={1} data-testid={`pref-overlay-text-row-${kind}`}>
-      <Typography variant="body2" sx={{ flexGrow: 1, minWidth: 0, opacity: synced ? 0.7 : 1 }}>
-        {OVERLAY_KIND_LABEL[kind]}
-      </Typography>
-      {synced ? (
-        <Tooltip title={SYNCED_TOOLTIP}>
-          <span>{stepper}</span>
-        </Tooltip>
-      ) : (
-        stepper
-      )}
-    </Stack>
-  )
-}
-
-/**
- * THE TWELVE, ALWAYS RENDERED.
- *
- * A list that appeared when the switch went on would make the switch a navigation step: you would
- * have to turn something on to find out what it offers. It is here, in force or not, and the rows
- * say which by being live or explained.
- *
- * GROUPED AS THE APP NAMES THEM (shared/overlayLabels.ts): the nine windows you open from the
- * Overlay menu, in that menu's order, then the three strips that appear by themselves. A row for a
- * closed window still edits its stored value — it applies the next time that window opens, which
- * is the same promise every other per-window setting in this app makes.
- */
-export function PerOverlayTextSizeSetting(): JSX.Element {
-  const [prefs] = useOverlayTextSize()
-  const [scales, setScales] = useState<Record<OverlayKind, number>>(usePrefsSeed().overlayTextScales)
-
-  // A press made on a WINDOW's own A− / A+ while this list is open (independent mode). Without it
-  // the row beside that window would go on stating the size it used to draw at.
-  useEffect(() => {
-    return window.eq.onOverlayTextScales((m) => {
-      setScales(m)
-      recordPref('overlayTextScales', m)
-    })
-  }, [])
-
-  const setKind = useCallback((kind: OverlayKind, textScale: number) => {
-    setScales((cur) => ({ ...cur, [kind]: textScale }))
-    void window.eq.setOverlayTextScale(kind, textScale).then((cfg) => {
-      const stored = clampTextScale(cfg.textScale)
-      setScales((cur) => {
-        const next = { ...cur, [kind]: stored }
-        recordPref('overlayTextScales', next)
-        return next
-      })
-    })
-  }, [])
-
-  return (
-    <Stack spacing={0.75}>
-      {OVERLAY_LABEL_ORDER.map((kind) => (
-        <Box key={kind}>
-          {kind === OVERLAY_STRIP_KINDS[0] && (
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', pt: 1, pb: 0.5 }}>
-              These appear by themselves when something happens.
-            </Typography>
-          )}
-          <OverlayRow
-            kind={kind}
-            // IN FORCE, never remembered: synced rows all read the shared value, which is what
-            // every one of those windows is genuinely drawing at.
-            scale={effectiveOverlayTextScale(prefs, scales[kind])}
-            synced={!prefs.independent}
-            onStep={(next) => { setKind(kind, next) }}
-          />
-        </Box>
-      ))}
-    </Stack>
-  )
-}

@@ -24,6 +24,12 @@ import {
   effectiveOverlayTextScale,
   type OverlayTextSizePrefs
 } from '@shared/overlayTextScale'
+import {
+  DEFAULT_OVERLAY_BG_ALPHA,
+  clampBgAlpha,
+  effectiveOverlayBgAlpha,
+  type OverlayBgAlphaPrefs
+} from '@shared/overlayBgAlpha'
 import { onOverlayPointerExit, overlayPointerExited } from './pointerExit'
 
 /**
@@ -73,6 +79,14 @@ export interface OverlayChrome {
   config: OverlayConfig | null
   /** click-through + no chrome; the persisted lock state */
   locked: boolean
+  /**
+   * The background alpha the body is painted with, 0.1..1 — the EFFECTIVE one (JOS-407), which is
+   * the shared preference unless the player has turned on independent transparency, and this
+   * window's own stored value if they have.
+   *
+   * Every caller is unchanged by the switch existing, which is the point of resolving it here: a
+   * surface asks "how see-through am I" and gets an answer, never a rule.
+   */
   bgAlpha: number
   /**
    * Text size, 0.8..2 — the EFFECTIVE one (JOS-405), which is the shared preference unless the
@@ -118,6 +132,10 @@ export function useOverlayChrome(): OverlayChrome {
    * would mean an overlay that paints nothing at all until a second IPC round trip lands.
    */
   const [textSize, setTextSize] = useState<OverlayTextSizePrefs>(DEFAULT_OVERLAY_TEXT_SIZE)
+  /** …and the TRANSPARENCY preference (JOS-407), on exactly the terms above: not this window's
+   *  config, not part of `ready`, and starting at the shipped default because a shade arriving a
+   *  hop later re-paints the same rows a little fainter. */
+  const [bgPrefs, setBgPrefs] = useState<OverlayBgAlphaPrefs>(DEFAULT_OVERLAY_BG_ALPHA)
   const [hovering, setHovering] = useState(false)
   /** What is asking for the mouse right now. Capture is on exactly while this is non-empty. */
   const reasonsRef = useRef<Set<CaptureReason>>(new Set())
@@ -139,11 +157,18 @@ export function useOverlayChrome(): OverlayChrome {
     return window.eqOverlay.onTextSize(setTextSize)
   }, [])
 
+  // The same hydrate-then-subscribe for the transparency preference (JOS-407).
+  useEffect(() => {
+    void window.eqOverlay.getBgAlpha().then(setBgPrefs)
+    return window.eqOverlay.onBgAlpha(setBgPrefs)
+  }, [])
+
   const locked = cfg?.locked ?? false
-  const bgAlpha = cfg?.bgAlpha ?? 0.72
   const drill = cfg?.drill ?? null
-  // ONE FUNCTION DECIDES THIS, and it is not this file (shared/overlayTextScale.ts).
+  // ONE FUNCTION DECIDES EACH OF THESE, and it is not this file (shared/overlayTextScale.ts,
+  // shared/overlayBgAlpha.ts).
   const textScale = effectiveOverlayTextScale(textSize, cfg?.textScale)
+  const bgAlpha = effectiveOverlayBgAlpha(bgPrefs, cfg?.bgAlpha)
 
   /**
    * THE LOCK CHANGING IS A RESET, HOWEVER IT CHANGED.
@@ -175,6 +200,13 @@ export function useOverlayChrome(): OverlayChrome {
     if (p.textScale !== undefined && !textSize.independent) {
       const shared = clampTextScale(p.textScale)
       setTextSize((t) => (t.independent ? t : { ...t, shared }))
+    }
+    // …and a `bg` DRAG the same way (JOS-407). It matters more here than it does one field over:
+    // a slider the user is dragging must track the cursor, and a shade that only landed once main
+    // answered would lag every pixel of the drag behind the pointer.
+    if (p.bgAlpha !== undefined && !bgPrefs.independent) {
+      const shared = clampBgAlpha(p.bgAlpha)
+      setBgPrefs((b) => (b.independent ? b : { ...b, shared }))
     }
     void window.eqOverlay.setConfig(p)
   }

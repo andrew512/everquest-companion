@@ -67,6 +67,15 @@ function stubReader(over: Partial<Record<keyof PrefsReader, unknown>> = {}): {
     // those windows is genuinely drawing at. Deliberately NOT all equal: the flattened-by-fan-out
     // store is the OLD shape, and this stub is a store somebody has since taken apart.
     getOverlayTextScales: answer('getOverlayTextScales', { fight: 1.6, overall: 1, events: 0.9 }),
+    // The overlays' TRANSPARENCY (JOS-407), stored off-default and with its OWN switch ON. This is
+    // the first switch in the pane whose stored value can be decided by a MIGRATION rather than by
+    // a click — an install whose overlays already differed comes up independent — so a card that
+    // painted the compiled-in OFF first would be wrong for everybody the migration spoke for.
+    getOverlayBgAlpha: answer('getOverlayBgAlpha', { shared: 0.4, independent: true }),
+    // …and the twelve per-kind alphas the same list edits, deliberately not all equal: differing
+    // values are the ordinary shape of this field, which is the whole reason its switch defaults
+    // the other way up from the text size's.
+    getOverlayBgAlphas: answer('getOverlayBgAlphas', { fight: 0.3, overall: 0.72, events: 0.9 }),
     // Stored ON against a compiled-in default of OFF (JOS-139; OFF since the owner's 2026-08-16
     // reversal) — and the one with TWO other controls (the tray menu's checkbox and the title bar's
     // overlay-menu row) that can move it while this pane is closed.
@@ -105,10 +114,11 @@ test('one read answers every card in the pane, and it snaps the text size to the
   const { reader, calls } = stubReader()
   const snap = await readPrefsSnapshot(reader)
 
-  // TWENTY-FOUR reads, one batch (JOS-405 added the overlays' text size and its twelve per-kind
-  // values). The number is not the claim; the claim is that the gate asks each question exactly
-  // once, so a pane that mounts does not stampede the store.
-  assert.equal(calls(), 24, 'every read fires exactly once')
+  // TWENTY-SIX reads, one batch (JOS-405 added the overlays' text size and its twelve per-kind
+  // values; JOS-407 the same pair for transparency). The number is not the claim; the claim is
+  // that the gate asks each question exactly once, so a pane that mounts does not stampede the
+  // store.
+  assert.equal(calls(), 26, 'every read fires exactly once')
 
   // The overlays' size (JOS-405), which is TWO facts read together for the toast pair's reason:
   // the shared stepper and the twelve rows are one control group, and a frame where the size was
@@ -119,6 +129,15 @@ test('one read answers every card in the pane, and it snaps the text size to the
   // can never hold a size no overlay could draw at (the `uiScale` argument, on a different blob).
   const clamped = await readPrefsSnapshot(stubReader({ getOverlayTextSize: { shared: 9 } }).reader)
   assert.deepEqual(clamped.overlayTextSize, { shared: 2, independent: false, seeded: false })
+
+  // The overlays' TRANSPARENCY (JOS-407), the same two facts one field over — and its per-kind
+  // map, which is what a row states while the switch is on.
+  assert.deepEqual(snap.overlayBgAlpha, { shared: 0.4, independent: true, seeded: false })
+  assert.equal(snap.overlayBgAlphas.fight, 0.3, 'and each window’s own transparency seeds the list')
+  // Through its own normalizer for the same reason, and the FLOOR is the interesting end: a stored
+  // 0 is a body nobody can see, and no slider in the app can get it back off the floor.
+  const floored = await readPrefsSnapshot(stubReader({ getOverlayBgAlpha: { shared: 0 } }).reader)
+  assert.deepEqual(floored.overlayBgAlpha, { shared: 0.1, independent: false, seeded: false })
 
   // The resist-evidence switch (JOS-385), stored against its shipped ON. It is in the batch for
   // the `processPriority` reason, and it is asserted here for the same one.
@@ -178,7 +197,7 @@ test('two mounts in one frame share ONE batch', async () => {
   resetPrefsSnapshotForTests()
   const { reader, calls } = stubReader()
   const [a, b] = await Promise.all([loadPrefsSnapshot(reader), loadPrefsSnapshot(reader)])
-  assert.equal(calls(), 24, 'not forty-eight')
+  assert.equal(calls(), 26, 'not fifty-two')
   assert.equal(a, b)
   resetPrefsSnapshotForTests()
 })
