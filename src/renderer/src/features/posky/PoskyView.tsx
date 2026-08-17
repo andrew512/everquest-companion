@@ -1,4 +1,4 @@
-import { type JSX, useCallback, useEffect, useState } from 'react'
+import { type JSX, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Box,
@@ -20,6 +20,8 @@ import QuestFilterBar, { InventorySource } from './QuestFilterBar'
 import { countSourcePhrase } from '../inventory/countSource'
 import ClassUnlockList from './ClassUnlockList'
 import { QUEST_PAGE, useQuestList, type QuestListState, type TabKey } from './useQuestList'
+import CleanupList, { NO_DUMP_LOCATIONS } from './CleanupList'
+import { cleanupRowsFor } from './cleanup'
 import type { MobTarget } from '../mobs/mobTarget'
 import Confetti from '../../lib/Confetti'
 
@@ -341,16 +343,21 @@ function ReadyList(props: ReadyListProps): JSX.Element {
 }
 
 /**
- * The four tabs, in the order the work happens: what you are farming, what you can hand in, what
- * all that grinding is FOR, and what you told the app to forget. Ready and Ignored carry their own
- * count, because the number IS the reason to look.
+ * The five tabs, in the order the work happens: what you are farming, what you can hand in, what
+ * you could throw away now that you have, what all that grinding is FOR, and what you told the app
+ * to forget. Ready, Cleanup and Ignored carry their own count, because the number IS the reason to
+ * look.
  *
  * Classes deliberately does not (JOS-148). Its number would be "how many classes are unlocked",
  * which needs the classUnlocks module — and subscribing to it HERE, just to letter a tab, would
  * put a second copy of the tab's own model in the container that mounts it. The count is the first
  * thing the tab says when you open it, one line above the rows.
+ *
+ * Cleanup's number arrives as a PROP rather than off `list` (JOS-389): it is not list state at
+ * all, it is the cleanup model's own row count, and the view computes it once above both this bar
+ * and the pane so the tab and its rows cannot disagree.
  */
-function PoskyTabs({ list }: { list: QuestListState }): JSX.Element {
+function PoskyTabs({ list, cleanupCount }: { list: QuestListState; cleanupCount: number }): JSX.Element {
   return (
     <Tabs
       value={list.tab}
@@ -367,6 +374,14 @@ function PoskyTabs({ list }: { list: QuestListState }): JSX.Element {
         value="ready"
         label={list.ready.length ? `Ready (${list.ready.length})` : 'Ready'}
         data-testid="posky-tab-ready"
+      />
+      {/* "Cleanup" - the owner's own word for the screen (JOS-389). The count is how many items
+          the model lists, i.e. how many stacks are candidates to throw away, which is exactly the
+          number that decides whether the tab is worth opening after a long campaign. */}
+      <Tab
+        value="cleanup"
+        label={cleanupCount ? `Cleanup (${String(cleanupCount)})` : 'Cleanup'}
+        data-testid="posky-tab-cleanup"
       />
       {/* "Classes" - what the tests are for. The word is the class, not the unlock, because a row
           is a class whether or not it is unlocked and the tab is as much a progress list. */}
@@ -456,10 +471,31 @@ export default function PoskyView({
     setItemOverride,
     itemOverrides,
     inventoryInfo,
+    reloadInventory,
     sharedItems,
     ambiguousQuestNames
   } = useProgress({ onQuestComplete })
   const list = useQuestList(quests)
+  /**
+   * THE CLEANUP COUNT, derived without the dump (JOS-389). Where an item SITS decides nothing
+   * about whether it belongs on that tab — membership is the turn-in rule and the held counts, and
+   * nothing else (cleanup.ts) — so the number on the tab costs one pass over the quests here and
+   * no `character:sheet` read for a player who never opens it. The pane recomputes the same list
+   * WITH the places on it; the two agree by construction because locations are decoration.
+   *
+   * It reads EVERY quest, ignored ones included, unlike every other tab on this view. Ignoring a
+   * quest means "never show me this row"; it does not mean "give away the drops it needs". On a
+   * screen whose advice is destructive the safe reading is the conservative one, so an ignored
+   * quest still speaks for its items.
+   */
+  const cleanupCount = useMemo(() => cleanupRowsFor(quests, NO_DUMP_LOCATIONS).length, [quests])
+  /** The same statement the quest rows make, in the `void`-returning shape a control wants. */
+  const onSetItemCount = useCallback<SetItemCount>(
+    (name, count) => {
+      void setItemOverride(name, count)
+    },
+    [setItemOverride]
+  )
   const anchor = useQuestAnchor(quests, list, {
     quest: focusQuest,
     nonce: focusNonce,
@@ -485,9 +521,18 @@ export default function PoskyView({
   return (
     <Stack spacing={2} sx={{ height: '100%', position: 'relative' }}>
       {burst != null && <Confetti key={burst} onDone={() => setBurst(null)} />}
-      <PoskyTabs list={list} />
+      <PoskyTabs list={list} cleanupCount={cleanupCount} />
       {list.tab === 'ignored' ? (
         <IgnoredList quests={list.ignored} onUnignore={list.questIgnored.toggle} />
+      ) : list.tab === 'cleanup' ? (
+        <CleanupList
+          quests={quests}
+          setItemCount={onSetItemCount}
+          countSource={countSource}
+          onCountSource={setCountSource}
+          inventoryLoadedAt={inventoryInfo?.readAt ?? null}
+          reloadInventory={reloadInventory}
+        />
       ) : list.tab === 'ready' ? (
         <ReadyList
           quests={list.ready}
