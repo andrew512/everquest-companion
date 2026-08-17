@@ -67,8 +67,12 @@ export interface ZoneEvent extends LogEventBase {
  *   'depot'    — stored in the tradeskill depot (bank-type storage — HELD)
  *   'combined' — consumed on pickup to create an upgraded `<item> +N` (see `created`;
  *      net-ZERO for held counts — the looted copy and a held copy merge into one)
+ *   'destroyed' — the ONE member of this family that is a SUBTRACTION (JOS-401). It rides the
+ *      loot lane rather than a kind of its own because everything a destroy has to reach
+ *      already reads loot rows (the module, the snapshot, the deltas, every held-count fold);
+ *      what it means to each reader is `shared/lootDisposition.ts`.
  */
-export type LootDisposition = 'currency' | 'sold' | 'hoard' | 'depot' | 'combined'
+export type LootDisposition = 'currency' | 'sold' | 'hoard' | 'depot' | 'combined' | 'destroyed'
 
 /** `--You have looted a <item> from <mob>'s corpse.--` (self-loot). */
 export interface LootEventE extends LogEventBase {

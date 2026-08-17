@@ -32,6 +32,7 @@ import type { EqModule } from './types'
 import type { LogEvent } from '../../shared/logEvents'
 import type { ConsiderDelta, ConsiderRow, ConsiderSnap, MobKnowledge } from '../../shared/types'
 import { MobLootIndex, mobKey } from '../mobLookupParse'
+import { isDestroyed } from '../../shared/lootDisposition'
 
 /** How many considered mobs the ring keeps. Oldest fall off the front. */
 export const CONSIDER_CAP = 50
@@ -141,6 +142,13 @@ export class ConsiderModule implements EqModule<ConsiderSnap, ConsiderDelta> {
     }
     if (ev.kind === 'loot') {
       // Historical loot counts — it IS the history. Stacked loots add their count, not 1.
+      //
+      // A DESTROY IS NEVER A DROP (JOS-401, the census). This index answers "what has this MOB
+      // handed me", so a row with no mob in the sentence has nothing to say to it. `MobLootIndex.
+      // note` already refuses a source-less row, which makes the mob knowledge and every drop-rate
+      // surface built on it structurally immune — the explicit refusal here is so the rule is
+      // stated where the decision is made rather than inferred from a guard two files away.
+      if (isDestroyed(ev)) return
       this.deps.ownLoot?.note(ev.item, ev.source, ev.ts, ev.count ?? 1)
       return
     }
