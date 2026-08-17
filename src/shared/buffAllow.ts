@@ -11,19 +11,22 @@
 // THREE FACTS, AND THE THIRD IS THE ONE THAT IS EASY TO GET WRONG.
 //
 // 1. A MODE. `optIn` off is the shipped answer and means every spell draws, exactly as it always
-//    has. On means the windows draw ONLY what you have checked. It is one boolean, stored beside
-//    the choices rather than somewhere else, because it is the thing that decides what they MEAN.
+//    has — AND THERE ARE NO CHECKBOXES (owner ruling 2026-08-17: "'only track' should enable the
+//    checkboxes, when its disabled there shouldn't be any checkboxes. so its opt-in, or no
+//    choice."). On means the boxes appear and the windows draw ONLY what you have checked. It is
+//    one boolean, stored beside the choices, because it is the thing that decides whether they
+//    are consulted at all.
 //
-// 2. A TRI-STATE PER SPELL LINE. `lines[key]` is `true` (allowed), `false` (denied) or ABSENT
-//    (unset). The mode decides what an absent key means — allowed in the default mode, denied in
-//    opt-in — and that is the whole of `buffAllowAllowed`.
+// 2. A VERDICT PER SPELL LINE. `lines[key]` is `true` (checked), `false` (unchecked) or ABSENT
+//    (never touched). In opt-in mode only `true` draws; with the mode off the map is not read at
+//    all. `false` and absent read the same; the record keeps the distinction only because a
+//    written answer is cheaper to keep than to collapse, and `null` in a patch still withdraws one.
 //
-// 3. FLIPPING THE MODE MUST NEVER LOSE A CHOICE. Which is why an explicit answer is always
-//    WRITTEN, in both modes and in both directions: unchecking in the default mode stores `false`,
-//    checking in opt-in mode stores `true`, and neither ever deletes the other's statement. A
-//    design that stored "the boxes that are ticked right now" would silently erase every deny the
-//    moment a user tried the other mode, and the owner's ask is explicitly that the two modes are
-//    two readings of ONE set of choices.
+// 3. FLIPPING THE MODE MUST NEVER LOSE A CHOICE. Turning opt-in off does not clear the map, and
+//    turning it back on reads the same set of ticks the user left — the switch hides the boxes,
+//    it does not forget them. (The first cut of this module had a default mode whose boxes could
+//    DENY; the owner struck that the day after it shipped, so a stored `false` from that day is
+//    inert now rather than a deny.)
 //
 // THE KEY IS THE SPELL LINE, NOT THE INSTANCE AND NOT THE RANK (the 2026-08-14 amendment): a haste
 // is a haste across characters, and a rank upgrade must not silently reset a user's answer. The
@@ -166,19 +169,17 @@ export function sameBuffAllowPrefs(a: BuffAllowPrefs, b: BuffAllowPrefs): boolea
 /**
  * MAY THIS SPELL LINE DRAW ON A TIMER WINDOW — the whole rule, and the mode is the whole of it.
  *
- *   default mode — allowed unless explicitly DENIED (`lines[key] === false`).
- *   opt-in mode  — allowed only when explicitly ALLOWED (`lines[key] === true`).
+ *   mode off — everything draws; the map is not consulted (there are no boxes to have set it).
+ *   opt-in   — only a line explicitly CHECKED (`lines[key] === true`) draws.
  *
- * Which is also exactly what the checkbox on the Buffs tab shows, in either mode: checked means
- * "this one draws". One function, two readings, no second definition anywhere.
+ * Which is also exactly what the checkbox on the Buffs tab shows when it is on screen: checked
+ * means "this one draws". One function, no second definition anywhere.
  */
 export function buffAllowAllowed(prefs: BuffAllowPrefs, key: string): boolean {
-  // ABSENT IS TESTED AS ABSENT, with `in` rather than by comparing the value to a literal: the
-  // record is typed `Record<string, boolean>`, so an index read is `boolean` as far as the compiler
-  // is concerned and the third state is invisible to it. Asking whether the key is there is both
-  // the honest question and the one the types can answer.
-  if (!(key in prefs.lines)) return !prefs.optIn
-  return prefs.lines[key]
+  if (!prefs.optIn) return true
+  // ABSENT IS TESTED AS ABSENT, with `in`: the record is typed `Record<string, boolean>`, so an
+  // index read is `boolean` to the compiler and the third state is invisible to it.
+  return key in prefs.lines && prefs.lines[key]
 }
 
 /**
@@ -189,7 +190,7 @@ export function buffAllowCheck(key: string, checked: boolean): BuffAllowPatch {
   return { lines: { [key]: checked } }
 }
 
-/** True when nothing has ever been said and the mode is the shipped one — the filter's fast path. */
+/** True when the mode is off — everything draws and the filter has nothing to do. */
 export function buffAllowIsDefault(prefs: BuffAllowPrefs): boolean {
-  return !prefs.optIn && Object.keys(prefs.lines).length === 0
+  return !prefs.optIn
 }

@@ -214,8 +214,9 @@ function ActiveGroup({
  * MEANS belongs on the page with the checkboxes.
  *
  * It is still a real preference (it is persisted in the settings store and reaches the overlay
- * windows), so only its UI home moved. OFF is the shipped answer and off is invisible: every box
- * starts checked and both timer windows draw exactly what they always drew.
+ * windows), so only its UI home moved. OFF is the shipped answer and off is invisible: there are
+ * NO boxes on the page and both timer windows draw exactly what they always drew. ON is what puts
+ * the boxes on every card and durations row (owner ruling 2026-08-17: "opt-in, or no choice").
  */
 function AllowModeSwitch({ optIn, onChange }: { optIn: boolean; onChange: (v: boolean) => void }): JSX.Element {
   return (

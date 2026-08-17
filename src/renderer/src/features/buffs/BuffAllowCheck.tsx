@@ -11,10 +11,11 @@
 // commit; drilling it through the card grid and the table body instead would be the same value
 // arriving by two routes with a chance to disagree for a frame.
 //
-// WHAT IT SHOWS IS ALWAYS "does this draw on the timer windows", in either mode — see
-// `buffAllowAllowed`. In the default mode a box starts checked and unchecking DENIES; in opt-in
-// mode it starts unchecked and checking ALLOWS. Two readings, one control, and nothing here has to
-// know which mode is on.
+// IT EXISTS ONLY IN OPT-IN MODE (owner ruling 2026-08-17: "'only track' should enable the
+// checkboxes, when its disabled there shouldn't be any checkboxes. so its opt-in, or no choice.").
+// With the mode off this component renders NOTHING — every surface that mounts it gets the same
+// answer from the same place, so no caller has to ask the mode itself. On, the box starts unchecked
+// and checking ALLOWS; what it shows is "does this draw on the timer windows" (`buffAllowAllowed`).
 
 import type { JSX } from 'react'
 import { Checkbox } from '@mui/material'
@@ -29,8 +30,9 @@ import { Tooltip } from '../../lib/Tooltip'
  * `dense` is the stats-table variant: the same control at table-row scale, because a durations row
  * is 20px tall and a card header is not.
  */
-export function BuffAllowCheck({ spell, dense = false }: { spell: string; dense?: boolean }): JSX.Element {
+export function BuffAllowCheck({ spell, dense = false }: { spell: string; dense?: boolean }): JSX.Element | null {
   const { prefs, setLine } = useBuffAllow(window.eq)
+  if (!prefs.optIn) return null
   const key = timerNameKey(spell)
   const checked = buffAllowAllowed(prefs, key)
   return (

@@ -44,16 +44,20 @@ test('the shipped default says nothing and allows everything', () => {
   assert.equal(buffAllowAllowed(p, 'anything at all'), true)
 })
 
-test('THE MODE DECIDES WHAT UNSET MEANS, and nothing else does', () => {
-  const denied: BuffAllowPrefs = { optIn: false, lines: { clarity: false, valor: true } }
-  assert.equal(buffAllowAllowed(denied, 'clarity'), false, 'an explicit deny holds in default mode')
-  assert.equal(buffAllowAllowed(denied, 'valor'), true)
-  assert.equal(buffAllowAllowed(denied, 'yaulp'), true, 'unset draws in default mode')
+test('OPT-IN OR NO CHOICE (owner ruling 2026-08-17): off draws everything, on draws only what is checked', () => {
+  // With the mode off there are no boxes, so nothing in the map can matter — a stored `false`
+  // (the first cut's deny) is inert, not a deny.
+  const off: BuffAllowPrefs = { optIn: false, lines: { clarity: false, valor: true } }
+  assert.equal(buffAllowAllowed(off, 'clarity'), true, 'a stored false does not deny with the mode off')
+  assert.equal(buffAllowAllowed(off, 'valor'), true)
+  assert.equal(buffAllowAllowed(off, 'yaulp'), true, 'unset draws with the mode off')
+  assert.equal(buffAllowIsDefault(off), true, 'off IS the default, whatever the map holds')
 
-  const optIn: BuffAllowPrefs = { ...denied, optIn: true }
-  assert.equal(buffAllowAllowed(optIn, 'clarity'), false, 'a deny is still a deny in opt-in mode')
-  assert.equal(buffAllowAllowed(optIn, 'valor'), true, 'an allow is what opt-in mode draws')
+  const optIn: BuffAllowPrefs = { ...off, optIn: true }
+  assert.equal(buffAllowAllowed(optIn, 'clarity'), false, 'unchecked is off in opt-in mode')
+  assert.equal(buffAllowAllowed(optIn, 'valor'), true, 'checked is what opt-in mode draws')
   assert.equal(buffAllowAllowed(optIn, 'yaulp'), false, 'unset is OFF in opt-in mode')
+  assert.equal(buffAllowIsDefault(optIn), false)
 })
 
 test('FLIPPING THE MODE LOSES NO CHOICE — the same verdicts, read the other way', () => {
@@ -83,7 +87,7 @@ test('a WITHDRAWAL (null) is the only thing that takes a line back to unset', ()
   const stated = applyBuffAllowPatch(DEFAULT_BUFF_ALLOW_PREFS, buffAllowCheck('clarity', false))
   const withdrawn = applyBuffAllowPatch(stated, { lines: { clarity: null } })
   assert.equal('clarity' in withdrawn.lines, false)
-  assert.equal(buffAllowAllowed(withdrawn, 'clarity'), true, 'unset in default mode draws again')
+  assert.equal(buffAllowAllowed(withdrawn, 'clarity'), true, 'unset with the mode off draws')
   assert.equal(buffAllowAllowed({ ...withdrawn, optIn: true }, 'clarity'), false, '…and is off in opt-in')
 })
 
@@ -160,10 +164,23 @@ test('the shipped default draws every row of both surfaces', () => {
   }
 })
 
-test('DENYING ONE LINE removes exactly its rows, in the default mode', () => {
+test('WITH THE MODE OFF the map is not consulted — a stored false removes nothing', () => {
   const { rows } = replay()
   const victim = keyOf(rows[0])
   const kept = filterAllowedRows(rows, { optIn: false, lines: { [victim]: false } })
+  assert.deepEqual(kept, rows, 'every row drawn, in the same order: off means no choice')
+})
+
+test('IN OPT-IN MODE unchecking one line removes exactly its rows', () => {
+  const { rows } = replay()
+  // Everything checked — including every candidate of a family row, which draws on any of them.
+  const all: Record<string, boolean> = {}
+  for (const r of rows) {
+    all[keyOf(r)] = true
+    for (const c of r.candidates ?? []) all[timerNameKey(c)] = true
+  }
+  const victim = keyOf(rows[0])
+  const kept = filterAllowedRows(rows, { optIn: true, lines: { ...all, [victim]: false } })
   assert.deepEqual(
     kept,
     rows.filter((r) => keyOf(r) !== victim),
@@ -210,9 +227,9 @@ test('a FAMILY row is kept when any candidate may draw, and dropped only when no
   assert.ok(keys.length > 1)
   const oneAllowed = filterAllowedRows(rows, { optIn: true, lines: { [keys[0]]: true } })
   assert.ok(oneAllowed.includes(family), 'one allowed candidate keeps the family row')
-  const allDenied: Record<string, boolean> = {}
-  for (const k of keys) allDenied[k] = false
-  assert.ok(!filterAllowedRows(rows, { optIn: false, lines: allDenied }).includes(family), 'all denied drops it')
+  const noneChecked: Record<string, boolean> = {}
+  for (const k of keys) noneChecked[k] = false
+  assert.ok(!filterAllowedRows(rows, { optIn: true, lines: noneChecked }).includes(family), 'none checked drops it')
 })
 
 test('IT IS A DISPLAY FILTER: the MODEL is byte-identical under every setting', () => {
@@ -236,7 +253,9 @@ test('IT IS A DISPLAY FILTER: the MODEL is byte-identical under every setting', 
 
 test('the filter never re-orders and never invents', () => {
   const { rows } = replay()
-  const kept = filterAllowedRows(rows, { optIn: false, lines: { [keyOf(rows[0])]: false } })
+  const some: Record<string, boolean> = {}
+  for (const r of rows.slice(1)) some[keyOf(r)] = true
+  const kept = filterAllowedRows(rows, { optIn: true, lines: some })
   const order = rows.filter((r) => kept.includes(r))
   assert.deepEqual(kept, order, 'order is the caller’s, filtered')
   assert.equal(new Set(kept.map((r) => r.id)).size, kept.length, 'no row was duplicated')

@@ -38,6 +38,7 @@ import type { BuffClass, BuffStat } from '@shared/types'
 import { fmtDuration, classAccent, estimatePrefix, estimatorSourceTitle } from './format'
 import { Tooltip } from '../../lib/Tooltip'
 import { BuffAllowCheck } from './BuffAllowCheck'
+import { useBuffAllow } from './useBuffAllow'
 
 // Stats-table sections: buffs first, then debuffs (Task #35 — a spell property).
 const CLASS_ORDER: BuffClass[] = ['buff', 'debuff']
@@ -84,15 +85,19 @@ function EstimateCell({ ms, src }: { ms?: number | null; src?: string }): JSX.El
 }
 
 /** One stats row. Everything not stated by a source renders as '—', never as a zero. */
-function StatsRow({ s }: { s: BuffStat }): JSX.Element {
+function StatsRow({ s, withBoxes }: { s: BuffStat; withBoxes: boolean }): JSX.Element {
   const est = rowEstimate(s)
   return (
     <TableRow hover data-testid="buff-stats-row" data-spell={s.spell}>
       {/* THE SECOND PLACE TO CHECK A SPELL (JOS-168) — the same box the active card carries, on
-          every mined line, which is what makes a buff that is not currently up reachable. */}
-      <TableCell padding="checkbox">
-        <BuffAllowCheck spell={s.spell} dense />
-      </TableCell>
+          every mined line, which is what makes a buff that is not currently up reachable. The
+          COLUMN exists only in opt-in mode (owner ruling 2026-08-17): off means no boxes anywhere,
+          and an empty column would be a box-shaped hole. */}
+      {withBoxes ? (
+        <TableCell padding="checkbox">
+          <BuffAllowCheck spell={s.spell} dense />
+        </TableCell>
+      ) : null}
       <TableCell>{s.spell}</TableCell>
       <TableCell align="right">
         <EstimateCell ms={est.ms} src={est.src} />
@@ -118,12 +123,12 @@ function StatsRow({ s }: { s: BuffStat }): JSX.Element {
 }
 
 /** The dense per-spell stats table for ONE class, sorted by sample count. */
-function StatsTable({ rows }: { rows: BuffStat[] }): JSX.Element {
+function StatsTable({ rows, withBoxes }: { rows: BuffStat[]; withBoxes: boolean }): JSX.Element {
   return (
     <Table size="small" sx={{ '& td, & th': { py: 0.5 } }}>
       <TableHead>
         <TableRow>
-          <TableCell padding="checkbox">on</TableCell>
+          {withBoxes ? <TableCell padding="checkbox">on</TableCell> : null}
           <TableCell>Spell</TableCell>
           <TableCell align="right">estimate</TableCell>
           <TableCell align="right">n</TableCell>
@@ -134,7 +139,7 @@ function StatsTable({ rows }: { rows: BuffStat[] }): JSX.Element {
       </TableHead>
       <TableBody>
         {rows.map((s) => (
-          <StatsRow key={s.spell} s={s} />
+          <StatsRow key={s.spell} s={s} withBoxes={withBoxes} />
         ))}
       </TableBody>
     </Table>
@@ -142,7 +147,7 @@ function StatsTable({ rows }: { rows: BuffStat[] }): JSX.Element {
 }
 
 /** One class's durations table, under its accent swatch. */
-function StatsSection({ cls, rows }: { cls: BuffClass; rows: BuffStat[] }): JSX.Element {
+function StatsSection({ cls, rows, withBoxes }: { cls: BuffClass; rows: BuffStat[]; withBoxes: boolean }): JSX.Element {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
@@ -152,7 +157,7 @@ function StatsSection({ cls, rows }: { cls: BuffClass; rows: BuffStat[] }): JSX.
         </Typography>
       </Stack>
       <Paper variant="outlined" sx={{ p: 1, borderLeft: '3px solid', borderLeftColor: classAccent(cls) }}>
-        <StatsTable rows={rows} />
+        <StatsTable rows={rows} withBoxes={withBoxes} />
       </Paper>
     </Box>
   )
@@ -181,6 +186,9 @@ export function BuffStats({ stats }: { stats: Record<string, BuffStat> }): JSX.E
     [stats, needle]
   )
   const mined = useMemo(() => Object.keys(stats).length > 0, [stats])
+  // The boxes and their column exist only in opt-in mode; the search stays in both, because the
+  // tables are worth searching whether or not you are ticking them.
+  const withBoxes = useBuffAllow(window.eq).prefs.optIn
 
   return (
     <Box>
@@ -217,7 +225,7 @@ export function BuffStats({ stats }: { stats: Record<string, BuffStat> }): JSX.E
       ) : (
         <Stack spacing={1.5}>
           {sections.map((s) => (
-            <StatsSection key={s.cls} cls={s.cls} rows={s.rows} />
+            <StatsSection key={s.cls} cls={s.cls} rows={s.rows} withBoxes={withBoxes} />
           ))}
         </Stack>
       )}
