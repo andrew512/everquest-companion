@@ -131,6 +131,13 @@ After a successful apply:
 
 2. **Step 2.5 — apply the schema. The stack does not work without this.**
 
+   **Export first, then migrate.** `migrate` refuses to run unless an offline copy from the
+   last six hours exists in `.triage/exports/` — take one with
+   `npx tsx scripts/triage-feedback.mts analytics export --profile <profile>` (read-only, a few
+   hundred KB, gzipped and checksummed). The same guard covers `analytics backfill-cohort |
+   backfill-verify | backfill-swap`. `--no-export-check` overrides it and prints the refusal
+   anyway; restore a copy with `analytics import <dir>` (JOS-399).
+
    ```bash
    npx tsx scripts/triage-feedback.mts migrate --profile <profile>
    ```
