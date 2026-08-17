@@ -39,7 +39,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseEvent } from '../src/main/log/parser'
 import { SETTLE_MS, SpellSetsModule } from '../src/main/modules/spellSets'
-import { isMemorized, memorizedPhrase, setsHolding, type SpellSetsSnap } from '../src/shared/spellSets'
+import {
+  isMemorized,
+  memorizedClause,
+  memorizedPhrase,
+  setsHolding,
+  type SpellSetsSnap
+} from '../src/shared/spellSets'
 import type { LogEvent } from '../src/shared/logEvents'
 import { readFixture } from './harness.mts'
 
@@ -211,6 +217,15 @@ test('R7 the sentence a row prints, and the one it refuses to print', () => {
   assert.equal(isMemorized(snap, '  heat   blood '), true)
   // No em dashes in anything a player reads.
   for (const name of snap.memorized) assert.ok(!/[—–]/.test(String(memorizedPhrase(snap, name))))
+
+  // THE SAME SENTENCE WITH THE NAME LIFTED OUT (JOS-392): the panel makes that name a hover target
+  // for the spell card, so the clause is exported rather than sliced off the phrase by a renderer.
+  // Composition is the pin — the two can never state different sentences.
+  assert.equal(memorizedClause(snap, 'Heat Blood'), ' is memorized now, in set dam, trav')
+  assert.equal(memorizedClause(snap, 'Complete Heal'), null)
+  for (const name of snap.memorized) {
+    assert.equal(`${name}${String(memorizedClause(snap, name))}`, memorizedPhrase(snap, name))
+  }
 })
 
 test('R8 the delta is the whole state, and only when something changed', () => {
