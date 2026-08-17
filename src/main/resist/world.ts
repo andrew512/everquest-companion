@@ -8,6 +8,7 @@
 import { localMobEntry } from '../mobLookupLocal'
 import { idKey, spellCanonKey } from '../log/parseCommon'
 import { isPlayerShapedName } from '../../shared/playerShape'
+import { mobKey } from '../../shared/mobKey'
 import type { SpellDb } from '../data/spellDb'
 import type { ResistCasterKind } from '../../shared/resistTypes'
 
@@ -233,6 +234,50 @@ export class DebuffWindows {
 
   clearMob(mobKey: string): void {
     this.byMob.delete(mobKey)
+  }
+}
+
+/** Bound on the display-name -> key cache. Cleared wholesale rather than evicted one at a time. */
+const MAX_KEY_CACHE = 4_096
+
+/**
+ * MOB NAMES, BOTH WAYS, MEMOISED — and the memo is a measurement rather than a habit.
+ *
+ * The fold sees every one of the two million events a full replay produces, and the busiest arm by
+ * far is melee: two swings a second for hours, each one asking for a mob key so a song pulse can
+ * later know who was in range. `mobKey` is a trim, three regex replacements and a lower-case —
+ * cheap once and not cheap two million times. MEASURED on the owner's log with
+ * `npm run bench:replay`: 1,779 ms of fold with the naive call, 1,067 ms with this cache, on
+ * identical input. The map is bounded because a long session meets thousands of distinct names and
+ * an unbounded one is a slow leak.
+ *
+ * The other direction (key -> the name the game last printed) is not a cache but a FACT the ledger
+ * needs: the fold keys rows canonically and the surfaces show the spelling the log used.
+ */
+export class MobNames {
+  private keys = new Map<string, string>()
+  private display = new Map<string, string>()
+
+  reset(): void {
+    this.keys = new Map()
+  }
+
+  key(display: string): string {
+    const hit = this.keys.get(display)
+    if (hit !== undefined) return hit
+    const key = mobKey(display)
+    if (this.keys.size >= MAX_KEY_CACHE) this.keys.clear()
+    this.keys.set(display, key)
+    return key
+  }
+
+  /** Note the spelling the game just used for this creature. */
+  remember(display: string): void {
+    this.display.set(this.key(display), display)
+  }
+
+  displayFor(key: string): string {
+    return this.display.get(key) ?? key
   }
 }
 

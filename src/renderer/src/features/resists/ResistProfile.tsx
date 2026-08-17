@@ -225,7 +225,7 @@ function AxisRow({ row }: { row: MobResistAxis }): JSX.Element {
         {/* THREE STATES, AND THEY ARE THREE DIFFERENT ANSWERS (JOS-387). "nothing has ever been
             cast at this on this axis" is not "the model could not fit what was cast", and neither
             is an estimate — so each has its own testid and its own sentence. */}
-        {est !== null && est.pinned ? (
+        {est?.pinned === true ? (
           <Typography variant="caption" color="warning.main" data-testid={`resist-nofit-${row.axis}`} sx={{ flex: 1 }}>
             {doesNotFitText(est.empirical)}
           </Typography>
@@ -250,6 +250,11 @@ function AxisRow({ row }: { row: MobResistAxis }): JSX.Element {
                 arithmetic hidden. */}
             <Typography variant="caption" sx={{ color, flex: 1, minWidth: 0 }} data-testid={`resist-tag-${row.axis}`}>
               {row.tag}
+              {row.benchmark && (
+                <Typography component="span" variant="caption" color="text.secondary" data-testid={`resist-guidance-${row.axis}`}>
+                  {` · ${row.benchmark.guidance}`}
+                </Typography>
+              )}
               {row.benchmark && (
                 <Typography component="span" variant="caption" color="text.secondary" data-testid={`resist-bench-${row.axis}`}>
                   {` · ${benchmarkText(row.benchmark)}`}

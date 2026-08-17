@@ -349,12 +349,23 @@ export interface ResistEstimate extends ResistFit {
 }
 
 /**
- * THE GUIDANCE, and it is a BENCHMARK AT THE VIEWER'S LEVEL rather than a band of R (owner ruling,
- * 2026-08-16 — JOS-387). Three bands, worded as advice because the question is "will it land if I
- * cast it" and the actionable half of the answer is whether the overchannel invocation is needed.
- * Thresholds and their argument: resistFormula.ts.
+ * THE SHORT WORD a chip and a row are labelled with. It is SCANNABLE — one or two words the eye
+ * picks out of a card over a running game — and since JOS-387 it is derived from the viewer-relative
+ * benchmark rather than from a band of R: the same creature is `normal` to a level-50 and
+ * `very resistant` to a level-30, which is the whole point of the change.
+ *
+ * `weak` is the one split that is still about R itself (under `WEAK_BELOW`), kept because "this
+ * thing has no magic resistance at all" and "this lands fine at your level" are different facts and
+ * a player who is planning ahead wants the first.
  */
-export type ResistTag = 'should land' | 'needs overchannel' | 'may not land even with overchannel'
+export type ResistTag = 'weak' | 'normal' | 'resistant' | 'very resistant'
+
+/**
+ * THE GUIDANCE SENTENCE under the word: what to actually do about it (owner ruling, 2026-08-16).
+ * The tag is the label and this is the advice, and they are the same three bands read two ways —
+ * `resistant` means `needs overchannel`, every time, on every surface.
+ */
+export type ResistGuidance = 'should land' | 'needs overchannel' | 'may not land even with overchannel'
 
 /** One axis row on the card. `tag` is null ONLY at n = 0, which draws as "no data". */
 export interface MobResistAxis {
@@ -407,7 +418,10 @@ export interface ResistBenchmark {
   pPlain: number
   /** The same, with the overchannel invocation up. */
   pOver: number
+  /** The scannable word. */
   tag: ResistTag
+  /** The sentence under it. */
+  guidance: ResistGuidance
 }
 
 export interface MobResistProfile {

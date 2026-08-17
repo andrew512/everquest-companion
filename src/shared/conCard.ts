@@ -25,6 +25,7 @@
 import { isPlayerShapedName } from './playerShape'
 import {
   RESIST_AXES,
+  type MobResistAxis,
   type MobResistProfile,
   type ResistAxis,
   type ResistAxisBenchmark,
@@ -276,25 +277,43 @@ export const CON_CARD_WIRE_DROPS = 24
  */
 export function conCardChips(profile: MobResistProfile): ConCardChip[] {
   const byAxis = new Map(profile.axes.map((a) => [a.axis, a]))
-  return RESIST_AXES.map((axis) => {
-    const row = byAxis.get(axis)
-    const est = row?.estimate ?? null
-    const tag = row?.tag ?? null
-    return {
-      axis,
-      tag,
-      benchmark: row?.benchmark ?? null,
-      pinned: est?.pinned === true,
-      empirical: est?.empirical ?? { total: 0, resisted: 0 },
-      npcOnly: est?.npcOnly === true,
-      // THE SAME TWO NUMBERS THE MOB PAGE PRINTS, and taken off the same estimate rather than
-      // recomputed: a chip that counted a -250 proc's casts and a row that did not would be two
-      // surfaces disagreeing about how much this app knows (JOS-385).
-      n: row?.nInformative ?? 0,
-      nTotal: row?.n ?? 0,
-      fit: est && tag ? { R: est.R, lo: est.lo, hi: est.hi } : null
-    }
-  })
+  return RESIST_AXES.map((axis) => chipFor(axis, byAxis.get(axis)))
+}
+
+/** The empty chip: what an axis the profile omits, or has nothing behind, looks like on the wire. */
+function blankChip(axis: ResistAxis): ConCardChip {
+  return {
+    axis,
+    tag: null,
+    benchmark: null,
+    pinned: false,
+    empirical: { total: 0, resisted: 0 },
+    npcOnly: false,
+    n: 0,
+    nTotal: 0,
+    fit: null
+  }
+}
+
+/** One axis row projected onto the wire. An axis the profile omits is an EMPTY chip, never absent. */
+function chipFor(axis: ResistAxis, row: MobResistAxis | undefined): ConCardChip {
+  if (!row) return blankChip(axis)
+  const est = row.estimate
+  if (!est) return { ...blankChip(axis), n: row.nInformative, nTotal: row.n }
+  return {
+    axis,
+    tag: row.tag,
+    benchmark: row.benchmark,
+    pinned: est.pinned,
+    empirical: est.empirical,
+    npcOnly: est.npcOnly,
+    // THE SAME TWO NUMBERS THE MOB PAGE PRINTS, and taken off the same estimate rather than
+    // recomputed: a chip that counted a -250 proc's casts and a row that did not would be two
+    // surfaces disagreeing about how much this app knows (JOS-385).
+    n: row.nInformative,
+    nTotal: row.n,
+    fit: row.tag === null ? null : { R: est.R, lo: est.lo, hi: est.hi }
+  }
 }
 
 /** Rendering guarantees, not taste: a 40 kB mob name cannot push a card off the screen. */

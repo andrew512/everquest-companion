@@ -311,10 +311,12 @@ function reportCells(rows: readonly ResistRow[], spells: SpellResistTable): void
       `${mob} / ${axis}: R ${String(Math.max(0, est.R))} (${String(Math.max(0, est.lo))}-${String(Math.max(0, est.hi))}) ` +
         `n=${String(est.nInformative)} informative / ${String(est.n)} total, mobLevel ${String(mobLevel)} -> ${tag} ` +
         `· lands ${String(Math.round(b.pPlain * 100))}% · with overchannel ${String(Math.round(b.pOver * 100))}%` +
-        `${est.npcOnly ? ' · from pets and other creatures only' : ''}` +
-        `${est.droppedNoLevel > 0 ? ` · ${String(est.droppedNoLevel)} dropped for no caster level` : ''}` +
-        `${est.droppedUnknownInvocation > 0 ? ` · ${String(est.droppedUnknownInvocation)} dropped for unknown invocation` : ''}` +
-        `${est.droppedUnobservable > 0 ? ` · ${String(est.droppedUnobservable)} dropped as unobservable` : ''}`
+        (est.npcOnly ? ' · from pets and other creatures only' : '') +
+        (est.droppedNoLevel > 0 ? ` · ${String(est.droppedNoLevel)} dropped for no caster level` : '') +
+        (est.droppedUnknownInvocation > 0
+          ? ` · ${String(est.droppedUnknownInvocation)} dropped for unknown invocation`
+          : '') +
+        (est.droppedUnobservable > 0 ? ` · ${String(est.droppedUnobservable)} dropped as unobservable` : '')
     )
   }
 }

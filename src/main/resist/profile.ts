@@ -147,9 +147,13 @@ function axisBenchmark(est: ResistEstimate, ctx: AxisCtx): ResistAxisBenchmark {
   const at = (R: number): ReturnType<typeof resistBenchmark> =>
     resistBenchmark(R, ctx.viewerLevel, ctx.mobLevel)
   const main = at(est.R)
+  const forced = est.resistsAlmostEverything
   return {
     ...main,
-    tag: est.resistsAlmostEverything ? 'may not land even with overchannel' : main.tag,
+    // BOTH HALVES MOVE TOGETHER: the word and the sentence are one band read two ways, and a chip
+    // that said `resistant · may not land even with overchannel` would be two answers on one line.
+    tag: forced ? 'very resistant' : main.tag,
+    guidance: forced ? 'may not land even with overchannel' : main.guidance,
     atLo: at(est.lo),
     atHi: at(est.hi),
   }

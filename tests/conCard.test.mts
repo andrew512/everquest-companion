@@ -33,7 +33,7 @@ import {
 } from '../src/renderer/src/overlay/conCardRows'
 import { fitChanged, overlayFitRequest } from '../src/renderer/src/overlay/overlayFit'
 // The forward model moved to its own module when JOS-385 split resistModel.ts (line ceiling).
-import { resistTag } from '../src/shared/resistFormula'
+import { benchmarkTag } from '../src/shared/resistFormula'
 import { OVERLAY_KINDS } from '../src/shared/types'
 import {
   FIT_HEIGHT_KINDS,
@@ -171,7 +171,8 @@ test('a re-con inside a minute of a CLOSE does not nag, and a minute later it do
 function est(spec: Partial<ResistEstimate> = {}): ResistEstimate {
   return {
     R: 126, lo: 110, hi: 144, n: 600, nInformative: 600, fromBaseline: 480, fromYou: 120,
-    droppedNoLevel: 0, droppedUnobservable: 0,
+    droppedNoLevel: 0, droppedUnobservable: 0, droppedUnknownInvocation: 0,
+    pinned: false, empirical: { total: 600, resisted: 40 }, resistsAlmostEverything: false, npcOnly: false,
     byFamily: { cast: { n: 600, resist: 40, land: 560 }, song: { n: 0, resist: 0, land: 0 } },
     byCaster: {
       self: { n: 600, resist: 40, land: 560 },
@@ -185,6 +186,35 @@ function est(spec: Partial<ResistEstimate> = {}): ResistEstimate {
   }
 }
 
+/** One chip as the wire carries it. `fit` and `benchmark` travel together with the band. */
+function chip(tag: ResistTag | null, n = 20): ConCardChip {
+  return {
+    axis: 'magic',
+    tag,
+    benchmark:
+      tag === null
+        ? null
+        : {
+            level: 50,
+            mobLevel: 53,
+            atMobLevel: false,
+            pPlain: 0.2,
+            pOver: 0.9,
+            tag,
+            guidance: 'needs overchannel',
+            atLo: { level: 50, mobLevel: 53, atMobLevel: false, pPlain: 0.3, pOver: 0.95, tag, guidance: 'needs overchannel' },
+            atHi: { level: 50, mobLevel: 53, atMobLevel: false, pPlain: 0.1, pOver: 0.85, tag, guidance: 'needs overchannel' }
+          },
+    pinned: false,
+    empirical: { total: n, resisted: 0 },
+    npcOnly: false,
+    n,
+    // A cell whose casts could all have been resisted: the two counts agree, which is most cells.
+    nTotal: n,
+    fit: tag === null ? null : { R: 60, lo: 40, hi: 80 }
+  }
+}
+
 function profile(spec: Partial<MobResistProfile> = {}): MobResistProfile {
   return {
     mobKey: 'a lava guardian',
@@ -194,7 +224,7 @@ function profile(spec: Partial<MobResistProfile> = {}): MobResistProfile {
     baselineFrozenAt: null,
     spellDataNote: null,
     axes: [
-      { axis: 'magic', estimate: est({ n: 600, nInformative: 600 }), tag: 'very resistant', n: 600, nInformative: 600 },
+      { axis: 'magic', estimate: est({ n: 600, nInformative: 600 }), tag: 'very resistant', benchmark: { level: 50, mobLevel: 53, atMobLevel: false, pPlain: 0.2, pOver: 0.9, tag: 'very resistant', guidance: 'may not land even with overchannel', atLo: { level: 50, mobLevel: 53, atMobLevel: false, pPlain: 0.3, pOver: 0.95, tag: 'very resistant', guidance: 'may not land even with overchannel' }, atHi: { level: 50, mobLevel: 53, atMobLevel: false, pPlain: 0.1, pOver: 0.85, tag: 'very resistant', guidance: 'may not land even with overchannel' } }, n: 600, nInformative: 600 },
       {
         axis: 'fire',
         estimate: est({ R: 180, lo: 40, hi: 200, n: 3, nInformative: 3 }),
@@ -202,7 +232,7 @@ function profile(spec: Partial<MobResistProfile> = {}): MobResistProfile {
         n: 3,
         nInformative: 3
       },
-      { axis: 'cold', estimate: null, tag: null, n: 0, nInformative: 0 },
+      { axis: 'cold', estimate: null, tag: null, benchmark: null, n: 0, nInformative: 0 },
       // POISON IS THE JOS-385 SHAPE: forty casts, and only six of them of a spell that could have
       // been resisted at all. The chip prints the six and the mob page prints both numbers.
       {
@@ -212,7 +242,7 @@ function profile(spec: Partial<MobResistProfile> = {}): MobResistProfile {
         n: 40,
         nInformative: 6
       },
-      { axis: 'disease', estimate: null, tag: null, n: 0, nInformative: 0 }
+      { axis: 'disease', estimate: null, tag: null, benchmark: null, n: 0, nInformative: 0 }
     ],
     ...spec
   }
@@ -223,7 +253,7 @@ test('five chips, always, in one order, whatever the profile hands over', () => 
   assert.deepEqual(chips.map((c) => c.axis), [...RESIST_AXES], 'the order the eye learns')
   // A profile missing an axis entirely (an older payload, a future shape) still draws five.
   const short = conCardChips(
-    profile({ axes: [{ axis: 'fire', estimate: est(), tag: 'resistant', n: 9, nInformative: 9 }] })
+    profile({ axes: [{ axis: 'fire', estimate: est(), tag: 'resistant', benchmark: { level: 50, mobLevel: 53, atMobLevel: false, pPlain: 0.2, pOver: 0.9, tag: 'resistant', guidance: 'needs overchannel', atLo: { level: 50, mobLevel: 53, atMobLevel: false, pPlain: 0.3, pOver: 0.95, tag: 'resistant', guidance: 'needs overchannel' }, atHi: { level: 50, mobLevel: 53, atMobLevel: false, pPlain: 0.1, pOver: 0.85, tag: 'resistant', guidance: 'needs overchannel' } }, n: 9, nInformative: 9 }] })
   )
   assert.equal(short.length, 5)
   assert.deepEqual(short.map((c) => c.axis), [...RESIST_AXES])
@@ -263,24 +293,36 @@ test('THE CARD KEEPS ONLY WHAT IT RESISTS (owner ruling, 2026-08-16)', () => {
   assert.deepEqual(fire?.fit, { R: 180, lo: 40, hi: 200 })
 })
 
-test('every tag at or above the estimator’s own `resistant` cut is kept, and nothing below it', () => {
-  // The cut is `resistTag()`'s boundary rather than a number invented on the card.
-  assert.deepEqual([...CON_CARD_NOTABLE_TAGS], ['resistant', 'very resistant', 'nearly immune'])
-  assert.equal(resistTag(45), 'resistant', 'the estimator draws the line in the same place')
-  assert.equal(resistTag(44), 'normal')
-  const chip = (tag: ResistTag | null, n = 20): ConCardChip => ({
-    axis: 'magic',
-    tag,
-    n,
-    // A cell whose casts could all have been resisted: the two counts agree, which is most cells.
-    nTotal: n,
-    fit: tag === null ? null : { R: 60, lo: 40, hi: 80 }
-  })
-  const kept = notableChips([chip('weak'), chip('normal'), chip('resistant'), chip('very resistant'), chip('nearly immune')])
-  assert.deepEqual(kept.map((c) => c.tag), ['resistant', 'very resistant', 'nearly immune'])
+test('the card keeps the two words that change what you cast, and nothing else', () => {
+  // THE CUT IS THE BENCHMARK'S OWN BOUNDARY (JOS-387), not a number invented on the card: the two
+  // bands whose guidance is `needs overchannel` and `may not land even with overchannel` stay, and
+  // the band that says `should land` — `weak` and `normal` — leaves.
+  assert.deepEqual([...CON_CARD_NOTABLE_TAGS], ['resistant', 'very resistant'])
+  assert.equal(benchmarkTag(60, 'needs overchannel'), 'resistant')
+  assert.equal(benchmarkTag(60, 'should land'), 'normal')
+  const kept = notableChips([chip('weak'), chip('normal'), chip('resistant'), chip('very resistant')])
+  assert.deepEqual(kept.map((c) => c.tag), ['resistant', 'very resistant'])
+  assert.deepEqual(kept.map((c) => c.from), ['benchmark', 'benchmark'], 'the model answered for both')
   // A tag with no observations behind it cannot happen from `conCardChips`, and is refused anyway.
   assert.deepEqual(notableChips([chip('resistant', 0)]), [], 'n = 0 is never notable')
   assert.deepEqual(notableChips([chip(null)]), [])
+})
+
+test('A PINNED CELL FALLS BACK TO THE RESIST RATE, and only when it is worth a warning (JOS-387)', () => {
+  // The Eye of Veeshan's poison: the model could not fit it, so there is no band and no number —
+  // but it refused 31 of 59 casts, and a creature that resists half of everything must not vanish
+  // from the card because the estimator ran out of grid.
+  const pinned = (resisted: number, total: number): ConCardChip => ({
+    ...chip(null, total),
+    pinned: true,
+    empirical: { total, resisted }
+  })
+  const eye = notableChips([pinned(31, 59)])
+  assert.equal(eye.length, 1)
+  assert.equal(eye[0].from, 'resistRate', 'the chip says where its claim came from')
+  assert.equal(eye[0].tag, null, 'and carries no band, because the model produced none')
+  // Under half, a pinned cell is not a warning and leaves the card like any other quiet axis.
+  assert.deepEqual(notableChips([pinned(5, 59)]), [])
 })
 
 test('the card’s empty state can tell "we looked" from "we have never seen one"', () => {

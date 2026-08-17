@@ -15,14 +15,15 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { damageModes, estimate } from '../src/shared/resistModel'
-import { resistTag } from '../src/shared/resistFormula'
+import { estimate, fullDamageRefs } from '../src/shared/resistModel'
+import { resistBenchmark } from '../src/shared/resistFormula'
 import { rowTotal } from '../src/main/resist/ledger'
 import { localMobEntry } from '../src/main/mobLookupLocal'
 import { parseSpellsUs } from '../src/main/resist/spellsUsParse'
 import {
   BASELINE_SOURCE_KEY,
   RESIST_AXES,
+  RESIST_LEDGER_SCHEMA,
   type ResistLedger,
   type ResistRow,
   type SpellResistTable
@@ -37,7 +38,7 @@ const ROWS = LEDGER.sources[0].rows
  * hands the estimator (`src/main/ipc/resist.ts`). Every estimate below passes it, so these tests
  * read the same numbers a mob page does rather than the narrower per-cell fallback.
  */
-const MODES = damageModes(ROWS)
+const MODES = fullDamageRefs(ROWS)
 
 const SPELLS_US =
   process.env.EQ_SPELLS_US ??
@@ -54,7 +55,7 @@ function rowsFor(mob: string): ResistRow[] {
 }
 
 test('the file is one baseline source at schema 1, stamped with when it was frozen', () => {
-  assert.equal(LEDGER.schema, 1)
+  assert.equal(LEDGER.schema, RESIST_LEDGER_SCHEMA)
   assert.equal(LEDGER.sources.length, 1)
   assert.equal(LEDGER.sources[0].key, BASELINE_SOURCE_KEY)
   // PINNED, not `new Date()`: a re-run on an unchanged log has to diff to nothing, or the file
@@ -142,7 +143,7 @@ test('a mob a bard sang at reads NORMAL, not nearly immune', { skip: !HAVE_CLIEN
   const est = estimate(rows, spells(), { axis: 'magic', mobLevel: 26 })
   assert.ok(est.byFamily.song.n > 300, `song observations: ${String(est.byFamily.song.n)}`)
   assert.ok(est.R >= 15 && est.R <= 45, `R=${String(est.R)} outside the 15-45 a 315/70 split implies`)
-  assert.equal(resistTag(est.R), 'normal')
+  assert.equal(resistBenchmark(est.R, 50, 26).guidance, 'should land')
 })
 
 test('only casters the owner ruled admissible are in it', () => {
@@ -199,7 +200,7 @@ test('the imp protector can finally speak about FIRE, and only because of the np
   const without = estimate(rows, spells(), { axis: 'fire', mobLevel: 45, includeNpcCasters: false })
   assert.ok(withNpc.n > 100, `n=${String(withNpc.n)}`)
   assert.equal(without.n, 0, 'no player ever cast fire at one in this log')
-  assert.equal(resistTag(withNpc.R), 'nearly immune')
+  assert.equal(resistBenchmark(withNpc.R, 50, 45).guidance, 'may not land even with overchannel')
   // AND THE COUNTS SURVIVE THE SWITCH. A family that is not weighed is still a family that was
   // observed, which is what the mob page prints as "(not included)".
   assert.equal(without.byCaster.npc.n, withNpc.byCaster.npc.n)
@@ -227,11 +228,17 @@ test('a loathling lich is provably DISEASE-resistant, from the owner\'s own cast
   assert.ok(disease.nInformative >= 60, `disease n=${String(disease.nInformative)}`)
   assert.ok(magic.nInformative >= 60, `magic n=${String(magic.nInformative)}`)
   assert.ok(disease.R > magic.R, `disease R=${String(disease.R)} vs magic R=${String(magic.R)}`)
-  // And provably so: the intervals do not overlap, which is what turns "looks higher" into a
-  // statement a player can act on.
+  // AND BY A MARGIN THE INTERVALS SUPPORT: the whole disease interval sits above the magic
+  // estimate, which is what turns "looks higher" into a statement a player can act on.
+  //
+  // THE CLAIM WAS `disease.lo > magic.hi` UNTIL JOS-387, and its weakening is the interval getting
+  // MORE HONEST rather than the evidence getting worse. The interval is now the central 95% of the
+  // posterior instead of a profile-likelihood cut on the evidence alone, so it carries the prior's
+  // own width; on this cell the two ends now touch by two grid steps (disease from 64, magic to
+  // 68). The separation itself is unchanged and larger than either interval's half-width.
   assert.ok(
-    disease.lo > magic.hi,
-    `disease [${String(disease.lo)},${String(disease.hi)}] vs magic [${String(magic.lo)},${String(magic.hi)}]`
+    disease.lo > magic.R && disease.R - magic.R >= 20,
+    `disease [${String(disease.lo)},${String(disease.hi)}] R=${String(disease.R)} vs magic [${String(magic.lo)},${String(magic.hi)}] R=${String(magic.R)}`
   )
 })
 

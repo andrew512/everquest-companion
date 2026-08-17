@@ -46,16 +46,13 @@ import { foldSeenVariants, perceivedDropRate } from '../features/mobs/seenVarian
  * that the window now literally wears. So the card keeps the axes where the answer would CHANGE
  * WHAT YOU CAST, and the card's own empty state carries the rest of the meaning.
  *
- * THE CUT IS THE BENCHMARK'S OWN BOUNDARY (JOS-387, which replaced the R bands with three
- * viewer-relative guidance bands). `should land` is the answer a player would have assumed and it
- * leaves the card; the two bands that change what you cast — `needs overchannel` and `may not land
- * even with overchannel` — stay. Reusing the band is what keeps the card and the page from
- * disagreeing, the same reason the chip's colour and word are imported rather than spelled twice.
+ * THE CUT IS THE BENCHMARK'S OWN BOUNDARY (JOS-387, which re-derived the same four words from a
+ * viewer-relative benchmark instead of from a band of R). The two words that change what you cast
+ * stay; `weak` and `normal` — the band whose guidance sentence is `should land` — leave. Reusing
+ * the tag is what keeps the card and the page from disagreeing about what `resistant` means, the
+ * same reason the chip's colour and word are imported rather than spelled twice.
  */
-export const CON_CARD_NOTABLE_TAGS: readonly ResistTag[] = [
-  'needs overchannel',
-  'may not land even with overchannel'
-]
+export const CON_CARD_NOTABLE_TAGS: readonly ResistTag[] = ['resistant', 'very resistant']
 
 /**
  * A chip that survived the cut, and WHY it survived.

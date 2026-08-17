@@ -130,6 +130,17 @@ function Chip({ chip }: { chip: ConCardNotableChip }): JSX.Element {
         {chip.from === 'benchmark' ? chip.tag : resistRateText(chip.empirical)}
         {lowSamples(chip.n) && <span style={{ color: DIM }}>{` · ${LOW_SAMPLE_NOTE}`}</span>}
       </div>
+      {/* THE GUIDANCE SENTENCE, under the word (owner ruling, 2026-08-16). The word is what the eye
+          picks out of a card over a running game; this is what to do about it, and the two are one
+          band read two ways. */}
+      {chip.benchmark && (
+        <div
+          data-testid={`con-chip-guidance-${chip.axis}`}
+          style={{ color: MUTED, fontSize: 10, marginTop: 1, overflowWrap: 'anywhere' }}
+        >
+          {chip.benchmark.guidance}
+        </div>
+      )}
       {/* THE TWO PERCENTAGES, under the band, on the card as on the page (owner ruling): the band
           answers the common case and these let a player scale their own — a rank-10 spell is another
           -150, a malo another 45.

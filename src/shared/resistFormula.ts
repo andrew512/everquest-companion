@@ -32,7 +32,7 @@
 // So rc >= 200 means nothing all-or-nothing can ever land, and rc >= 600 means even a nuke is
 // immune — which is why lures carry -300/-1000 resist adjusts.
 
-import type { ResistAxis, ResistBenchmark, ResistTag } from './resistTypes'
+import type { ResistAxis, ResistBenchmark, ResistGuidance, ResistTag } from './resistTypes'
 
 /** A mob this many levels above the caster is immune, whatever its resist stat is. */
 export const IMMUNE_LEVEL_GAP = 21
@@ -255,11 +255,16 @@ export function expectedDamageFraction(rc: number): number {
 // chance that spell lands. The second number is the same spell with the OVERCHANNEL invocation up,
 // which is the one thing a player can do about a resistant mob without changing spell or level.
 //
-// THREE BANDS, AND THEY ARE ADVICE (owner ruling, 2026-08-16, replacing the four-word first cut):
+// THREE BANDS, READ TWO WAYS (owner ruling, 2026-08-16). Each band has a SCANNABLE WORD for the
+// chip and the row label, and a GUIDANCE SENTENCE under it saying what to do about it:
 //
-//   should land                          pPlain >= 60%
-//   needs overchannel                    pPlain < 60%, pOver >= 60%
-//   may not land even with overchannel   pOver < 60%
+//   normal / weak     should land                          pPlain >= 60%
+//   resistant         needs overchannel                    pPlain < 60%, pOver >= 60%
+//   very resistant    may not land even with overchannel   pOver < 60%
+//
+// `weak` is the one distinction still drawn on R itself (`WEAK_BELOW`) rather than on the
+// benchmark: inside the top band, "this creature has essentially no resistance" is a different and
+// more durable fact than "this lands at your level", and a player planning ahead wants it.
 //
 // THE LEVEL TERM ALONE CAN PUT A MOB IN THE TOP BAND, and that is correct and intended rather than
 // a symptom: the player level cap is 50 and Sky runs to 70, so a twenty-level gap is +200 of `rc`
@@ -280,10 +285,20 @@ export function expectedDamageFraction(rc: number): number {
 /** The one threshold all three bands are drawn at. Owner's number. */
 export const BENCHMARK_LANDS_AT = 0.6
 
+/** Under this R the top band says `weak` rather than `normal`. The one band drawn on R itself. */
+export const WEAK_BELOW = 10
+
 /** The band from the two probabilities. The boundary belongs to the more optimistic band. */
-export function benchmarkTag(pPlain: number, pOver: number): ResistTag {
+export function benchmarkGuidance(pPlain: number, pOver: number): ResistGuidance {
   if (pPlain >= BENCHMARK_LANDS_AT) return 'should land'
   return pOver >= BENCHMARK_LANDS_AT ? 'needs overchannel' : 'may not land even with overchannel'
+}
+
+/** The scannable word for a band. `weak` splits the top band on R; the others are the band. */
+export function benchmarkTag(R: number, guidance: ResistGuidance): ResistTag {
+  if (guidance === 'needs overchannel') return 'resistant'
+  if (guidance === 'may not land even with overchannel') return 'very resistant'
+  return R < WEAK_BELOW ? 'weak' : 'normal'
 }
 
 /**
@@ -303,5 +318,6 @@ export function resistBenchmark(
   const rc0 = R + lm
   const pPlain = pFullDamage(rc0)
   const pOver = pFullDamage(rc0 + OVERCHANNEL_RESIST_ADJ)
-  return { level, mobLevel, atMobLevel, pPlain, pOver, tag: benchmarkTag(pPlain, pOver) }
+  const guidance = benchmarkGuidance(pPlain, pOver)
+  return { level, mobLevel, atMobLevel, pPlain, pOver, guidance, tag: benchmarkTag(R, guidance) }
 }
