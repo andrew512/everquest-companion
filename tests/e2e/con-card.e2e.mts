@@ -61,6 +61,9 @@ import {
 } from './appHarness.mjs'
 import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
 import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
+// The two RESIST-CHIP steps live next door, because this spec is at the repo's max-lines budget and
+// the rule is SPLIT, never ratchet. Their own header carries the argument for the two creatures.
+import { stepNotableChips, stepResistantChip } from './conCardChipSteps.mjs'
 
 const CARD = '[data-testid="con-card"]'
 const NAME = '[data-testid="con-card-name"]'
@@ -70,8 +73,6 @@ const CLOSE = '[data-testid="con-card-close"]'
 /** The box the renderer measures for the window fit (JOS-386): the drag frame + the scaled card. */
 const FIT = '[data-testid="con-card-fit"]'
 
-/** The five axes in the order the payload carries them — the survivors still read in this order. */
-const AXES = ['magic', 'fire', 'cold', 'poison', 'disease'] as const
 
 /**
  * ConCardOverlay's root inset, on each side, spelled out rather than imported: an e2e file loads no
@@ -262,63 +263,10 @@ async function stepConDrawsTheCard(log: FixtureLog, card: Page): Promise<void> {
   check('…and exactly one card, never a stack', cards.length === 1, `${String(cards.length)} card(s)`)
 }
 
-/**
- * ONLY WHAT IT RESISTS (owner ruling, 2026-08-16 — the second one that day).
- *
- * The card used to draw five chips whatever the mob was. It now draws only the axes whose tag is
- * `resistant` / `very resistant` / `nearly immune`, because the other four routinely said "this is
- * ordinary" — the answer you would have assumed without reading anything — and each one cost a row
- * of a window that (this ticket) now literally wears that height. THE MOB PAGE STILL SHOWS ALL FIVE
- * ROWS and is one click away; tests/e2e/mob-resists.e2e.mts is where that claim lives.
- *
- * IT RUNS AFTER THE DROPS STEP, and that ordering is a finding rather than a preference: the card
- * arrives in TWO passes and the client's 38 MB `spells_us.txt` is read on a worker, so the first
- * pass genuinely has no resist table behind it. Reading the chips before the second pass lands is
- * reading a state the app is only in for a second.
- */
-async function stepNotableChips(card: Page): Promise<void> {
-  const text = (await cardTexts(card))[0] ?? ''
-
-  // THE DEGRADED BRANCH FIRST, on a machine that cannot join the client's spell table: with no
-  // estimates there is nothing to call resistant, so the card's empty state is the whole answer —
-  // and it must still SAY why. The same carve-out tests/e2e/mob-resists.e2e.mts takes.
-  if (/spells_us\.txt/.test(text)) {
-    note('no client spell data on this machine - the resist block took its stated degraded branch')
-    check('…and the card SAYS the spell data is missing rather than implying the mob is unknown',
-      /Resists need your EverQuest install/.test(text), text.slice(0, 200))
-    check('…and says it looked rather than drawing nothing',
-      (await countOf(card, '[data-testid="con-card-no-resists"]')) === 1, text.slice(0, 200))
-    return
-  }
-
-  // WHAT THIS MOB ACTUALLY RESISTS. `a loathling lich` has 33 rows in the COMMITTED baseline, so on
-  // a machine with EverQuest installed this is exact and not a floor: POISON and DISEASE are the
-  // two axes of the five that reach the `resistant` cut, and the other three leave the card.
-  const shown: string[] = []
-  for (const axis of AXES) {
-    if ((await countOf(card, `[data-testid="con-chip-${axis}"]`)) === 1) shown.push(axis)
-  }
-  check(
-    'the card keeps ONLY the axes this creature resists',
-    shown.join(',') === 'poison,disease',
-    shown.join(',') || '(none)'
-  )
-  check('…and every chip on it reports its answer in WORDS, with the number and interval and count',
-    /disease resistant/i.test(text.replace(/\s+/g, ' ')) && /R \d+ \(\d+-\d+\) n=\d+/.test(text), text.slice(0, 240))
-  // The survivors still read in the payload's fixed order, so the eye learns the positions.
-  const order = shown.map((a) => text.indexOf(a))
-  check('…in the same fixed order the mob page lists them in',
-    order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1])), text.slice(0, 200))
-  // No weak/normal axis, and no "no data" chip: the two things this ruling removed.
-  check('a `weak` or `normal` axis is not on the card at all',
-    !/\b(weak|normal)\b/.test(text), text.slice(0, 240))
-  check('and no chip says "no data" — an empty axis leaves rather than shrugging',
-    !/no data/i.test(text), text.slice(0, 240))
-  // NO ACRONYMS, EVER (the first ruling of 2026-08-16) — the whole reason the words are the labels.
-  check('no acronym reaches the card', !/\b(MR|FR|CR|DR|PR)\b/.test(text), text.slice(0, 200))
-  // Whatever the machine has, a chip either reports its answer or is not there — never the
-  // withheld "not enough data" the owner overruled on 2026-08-16.
-  check('and no chip withholds an answer it has', !/not enough data/i.test(text), text.slice(0, 200))
+/** Put the lich back on screen: every step after this one is asserted against ITS card. */
+async function stepBackToTheLich(log: FixtureLog, card: Page): Promise<void> {
+  const name = await conAndWait(log, card, MOB_CON, MOB).catch(() => '')
+  check(`the card returns to ${MOB} for the steps that measure it`, name === MOB, name)
 }
 
 /** Where the con card's window IS, asked of main. Identified by the `?kind=` it was opened with. */
@@ -653,6 +601,8 @@ async function main(): Promise<void> {
       // read from a settled card rather than from the moment before the spell table landed.
       await stepDrops(card)
       await stepNotableChips(card)
+      await stepResistantChip(card, (line, expect) => conAndWait(log, card, line, expect))
+      await stepBackToTheLich(log, card)
       // The fit is asserted on the FINISHED card — after the second pass brought the drops in, so
       // the height under test is the one the user actually looks at rather than a mid-flight one.
       await stepWindowFitsCard(app, card)

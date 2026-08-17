@@ -113,12 +113,20 @@ async function stepNumbers(page: Page): Promise<void> {
   // observations in the shipped baseline, all of them the tailed character's own casts.
   const magic = await textOf(page, '[data-testid="resist-value-magic"]')
   check('magic prints its number WITH its interval', /^R \d+ \(-?\d+-\d+\)$/.test(magic), magic)
+  // THE WORD, THE SENTENCE AND THE TWO PERCENTAGES (JOS-387). The tag cell carries all three, in
+  // that order, because they are one claim read three ways: what to call it, what to do about it,
+  // and the arithmetic a player scales their own case from.
   const tag = await textOf(page, '[data-testid="resist-tag-magic"]')
+  const word = tag.split(' · ')[0]
+  check('and a plain-language word beside it', ['weak', 'normal', 'resistant', 'very resistant'].includes(word), tag)
+  const guidance = await textOf(page, '[data-testid="resist-guidance-magic"]')
   check(
-    'and a plain-language tag beside it',
-    ['weak', 'normal', 'resistant', 'very resistant', 'nearly immune'].includes(tag),
-    tag
+    'with the guidance sentence under it',
+    ['should land', 'needs overchannel', 'may not land even with overchannel'].includes(guidance.replace('· ', '').trim()),
+    guidance
   )
+  const bench = await textOf(page, '[data-testid="resist-bench-magic"]')
+  check('and BOTH percentages, so a player can scale their own case', /lands \d+% · with overchannel \d+%/.test(bench), bench)
   const row = await textOf(page, '[data-testid="resist-row-magic"]')
   check('and the count it rests on', /n=\d+/.test(row), row)
   check('and where the evidence came from', /baseline \d+/.test(row), row)
@@ -182,6 +190,25 @@ async function stepThinRow(page: Page): Promise<void> {
   check(`…with its number and interval still printed (${axis})`, /^R \d+ \(\d+-\d+\)$/.test(value), value)
 }
 
+/**
+ * A FIT THAT DOES NOT FIT PRINTS THE OBSERVATIONS INSTEAD (owner review, 2026-08-16 — JOS-387).
+ *
+ * The measured case is the Eye of Veeshan's poison: a level-50 charmed pet refused 31 times out of
+ * 59 by a level-70 creature, which the model cannot express at any resistance, and which the display
+ * clamped to `R 0 (0-0)` and tagged WEAK. Three of the shipped baseline's 598 non-empty cells are in
+ * that state, so a given mob usually has none — the claim asserted here is about the SHAPE of the
+ * row when one appears: no number, no band, and the resist rate said out loud.
+ */
+async function stepDoesNotFit(page: Page): Promise<void> {
+  const rows = await countOf(page, '[data-testid^="resist-nofit-"]')
+  if (rows === 0) {
+    note('every axis on this mob fits the model - the refusal branch has nothing to show here')
+    return
+  }
+  const text = await textOf(page, '[data-testid^="resist-nofit-"]')
+  check('a cell the model cannot fit says so, with the count behind it', /does not fit the model: \d+ of \d+ resisted/.test(text), text)
+}
+
 async function stepEvidence(page: Page): Promise<void> {
   if (!(await appears(page, '[data-testid="resist-expand-magic"]', 5_000))) {
     check('the magic row is expandable', false)
@@ -202,6 +229,15 @@ async function stepEvidence(page: Page): Promise<void> {
   )
   const first = text.split(/\s(?=[A-Z][a-z]+(?:'s)?[^:]*: \d+ casts?)/)[0]
   check('…and it is not the first line, however many times it was cast', !first.includes('Smiting Strike'), first)
+
+  // JOS-387's ACCEPTANCE, on the surface it names: a ranked cast is modelled at -15 a rank and an
+  // overchannel cast at -150 or more, and the drilldown says so on the spell's own line. Which of
+  // the two this mob's magic evidence carries depends on the committed baseline, so each is checked
+  // when it is there and noted when it is not.
+  if (/rank \d+ at -\d+ adjust/.test(text)) check('a ranked cast is modelled at its rank, and the line says so', true)
+  else note('no ranked spell in this mob’s magic evidence - the rank clause has nothing to show here')
+  if (/in overchannel at -\d+ adjust/.test(text)) check('an overchannel cast says which adjust it was modelled at', true)
+  else note('nothing was cast at this mob in overchannel - the invocation clause has nothing to show here')
 }
 
 /**
@@ -313,6 +349,7 @@ async function main(): Promise<void> {
         await stepFiveRows(page)
         await stepNumbers(page)
         await stepThinRow(page)
+        await stepDoesNotFit(page)
         await stepEvidence(page)
       }
       await stepNoAcronyms(page, populated)
