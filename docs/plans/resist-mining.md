@@ -358,10 +358,16 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
   adjust per rank (the Roman numeral in the log name; `Scorching Arrow IV` = -60), and the
   Overchannel invocation is -150 (plus -15 per non-hybrid caster class) on cast spells (Legends
   wiki, Stances & Invocations, cached in the repo). Then, per viewer level L: `rc0 = R +
-  levelMod(L, mob)`, `pPlain = (200 - rc0)/200`, `pOver` the same at rc0 - 150; tags: lands
-  (>= 80%), usually lands (50-80%), resistant (plain < 50% but overchannel >= 50% - "not without
-  overchannel"), very resistant (overchannel < 50% - "will not land"). Every row/chip prints
-  `lands N% · with overchannel M%`. Informative n (spells with adjust > -100) drives the
+  levelMod(L, mob)`, `pPlain = (200 - rc0)/200`, `pOver` the same at rc0 - 150. THREE bands
+  (owner, later the same day, superseding an earlier four): `should land` (pPlain >= 60%),
+  `needs overchannel` (pOver >= 60%), `may not land even with overchannel`. Every row/chip
+  prints `lands N% · with overchannel M%` so a player scales their own expectation (rank 10 is
+  another -150; tash/malo/scent on top). The player cap is 50 and Sky mobs run to 70, so the
+  level term alone can put a mob in the top band - intended. The formula is only the machinery
+  that removes each cast's own negative check; where it cannot fit (a fit pinned at the grid
+  edge) it steps aside for the empirical resist rate. Point estimate is the posterior median;
+  >= 90% resisted with n >= 10 informative is the top band regardless; pet-only evidence is
+  caveated as such. Informative n (spells with adjust > -100) drives the
   low-samples caveat; the fixed-damage full reference is the histogram MODE across mobs, not
   the max (Live focus effects roll a random +1..34%) - both in JOS-385.
 - **What `n` counts** (owner, 2026-08-16, off a live thunder spirit princess reading
