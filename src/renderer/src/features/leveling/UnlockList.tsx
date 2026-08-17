@@ -52,6 +52,7 @@ import type { ClassAbbr } from '@shared/classCombo'
 import { ownershipPhrase, replacesPhrase, type UnlockRow } from '@shared/levelUnlocks'
 import { spellMetricsParts } from '@shared/spellMetrics'
 import { memorizedPhrase, type SpellSetsSnap } from '@shared/spellSets'
+import { classLevelLabel } from '@shared/unlockSearch'
 import { Tooltip } from '../../lib/Tooltip'
 import { SpellTooltip } from '../../lib/SpellCard'
 
@@ -72,17 +73,34 @@ const KIND_COLOR: Record<UnlockRow['kind'], string> = {
   innate: '#d9b25f'
 }
 
-/** The class chips: FILLED for a class we know is in the loadout, outlined for a candidate. */
-function ClassChips({ classes, resolved }: { classes: ClassAbbr[]; resolved: ReadonlySet<string> }): JSX.Element {
+/**
+ * The class chips: FILLED for a class we know is in the loadout, outlined for a candidate.
+ *
+ * A SEARCH ROW'S CHIPS CARRY THE LEVEL (JOS-392, `row.levels`) — `CLR 24 · PAL 30` said as chips,
+ * because that row is drawn at no level and a bare `CLR` would be a fact withheld. A LEVEL row's
+ * chips stay bare: the level is stated once, for the whole panel, by the stepper.
+ */
+function ClassChips({
+  row,
+  resolved
+}: {
+  row: UnlockRow
+  resolved: ReadonlySet<string>
+}): JSX.Element {
+  const chips: { cls: ClassAbbr; label: string }[] =
+    row.levels === undefined
+      ? row.classes.map((c) => ({ cls: c, label: c }))
+      : row.levels.map((p) => ({ cls: p.cls, label: classLevelLabel(p) }))
   return (
     <>
-      {classes.map((c) => (
+      {chips.map((c) => (
         <Chip
-          key={c}
+          key={c.cls}
           size="small"
-          label={c}
+          label={c.label}
           data-testid="unlock-class-chip"
-          variant={resolved.has(c) ? 'filled' : 'outlined'}
+          data-class={c.cls}
+          variant={resolved.has(c.cls) ? 'filled' : 'outlined'}
           color="secondary"
           sx={{ height: 17, fontSize: 10, '& .MuiChip-label': { px: 0.6 } }}
         />
@@ -217,7 +235,7 @@ function Row({
           />
         </Tooltip>
       )}
-      <ClassChips classes={row.classes} resolved={resolved} />
+      <ClassChips row={row} resolved={resolved} />
     </Stack>
       <RowDetail row={row} resolved={resolved} sets={sets} />
     </Box>
@@ -234,7 +252,8 @@ export function UnlockList({
   rows,
   resolved,
   empty,
-  sets
+  sets,
+  count
 }: {
   title: string
   rows: UnlockRow[]
@@ -242,11 +261,17 @@ export function UnlockList({
   empty: string
   /** The live gem/spell-set state, for the "is what this replaces loaded right now" clause. */
   sets: SpellSetsSnap
+  /**
+   * What the heading counts, when that is not the number of rows drawn — the search results are
+   * CAPPED (JOS-392), and a heading that counted the mounted rows would quietly restate the cap as
+   * the answer. Absent everywhere else, where the two numbers are the same by construction.
+   */
+  count?: number
 }): JSX.Element {
   return (
     <Box sx={{ flex: 1, minWidth: 0 }} data-testid="unlock-list">
       <Typography variant="caption" color="text.secondary" sx={{ mb: 0.25 }}>
-        {title} ({rows.length})
+        {title} ({count ?? rows.length})
       </Typography>
       <Box>
         {rows.length === 0 ? (

@@ -31,6 +31,11 @@ import { applySpellCorrections } from './spellCorrections'
 // nothing. Invigor reached three of his levels (PAL 22, SHM 24, RNG 30) that way. Applied BEFORE
 // the corrections overlay, the load order `spellDb.ts` states.
 import { applySpellRemovals } from './spellRemovals'
+// THE SEARCH SURFACE (JOS-392), built by the function the alerts catalog is built with. Two
+// datasets searched by one matcher (`shared/spellSearch.ts`) must be folded by one surface builder,
+// or the box goes quietly deaf on one of them — the same argument `searchTextFor`'s own header
+// makes about the query side.
+import { searchTextFor } from './spellDb'
 import { parseSpellClasses } from '../../shared/spellLevels'
 import { isClassAbbr, type ClassAbbr } from '../../shared/classCombo'
 import type { LevelUnlockData, UnlockSkill, UnlockSpell } from '../../shared/levelUnlocks'
@@ -179,6 +184,12 @@ function unlockSpells(): UnlockSpell[] {
     if (s.targetType) spell.targetType = s.targetType
     if (s.spellType) spell.spellType = s.spellType
     if (typeof s.durationMs === 'number') spell.durationMs = s.durationMs
+    // The RANK NAMES are deliberately not part of this surface: the catalog folds a line's ranks
+    // onto one row and has them to hand, while this dataset is one row per DB page and would have
+    // to rebuild the rank index to say the same thing. The name and the three sentences the game
+    // prints are what a player searching for a spell types.
+    spell.searchText = searchTextFor(s, undefined)
+    if (s.illusion) spell.illusion = true
     const metrics = spellMetricsAt(s, Math.min(...at.map((p) => p.level)))
     if (metrics) spell.metrics = metrics
     const replaces = replacesFor(s.name, at)
