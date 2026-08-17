@@ -78,6 +78,13 @@ import { TEXT_SCALE_MAX } from '../../src/shared/overlayTextScale'
 // max-lines budget and the rule is SPLIT, never ratchet. Each carries its own argument in its
 // header: the chips' two creatures, and the click that made the card a lily pad (JOS-390).
 import { stepNotableChips, stepResistantChip } from './conCardChipSteps.mjs'
+// …and the SIZE steps (JOS-406), for the same reason: the window scaling with the text, the chip
+// grid wrapping instead of squeezing, and a drag at 150% remembered as the 100% box.
+import {
+  stepChipGridWraps,
+  stepResizeRecordsLayoutBox,
+  stepWindowScalesWithText
+} from './conCardScaleSteps.mjs'
 import {
   stepClickOpensTheMobPage,
   stepCloseDoesNotNavigate,
@@ -385,10 +392,15 @@ async function stepWindowFitsCard(app: ElectronApplication, card: Page): Promise
       (big as Bounds).height > (b as Bounds).height &&
         Math.abs((big as Bounds).height - fittedTo(bigger.want)) <= FIT_SLACK,
       `${String((b as Bounds).height)} -> ${String((big as Bounds).height)} (card+padding ${String(bigger.want)})`)
-    // THE POSITION NEVER GIVES. Only the height is the app's to change.
-    check('…while x, y and width stayed exactly where they were',
-      (big as Bounds).x === (b as Bounds).x && (big as Bounds).y === (b as Bounds).y &&
-        (big as Bounds).width === (b as Bounds).width,
+    // THE TOP EDGE NEVER GIVES — and since JOS-406 that is the ONLY half of this that still holds.
+    // This check used to read "x, y and width stayed exactly where they were", because a text scale
+    // moved nothing but the height: the window kept the width chosen at 100% while the card zoomed
+    // inside it, which is exactly the defect the owner reported ("that doesn't look good" on the
+    // 200% card). The window is the card now, so the WIDTH is the layout box times the scale and
+    // `x` re-centres around the middle it had. The full arithmetic is asserted next door
+    // (conCardScaleSteps.mts); what is kept here is the one thing that is still nobody's to move.
+    check('…while the TOP EDGE stayed exactly where it was',
+      (big as Bounds).y === (b as Bounds).y,
       `${JSON.stringify(b)} -> ${JSON.stringify(big)}`)
     // NOTHING IS CUT OFF SIDEWAYS EITHER. The height is what main re-fits; the WIDTH is fixed, and
     // `zoom` reflows rather than magnifying, so the honest question at 200% is whether the card
@@ -662,6 +674,15 @@ async function main(): Promise<void> {
       await stepNotableChips(card)
       await stepWindowFitsCard(app, card)
       await shootCard(app, card, 'con-card.png')
+      // THE SIZE (JOS-406): the window IS the card, so it scales with the text and the chips wrap
+      // rather than squeeze. These three drive SYNTHETIC payloads (five chips, then one) because
+      // the chip count of a real creature is a fact about the resist baseline rather than about
+      // this feature — the argument is in conCardScaleSteps.mts's header. They put the lich back
+      // afterwards, so every step below reads the card the rest of this spec is about.
+      const columns = await stepChipGridWraps(app, card)
+      await stepWindowScalesWithText(app, card, columns)
+      await stepResizeRecordsLayoutBox(app, card)
+      await stepBackToTheLich(log, card)
       // THE LINK (JOS-390), on the lich's card, which is the one on screen: a click opens its page
       // in the app and leaves the card up; unlocked, the same click navigates nothing.
       await stepClickOpensTheMobPage(card, page, MOB)
