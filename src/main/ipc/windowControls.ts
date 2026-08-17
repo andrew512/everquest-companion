@@ -35,7 +35,7 @@ import {
   setOverlayIgnoreMouse,
   setOverlayOpen
 } from '../windows'
-import { OVERLAY_KINDS } from '../../shared/types'
+import { OVERLAY_KINDS, TEXT_SCALE_DEFAULT } from '../../shared/types'
 import type { AppFocus, AppFocusView, OverlayConfig, OverlayKind } from '../../shared/types'
 
 /**
@@ -56,6 +56,21 @@ function broadcastOverlayTextSize(prefs: OverlayTextSizePrefs): void {
   }
   const app = getMainWindow()
   if (app && !app.isDestroyed()) app.webContents.send(IPC.onOverlayTextSize, prefs)
+}
+
+/** Every kind's OWN stored scale, clamped by the store on the way out. What Preferences'
+ *  per-overlay list edits while independent sizes are on. */
+function overlayTextScaleMap(): Record<OverlayKind, number> {
+  const out = {} as Record<OverlayKind, number>
+  for (const k of OVERLAY_KINDS) out[k] = getOverlayConfig(k).textScale ?? TEXT_SCALE_DEFAULT
+  return out
+}
+
+/** …and the push that keeps that list honest when a press is made on a WINDOW instead. Only the
+ *  app window has rows to correct; an overlay's own config echo already told it about itself. */
+function broadcastOverlayTextScales(): void {
+  const app = getMainWindow()
+  if (app && !app.isDestroyed()) app.webContents.send(IPC.onOverlayTextScales, overlayTextScaleMap())
 }
 
 /** A non-empty display string, or undefined. Trimmed only for the emptiness test — the receiving
@@ -162,6 +177,9 @@ export function registerWindowIpc(): void {
     // Echo the merged config to that kind's overlay window so its UI stays in sync if the change
     // originated elsewhere (keeps the contract honest and cheap).
     getOverlayWindow(kind)?.webContents.send(IPC.onOverlayConfig, { kind, config: next })
+    // …and, when the thing that moved was a per-kind SIZE (independent mode), tell Preferences,
+    // whose per-overlay list is the only other place that number is written down.
+    if (p.textScale !== undefined) broadcastOverlayTextScales()
     return next
   })
   // Locked (click-through) vs interactive. Persist + apply to the live window + ECHO.
@@ -212,6 +230,7 @@ export function registerWindowIpc(): void {
   // the switch off is what puts every window back on the shared size, and no window can observe
   // that for itself.
   ipcMain.handle(IPC.overlayTextSizeGet, () => getOverlayTextSize())
+  ipcMain.handle(IPC.overlayTextScalesGet, () => overlayTextScaleMap())
   ipcMain.handle(IPC.overlayTextSizeSet, (_e, patch: unknown) => {
     const prefs = setOverlayTextSize(patch)
     broadcastOverlayTextSize(prefs)

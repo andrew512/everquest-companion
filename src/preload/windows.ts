@@ -18,6 +18,7 @@ import type { ScopeSelection } from '../shared/scopeSelection'
 import type { BuffAllowPatch, BuffAllowPrefs } from '../shared/buffAllow'
 import type { CloseToTrayPrefs } from '../shared/closeToTray'
 import type { OverlayConfig, OverlayKind } from '../shared/types'
+import type { OverlayTextSizePrefs } from '../shared/overlayTextScale'
 
 export const windowsApi = {
   // ---- frameless window controls (Task #23) ----
@@ -181,5 +182,47 @@ export const windowsApi = {
   setConCardConfig: (patch: Partial<OverlayConfig>): Promise<OverlayConfig> =>
     ipcRenderer.invoke(IPC.overlaySetConfig, 'conCard', patch),
   /** Lock (click-through) / unlock (position it). APPLIED to the live window as well as stored. */
-  setConCardLocked: (locked: boolean): void => ipcRenderer.send(IPC.overlaySetLocked, 'conCard', locked)
+  setConCardLocked: (locked: boolean): void => ipcRenderer.send(IPC.overlaySetLocked, 'conCard', locked),
+
+  // ---- the overlays' TEXT SIZE (JOS-405; shared/overlayTextScale.ts) ------------------------
+  //
+  // IN THIS SLICE rather than a module of its own, and the reason is the ceiling that put the
+  // three cards above here: src/preload/index.ts is AT 400 code lines, so a new spread there
+  // costs two lines it does not have. This is the honest home anyway — the members right above
+  // are "Preferences' door to an overlay's config", and the twelve-row list is exactly that door
+  // opened on one more field.
+  //
+  // THE OVERLAY WINDOWS HAVE THEIR OWN TWO (preload/overlay.ts), under the same names. Not
+  // duplication to tidy away later: it is the fight-selection trio's arrangement, for the same
+  // reason — two very different windows decide one thing with this value, and a second NAME for
+  // one signal is how they end up disagreeing about it.
+  /** The shared size and whether it is in force. `{ 1, false }` on an install that never chose. */
+  getOverlayTextSize: (): Promise<OverlayTextSizePrefs> =>
+    ipcRenderer.invoke(IPC.overlayTextSizeGet),
+  /** Merge-patch it; every open overlay window is resized before this resolves. Main re-validates
+   *  through the same normalizer the store reader uses, so the reply is what will ACTUALLY happen. */
+  setOverlayTextSize: (patch: Partial<OverlayTextSizePrefs>): Promise<OverlayTextSizePrefs> =>
+    ipcRenderer.invoke(IPC.overlayTextSizeSet, patch),
+  /** Main's push, for the presses this window did not make. Twelve overlay windows carry an
+   *  A− / A+ that moves the shared size, so a Preferences pane left open while somebody scales
+   *  their fight meter would otherwise print a stale percentage. */
+  onOverlayTextSize: (cb: (p: OverlayTextSizePrefs) => void): (() => void) => {
+    const listener = (_e: unknown, p: OverlayTextSizePrefs): void => cb(p)
+    ipcRenderer.on(IPC.onOverlayTextSize, listener)
+    return () => ipcRenderer.removeListener(IPC.onOverlayTextSize, listener)
+  },
+  /** Every kind's OWN scale, in ONE read — the per-overlay list is twelve rows, not twelve round
+   *  trips. Values are what each window would draw at IF independent sizes were on. */
+  getOverlayTextScales: (): Promise<Record<OverlayKind, number>> =>
+    ipcRenderer.invoke(IPC.overlayTextScalesGet),
+  /** Write ONE kind's own scale, through the very door that kind's own A− / A+ uses, so a row and
+   *  a footer button are the same write and main routes both by the same rule. */
+  setOverlayTextScale: (kind: OverlayKind, textScale: number): Promise<OverlayConfig> =>
+    ipcRenderer.invoke(IPC.overlaySetConfig, kind, { textScale }),
+  /** Main's push for a per-kind value moved on a WINDOW while the list was open. */
+  onOverlayTextScales: (cb: (m: Record<OverlayKind, number>) => void): (() => void) => {
+    const listener = (_e: unknown, m: Record<OverlayKind, number>): void => cb(m)
+    ipcRenderer.on(IPC.onOverlayTextScales, listener)
+    return () => ipcRenderer.removeListener(IPC.onOverlayTextScales, listener)
+  }
 }

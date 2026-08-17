@@ -1,10 +1,14 @@
 // TextSizeSetting — Preferences → Text size (JOS-123).
 //
 // A player on v0.13.0 wrote "Please allow us to enlarge the text. I can barely read it." This is
-// the answer for the MAIN window; the floating overlays got theirs in an earlier round and keep
-// it (the A− / A+ stepper in their own footer), which is why the caption says so out loud. Someone
-// who came here to fix their meters and left thinking nothing happened would be the one way this
-// card can fail.
+// the answer for the MAIN window.
+//
+// AND THE OVERLAYS' ANSWER IS NOW THE NEXT ITEM DOWN (JOS-405), not "on the overlay itself". The
+// caption used to send them there, and two 1.4.0 reporters proved that sentence was not enough:
+// the stepper it pointed at is in a footer a PINNED overlay does not draw. The section now carries
+// all three controls — this ladder, the shared overlay size, and the twelve per-overlay rows —
+// which is what "someone who came here to fix their meters and left thinking nothing happened"
+// looked like when it actually happened. See ./OverlayTextSizeSetting.tsx.
 //
 // FIVE BUTTONS, NOT A SLIDER. The ladder lives in shared/uiScale.ts with the reasoning; what
 // matters here is that a person who cannot read the screen should not have to aim at a 4px track
@@ -27,6 +31,9 @@ import { Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/materia
 import FormatSizeIcon from '@mui/icons-material/FormatSize'
 import { UI_SCALE_STEPS, normalizeUiScale, uiScalePercent } from '@shared/uiScale'
 import { recordPref, usePrefsSeed } from './prefsHydration'
+// The OVERLAYS' size and the per-overlay list (JOS-405), which are items in THIS section: someone
+// who came here to fix their meters has to find them without leaving the card they landed on.
+import { OverlayTextSizeSetting, PerOverlayTextSizeSetting } from './OverlayTextSizeSetting'
 import type { PrefSection } from './PreferencesView'
 
 /**
@@ -66,6 +73,25 @@ function useUiScale(): [number, (next: number) => void] {
  * what they are experiencing, not naming a feature. "overlay" is in there too: the overlays' own
  * control is somewhere else entirely, and this card is the one that says where.
  */
+/**
+ * The words somebody types when they cannot read something, shared by every item in this section.
+ *
+ * SYMPTOM VOCABULARY AS HEAVILY AS MECHANISM ("small", "tiny", "hard to read", "eyes", "squint",
+ * "accessibility"): the person searching for this is describing what they are experiencing, not
+ * naming a feature. Hoisted out of the one item that used to carry it because JOS-405 added two
+ * more and the search has to find all three from the same words.
+ */
+const SIZE_WORDS =
+  'text size font bigger larger smaller enlarge shrink zoom scale magnify percent ' +
+  'readable read reading small tiny huge big hard to see eyes eyesight squint vision ' +
+  'accessibility accessible interface ui display'
+
+/** …and the words for the OVERLAYS' half of it (JOS-405) — including what the reporter SAW (a
+ *  card, a meter, a banner) rather than what the app calls it. */
+const OVERLAY_WORDS =
+  'overlay overlays meter card con mob toast banner independent separate each individually unpin ' +
+  'window windows floating pinned locked strip popup timers respawn xp healing'
+
 export function textSizeSection(): PrefSection {
   return {
     id: 'textsize',
@@ -75,11 +101,22 @@ export function textSizeSection(): PrefSection {
       {
         id: 'ui-scale',
         label: 'Text size',
-        keywords:
-          'text size font bigger larger smaller enlarge shrink zoom scale magnify percent ' +
-          'readable read reading small tiny huge big hard to see eyes eyesight squint vision ' +
-          'accessibility accessible interface ui display window overlay',
+        keywords: `${SIZE_WORDS} window overlay`,
         content: <TextSizeSetting />
+      },
+      // JOS-405: the overlays' size, in the place two 1.4.0 reporters went looking for it. The
+      // controls on the overlays themselves are unchanged and write the same value.
+      {
+        id: 'overlay-text-size',
+        label: 'Overlay text size',
+        keywords: `${SIZE_WORDS} ${OVERLAY_WORDS}`,
+        content: <OverlayTextSizeSetting />
+      },
+      {
+        id: 'overlay-text-per-kind',
+        label: 'Per-overlay sizes',
+        keywords: `${SIZE_WORDS} ${OVERLAY_WORDS}`,
+        content: <PerOverlayTextSizeSetting />
       }
     ]
   }
@@ -116,7 +153,7 @@ export function TextSizeSetting(): JSX.Element {
 
       <Typography variant="caption" color="text.secondary" data-testid="pref-text-size-note">
         This sizes the whole window, meters and numbers included, and it stays this way next time
-        you open the app. The floating overlays keep their own size control, on the overlay itself.
+        you open the app. The floating overlays have their own size, right below this.
       </Typography>
     </Stack>
   )

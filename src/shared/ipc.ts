@@ -278,6 +278,14 @@ export const IPC = {
   // resizes when Preferences moves the shared size, and the reason the Preferences stepper agrees
   // with a press made on a meter's own A+ — one value with thirteen controls needs one push.
   onOverlayTextSize: 'overlayTextSize:changed',
+  // renderer(main app) -> main: every kind's OWN stored `textScale`, in one read. Preferences'
+  // per-overlay list is twelve rows and this is one call rather than twelve; an overlay window
+  // never asks, because the only per-kind value it can draw is its own and that is in its config.
+  overlayTextScalesGet: 'overlayTextSize:kinds',
+  // main -> renderer(main app): a per-kind value moved (a window's own A− / A+ while independent
+  // sizes are on). Payload Record<OverlayKind, number>. Preferences' rows would otherwise seed
+  // from a cache written before the press and state a size that window is not drawing at.
+  onOverlayTextScales: 'overlayTextSize:kindsChanged',
   // ---- closing the window keeps the companion running (JOS-139; shared/closeToTray.ts) ----
   // renderer(main app) -> main: read / patch the close-to-tray preference. Returns
   // CloseToTrayPrefs, re-validated at the handler through the same normalizer the store uses.

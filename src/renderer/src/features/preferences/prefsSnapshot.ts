@@ -23,6 +23,7 @@
 import { normalizeUiScale } from '../../../../shared/uiScale'
 import { normalizeAlertBannerConfig } from '../../../../shared/alertBanner'
 import { normalizeConCardConfig } from '../../../../shared/conCard'
+import { normalizeOverlayTextSize } from '../../../../shared/overlayTextScale'
 import type { AlertBannerOverlayConfig } from '@shared/alertBanner'
 import type { ConCardOverlayConfig } from '@shared/conCard'
 import type { BuffTrustPrefs } from '@shared/buffTrust'
@@ -30,6 +31,7 @@ import type { GraphicsPrefs } from '@shared/graphicsPrefs'
 import type { GraphicsEnvironment } from '@shared/wineDetect'
 import type { CursorRingPrefs, OverlayAutoHidePrefs } from '@shared/presencePrefs'
 import type { OverlaySnapPrefs } from '@shared/overlaySnap'
+import type { OverlayTextSizePrefs } from '@shared/overlayTextScale'
 import type { CloseToTrayPrefs } from '@shared/closeToTray'
 import type { PerfHudPrefs, StartupProfile } from '@shared/perf'
 import type { ProcessPriorityPrefs } from '@shared/processPriority'
@@ -89,6 +91,21 @@ export interface PrefsSnapshot {
   overlayAutoHide: OverlayAutoHidePrefs
   /** Overlays — the opt-in drag magnetism (JOS-217). */
   overlaySnap: OverlaySnapPrefs
+  /**
+   * Text size — the OVERLAYS' size (JOS-405): the shared value and whether it is in force.
+   *
+   * In the batch for the `uiScale` reason next door, and rather more sharply: the person opening
+   * this section is the person who cannot read their meters, so their shared size is by definition
+   * not 100% — a stepper that painted 100% first would be wrong for exactly the audience the card
+   * is for.
+   */
+  overlayTextSize: OverlayTextSizePrefs
+  /**
+   * …and every kind's OWN size, for the persistent twelve-row list. Seeded here rather than read
+   * on mount for the same reason everything else in this object is: the rows state a size, and a
+   * row that states the wrong one for a frame is this gate's whole subject.
+   */
+  overlayTextScales: Record<OverlayKind, number>
   /** Window — what the X does (JOS-139). OFF by default (owner reversal, 2026-08-16), and it has
    *  TWO other controls (the tray menu's checkbox and the title bar's overlay-menu row), so this
    *  entry is kept current by main's pushes as well as by the card's own writes — see App.tsx. */
@@ -144,6 +161,8 @@ export interface PrefsReader {
   getGraphicsEnvironment: () => Promise<GraphicsEnvironment>
   getOverlayAutoHide: () => Promise<OverlayAutoHidePrefs>
   getOverlaySnap: () => Promise<OverlaySnapPrefs>
+  getOverlayTextSize: () => Promise<OverlayTextSizePrefs>
+  getOverlayTextScales: () => Promise<Record<OverlayKind, number>>
   getCloseToTray: () => Promise<CloseToTrayPrefs>
   getOverlayState: () => Promise<Record<OverlayKind, boolean>>
   getToastConfig: () => Promise<OverlayConfig>
@@ -178,6 +197,8 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     graphicsEnv,
     overlayAutoHide,
     overlaySnap,
+    overlayTextSize,
+    overlayTextScales,
     closeToTray,
     overlayState,
     toastConfig,
@@ -201,6 +222,8 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     eq.getGraphicsEnvironment(),
     eq.getOverlayAutoHide(),
     eq.getOverlaySnap(),
+    eq.getOverlayTextSize(),
+    eq.getOverlayTextScales(),
     eq.getCloseToTray(),
     eq.getOverlayState(),
     eq.getToastConfig(),
@@ -226,6 +249,10 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     graphicsEnv,
     overlayAutoHide,
     overlaySnap,
+    // Through the same normalizer main's store reader uses, for the `uiScale` reason next door:
+    // the cache can never hold a shared size that is not a legal one.
+    overlayTextSize: normalizeOverlayTextSize(overlayTextSize),
+    overlayTextScales,
     closeToTray,
     toast: { open: overlayState.toast, locked: toastConfig.locked },
     // The knobs go through the same normalizer main's store reads with, so the cache can never
