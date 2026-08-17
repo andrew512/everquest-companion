@@ -9,6 +9,7 @@ import type { AlertDef, AlertPrefs, OverlayConfig, OverlayKind, ProgressState, U
 import type { CursorRingPrefs, OverlayAutoHidePrefs } from '../shared/presencePrefs'
 import type { OverlaySnapPrefs } from '../shared/overlaySnap'
 import type { OverlayTextSizePrefs } from '../shared/overlayTextScale'
+import type { OverlayBgAlphaPrefs } from '../shared/overlayBgAlpha'
 import type { CloseToTrayPrefs } from '../shared/closeToTray'
 import type { TelemetryPrefs } from '../shared/telemetry'
 import type { PerfHudPrefs } from '../shared/perf'
@@ -166,6 +167,20 @@ export interface StoreShape {
    * ceiling.
    */
   overlayTextSize?: OverlayTextSizePrefs
+  /**
+   * THE OVERLAYS' BACKGROUND TRANSPARENCY, as a preference rather than twelve unrelated numbers
+   * (JOS-407; shared/overlayBgAlpha.ts). `{ shared, independent }`, defaulting to `{ 0.72, false }`.
+   *
+   * ABSENT DOES NOT MEAN THE DEFAULT HERE either — `storeOverlayBgAlpha.ts` DERIVES both halves
+   * from the twelve `overlays.<kind>.bgAlpha` values the store already holds and writes the answer
+   * back on the first read. Where the text size's derivation could assume twelve EQUAL values (its
+   * setter fanned every press out), this field never had a fan-out, so the derivation decides the
+   * MODE as well: all equal ⇒ synced at that value, any different ⇒ independent, and either way
+   * nothing on screen moves. It needs no schema bump for its twin's reason: it reads and writes
+   * only additive optional keys, and a build that predates it opens a store it wrote without
+   * noticing. The accessors live in their own file because store.ts is at the 400-code-line ceiling.
+   */
+  overlayBgAlpha?: OverlayBgAlphaPrefs
   /**
    * WHAT THE X ON THE MAIN WINDOW DOES, and whether this install has been told (JOS-139;
    * shared/closeToTray.ts). `{ enabled, noticeAcknowledged }`, defaulting to `{ false, false }` (OFF since the owner's same-day reversal, 2026-08-16).

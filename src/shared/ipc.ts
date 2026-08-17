@@ -286,6 +286,27 @@ export const IPC = {
   // sizes are on). Payload Record<OverlayKind, number>. Preferences' rows would otherwise seed
   // from a cache written before the press and state a size that window is not drawing at.
   onOverlayTextScales: 'overlayTextSize:kindsChanged',
+  // ---- the overlays' BACKGROUND TRANSPARENCY (JOS-407; shared/overlayBgAlpha.ts) ----
+  // FOUR CHANNELS OF ITS OWN, mirroring the four above rather than widening them to carry both
+  // preferences in one message. The two settings are linked and unlinked SEPARATELY by design
+  // (owner: if they are separate in their settings, separate them), so a shared envelope would put
+  // two independent switches on one wire and make every reader unpack a pair it half-cares about;
+  // a window that only redraws its background would re-resolve its text size on every alpha drag.
+  // renderer(main app OR any overlay window) -> main: read / patch `{ shared, independent }`.
+  // Returns OverlayBgAlphaPrefs, re-validated at the handler through the same normalizer the store
+  // reader uses.
+  overlayBgAlphaGet: 'overlayBgAlpha:get',
+  overlayBgAlphaSet: 'overlayBgAlpha:set',
+  // main -> renderer(main app AND every open overlay window): the prefs changed somewhere this
+  // window could not see. Payload OverlayBgAlphaPrefs — one value with fifteen controls (twelve
+  // windows' own `bg` sliders and Preferences' slider, switch and rows) needs one push.
+  onOverlayBgAlpha: 'overlayBgAlpha:changed',
+  // renderer(main app) -> main: every kind's OWN stored `bgAlpha`, in one read, for the twelve-row
+  // list. An overlay window never asks: the only per-kind value it can draw is its own.
+  overlayBgAlphasGet: 'overlayBgAlpha:kinds',
+  // main -> renderer(main app): a per-kind value moved (a window's own `bg` slider while
+  // independent transparency is on). Payload Record<OverlayKind, number>.
+  onOverlayBgAlphas: 'overlayBgAlpha:kindsChanged',
   // ---- closing the window keeps the companion running (JOS-139; shared/closeToTray.ts) ----
   // renderer(main app) -> main: read / patch the close-to-tray preference. Returns
   // CloseToTrayPrefs, re-validated at the handler through the same normalizer the store uses.

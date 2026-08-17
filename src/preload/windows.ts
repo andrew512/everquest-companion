@@ -19,6 +19,7 @@ import type { BuffAllowPatch, BuffAllowPrefs } from '../shared/buffAllow'
 import type { CloseToTrayPrefs } from '../shared/closeToTray'
 import type { OverlayConfig, OverlayKind } from '../shared/types'
 import type { OverlayTextSizePrefs } from '../shared/overlayTextScale'
+import type { OverlayBgAlphaPrefs } from '../shared/overlayBgAlpha'
 
 export const windowsApi = {
   // ---- frameless window controls (Task #23) ----
@@ -224,5 +225,40 @@ export const windowsApi = {
     const listener = (_e: unknown, m: Record<OverlayKind, number>): void => cb(m)
     ipcRenderer.on(IPC.onOverlayTextScales, listener)
     return () => ipcRenderer.removeListener(IPC.onOverlayTextScales, listener)
+  },
+
+  // ---- the overlays' BACKGROUND TRANSPARENCY (JOS-407; shared/overlayBgAlpha.ts) ------------
+  //
+  // THE FIVE MEMBERS ABOVE, ONE FIELD OVER, under names that differ only in what they name. The
+  // two settings are separate on purpose — they are linked and unlinked by two switches, because a
+  // player who wants one size everywhere and a fainter respawn window is asking for exactly that —
+  // so they are separate on the bridge too rather than one widened call carrying a pair.
+  /** The shared alpha and whether it is in force. `{ 0.72, false }` on an install that never chose,
+   *  and `{ …, true }` on one whose overlays already disagreed when this shipped. */
+  getOverlayBgAlpha: (): Promise<OverlayBgAlphaPrefs> => ipcRenderer.invoke(IPC.overlayBgAlphaGet),
+  /** Merge-patch it; every open overlay window is repainted before this resolves. Main re-validates
+   *  through the same normalizer the store reader uses, so the reply is what will ACTUALLY happen. */
+  setOverlayBgAlpha: (patch: Partial<OverlayBgAlphaPrefs>): Promise<OverlayBgAlphaPrefs> =>
+    ipcRenderer.invoke(IPC.overlayBgAlphaSet, patch),
+  /** Main's push, for the drags this window did not make — twelve overlay windows carry a `bg`
+   *  slider that moves the shared alpha. */
+  onOverlayBgAlpha: (cb: (p: OverlayBgAlphaPrefs) => void): (() => void) => {
+    const listener = (_e: unknown, p: OverlayBgAlphaPrefs): void => cb(p)
+    ipcRenderer.on(IPC.onOverlayBgAlpha, listener)
+    return () => ipcRenderer.removeListener(IPC.onOverlayBgAlpha, listener)
+  },
+  /** Every kind's OWN alpha, in ONE read — the per-overlay list is twelve rows, not twelve round
+   *  trips. Values are what each window would paint with IF independent transparency were on. */
+  getOverlayBgAlphas: (): Promise<Record<OverlayKind, number>> =>
+    ipcRenderer.invoke(IPC.overlayBgAlphasGet),
+  /** Write ONE kind's own alpha, through the very door that kind's own slider uses, so a row and a
+   *  footer slider are the same write and main routes both by the same rule. */
+  setOverlayBgAlphaFor: (kind: OverlayKind, bgAlpha: number): Promise<OverlayConfig> =>
+    ipcRenderer.invoke(IPC.overlaySetConfig, kind, { bgAlpha }),
+  /** Main's push for a per-kind value moved on a WINDOW while the list was open. */
+  onOverlayBgAlphas: (cb: (m: Record<OverlayKind, number>) => void): (() => void) => {
+    const listener = (_e: unknown, m: Record<OverlayKind, number>): void => cb(m)
+    ipcRenderer.on(IPC.onOverlayBgAlphas, listener)
+    return () => ipcRenderer.removeListener(IPC.onOverlayBgAlphas, listener)
   }
 }
