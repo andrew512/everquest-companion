@@ -14,6 +14,7 @@
 // Every channel name lives in `src/shared/ipc.ts`; nothing here invents one.
 
 import { registerAlertsIpc } from './alerts'
+import { registerBuffAllowIpc } from './buffAllow'
 import { registerBuffTrustIpc } from './buffTrust'
 import { registerResistIpc } from './resist'
 import { registerRespawnIpc } from './respawn'
@@ -80,6 +81,7 @@ export function registerIpc(): void {
   registerPerfIpc()
   registerGraphicsIpc()
   registerBuffTrustIpc()
+  registerBuffAllowIpc()
   registerRespawnIpc()
   registerResistIpc()
   registerUiScaleIpc()
