@@ -74,7 +74,7 @@ import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs
 // The RESIST-CHIP steps and the LINK steps live next door, because this spec is at the repo's
 // max-lines budget and the rule is SPLIT, never ratchet. Each carries its own argument in its
 // header: the chips' two creatures, and the click that made the card a lily pad (JOS-390).
-import { stepLatelyChip, stepNotableChips, stepResistantChip } from './conCardChipSteps.mjs'
+import { stepNotableChips, stepResistantChip } from './conCardChipSteps.mjs'
 import {
   stepClickOpensTheMobPage,
   stepCloseDoesNotNavigate,
@@ -645,10 +645,6 @@ async function main(): Promise<void> {
       await stepClickOpensTheMobPage(card, page, MOB)
       await stepUnlockedClickDoesNotNavigate(card, page)
       await stepNextConReplaces(log, card)
-      // JOS-397: three resists written into the LIVE log put an ORDINARY axis back on the card, and
-      // one landing takes it off again. It runs on OTHER, which the step above has just put on
-      // screen, and it settles on the CHIP rather than on the name for exactly that reason.
-      await stepLatelyChip(card, (...m) => log.append(...m), OTHER, OTHER_CON)
       await stepPlayerGetsNothing(log, card)
       // The × is the one control on a card-wide link that must not navigate — it closes, and only
       // closes. Its suppression half follows, and only runs on a card that demonstrably went.

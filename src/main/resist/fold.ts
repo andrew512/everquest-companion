@@ -94,7 +94,7 @@ import { idKey, spellCanonKey, spellRank } from '../log/parseCommon'
 import { ArmedCasts, CastState } from './castState'
 import type { LogEvent } from '../../shared/logEvents'
 import type { SpellDb } from '../data/spellDb'
-import type { ResistCasterKind, ResistFamily, ResistRecentEntry, ResistRow } from '../../shared/resistTypes'
+import type { ResistCasterKind, ResistFamily, ResistRow } from '../../shared/resistTypes'
 import { isoWeekKey } from '../../shared/resistDecay'
 import { ResistBucket, type RowSpec } from './ledger'
 import { SongFold } from './songFold'
@@ -490,9 +490,7 @@ export class ResistFold {
     // Only YOUR emote-landings are attributable. A stranger's sentence names no caster, and an
     // npc's cast is never armed in the first place (see the header).
     if (d.kind !== 'self') return
-    const row = this.rowFor({ ...d, family: 'cast' })
-    row.land += 1
-    this.remember(row, { ts: d.ts })
+    this.rowFor({ ...d, family: 'cast' }).land += 1
   }
 
   private cancelDeferred(mobDisplay: string, spellKey: string): void {
@@ -517,7 +515,7 @@ export class ResistFold {
     if (this.songs.onResist(ev.target, spellKey, kind, ev.ts)) return
     const level = this.casterLevel(kind, ev.caster)
     const cast = this.casts.ownedBy(kind, spellKey, ev.ts)
-    const row = this.rowFor({
+    this.rowFor({
       mob: ev.target,
       spellKey,
       family: 'cast',
@@ -526,28 +524,7 @@ export class ResistFold {
       ts: ev.ts,
       rank: lineRank > 0 ? lineRank : (cast?.rank ?? 0),
       overchannel: this.cast.invocationFor(kind, cast),
-    })
-    row.resist += 1
-    this.remember(row, { ts: ev.ts, resist: true })
-  }
-
-  /**
-   * REMEMBER ONE OF YOUR OWN OUTCOMES, in order, for the run detector (JOS-397).
-   *
-   * YOUR OWN CASTS ONLY, and the two exclusions are the ticket's rules rather than an optimisation.
-   * A pet's or another player's outcome cannot carry the sentence (`shared/resistLately.ts` says
-   * why), and a SONG is excluded because the Symphonic Aura re-pulses every six seconds — three song
-   * pulses in a row is four seconds of one fight, and a run detector fed by them would fire on every
-   * creature a bard walks past.
-   *
-   * It records what the LOG printed and nothing derived: a resist message, or the damage number, or
-   * neither. Which of those was a full hit and which a silent partial is a question about the whole
-   * ledger's histograms, and it is answered at read time exactly as it is for a row's `dmg`.
-   */
-  private remember(row: ResistRow, entry: ResistRecentEntry): void {
-    if (row.casterKind !== 'self' || row.family !== 'cast') return
-    const level = row.casterLevel
-    this.bucket.note(row.mobKey, row.spellKey, level === null ? entry : { ...entry, level })
+    }).resist += 1
   }
 
   /**
@@ -607,7 +584,7 @@ export class ResistFold {
       rank: lineRank > 0 ? lineRank : (cast?.rank ?? 0),
       overchannel: this.cast.invocationFor(kind, cast),
     })
-    if (ev.dtype === 'dot') this.onDotTick(row, ev.target, spellKey, ev.ts)
+    if (ev.dtype === 'dot') this.onDotTick(row, ev.target, spellKey)
     else this.fileHit(row, ev)
   }
 
@@ -617,24 +594,15 @@ export class ResistFold {
    * "full" value for the estimator to read partials against.
    */
   private fileHit(row: ResistRow, ev: Extract<LogEvent, { kind: 'damage' }>): void {
-    if (ev.crit || (ev.modifiers?.length ?? 0) > 0) {
-      row.land += 1
-      // A CRIT IS A LANDING WITH NO NUMBER, in the ring for the same reason it is out of the
-      // histogram: its damage is not the spell's full damage, and remembering it as one would let a
-      // focused crit read as a partial three casts later.
-      this.remember(row, { ts: ev.ts })
-      return
-    }
-    this.bucket.addDamage(row, ev.amount)
-    this.remember(row, { ts: ev.ts, dmg: ev.amount })
+    if (ev.crit || (ev.modifiers?.length ?? 0) > 0) row.land += 1
+    else this.bucket.addDamage(row, ev.amount)
   }
 
-  private onDotTick(row: ResistRow, target: string, spellKey: string, ts: number): void {
+  private onDotTick(row: ResistRow, target: string, spellKey: string): void {
     const key = pairKey(this.names.key(target), spellKey)
     if (this.dotSeen.has(key)) return
     this.dotSeen.add(key)
     row.land += 1
-    this.remember(row, { ts })
   }
 
   // ---- songs ---------------------------------------------------------------------------

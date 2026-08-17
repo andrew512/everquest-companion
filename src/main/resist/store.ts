@@ -21,12 +21,7 @@ import { app } from 'electron'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError } from '../errorLog'
-import {
-  BASELINE_SOURCE_KEY,
-  type ResistLedger,
-  type ResistRecentSeries,
-  type ResistRow,
-} from '../../shared/resistTypes'
+import { BASELINE_SOURCE_KEY, type ResistLedger, type ResistRow } from '../../shared/resistTypes'
 import { ResistLedgerStore, type ResistBucket } from './ledger'
 import type { ResistLedgerSeam } from './module'
 // Inlined committed baseline (bundled into the main build, like spells.json).
@@ -35,15 +30,21 @@ import baselineJson from '../data/resistBaseline.json'
 /**
  * Bump to invalidate every user ledger in the field. The baseline carries its own schema.
  *
- * VERSION 2 (JOS-397): rows carry the ISO week they were observed in, and a source carries the
- * recent-outcome rings beside them. A version-1 row pooled its counts ACROSS weeks and no migration
- * can un-pool them — the honest upgrade is the re-fold this app does from the log on every launch.
+ * VERSION 2 (JOS-397): rows carry the ISO week they were observed in. A version-1 row pooled its
+ * counts ACROSS weeks and no migration can un-pool them — the honest upgrade is the re-fold this app
+ * does from the log on every launch.
+ *
+ * VERSION 3 (JOS-400) IS A DELETION, and it is a bump precisely because the thing deleted was ON
+ * DISK. Version 2 also wrote the run detector's per-(mob, spell) outcome rings beside the rows; the
+ * detector is gone, nothing reads a ring any more, and a field ledger written by version 2 would
+ * otherwise keep carrying kilobytes of them forward forever. Rows are unaffected in shape — they are
+ * simply re-folded from the log, as they are on every launch.
  */
-export const RESIST_LEDGER_VERSION = 2
+export const RESIST_LEDGER_VERSION = 3
 
 interface UserLedgerFile {
   version: number
-  sources: { key: string; rows: ResistRow[]; recent?: ResistRecentSeries[] }[]
+  sources: { key: string; rows: ResistRow[] }[]
 }
 
 /** The committed baseline, typed. Read-only, re-seeded from the bundle on every launch. */
@@ -93,7 +94,7 @@ export function resistLedger(): ResistLedgerStore {
   if (existing) return existing
   const created = new ResistLedgerStore()
   created.seed(baselineLedger())
-  for (const src of loadUserSources()) created.bucket(src.key).seed(src.rows, src.recent)
+  for (const src of loadUserSources()) created.bucket(src.key).seed(src.rows)
   store = created
   return created
 }

@@ -29,13 +29,10 @@ import {
   type ResistAxis,
   type ResistAxisBenchmark,
   type ResistEstimate,
-  type ResistLately,
-  type ResistRecentSeries,
   type ResistRow,
   type SpellResistTable,
 } from '../../shared/resistTypes'
 import { estimate, hasAnswer } from '../../shared/resistModel'
-import { detectLately, recentOnAxis } from '../../shared/resistLately'
 import type { DamageRef } from '../../shared/resistDamage'
 import { resistBenchmark } from '../../shared/resistFormula'
 import { BASELINE_SOURCE_KEY } from '../../shared/resistTypes'
@@ -109,11 +106,6 @@ export interface ProfileDeps {
   /** Why the client's spell table is unavailable, when it is. See `spellDataNote`. */
   spellStatus: () => { state: SpellTableState; path: string }
   /**
-   * YOUR LAST FEW OUTCOMES ON THIS CREATURE, per spell (JOS-397). Rings, not counts — see
-   * `shared/resistLately.ts` for why they are kept per spell and joined to an axis on read.
-   */
-  recentFor: (display: string) => ResistRecentSeries[]
-  /**
    * The newest week anything in the LEDGER was observed in: the instant every row's age is measured
    * against (`shared/resistDecay.ts`). Whole-ledger and not per-mob, or a creature nobody has
    * fought in months would report itself as freshly observed.
@@ -145,30 +137,8 @@ interface AxisCtx {
   unobservable: ReadonlySet<string>
   modes: ReadonlyMap<string, DamageRef>
   includeNpcCasters: boolean
-  /** This creature's recent-outcome rings, and the ledger-wide age reference (JOS-397). */
-  recent: ResistRecentSeries[]
+  /** The ledger-wide age reference every row's decay is measured against (JOS-397). */
   newestWeek: string | undefined
-}
-
-/**
- * THE RUN, WHEN THERE IS ONE — beside the estimate and never inside it (JOS-397).
- *
- * `pLand` is the number the surface is ALREADY PRINTING, which is what makes the claim checkable by
- * the reader: the line only appears where what you are looking at did not predict what just
- * happened. A pinned fit prints no benchmark, so there the raw resist rate stands in — a cell the
- * model refused to fit is exactly where a run of three is worth saying out loud, and dropping the
- * line for want of a percentage would lose it on the mobs it matters most on.
- */
-function axisLately(est: ResistEstimate, bench: ResistAxisBenchmark | null, ctx: AxisCtx, input: {
-  spells: SpellResistTable
-  axis: ResistAxis
-}): ResistLately | null {
-  if (ctx.recent.length === 0) return null
-  const emp = est.empirical
-  const pLand = bench ? bench.pPlain : emp.total > 0 ? 1 - emp.resisted / emp.total : null
-  if (pLand === null) return null
-  const reads = recentOnAxis(ctx.recent, { spells: input.spells, axis: input.axis, modes: ctx.modes })
-  return detectLately(reads, { pLand, viewerLevel: ctx.viewerLevel, mobLevel: ctx.mobLevel })
 }
 
 /**
@@ -226,7 +196,6 @@ function axisRow(
     benchmark: bench,
     n: est.n,
     nInformative: est.nInformative,
-    lately: axisLately(est, bench, ctx, { spells, axis }),
   }
 }
 
@@ -243,22 +212,13 @@ export function mobResistProfile(displayName: string, deps: ProfileDeps): MobRes
     unobservable: deps.unobservable(),
     modes: deps.damageModes(),
     includeNpcCasters: deps.includeNpcCasters(),
-    recent: deps.recentFor(displayName),
     newestWeek: deps.newestWeek(),
   }
   const axes = spells
     ? RESIST_AXES.map((axis) => axisRow(rows, spells, axis, ctx))
     : RESIST_AXES.map(
         (axis) =>
-          ({
-            axis,
-            estimate: null,
-            tag: null,
-            benchmark: null,
-            n: 0,
-            nInformative: 0,
-            lately: null,
-          }) satisfies MobResistAxis
+          ({ axis, estimate: null, tag: null, benchmark: null, n: 0, nInformative: 0 }) satisfies MobResistAxis
       )
   return {
     mobKey: key,

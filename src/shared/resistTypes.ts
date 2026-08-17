@@ -179,69 +179,6 @@ export interface ResistRow {
   source?: ResistSource
 }
 
-/**
- * ONE REMEMBERED OUTCOME (JOS-397). The ring's entry, and it says only what the LOG printed -
- * whether the game refused the spell, and the damage number if it printed one. Full-versus-partial
- * is derived on read against the ledger's own histograms, exactly as `ResistRow.dmg` is, because
- * this file's one design rule is that the ledger stores observations and never conclusions.
- */
-export interface ResistRecentEntry {
-  ts: number
-  /** The game printed the resist message. Absent means it did not. */
-  resist?: true
-  /** The damage the line printed, when it printed one. */
-  dmg?: number
-  /** The caster's level, which is what the full-damage reference is keyed by. */
-  level?: number
-}
-
-/**
- * The last few outcomes for one (mob, spell), newest LAST (append order), capped at
- * `RESIST_RECENT_CAP`. Your own casts only, and the user's ledger only - the shipped baseline
- * carries none, because a run that ended a month before you installed the app is not `lately`.
- */
-export interface ResistRecentSeries {
-  mobKey: string
-  spellKey: string
-  out: ResistRecentEntry[]
-}
-
-/**
- * What one remembered outcome turns out to have been, once the client's spell table and the
- * ledger's own damage histograms are joined in (`shared/resistLately.ts`).
- *
- *   `resist`   the game printed the resist message.
- *   `full`     unreduced damage: the roll beat `rc` outright.
- *   `partial`  silently reduced damage. THE ROLL WENT AGAINST YOU on a spell that cannot be refused
- *              outright - the same reading the hard data rule takes - so a partial breaks a run of
- *              landings AND a run of resists. It is the honest middle and it is treated as one.
- *   `land`     it landed and nothing distinguishes full from partial (an all-or-nothing spell, a
- *              DoT tick, an emote landing, or a nuke whose histogram names no reference).
- */
-export type ResistRecentOutcome = 'resist' | 'land' | 'partial' | 'full'
-
-/**
- * A RUN OF RECENT OUTCOMES THE ESTIMATE DID NOT PREDICT (JOS-397). Null everywhere else, which is
- * almost everywhere - the rules that keep it rare, and the arithmetic behind `tag`, are in
- * `shared/resistLately.ts`.
- *
- * It never touches `R`, the interval or the two percentages: those stay the decayed estimate's on
- * every surface. What this adds is one sentence and one band, and the band is worn with the word
- * `lately` in front precisely so the two windows can never be read as one answer.
- */
-export interface ResistLately {
-  /** How many of the newest outcomes ran the same way. The sentence is `N of the last N`. */
-  run: number
-  /** The word the sentence ends on. */
-  outcome: 'resisted' | 'landed'
-  /** The band the run implies, at the viewer's level. Worn as `lately resistant`. */
-  tag: ResistTag
-  /** The same band's sentence, for a surface that wants it. */
-  guidance: ResistGuidance
-  /** How likely the run was under the estimate the surface is printing. Under `LATELY_MAX_PROB`. */
-  probability: number
-}
-
 /** Past this many distinct damage values a row stops keeping the histogram (see ResistRow). */
 export const MAX_DISTINCT_DAMAGE_VALUES = 32
 
@@ -252,14 +189,18 @@ export const MAX_DISTINCT_DAMAGE_VALUES = 32
  */
 export interface ResistLedger {
   /**
-   * SCHEMA 3 (JOS-397): rows carry the ISO week they were observed in, and a source may carry the
-   * recent-outcome rings beside its rows. Same argument as schema 2 (JOS-387: the upgrade rank and
-   * the invocation state) and schema 1 before it — a row's counts were pooled ACROSS weeks and
-   * nothing can un-pool them, so a bump means a RE-FOLD, which this app does from the log on every
-   * launch anyway. `ResistLedgerStore.seed` refuses anything else.
+   * SCHEMA 3 (JOS-397): rows carry the ISO week they were observed in. Same argument as schema 2
+   * (JOS-387: the upgrade rank and the invocation state) and schema 1 before it — a row's counts
+   * were pooled ACROSS weeks and nothing can un-pool them, so a bump means a RE-FOLD, which this
+   * app does from the log on every launch anyway. `ResistLedgerStore.seed` refuses anything else.
+   *
+   * The schema-3 bump also carried the JOS-397 run detector's per-source outcome rings; those were
+   * removed the same day (JOS-400, owner ruling) and the number did not move with them — a stale
+   * ring is dropped by the USER ledger's own version bump (`main/resist/store.ts`), and nothing on
+   * disk in the shipped baseline changed.
    */
   schema: typeof RESIST_LEDGER_SCHEMA
-  sources: { key: string; rows: ResistRow[]; recent?: ResistRecentSeries[] }[]
+  sources: { key: string; rows: ResistRow[] }[]
   /**
    * Baseline only: when it was mined, and against which `spells_us.txt`.
    *
@@ -470,12 +411,6 @@ export interface MobResistAxis {
   n: number
   /** The half of `n` that could have gone either way — see `ResistEstimate.nInformative`. */
   nInformative: number
-  /**
-   * A RUN OF RECENT OUTCOMES THIS ESTIMATE DID NOT PREDICT (JOS-397), or null - which is the answer
-   * on almost every row. It sits BESIDE the estimate and never inside it: `tag`, `benchmark`, `n`
-   * and the interval above are all the decayed long-run answer whether this is present or not.
-   */
-  lately: ResistLately | null
 }
 
 /**

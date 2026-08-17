@@ -50,8 +50,9 @@
 // itself. It MULTIPLIES the baseline down-weighting above rather than replacing it — "the shipped
 // file counts less because you have your own data" and "it counts less because it is old" are two
 // different statements and a row that is both should pay for both. The argument for the half-life
-// and for the floor is in `shared/resistDecay.ts`; the run detector that reports what three recent
-// resists say WITHOUT touching the number is in `shared/resistLately.ts`.
+// and for the floor is in `shared/resistDecay.ts`, and it is the ONE place recency speaks: JOS-397
+// also shipped a separate run detector that printed a second verdict beside this estimate, and the
+// owner removed it the same day (JOS-400). A card says one thing about a creature, and this is it.
 
 import {
   LOW_SAMPLE_BELOW,

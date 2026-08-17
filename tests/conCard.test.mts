@@ -29,7 +29,6 @@ import {
   normalizeConCardConfig
 } from '../src/shared/conCard'
 import {
-  CON_CARD_NOTABLE_LATELY_TAGS,
   CON_CARD_NOTABLE_TAGS,
   CON_CARD_OPEN_HINT,
   conCardTotalN,
@@ -52,7 +51,6 @@ import {
   RESIST_AXES,
   type MobResistProfile,
   type ResistEstimate,
-  type ResistLately,
   type ResistTag
 } from '../src/shared/resistTypes'
 import type { ConCardChip, ConCardPayload } from '../src/shared/conCard'
@@ -221,20 +219,9 @@ function chip(tag: ResistTag | null, n = 20): ConCardChip {
     n,
     // A cell whose casts could all have been resisted: the two counts agree, which is most cells.
     nTotal: n,
-    fit: tag === null ? null : { R: 60, lo: 40, hi: 80 },
-    // No run, which is the answer on almost every chip (JOS-397).
-    lately: null
+    fit: tag === null ? null : { R: 60, lo: 40, hi: 80 }
   }
 }
-
-/** A run of three recent resists implying a band. What `detectLately` hands the chip. */
-const lately = (tag: ResistTag): ResistLately => ({
-  run: 3,
-  outcome: 'resisted',
-  tag,
-  guidance: tag === 'very resistant' ? 'may not land even with overchannel' : 'needs overchannel',
-  probability: 0.027
-})
 
 function profile(spec: Partial<MobResistProfile> = {}): MobResistProfile {
   return {
@@ -329,28 +316,16 @@ test('the card keeps the two words that change what you cast, and nothing else',
   assert.deepEqual(notableChips([chip(null)]), [])
 })
 
-test('A RUN OF THREE EARNS A CHIP THE LONG-RUN BAND WOULD HAVE DROPPED (JOS-397)', () => {
-  // THE OWNER'S CASE, on this surface. The female vampires in Hate read `normal` over the whole
-  // ledger - a chip that would leave the card entirely - and he was resisted three times running.
-  assert.deepEqual([...CON_CARD_NOTABLE_LATELY_TAGS], ['resistant', 'very resistant'])
-  const ordinary = { ...chip('normal'), lately: lately('resistant') }
-  const kept = notableChips([ordinary])
-  assert.equal(kept.length, 1)
-  assert.equal(kept[0].from, 'lately', 'the chip says which half of the card earned it')
-  assert.equal(kept[0].tag, 'normal', 'and the long-run band it still prints is untouched')
-  assert.deepEqual(kept[0].fit, { R: 60, lo: 40, hi: 80 }, 'as are the number and its interval')
-
-  // A run that implies an ORDINARY band is not news, on the same argument that drops `normal`.
-  assert.deepEqual(notableChips([{ ...chip('normal'), lately: lately('weak') }]), [])
-  // And a chip that qualifies BOTH ways is labelled by the durable half.
-  assert.equal(notableChips([{ ...chip('resistant'), lately: lately('resistant') }])[0].from, 'benchmark')
-  // A pinned cell under the resist-rate bar can still be carried in by its run - that cell is
-  // exactly where the model gave up, which is where a run of three is worth most.
-  const pinned = { ...chip(null, 59), pinned: true, empirical: { total: 59, resisted: 5 } }
-  assert.deepEqual(notableChips([pinned]), [])
-  assert.equal(notableChips([{ ...pinned, lately: lately('resistant') }])[0].from, 'lately')
-  // An axis nothing has ever been cast on is still dropped, run or no run - there cannot be one.
-  assert.deepEqual(notableChips([{ ...chip('normal', 0), lately: lately('resistant') }]), [])
+test('THERE ARE EXACTLY TWO WAYS ONTO THE CARD (JOS-400 removed the third)', () => {
+  // JOS-397 added a run detector that could carry an ordinary chip onto the card and print a second
+  // band on it; the owner removed it the same day, because a card says ONE thing about a creature.
+  // What survives of that ruling is the decay inside the estimate, which reaches this card as `tag`.
+  const kept = notableChips([chip('normal'), chip('resistant'), { ...chip(null, 59), pinned: true, empirical: { total: 59, resisted: 40 } }])
+  assert.deepEqual(kept.map((c) => c.from), ['benchmark', 'resistRate'], 'benchmark or resist rate, and nothing else')
+  // An ordinary band leaves whatever has been happening recently: there is no second route back on.
+  assert.deepEqual(notableChips([chip('normal')]), [])
+  const quietPinned = { ...chip(null, 59), pinned: true, empirical: { total: 59, resisted: 5 } }
+  assert.deepEqual(notableChips([quietPinned]), [], 'a pinned cell under the rate bar stays off')
 })
 
 test('A PINNED CELL FALLS BACK TO THE RESIST RATE, and only when it is worth a warning (JOS-387)', () => {
