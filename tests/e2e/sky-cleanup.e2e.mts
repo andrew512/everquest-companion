@@ -474,8 +474,8 @@ async function stepFloorEndsTheRow(page: Page, log: FixtureLog): Promise<void> {
 async function arc(page: Page, app: ElectronApplication, log: FixtureLog): Promise<void> {
   if (!(await stepNothingSpareYet(page))) return
   if (!(await stepTurnInMakesItSpare(page))) return
-  // The tab at its most interesting: caveat, source control, one row with its verdict chip, its
-  // place and its decision line. Taken before anything is destroyed, so the artifact shows the
+  // The tab at its most interesting: caveat, source control, one row with its place and its
+  // decision line (no verdict chip - owner ruling 2026-08-17, the reader makes their own choice). Taken before anything is destroyed, so the artifact shows the
   // screen a player decides from. Opt-in (see `captureTab`) - an ordinary run writes no PNG.
   await captureTab(app, 'sky-cleanup-tab')
   await stepRewardHovers(page)

@@ -39,7 +39,6 @@ import { type JSX, useCallback, useMemo } from 'react'
 import {
   Alert,
   Box,
-  Chip,
   Stack,
   Table,
   TableBody,
@@ -79,31 +78,6 @@ export interface CleanupListProps {
   inventoryLoadedAt: number | null
   /** an item name → the Loot tab's drill-down; absent leaves the names hoverable but unlinked */
   onOpenLoot?: (item: string) => void
-}
-
-/** Is this row arguing to KEEP? The best turn-in's own answer — the list is sorted by it. */
-function keepsIt(row: CleanupRow): boolean {
-  return (row.turnIns[0]?.sets ?? 0) >= 1
-}
-
-/**
- * The row's VERDICT, as one word at the head of the line.
- *
- * It states nothing the row does not already say — `sets >= 1` on the best turn-in is exactly what
- * `decisionLine` opens with — but it says it where a reader scanning a column of items can act on
- * it. `Keep` is warning-coloured for the same reason the sentence is: on this screen the cautious
- * answer is the one that should catch the eye.
- */
-function VerdictChip({ keep }: { keep: boolean }): JSX.Element {
-  return (
-    <Chip
-      size="small"
-      variant="outlined"
-      color={keep ? 'warning' : 'default'}
-      label={keep ? 'Keep' : 'Spare'}
-      sx={{ height: 20, fontSize: 11 }}
-    />
-  )
 }
 
 /** One quest this item feeds, and the case for keeping the item instead of destroying it. */
@@ -151,7 +125,7 @@ function TurnInLine({
   )
 }
 
-/** One item: the verdict, the name, the count, where it sits, and the quests it would feed. */
+/** One item: the name, the count, where it sits, and the quests it would feed. */
 function CleanupItemRow({
   row,
   tierOf,
@@ -163,9 +137,6 @@ function CleanupItemRow({
 }): JSX.Element {
   return (
     <TableRow data-testid="posky-cleanup-row" data-item={row.name} data-count={row.quantity}>
-      <TableCell padding="checkbox" sx={{ verticalAlign: 'top', pt: 1.5 }}>
-        <VerdictChip keep={keepsIt(row)} />
-      </TableCell>
       <TableCell sx={{ verticalAlign: 'top', fontWeight: 600 }}>
         {/* No `row` for the card's drop roster: a Cleanup row is keyed by the counting key and can
             be claimed by several quests with different stated `where`s, so there is no ONE quest
@@ -251,7 +222,6 @@ export default function CleanupList({
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell padding="checkbox" />
                   <TableCell>Item</TableCell>
                   <TableCell>Held</TableCell>
                   <TableCell>Where</TableCell>
