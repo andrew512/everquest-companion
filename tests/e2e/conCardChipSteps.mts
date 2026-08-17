@@ -5,11 +5,13 @@
 //
 // THE TWO CLAIMS, and they need two different creatures, which is the whole reason this pair exists:
 //
-//   THE CUT. `a loathling lich` is level 51 and its worst axis is disease at R 76; against a
-//   level-50 caster that is rc 76, which lands 62% of the time — so nothing about it is worth a
-//   chip and the card's honest answer is its empty state. Under JOS-386's R bands the same number
-//   read `resistant` and drew one, and the benchmark going viewer-relative (JOS-387) is what moved
-//   it. A creature whose numbers are ordinary AT YOUR LEVEL is the case the cut exists for.
+//   THE CUT. `a loathling lich` is level 51 and four of its five axes are ordinary at a level-50
+//   caster's own level — magic R 48, fire R 36, cold R 16, disease R 76, all of which land more
+//   than 60% of the time and none of which is worth a line of window over a running game. Under
+//   JOS-386's R bands disease read `resistant` and drew a chip; the benchmark going viewer-relative
+//   (JOS-387) is what moved it. A creature whose numbers are ordinary AT YOUR LEVEL is the case the
+//   cut exists for, and the step asserts the cut rather than a count of survivors — see its own
+//   comment for the day the owner's continued play made that distinction load-bearing.
 //
 //   THE CHIP. `a thunder spirit princess` is level 53 and reads magic R 154 and fire R 148 in the
 //   committed baseline — 21% and 24% to land a plain cast, 96% and 99% with the overchannel
@@ -28,6 +30,22 @@ const AXES = ['magic', 'fire', 'cold', 'poison', 'disease'] as const
 
 export const NOTABLE = 'A thunder spirit princess'
 export const NOTABLE_CON = `${NOTABLE} scowls at you, ready to attack -- what would you like your tombstone to say? (Lvl: 53)`
+
+/**
+ * THE THIRD CREATURE, and it is the OWNER'S OWN CASE (JOS-397): a mob whose long-run answer is
+ * ordinary and whose last three casts were not.
+ *
+ * `a wan ghoul knight` reads magic R 12 off 421 informative observations in the committed baseline —
+ * a plain cast lands every time at a level-50 viewer, so it is a `normal` axis and the JOS-386 cut
+ * drops it from the card entirely. Three resists written into the LIVE log make that run a
+ * one-in-a-million event under the number the card is printing, which is the whole test: the chip
+ * has to come back, carrying the sentence and the `lately resistant` word, with the long-run number
+ * beside it untouched. It is the only claim in this feature that spans the fold, the ledger's ring,
+ * the estimator and a window over the game, so it cannot be made anywhere but here.
+ */
+const LATELY_SPELL = 'Chaotic Feedback'
+/** The minimum run, so the spec is asserting the RULE's own boundary and not a comfortable margin. */
+const LATELY_RUN = 3
 
 function cardText(page: Page): Promise<string> {
   return page.evaluate(
@@ -69,8 +87,8 @@ async function degraded(card: Page, text: string): Promise<boolean> {
 
 /**
  * ONLY WHAT IT RESISTS (owner ruling, 2026-08-16 — the second one that day), asserted as the RULE
- * rather than as a fixed axis list: no ordinary axis survives, and when nothing survives the card
- * says it looked. See the header for why this creature now has nothing.
+ * rather than as a fixed axis list: no ordinary axis survives, every survivor wears one of the two
+ * words that change what you cast, and a card with nothing to flag says it looked.
  *
  * IT RUNS AFTER `stepResistantChip`, and that ordering is a finding rather than a preference: the
  * card arrives in TWO passes and the client's 38 MB `spells_us.txt` is read on a worker, so the
@@ -86,8 +104,26 @@ export async function stepNotableChips(card: Page): Promise<void> {
     return
   }
   const shown = await shownAxes(card)
-  check('nothing about a level-51 lich is worth a chip at the viewer’s own level', shown.length === 0, shown.join(',') || '(none)')
-  check('…and the card SAYS it looked, with the count it looked at', /no notable resists · n=\d+/.test(text), text.slice(0, 200))
+  // THE RULE, NOT A ROSTER — and the difference stopped being academic on 2026-08-17 (JOS-397's
+  // re-mine). This step used to assert that the lich has NO chip at all, off numbers measured when
+  // the baseline was frozen; the owner kept playing, sixteen more poison observations landed on the
+  // same creature, and its poison moved from R 66 over 27 casts to R 106 over 43 — genuinely
+  // `resistant` at a level-50 viewer, and genuinely worth the chip it now draws. A spec pinned to
+  // one creature's numbers is a hostage to whether the owner went back to Guk. So what is asserted
+  // is the CUT itself: every chip that survives is one of the two words that change what you cast,
+  // and an empty card says it looked.
+  if (shown.length === 0) {
+    check('…and a card with nothing to flag SAYS it looked, with the count it looked at', /no notable resists · n=\d+/.test(text), text.slice(0, 200))
+  } else {
+    for (const axis of shown) {
+      const word = await textOf(card, `[data-testid="con-chip-tag-${axis}"]`)
+      check(
+        `the ${axis} chip survived on one of the words that change what you cast`,
+        /^(lately )?(resistant|very resistant)|^resists \d+% of casts/.test(word),
+        word
+      )
+    }
+  }
   // No weak/normal axis, and no "no data" chip: the two things this ruling removed.
   check('a `weak` or `normal` axis is not on the card at all', !/\b(weak|normal)\b/.test(text), text.slice(0, 240))
   check('and no chip says "no data" — an empty axis leaves rather than shrugging', !/no data/i.test(text), text.slice(0, 240))
@@ -137,4 +173,64 @@ export async function stepResistantChip(
   const bench = await textOf(card, `[data-testid="con-chip-bench-${shown[0]}"]`)
   check('…and BOTH percentages under that', /^lands \d+% · with overchannel \d+%$/.test(bench), bench)
   check('…and the number and its interval and its count are still on the chip', /R \d+ \(\d+-\d+\) n=\d+/.test(text), text.slice(0, 240))
+}
+
+/**
+ * A RUN OF THREE, END TO END (JOS-397) — the one claim in this feature no unit test can make.
+ *
+ * It writes three resists of one spell into the LIVE log and cons the creature, so what is being
+ * asserted is the whole chain: the fold remembering your own outcomes in order, the ring surviving
+ * into the ledger, the estimator's own printed number being what the run is measured as surprising
+ * AGAINST, and the card putting the result on screen over the game.
+ *
+ * IT SETTLES ON THE CHIP, NEVER ON THE NAME. This creature may already be the card on screen when
+ * the step runs, so a settle on the card's name would return before the new payload had arrived and
+ * would read the previous answer — which, correctly, has no chip at all.
+ */
+export async function stepLatelyChip(
+  card: Page,
+  append: (...messages: readonly string[]) => number,
+  mob: string,
+  conLine: string
+): Promise<void> {
+  if (/spells_us\.txt/.test(await cardText(card))) {
+    note('no client spell data on this machine - the `lately` chip cannot be asserted here')
+    return
+  }
+  const burst: string[] = []
+  for (let i = 0; i < LATELY_RUN; i++) {
+    burst.push(`You begin casting ${LATELY_SPELL}.`, `${mob} resisted your ${LATELY_SPELL}!`)
+  }
+  append(...burst)
+  append(conLine)
+  const line = await settle(
+    () => textOf(card, '[data-testid="con-chip-lately-magic"]'),
+    (t) => t.length > 0,
+    { timeoutMs: 30_000 }
+  ).catch(() => '')
+  const want = `lately: ${String(LATELY_RUN)} of the last ${String(LATELY_RUN)} resisted`
+  if (!check(`three resists in the live log put ${mob}'s magic back on the card`, line === want, line || '(no lately line)')) {
+    note(`card was: ${(await cardText(card)).slice(0, 240)}`)
+    return
+  }
+  // THE WORD IS THE RUN'S, AND EVERYTHING UNDER IT IS STILL THE LONG-RUN ANSWER. That split is the
+  // ruling: the eye gets what just happened, and the numbers a player scales their own case from
+  // stay the estimate's — this creature reads R 12 off four hundred observations and still does.
+  const word = await textOf(card, '[data-testid="con-chip-tag-magic"]')
+  check('…worn as the scannable word, with `lately` in front of it', /^lately (resistant|very resistant)/.test(word), word)
+  const text = await cardText(card)
+  check('…and the long-run number and interval are untouched beside it', /R \d+ \(\d+-\d+\) n=\d+/.test(text), text.slice(0, 240))
+  // AND IT ENDS BY ITSELF. One landing makes the newest outcome a landing, the leading run is one,
+  // and the line is simply not there on the next draw - nothing is cleared, because nothing is kept.
+  append(
+    `You begin casting ${LATELY_SPELL}.`,
+    `You hit ${mob.toLowerCase()} for 30 points of magic damage by ${LATELY_SPELL}.`
+  )
+  append(conLine)
+  const gone = await settle(
+    () => textOf(card, '[data-testid="con-chip-lately-magic"]'),
+    (t) => t.length === 0,
+    { timeoutMs: 30_000 }
+  ).catch(() => 'still there')
+  check('…and one landing after it takes the line away again', gone === '', gone)
 }

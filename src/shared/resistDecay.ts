@@ -83,11 +83,26 @@ export function weekStart(ts: number): number {
  */
 export function isoWeekKey(ts: number): string {
   const monday = weekStart(ts)
+  if (monday === memoMonday) return memoKey
   const thursday = new Date(monday + 3 * DAY_MS)
   const year = thursday.getUTCFullYear()
   const week = Math.round((monday - weekStart(Date.UTC(year, 0, 4))) / WEEK_MS) + 1
-  return `${String(year)}-W${week < 10 ? '0' : ''}${String(week)}`
+  memoMonday = monday
+  memoKey = `${String(year)}-W${week < 10 ? '0' : ''}${String(week)}`
+  return memoKey
 }
+
+/**
+ * ONE ENTRY OF MEMO, AND IT IS MEASURED (JOS-397). The fold calls this on EVERY observation and a
+ * log's lines arrive in order, so consecutive calls answer the same week for hours at a time — the
+ * uncached version allocated a `Date` and read a calendar per row. It costs nothing in correctness:
+ * the function is total and referentially transparent, so a cache of its last answer is the answer.
+ * MEASURED on the owner's 2.08M-line log (`npm run bench:replay`): the resist module costs
+ * 1.01 us/event with this off and 0.99 with it on, against 0.94 before this ticket existed — so the
+ * memo is most of the week key's own cost, and what is left is the recent-outcome ring's writes.
+ */
+let memoMonday = Number.NaN
+let memoKey = ''
 
 /** The Monday an `isoWeekKey` names, or null when the string is not one. */
 export function weekStartOfKey(key: string): number | null {

@@ -416,6 +416,53 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
   / 239 at levels 46 / 47 / 48-up, which are the game's own tiers. Cost of the fix, on the shipped
   baseline: a zol ghoul knight's cold falls from R 60 [40,84] to R 26 [10,50] as 23 partials become
   5, and the "provably cold-resistant" claim that stood on them is withdrawn.
+- **Recent evidence weighs more, and a run of three says so out loud** (owner, 2026-08-16 -
+  SHIPPED in JOS-397). Two halves of one ruling, deliberately different in kind.
+
+  THE WEIGHT. Rows carry the ISO WEEK they were observed in, in the pooling key (schema 3; a
+  schema-2 row pooled its counts across weeks and nothing can un-pool them, so the bump is a
+  re-fold, which this app does from the log every launch). Each term then weighs
+  `w = max(0.15, 0.5 ^ (ageDays / 21))`, aged in whole weeks from the NEWEST OBSERVATION THE
+  LEDGER HOLDS rather than from the wall clock - a paused log must not decay itself, or a player
+  who stops for three months returns to doubled intervals having learned nothing new. Half-life
+  21 days because patches land weeks apart; floor 0.15 because history fades and does not vanish,
+  and because a weight decaying to zero would silently delete the whole shipped baseline after a
+  month of play, which is not the same statement as "your own log outweighs it". It MULTIPLIES
+  JOS-382's `K/(K + nUser)` rather than replacing it: a shipped observation that is both
+  out-voted and old pays for both. Counts are untouched - `n`, the low-samples caveat and the
+  hard data rule still speak in observations a player could count themselves. Cost, measured on
+  the owner's 2.08M-line log: the resist module goes 0.94 -> 0.99 us/event (10.6% -> 10.8% of the
+  fold), of which most of the week key's own share is recovered by a one-entry memo.
+
+  THE SHIPPED BASELINE IS AGED FROM `frozenAt`, and its rows do not carry a week at all. The file
+  is a snapshot rather than a diary (its timestamps have been stripped since JOS-382), so the
+  freeze RE-POOLS the fold's week buckets onto that one week and the store fills the value back in
+  from the stamp as the file is read. MEASURED, and it is why the re-pool is not optional: pooled,
+  4,016 rows carrying 59,987 observations clear the five-observation floor; left split by their
+  real weeks, 4,164 rows carrying 58,368 do - a bigger file that knows less. Omitting the field
+  saves 80 kB of one repeated string.
+
+  THE RUN. A ring of the last 10 of YOUR OWN outcomes per (mob, spell) rides the user's ledger and
+  never the baseline. Per SPELL rather than per mob because the fold cannot know an axis (it never
+  reads `spells_us.txt`) and no spell can contribute more than ten to the last ten, so merging the
+  rings on read returns exactly the true last ten. Three or more identical outcomes in a row, AND
+  a run under 10% likely under the estimate the surface is already printing, surface
+  `lately: 3 of the last 3 resisted` and a band computed through the SAME benchmark, worn as
+  `lately resistant`. It replaces the scannable word and nothing else: `R`, the interval and both
+  percentages stay the decayed long-run answer, on the mob page and on the con card alike. A
+  partial breaks both a run of resists and a run of landings - the roll went against you on a
+  spell that cannot be refused. Songs are excluded (the Symphonic Aura re-pulses every six
+  seconds, so three pulses is four seconds of one fight); pets and other players are excluded
+  because the sentence is about what happened when YOU cast. Nothing is stored and nothing is
+  cleared: a landing makes the leading run one, and the line is not there on the next draw.
+
+  THE CON CARD gains a third way onto the card - a run whose band is `resistant` or
+  `very resistant` earns a chip the long-run cut would have dropped, which is exactly the owner's
+  own case (three resists running on the female vampires in Hate, whose pooled magic reads
+  ordinary). A run of PLAIN casts can imply at most `resistant`, and the arithmetic says why: `rc`
+  tops out at 200 and overchannel is worth -150, so a plain cast always beats the 60% line. What
+  reaches the top band is a run on casts that were already helped by the spell's own resist
+  adjust, which is carried into the inversion for the same reason the estimator carries it.
 - Presentation: **no acronyms**. Every axis is shown as its word (magic, fire, cold, poison,
   disease) with a stable colour per axis; the colour and the word always appear together.
 

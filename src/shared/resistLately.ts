@@ -131,7 +131,12 @@ export function recentOnAxis(series: readonly ResistRecentSeries[], ctx: RecentC
     const info = ctx.spells[s.spellKey]
     if (info?.axis !== ctx.axis) continue
     if (!isInformativeSpell(info.resistAdj)) continue
-    for (const entry of s.out) {
+    // NEWEST FIRST WITHIN A RING, before the sort rather than after it. EQ stamps a line to the
+    // SECOND, so a burst of casts in one second arrives with identical timestamps and a stable sort
+    // would then hand back the order it was given - which for a ring stored oldest-first is exactly
+    // backwards. Feeding it reversed makes the tie-break the ring's own order, which is the truth.
+    for (let i = s.out.length - 1; i >= 0; i--) {
+      const entry = s.out[i]
       out.push({
         ts: entry.ts,
         spellKey: s.spellKey,
