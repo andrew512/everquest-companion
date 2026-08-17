@@ -1068,6 +1068,53 @@ export interface InvocationChangeEvent extends LogEventBase {
 }
 
 /**
+ * A GEM CHANGED (JOS-391). `Beginning to memorize <spell>...` and, one to three seconds later,
+ * `You have finished memorizing <spell>.`
+ *
+ * BOTH PHASES, ONE KIND, and `done` is what a consumer reads. The finished line is the one that
+ * changes the world (the gem is now loaded); the begin line is the one that says the player is
+ * STILL WORKING, which is what `spellSets.ts` needs to know a spell-set load has not settled yet.
+ * A memorize that is interrupted prints a begin and no finish, so the two cannot be collapsed.
+ *
+ * MEASURED on the owner's log (2,048,450 lines, 2026-08-16): 4,321 begin lines, 4,285 finished.
+ * Every one of them parsed to `{kind:'unknown'}` before this existed, so the classifier can
+ * neither shadow nor be shadowed. Note the trailing `...` on the begin line and the `.` on the
+ * finished one — the spell name is what sits between the prefix and that punctuation.
+ */
+export interface SpellMemorizeEvent extends LogEventBase {
+  kind: 'spellMemorize'
+  spell: string
+  /** True for `You have finished memorizing X.` — the line that loaded the gem. */
+  done: boolean
+}
+
+/**
+ * A GEM EMPTIED (JOS-391) — `You forget <spell>.` 4,232 in the owner's log, all previously
+ * `{kind:'unknown'}`. It is printed both when the player drops a gem by hand and, in a burst,
+ * when a spell set is loaded over the current gems.
+ */
+export interface SpellForgetEvent extends LogEventBase {
+  kind: 'spellForget'
+  spell: string
+}
+
+/**
+ * A NAMED SPELL SET WAS SAVED, LOADED OR DELETED (JOS-391) — `Spell set <name> saved.`
+ *
+ * The name is free text with spaces in it (`sham rang buff 2`, `pal primary`), so it is taken
+ * whole between the prefix and the verb rather than tokenized. MEASURED: 474 lines over the
+ * owner's log across 21 distinct set names, split 297 loaded / 172 saved / 5 deleted — the
+ * `deleted` verb is not in the ticket's list and is real, which is why the field is an action
+ * rather than a boolean.
+ */
+export interface SpellSetEvent extends LogEventBase {
+  kind: 'spellSet'
+  /** The set's name, verbatim. */
+  set: string
+  action: 'saved' | 'loaded' | 'deleted'
+}
+
+/**
  * The character's OWN `/who` row — the ONLY line in the game that states the class loadout
  * (docs/plans/class-combo-inference.md § 2/A1). EQ Legends runs up to THREE classes at once
  * and never logs a swap, so this row is the single Tier-A observation the combo model can
@@ -1472,6 +1519,12 @@ export type LogEvent =
   | OfflineGapEvent
   | StanceChangeEvent
   | InvocationChangeEvent
+  // WHAT IS IN YOUR GEMS (JOS-391). Beside the stance/invocation pair because it is the same
+  // level of statement — the player operating their own character sheet — and, like them,
+  // MEASURED `{kind:'unknown'}` before it existed (4,321 + 4,285 + 4,232 + 474 lines).
+  | SpellMemorizeEvent
+  | SpellForgetEvent
+  | SpellSetEvent
   | SelfWhoEvent
   | SkillUpEvent
   | SpecialAttackEvent

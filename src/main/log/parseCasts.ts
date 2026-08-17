@@ -98,6 +98,22 @@ const AA_ACTIVATE_RE = /^You activate (.+?)\.$/
 const STANCE_RE = /^You assume an? (.+?) stance\.$/
 const INVOCATION_RE = /^You begin reciting the (.+?) invocation\.$/
 
+// ----- WHAT IS IN YOUR GEMS (JOS-391) -----
+// Four shapes, all four MEASURED `{kind:'unknown'}` over the owner's 2,048,450-line log before
+// this existed (4,321 / 4,285 / 4,232 / 474), so this family can neither shadow nor be shadowed:
+//   `Beginning to memorize Heat Blood...`         the gem is being loaded
+//   `You have finished memorizing Heat Blood.`    the gem IS loaded
+//   `You forget Symbol of Transal.`               the gem is empty
+//   `Spell set primary loaded.`  / `saved.` / `deleted.`
+// Each regex is anchored at both ends and the name capture is permissive, because spell names
+// carry apostrophes and commas (`Denon's Disruptive Discord`) and SET names carry spaces and
+// digits (`sham rang buff 2`). The three verbs are an alternation rather than a `(.+?)` so an
+// unknown fifth verb stays `unknown` instead of arriving as a mystery action.
+const MEMORIZE_BEGIN_RE = /^Beginning to memorize (.+?)\.\.\.$/
+const MEMORIZE_DONE_RE = /^You have finished memorizing (.+?)\.$/
+const FORGET_RE = /^You forget (.+?)\.$/
+const SPELL_SET_RE = /^Spell set (.+?) (saved|loaded|deleted)\.$/
+
 // ----- spell-landing emotes (Task #33): the cast-target discriminator -----
 // EQ prints a short flavor line the instant a buff lands. Two forms:
 //   SELF:  "You feel much faster."  "You feel much better."  "You feel armored."  …
@@ -531,6 +547,40 @@ export function classifyStance({ text, ts, seq, raw }: ClassifyCtx): LogEvent | 
   if (text.startsWith('You begin reciting ')) {
     const m = INVOCATION_RE.exec(text)
     if (m) return { kind: 'invocationChange', seq, ts, raw, invocation: m[1].trim().toLowerCase() }
+  }
+  return null
+}
+
+/**
+ * WHAT IS IN YOUR GEMS (JOS-391) — the memorize / forget / spell-set family.
+ *
+ * ONE CLASSIFIER FOR FOUR SHAPES because they are one subject and one consumer
+ * (`src/main/modules/spellSets.ts`), and because the three cheap prefix probes below run on
+ * every line of a two-million-line replay: the regexes only execute for a line that already
+ * starts with the right words.
+ *
+ * THE MEMORIZE LINES STAY SUPPRESSED WHERE THEY WERE SUPPRESSED (buffsShapes.ts
+ * `CASTING_SYSTEM_RE`). That module is the landing-message MINER and these lines are not spell
+ * landings — a coincidental burst pairing on `You forget Center.` would teach the overlay a
+ * message for a spell that just left the bar. Parsing them into events here and refusing them
+ * there are the same decision from two sides: the miner is not the consumer.
+ */
+export function classifySpellGems({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
+  if (text.startsWith('You forget ')) {
+    const m = FORGET_RE.exec(text)
+    return m ? { kind: 'spellForget', seq, ts, raw, spell: m[1].trim() } : null
+  }
+  if (text.startsWith('You have finished memorizing ')) {
+    const m = MEMORIZE_DONE_RE.exec(text)
+    return m ? { kind: 'spellMemorize', seq, ts, raw, spell: m[1].trim(), done: true } : null
+  }
+  if (text.startsWith('Beginning to memorize ')) {
+    const m = MEMORIZE_BEGIN_RE.exec(text)
+    return m ? { kind: 'spellMemorize', seq, ts, raw, spell: m[1].trim(), done: false } : null
+  }
+  if (text.startsWith('Spell set ')) {
+    const m = SPELL_SET_RE.exec(text)
+    if (m) return { kind: 'spellSet', seq, ts, raw, set: m[1].trim(), action: m[2] as 'saved' | 'loaded' | 'deleted' }
   }
   return null
 }
