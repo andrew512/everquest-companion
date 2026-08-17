@@ -1,7 +1,7 @@
 import { type JSX, useCallback, useEffect, useMemo, useState } from 'react'
 import { Alert, Box, Checkbox, FormControlLabel, Stack, Tab, Tabs, Typography } from '@mui/material'
 import type { CountSource, ItemCountOverride } from '@shared/types'
-import { OverrideSummaryChip, type SetItemCount } from './ItemOverrides'
+import { OverrideSummaryChip } from './ItemOverrides'
 import { useProgress, type QuestProgress } from './useProgress'
 import { IgnoredList } from './IgnoredList'
 import QuestFilterBar, { InventorySource } from './QuestFilterBar'
@@ -288,9 +288,8 @@ interface PoskyBodyProps {
   countSource: CountSource
   onCountSource: (s: CountSource) => void
   inventoryLoadedAt: number | null
-  reloadInventory: () => Promise<string>
-  /** the `void`-returning statement control, for the pane that is not drawing quest rows */
-  setItemCount: SetItemCount
+  /** an item name → the Loot tab's drill-down, for the pane that draws names without quest rows */
+  onOpenLoot?: (item: string) => void
   itemOverrides: readonly ItemCountOverride[]
 }
 
@@ -309,11 +308,10 @@ function PoskyBody(x: PoskyBodyProps): JSX.Element {
       <CleanupList
         // EVERY quest, ignored ones included - see the note on `cleanupCount` below.
         quests={x.quests}
-        setItemCount={x.setItemCount}
         countSource={countSource}
         onCountSource={onCountSource}
         inventoryLoadedAt={inventoryLoadedAt}
-        reloadInventory={x.reloadInventory}
+        onOpenLoot={x.onOpenLoot}
       />
     )
   }
@@ -401,7 +399,6 @@ export default function PoskyView({
     setItemOverride,
     itemOverrides,
     inventoryInfo,
-    reloadInventory,
     sharedItems,
     ambiguousQuestNames
   } = useProgress({ onQuestComplete })
@@ -419,13 +416,6 @@ export default function PoskyView({
    * quest still speaks for its items.
    */
   const cleanupCount = useMemo(() => cleanupRowsFor(quests, NO_DUMP_LOCATIONS).length, [quests])
-  /** The same statement the quest rows make, in the `void`-returning shape a control wants. */
-  const onSetItemCount = useCallback<SetItemCount>(
-    (name, count) => {
-      void setItemOverride(name, count)
-    },
-    [setItemOverride]
-  )
   const anchor = useQuestAnchor(quests, list, {
     quest: focusQuest,
     nonce: focusNonce,
@@ -458,8 +448,7 @@ export default function PoskyView({
         countSource={countSource}
         onCountSource={setCountSource}
         inventoryLoadedAt={inventoryInfo?.readAt ?? null}
-        reloadInventory={reloadInventory}
-        setItemCount={onSetItemCount}
+        onOpenLoot={onOpenLoot}
         itemOverrides={itemOverrides}
       />
     </Stack>

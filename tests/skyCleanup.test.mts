@@ -22,6 +22,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseInventoryDump } from '../src/main/outputs/inventoryParse'
 import { carryAll } from '../src/shared/carryAll'
+import { parseEvent } from '../src/main/log/parser'
+import { LootModule } from '../src/main/modules/loot'
+import { computeHeldCounts } from '../src/renderer/src/features/posky/heldCounts'
 import {
   CLEANUP_CAVEAT,
   cleanupRows,
@@ -220,7 +223,9 @@ test('SYNTHETIC: the shared bank and the personal depot get the words a player u
 test('an item no loaded dump names says so, rather than saying nothing', () => {
   const rows = cleanupRows([AZARACK], { [AZARACK.key]: 1 }, { 'azarack skin': 2 })
   assert.deepEqual(rows[0].locations, [])
-  assert.equal(locationsLine(rows[0].locations), 'location not in the inventory dump')
+  // Four words, because it is a cell under a `Where` header now (JOS-401) rather than a clause in
+  // a sentence. Still a statement: silence in that column would read as "nowhere".
+  assert.equal(locationsLine(rows[0].locations), 'not in the export')
 })
 
 test('the places ride the row when the dump does know them', () => {
@@ -233,17 +238,54 @@ test('the places ride the row when the dump does know them', () => {
   assert.equal(locationsLine(rows[0].locations), 'Bank 2')
 })
 
-// ---- 5. the destroyed override takes the row away ----------------------------------------
+// ---- 5. a destroy takes the row away, and the log is what says so -------------------------
 
-test('a hand-stated count of 0 removes the row - which is what "I destroyed these" does', () => {
+test('a count of 0 removes the row - which is what a destroy in the LOG now does', () => {
   const quests = [AZARACK]
   const progress = { [AZARACK.key]: 1 }
   assert.equal(cleanupRows(quests, progress, { 'azarack skin': 2 }).length, 1)
-  // The button writes an override of 0 through `useProgress.setItemOverride`; `reconcile` then
-  // answers 0 for the item, and that is the only input this module reads about holdings.
+  // The held count is the tab's only input about holdings, and since JOS-401 the log's own
+  // `You successfully destroyed …` lines are subtracted from it (heldCounts.foldHeld) - so the
+  // row leaves with no statement from anybody. The pencil override lands in exactly the same
+  // place for what the log cannot see, which is why one assertion covers both.
   assert.deepEqual(cleanupRows(quests, progress, { 'azarack skin': 0 }), [])
   // An item nobody has ever looted or dumped is the same case, and must not draw a phantom row.
   assert.deepEqual(cleanupRows(quests, progress, {}), [])
+})
+
+test('THE DESTROY, END TO END: parsed loot lines drive the row down and then off the tab', () => {
+  // The whole ticket in one assertion chain: real line shapes → the real parser → the real
+  // LootModule → the real held-count fold → the real cleanup model. Nothing here is hand-fed a
+  // count, which is the point - the tab's number is now downstream of the log for BOTH directions.
+  const at = (n: number, text: string): string => `[Sat Aug 01 01:1${String(n)}:00 2026] ${text}`
+  const replay = (lines: string[]): Record<string, number> => {
+    const mod = new LootModule()
+    mod.reset()
+    let seq = 0
+    for (const raw of lines) {
+      const ev = parseEvent(raw, seq++)
+      if (ev) mod.onEvent(ev)
+    }
+    return computeHeldCounts(mod.snapshot().state)
+  }
+  const looted = [
+    at(0, '--You have looted a Azarack Skin from a spiroc guardian’s corpse.--'),
+    at(1, '--You have looted 2 Azarack Skin from a spiroc guardian’s corpse.--'),
+    at(2, '--You have looted a Wind Rune Heda from a spiroc guardian’s corpse.--')
+  ]
+  const quests = [AZARACK]
+  const progress = { [AZARACK.key]: 1 }
+
+  const three = cleanupRows(quests, progress, replay(looted))
+  assert.equal(three.find((r) => r.key === 'azarack skin')?.quantity, 3, 'three skins in hand')
+
+  const two = cleanupRows(quests, progress, replay([...looted, at(3, 'You successfully destroyed 2 Azarack Skin.')]))
+  assert.equal(two.find((r) => r.key === 'azarack skin')?.quantity, 1, 'destroying two leaves one')
+
+  const none = cleanupRows(quests, progress, replay([...looted, at(3, 'You successfully destroyed 9 Azarack Skin.')]))
+  assert.equal(none.find((r) => r.key === 'azarack skin'), undefined, 'and destroying the lot ends the row')
+  // Floored, not negative: the rune beside it is untouched and the skin never goes below zero.
+  assert.equal(none.find((r) => r.key === 'wind rune heda')?.quantity, 1)
 })
 
 // ---- order, and the copy that is not a row ------------------------------------------------

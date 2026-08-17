@@ -1,7 +1,7 @@
 /**
- * Headless Electron integration test for THE CLEANUP TAB (JOS-389) — the fifth Sky tab, which
- * lists the quest items no un-turned-in quest still wants, says where they are sitting, and argues
- * the other way before you throw them out.
+ * Headless Electron integration test for THE CLEANUP TAB (JOS-389, rebuilt JOS-401) — the fifth
+ * Sky tab, which lists the quest items no un-turned-in quest still wants, says where they are
+ * sitting, and argues the other way before you throw them out.
  *
  * THE OWNER'S ASK, 2026-08-16: after a long Plane of Sky campaign a player is carrying dozens of
  * quest items in bags, bank, shared bank, personal depot and the Dragon Hoard for quests they
@@ -9,38 +9,39 @@
  * should say "destroy this" either: a Sky quest can be run AGAIN, a second turn-in is a second copy
  * of the reward, and two copies merge into a +1. So the row carries both halves.
  *
+ * AND HIS SECOND ASK, THE DAY THE TAB SHIPPED (JOS-401): the destruction is IN THE LOG. It always
+ * was — `You successfully destroyed <N> <Item>.`, 356 lines of his own — and the app was asking him
+ * to press a button stating it. The button is gone, the manual re-read of the inventory export is
+ * gone (this tab follows the file like every other Sky surface), and what replaces both is the
+ * subject of steps 3 to 5 below: a destroy line arriving in the tailed log while the tab is open.
+ *
  * WHY THIS NEEDS A REAL APP. The arithmetic is pure and pinned without a browser
- * (tests/skyCleanup.test.mts drives the five cases, including the ones this spec cannot stage).
- * What no unit test can see is the WIRING, and almost all of it is new here: the turn-in ledger →
- * `reconcile` → the cleanup model → a tab whose COUNT is computed above the pane it labels; the
- * `/outputfile inventory` dump → main's `character:sheet` → `carryAll` → the place on the row; and
- * the destroyed override, which is a full round trip through IPC, the store, the sanitizer and
- * back into two different tabs' numbers.
+ * (tests/skyCleanup.test.mts drives the cases, tests/lootDispositionWindows.test.mts the fold on
+ * real bytes, tests/skyItemOverrides.test.mts the witness discount per count source). What no unit
+ * test can see is the WIRING: the log line → the parser → the LootModule's LIVE delta → the held
+ * counts → `reconcile` → the cleanup model → a tab whose COUNT is computed above the pane it
+ * labels, and the same number arriving on the Quests tab beside it.
  *
  * THE FIXTURE IS THE POINT, and it was measured rather than invented. The committed dump
  * (tests/fixtures/Primitive_freeport-Inventory.txt, a real `/outputfile inventory`) contains
  * EXACTLY ONE Plane of Sky quest item — `Azarack Skin`, one copy, in `General 5-Slot7` — and that
  * item is required by exactly ONE quest in the committed data, `Beastlord Test of Azarack`. So a
  * single recorded turn-in flips one item from "still wanted" to "spare", and every number below is
- * caused by that one act. The log fixture `e2e-copy.log` carries ZERO loot lines, so nothing else
- * can be in the way.
+ * caused by one act. The log fixture `e2e-copy.log` carries ZERO loot lines, so nothing else can be
+ * in the way and every count this spec asserts is arithmetic this file performed on purpose.
  *
- * (It also means the dump ANSWERS the count after the turn-in, which is `reconcile`'s rule doing
- * its job in public: a dump is an observation of what you are HOLDING, so it owes no turn-in
- * subtraction — the file was written after all of them. The row reads 1 because the file says 1.)
+ * THE ARITHMETIC, SPELLED OUT ONCE (count source `both`, the shipped default — `max(dump, log less
+ * the turn-ins)`, each witness discounted on its own terms):
  *
- * THE ARC, in five steps:
- *   1. the tab is there, with the caveat up and NOTHING listed — the quest has not been run, so
- *      the skin in the bag is not spare. This is the membership rule, asserted as an absence.
- *   2. record one turn-in on the quest → the item is listed, with its quantity, the place the dump
- *      put it, and the turn-in line: who takes it, how many times, what it pays, and the gap.
- *   3. "I destroyed these" → the row leaves, and an Undo takes its place.
- *   4. Undo → the statement is taken back and the row comes back with it.
- *   5. destroy again, and the QUEST tab agrees: the item's Have cell reads 0/1 and carries the
- *      provenance chip, because there is ONE override ledger and every Sky surface reads it.
- *      Clearing it from that chip puts the Cleanup row back — the same seam, driven the other way
- *      — and proves the undo strip's scope is deliberate: it is component state, so leaving the
- *      tab ends it, and the statement is still reachable where every other one is.
+ *   after the turn-in   log 0 - 1 turn-in = 0 · dump 1                       -> x1
+ *   loot 3 more         log 3 - 1 turn-in = 2 · dump 1                       -> x2
+ *   destroy 1           log 3-1 = 2, -1 turn-in = 1 · dump 1-1 = 0           -> x1
+ *   destroy 5 more      log floors at 0 · dump floors at 0                   -> no row
+ *
+ * The last line is the floor doing its job in public: five destroyed where two were held is not
+ * -3, and the row simply ends. Both witnesses are discounted, which is why the last step needs the
+ * dump half to work as well as the log half — the dump would otherwise keep vouching for its copy
+ * forever, which is exactly the defect the owner reported.
  *
  * WHY IT NEVER TAKES THE SCREEN: `EQ_E2E=1` (src/main/e2e.ts) shows no window, skips the
  * single-instance lock, and points `userData` at a throwaway temp dir per launch.
@@ -50,9 +51,21 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ElectronApplication, Page } from 'playwright-core'
-import { ARTIFACTS, buildIfStale, check, countOf, dumpArtifacts, failures, reportRun, settle } from './appHarness.mjs'
+import {
+  ARTIFACTS,
+  buildIfStale,
+  check,
+  countOf,
+  dumpArtifacts,
+  failures,
+  hoverAt,
+  note,
+  reportRun,
+  settle,
+  settleStable
+} from './appHarness.mjs'
 import { mainWindow } from './appWindow.mjs'
-import { launchOnFixture } from './logFixture.mjs'
+import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
 
 const NAV_SKY = '[data-testid="nav-posky"]'
 const NAV_OVERVIEW = '[data-testid="nav-overview"]'
@@ -68,23 +81,29 @@ const CLEANUP = '[data-testid="posky-cleanup"]'
 const CAVEAT = '[data-testid="posky-cleanup-caveat"]'
 const EMPTY = '[data-testid="posky-cleanup-empty"]'
 const ROW = '[data-testid="posky-cleanup-row"]'
-const DESTROY = `${ROW} [data-testid="posky-cleanup-destroy"]`
-const DESTROYED = '[data-testid="posky-cleanup-destroyed"]'
-const UNDO = `${DESTROYED} [data-testid="posky-cleanup-undo"]`
-const REFRESH = '[data-testid="posky-cleanup-refresh"]'
-/** The provenance chip the statement leaves on the QUEST row, and its take-back (JOS-186). */
-const CHIP = '[data-testid="posky-item-override"]'
-const CHIP_CLEAR = `${CHIP} .MuiChip-deleteIcon`
+/** The item and every reward on this tab are the same component (QuestItemsTable's ItemNameLink). */
+const NAME_LINK = `${ROW} [data-testid="posky-item-link"]`
+const POPPER = '.MuiTooltip-popper'
+/** The count-source control, which STAYS - it is the strategy, not a refresh. */
+const SOURCE = '[data-testid="posky-count-source"]'
+/** Everything JOS-401 removed. Asserted as an ABSENCE, once, so a revert cannot pass quietly. */
+const GONE = [
+  '[data-testid="posky-cleanup-destroy"]',
+  '[data-testid="posky-cleanup-destroyed"]',
+  '[data-testid="posky-cleanup-undo"]',
+  '[data-testid="posky-cleanup-refresh"]'
+]
 
 const QUEST = 'Beastlord Test of Azarack'
 const ITEM = 'Azarack Skin'
+const REWARD = 'Azarack Skin Wristwraps'
 /** The dump that holds exactly one Sky item — see the header. */
 const DUMP = 'Primitive_freeport-Inventory.txt'
 /** The owner's caveat, in his own words. "There is a warning" is not the assertion; this is. */
 const CAVEAT_TEXT =
   'Cleanup lists items you could destroy because every Sky quest that needs them has been turned in. Destroying is permanent and happens in the game, not here. If you delete something you wanted, that is on you.'
 /** What a row says when no loaded dump names the item - the state the place read starts in. */
-const NO_PLACE = 'location not in the inventory dump'
+const NO_PLACE = 'not in the export'
 
 /**
  * A PICTURE OF THE TAB — OPT-IN, and off in every ordinary run.
@@ -166,8 +185,8 @@ function tabLabel(page: Page): Promise<string> {
 
 /**
  * The `have/need` pair in the QUEST tab's item table — `sky-item-override.e2e.mts`'s reader,
- * because step 4 asserts the exact thing that spec asserts from the other end: there is one
- * override ledger and both tabs read it.
+ * because two steps below assert the exact thing that spec asserts from the other end: there is one
+ * held count and both tabs read it.
  */
 function haveText(page: Page, item: string): Promise<string | null> {
   return page.evaluate((name) => {
@@ -228,8 +247,17 @@ async function openCleanup(page: Page): Promise<boolean> {
   return check('the Cleanup tab opens', up)
 }
 
+/** Wait for the tab to settle on a stated count for the one item; `null` when the row is gone. */
+function settleCountOf(page: Page, want: number | null): Promise<Row[]> {
+  return settle(
+    () => rows(page),
+    (r) => (want === null ? r.length === 0 : r.length === 1 && r[0].count === want),
+    { timeoutMs: 30_000 }
+  )
+}
+
 /**
- * STEP 1 — THE MEMBERSHIP RULE, ASSERTED AS AN ABSENCE.
+ * STEP 1 — THE MEMBERSHIP RULE, ASSERTED AS AN ABSENCE, and the screen's own controls.
  *
  * The dump says this character is holding an Azarack Skin and the app counts it (the Quests tab
  * reads 1/1 for it). It is still not on this tab, because the quest that wants it has never been
@@ -250,7 +278,11 @@ async function stepNothingSpareYet(page: Page): Promise<boolean> {
     '…and it cannot be dismissed - this screen is destructive advice by design',
     (await countOf(page, `${CAVEAT} .MuiAlert-action`)) === 0
   )
-  check('the tab offers the reload the Sky tab has not had since JOS-268', (await countOf(page, REFRESH)) === 1)
+  check('the count-source control is still here - it is the strategy, not a refresh', (await countOf(page, SOURCE)) === 1)
+  // JOS-401's removals, as an absence. The log states a destroy, so no button asks the player to.
+  for (const sel of GONE) {
+    check(`no ${sel} anywhere on the tab (JOS-401)`, (await countOf(page, sel)) === 0)
+  }
 
   const listed = await rows(page)
   check(
@@ -274,7 +306,7 @@ async function stepTurnInMakesItSpare(page: Page): Promise<boolean> {
   if (!(await reopenTheQuestPanel(page))) return false
   await page.click(RECORD_TURNIN, { timeout: 15_000 })
   if (!(await openCleanup(page))) return false
-  const listed = await settle(() => rows(page), (r) => r.length === 1, { timeoutMs: 30_000 })
+  const listed = await settleCountOf(page, 1)
   if (
     !check(
       'RECORDING THE TURN-IN PUTS THE ITEM ON THE TAB — every quest that wants it is now done',
@@ -303,7 +335,7 @@ async function stepTurnInMakesItSpare(page: Page): Promise<boolean> {
   check(
     '…with the turn-in it feeds spelled out: who, how many times, and what it pays',
     row.turnIns.length === 1 &&
-      row.turnIns[0].startsWith('Animist Kratho - Beastlord Test of Azarack (Beastlord) · turned in 1 time · reward: Azarack Skin Wristwraps'),
+      row.turnIns[0].startsWith(`Animist Kratho - Beastlord Test of Azarack (Beastlord) · turned in 1 time · reward: ${REWARD}`),
     row.turnIns.join(' | ')
   )
   // The other half of the decision. One skin and no wind rune is not another set, so the row says
@@ -316,71 +348,104 @@ async function stepTurnInMakesItSpare(page: Page): Promise<boolean> {
   return check('the tab now carries the count', (await tabLabel(page)) === 'Cleanup (1)', await tabLabel(page))
 }
 
-/** STEP 3 — the destruction the log can never see, stated by hand. */
-async function stepDestroyed(page: Page): Promise<boolean> {
-  await page.click(DESTROY, { timeout: 15_000 })
-  const gone = await settle(() => rows(page), (r) => r.length === 0, { timeoutMs: 30_000 })
-  if (
-    !check(
-      'SAYING IT IS DESTROYED TAKES THE ROW OFF THE TAB — through IPC, the store and back',
-      gone.length === 0,
-      `${String(gone.length)} rows`
-    )
-  ) {
-    return false
+/**
+ * STEP 3 — EVERY NAME ON THE ROW IS THE ITEM CARD'S ANCHOR (the owner's third ask).
+ *
+ * "for quest reward, we need the tooltip on hover on that." Both names — the item and the reward —
+ * are the same component now (`ItemNameLink`), so hovering the LAST link on the row is the reward's
+ * own hover and proves the pair. One popper, never two: `tests/tooltipCursor.test.mts` pins that
+ * this tab reaches the card only through `SkyItemCard`, and this is the browser agreeing.
+ */
+async function stepRewardHovers(page: Page): Promise<void> {
+  const links = await countOf(page, NAME_LINK)
+  if (!check('the row draws two hoverable names: the item and its reward', links === 2, `links=${String(links)}`)) {
+    return
   }
-  check('…and the tab`s count goes with it', (await tabLabel(page)) === 'Cleanup', await tabLabel(page))
-  return check('…leaving the way back beside it', (await countOf(page, UNDO)) === 1)
-}
-
-/** STEP 4 — the take-back, off the row that made the statement. */
-async function stepUndo(page: Page): Promise<boolean> {
-  await page.click(UNDO, { timeout: 15_000 })
-  const back = await settle(() => rows(page), (r) => r.length === 1, { timeoutMs: 30_000 })
-  if (
-    !check(
-      'UNDO TAKES THE STATEMENT BACK AND THE ROW RETURNS',
-      back.length === 1 && back[0].item === ITEM && back[0].count === 1,
-      back.map((r) => `${r.item} x${String(r.count)}`).join(', ')
-    )
-  ) {
-    return false
+  if (!(await hoverAt(page, `${NAME_LINK} >> nth=1`, 0.5, 0.5))) {
+    note('could not put the pointer on the reward name')
+    return
   }
-  return check('…and the strip of destroyed items empties with it', (await countOf(page, DESTROYED)) === 0)
+  const poppers = await settleStable(() => countOf(page, POPPER), { timeoutMs: 4000 })
+  check('hovering the REWARD opens its item card', poppers === 1, `poppers=${String(poppers)}`)
+  // Off the name and the card leaves with it — a card that outlives its anchor is the click-eating
+  // defect this tab's whole card policy exists to prevent.
+  await page.mouse.move(5, 5)
+  const gone = await settleStable(() => countOf(page, POPPER), { timeoutMs: 4000 })
+  check('…and it leaves when the pointer does', gone === 0, `poppers=${String(gone)}`)
 }
 
 /**
- * STEP 5 — THE OTHER TAB AGREES, IN BOTH DIRECTIONS. One override ledger, every Sky surface
- * reading it: destroy the skin again, and the quest that needed it says you hold none — which is
- * the whole point of writing a statement rather than hiding a row. Then clear the statement from
- * THAT row's own chip and the Cleanup row comes back, which is the same seam driven the other way.
+ * STEP 4 — THE LOG SAYS YOU DESTROYED ONE, AND THE COUNT GOES DOWN. Live, with no button.
  *
- * It also pins the undo's SCOPE, which is a deliberate design and not an oversight: the strip is
- * component state, so leaving the tab ends it. The way back after that is the provenance chip on
- * the quest row, where every other hand-stated count is taken back (JOS-186) — so the statement is
- * never stranded, and the tab does not grow a second, permanent ledger of its own.
+ * Three loots first, so both witnesses have something to lose and the log is not simply agreeing
+ * with the dump: the row reads x2 (log 3 less the turn-in, against the dump's 1), and one destroy
+ * line takes it to x1 — the log witness by the fold, the dump witness by the discount reconcile
+ * applies for destroys stamped after the file was written.
  */
-async function stepOneLedgerBothWays(page: Page): Promise<void> {
-  await page.click(DESTROY, { timeout: 15_000 })
-  const gone = await settle(() => rows(page), (r) => r.length === 0, { timeoutMs: 30_000 })
-  if (!check('saying it again takes the row away again', gone.length === 0, `${String(gone.length)} rows`)) return
+async function stepDestroyLowersIt(page: Page, log: FixtureLog): Promise<boolean> {
+  log.append(`--You have looted 3 ${ITEM} from a spiroc guardian's corpse.--`)
+  const farmed = await settleCountOf(page, 2)
+  if (
+    !check(
+      'a LOOT line arriving in the tailed log raises the count with no reload',
+      farmed.length === 1 && farmed[0].count === 2,
+      farmed.map((r) => `${r.item} x${String(r.count)}`).join(', ')
+    )
+  ) {
+    return false
+  }
+
+  log.append(`You successfully destroyed 1 ${ITEM}.`)
+  const after = await settleCountOf(page, 1)
+  if (
+    !check(
+      'A DESTROY LINE LOWERS THE COUNT — the thing the app used to need a button for',
+      after.length === 1 && after[0].count === 1,
+      after.map((r) => `${r.item} x${String(r.count)}`).join(', ')
+    )
+  ) {
+    return false
+  }
+  check('…and the tab`s count follows it', (await tabLabel(page)) === 'Cleanup (1)', await tabLabel(page))
+
+  // ONE HELD COUNT, TWO TABS. The Quests tab's Have cell is the same number by construction; a
+  // disagreement here would mean the destroy reached one fold and not the other.
+  if (!(await reopenTheQuestPanel(page))) return false
+  const have = await settle(() => haveText(page, ITEM), (v) => v === '1/1', { timeoutMs: 20_000 })
+  return check('THE QUEST THAT NEEDS IT AGREES, with no statement from anybody', have === '1/1', String(have))
+}
+
+/**
+ * STEP 5 — DESTROY MORE THAN YOU HAVE AND THE ROW ENDS AT ZERO, never below it.
+ *
+ * Five where two are held. The fold floors per row, so the log witness lands on 0 rather than -3 —
+ * which matters because a negative would silently eat the next copy the player farms. The dump
+ * witness is discounted and floored the same way, and only when BOTH have let go does the row
+ * leave: this last assertion is the one that would still fail if the dump kept vouching for its
+ * copy, which is the defect the owner reported.
+ */
+async function stepFloorEndsTheRow(page: Page, log: FixtureLog): Promise<void> {
+  if (!(await openCleanup(page))) return
+  log.append(`You successfully destroyed 5 ${ITEM}.`)
+  const gone = await settleCountOf(page, null)
+  if (
+    !check(
+      'DESTROYING THE LOT TAKES THE ROW OFF THE TAB — and destroying more than you hold floors at 0',
+      gone.length === 0,
+      gone.map((r) => `${r.item} x${String(r.count)}`).join(', ')
+    )
+  ) {
+    return
+  }
+  check('…the empty state is back', (await countOf(page, EMPTY)) === 1)
+  check('…and the tab drops its count', (await tabLabel(page)) === 'Cleanup', await tabLabel(page))
 
   if (!(await reopenTheQuestPanel(page))) return
   const have = await settle(() => haveText(page, ITEM), (v) => v === '0/1', { timeoutMs: 20_000 })
-  if (!check('THE QUEST THAT NEEDS IT READS 0 FOR THE ITEM TOO', have === '0/1', String(have))) return
-  check('…and says out loud that the number is the user`s', (await countOf(page, CHIP)) === 1)
-
-  await page.click(CHIP_CLEAR, { timeout: 15_000 })
-  if (!(await openCleanup(page))) return
-  const back = await settle(() => rows(page), (r) => r.length === 1, { timeoutMs: 30_000 })
+  check('THE QUEST READS 0 FOR THE ITEM TOO, and not a negative one', have === '0/1', String(have))
   check(
-    'CLEARING THE STATEMENT ON THE QUEST ROW PUTS THE CLEANUP ROW BACK',
-    back.length === 1 && back[0].item === ITEM,
-    back.map((r) => r.item).join(', ')
-  )
-  check(
-    '…and the undo strip did NOT survive leaving the tab, which is its documented scope',
-    (await countOf(page, DESTROYED)) === 0
+    '…and it says so with no provenance chip: this is the LOG talking, not the user',
+    (await countOf(page, '[data-testid="posky-item-override"]')) === 0
   )
 }
 
@@ -389,16 +454,16 @@ async function stepOneLedgerBothWays(page: Page): Promise<void> {
  * is also what keeps this file inside the measured `max-depth`. A step that could not establish its
  * own precondition has already said so through `check`; there is nothing to add here.
  */
-async function arc(page: Page, app: ElectronApplication): Promise<void> {
+async function arc(page: Page, app: ElectronApplication, log: FixtureLog): Promise<void> {
   if (!(await stepNothingSpareYet(page))) return
   if (!(await stepTurnInMakesItSpare(page))) return
-  // The tab at its most interesting: caveat, toolbar, one row with its place and its decision
-  // line. Taken before anything is destroyed, so the artifact shows the screen a player decides
-  // from. Opt-in (see `captureTab`) - an ordinary run takes no screen and writes no PNG.
+  // The tab at its most interesting: caveat, source control, one row with its verdict chip, its
+  // place and its decision line. Taken before anything is destroyed, so the artifact shows the
+  // screen a player decides from. Opt-in (see `captureTab`) - an ordinary run writes no PNG.
   await captureTab(app, 'sky-cleanup-tab')
-  if (!(await stepDestroyed(page))) return
-  if (!(await stepUndo(page))) return
-  await stepOneLedgerBothWays(page)
+  await stepRewardHovers(page)
+  if (!(await stepDestroyLowersIt(page, log))) return
+  await stepFloorEndsTheRow(page, log)
 }
 
 async function main(): Promise<void> {
@@ -420,7 +485,7 @@ async function main(): Promise<void> {
     if (!(await openTheQuest(page))) {
       throw new Error('never reached the expanded Sky quest — nothing below can be asserted')
     }
-    await arc(page, launched.app)
+    await arc(page, launched.app, launched.log)
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
     await dumpArtifacts(page, failures.length ? 'sky-cleanup-FAIL' : 'sky-cleanup-pass')
   } finally {
