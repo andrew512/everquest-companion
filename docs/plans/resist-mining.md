@@ -353,23 +353,47 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
   resistant / very resistant / nearly immune (R >= 45); weak, normal and no-data axes are not
   chips. One quiet "no notable resists" line when nothing qualifies. The mob page keeps the
   full five-row table (JOS-386).
-- The tag is a benchmark, not an R band (owner, 2026-08-16): "will it land if I cast it".
-  Two Legends mechanics enter the model first (JOS-387): spell upgrade ranks are -15 resist
-  adjust per rank (the Roman numeral in the log name; `Scorching Arrow IV` = -60), and the
-  Overchannel invocation is -150 (plus -15 per non-hybrid caster class) on cast spells (Legends
-  wiki, Stances & Invocations, cached in the repo). Then, per viewer level L: `rc0 = R +
-  levelMod(L, mob)`, `pPlain = (200 - rc0)/200`, `pOver` the same at rc0 - 150. THREE bands
-  (owner, later the same day, superseding an earlier four): `should land` (pPlain >= 60%),
-  `needs overchannel` (pOver >= 60%), `may not land even with overchannel`. Every row/chip
-  prints `lands N% · with overchannel M%` so a player scales their own expectation (rank 10 is
-  another -150; tash/malo/scent on top). The player cap is 50 and Sky mobs run to 70, so the
-  level term alone can put a mob in the top band - intended. The formula is only the machinery
-  that removes each cast's own negative check; where it cannot fit (a fit pinned at the grid
-  edge) it steps aside for the empirical resist rate. Point estimate is the posterior median;
-  >= 90% resisted with n >= 10 informative is the top band regardless; pet-only evidence is
-  caveated as such. Informative n (spells with adjust > -100) drives the
-  low-samples caveat; the fixed-damage full reference is the histogram MODE across mobs, not
-  the max (Live focus effects roll a random +1..34%) - both in JOS-385.
+- The tag is a benchmark, not an R band (owner, 2026-08-16 - SHIPPED in JOS-387). Two Legends
+  mechanics entered the model with it: spell upgrade ranks are -15 resist adjust per rank (the
+  Roman numeral in the log name; `Scorching Arrow IV` = -60) and the Overchannel invocation is
+  -150 plus -15 per non-hybrid caster class on CAST spells (Legends wiki, Stances & Invocations,
+  cached in the repo). Both ride the ROW, with the caster's class count, so a shipped observation
+  is read at the offset it was MADE under. Then, per viewer level L: `rc0 = R + levelMod(L, mob)`,
+  `pPlain = (200 - rc0)/200`, `pOver` the same at rc0 - 150.
+  **THREE BANDS, READ TWO WAYS** (owner's final wording, same day): the scannable WORD stays
+  weak / normal / resistant / very resistant and a GUIDANCE SENTENCE sits under it - `should land`
+  (pPlain >= 60%), `needs overchannel`, `may not land even with overchannel` (pOver < 60%). Both
+  percentages print under the sentence on every row and every chip, because the band answers the
+  common case and the numbers let a reader answer theirs (a rank-10 spell is another -150, and
+  tash, malo or the necromancer Scent line another 20 to 60). The player cap is 50 and Sky runs to
+  70, so THE LEVEL TERM ALONE can put a creature in the top band; that is correct and intended.
+  The con card keeps `resistant` + `very resistant`.
+- The estimate is a POSTERIOR MEDIAN and the interval its central 95% (owner review, 2026-08-16 -
+  JOS-387), because `P(resist) = rc/200` saturates and the old argmax reported the weakest edge of
+  the resulting plateau (a dracoliche's disease read `R 60 (46-600) resistant` off thirty
+  observations that were all resists). The prior became a broad Gaussian on R at the same time: the
+  old pseudo-observation prior charges 22 log units to say "this mob resists everything", which was
+  survivable while it only picked a point and is not now that it decides the interval too.
+  Three guards sit on top of the model, and every threshold is measured against the shipped
+  baseline rather than chosen: a HARD DATA RULE (10+ informative observations, 90%+ resisted =>
+  the top band whatever the fit says); a PINNED-FIT GUARD (grid edge, or a residual that is both
+  big - 15 points of resist rate - and certain - 4 sigma, or a whole credible interval below zero
+  on a creature that demonstrably resists) which prints `does not fit the model: 62 of 118
+  resisted` instead of a number and falls back to the raw rate on the con card; and a
+  `from pets and other creatures only` caveat. Result: 3 of 598 non-empty cells refuse to print.
+- **A DoT AND A PROC ARE ALL-OR-NOTHING** (JOS-387, found by the pinned-fit guard rather than by
+  reasoning). Of 207 (spell, caster level) histograms with 20+ hits, 50 carry essentially no
+  partials, and they are exactly the DoTs and the procs; the 157 that do run 14% to 20% partial.
+  So a partial-free histogram means the spell lands or is refused and its damage lines are
+  LANDINGS. Reading one as direct damage asks the fitter to explain 262 resists beside 86 hits and
+  zero partials (a thunder spirit princess's Choking), which no rc can do.
+- The full-damage reference is the BASE OF THE UPPER CLUSTER (owner, 2026-08-16 - JOS-387, refining
+  JOS-385's mode): the largest value whose focus band `[v, 1.35v]` holds 60% of the (spell, level)
+  histogram AND is the most common value inside that band. The mode rule gave up exactly where the
+  owner plays - at level 50 his damage focus leaves Discordant Mind's base 394 at 6% of the
+  histogram - and "the largest v covering 60%" alone answers 458, a number the game never computes.
+  Measured: 394 at levels 43-50, Scorching Arrow 214 / 233 / 239 at 46 / 47 / 48-up. Informative n
+  (spells with adjust > -100) still drives the low-samples caveat (JOS-385).
 - **What `n` counts** (owner, 2026-08-16, off a live thunder spirit princess reading
   `R 58 (36-102) n=83 resistant` with no caveat): an observation only counts as evidence if the
   spell could have been resisted at all. `rc = R + levelMod + resistAdj`, so a -150/-200/-250 proc
