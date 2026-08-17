@@ -58,11 +58,11 @@ import {
   countOf,
   dumpArtifacts,
   failures,
-  hoverAt,
   note,
   reportRun,
   settle,
-  settleStable
+  settleCount,
+  settleGone
 } from './appHarness.mjs'
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
@@ -83,6 +83,8 @@ const EMPTY = '[data-testid="posky-cleanup-empty"]'
 const ROW = '[data-testid="posky-cleanup-row"]'
 /** The item and every reward on this tab are the same component (QuestItemsTable's ItemNameLink). */
 const NAME_LINK = `${ROW} [data-testid="posky-item-link"]`
+/** …so the REWARD carries a handle of its own, because it is the one this spec is about. */
+const REWARD_LINK = `${ROW} [data-testid="posky-cleanup-reward"] [data-testid="posky-item-link"]`
 const POPPER = '.MuiTooltip-popper'
 /** The count-source control, which STAYS - it is the strategy, not a refresh. */
 const SOURCE = '[data-testid="posky-count-source"]'
@@ -361,17 +363,32 @@ async function stepRewardHovers(page: Page): Promise<void> {
   if (!check('the row draws two hoverable names: the item and its reward', links === 2, `links=${String(links)}`)) {
     return
   }
-  if (!(await hoverAt(page, `${NAME_LINK} >> nth=1`, 0.5, 0.5))) {
+  // `locator.hover()` rather than the harness's `hoverAt`, and the difference is measured: this
+  // name sits in the LAST column of a table inside a horizontally scrolling pane, so the fraction
+  // helper clips it away to nothing and declines. Playwright's own hover scrolls the pane first
+  // and then aims, which is the whole job here — the fraction helper earns its keep on charts,
+  // where the POINT inside the element is the subject.
+  const put = await page
+    .locator(REWARD_LINK)
+    .first()
+    .hover({ timeout: 10_000 })
+    .then(
+      () => true,
+      () => false
+    )
+  if (!put) {
     note('could not put the pointer on the reward name')
     return
   }
-  const poppers = await settleStable(() => countOf(page, POPPER), { timeoutMs: 4000 })
+  // WAIT FOR IT TO OPEN, never for it to be stably absent: the card carries an item LOOKUP behind
+  // MUI's enter delay, so a stability read settles on 0 long before the popper exists and reports
+  // an absence that was only ever a race (measured here, 2026-08-17).
+  const poppers = await settleCount(page, POPPER, 1, { timeoutMs: 15_000 })
   check('hovering the REWARD opens its item card', poppers === 1, `poppers=${String(poppers)}`)
   // Off the name and the card leaves with it — a card that outlives its anchor is the click-eating
   // defect this tab's whole card policy exists to prevent.
   await page.mouse.move(5, 5)
-  const gone = await settleStable(() => countOf(page, POPPER), { timeoutMs: 4000 })
-  check('…and it leaves when the pointer does', gone === 0, `poppers=${String(gone)}`)
+  check('…and it leaves when the pointer does', await settleGone(page, POPPER, { timeoutMs: 10_000 }))
 }
 
 /**

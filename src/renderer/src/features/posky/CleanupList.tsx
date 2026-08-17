@@ -127,7 +127,13 @@ function TurnInLine({
         {t.reward ? (
           <>
             {' · reward: '}
-            <ItemNameLink name={t.reward} onOpenLoot={onOpenLoot} />
+            {/* The wrapper is a HANDLE, not a style: both names on this row are the same
+                component and therefore the same testid, and the e2e's subject is specifically the
+                REWARD's hover (the owner's third ask). A `:nth-of-type` would pin the answer to
+                the cell layout instead of to the thing being asserted. */}
+            <Box component="span" data-testid="posky-cleanup-reward">
+              <ItemNameLink name={t.reward} onOpenLoot={onOpenLoot} />
+            </Box>
           </>
         ) : null}
         {owned ? ` · ${owned}` : ''}
