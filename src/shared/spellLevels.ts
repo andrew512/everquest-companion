@@ -86,6 +86,16 @@ export function knownClassDisplayNames(): string[] {
   return [...ABBR_BY_DISPLAY_NAME.keys()]
 }
 
+/**
+ * `Shadow Knight` -> SHD. The SAME table the `classes` field is read with, exported for the one
+ * other place a class arrives as a display name: the spell-lines research files, whose thirteen
+ * agents each wrote `"class": "Cleric"` at the top (scripts/gen-spell-lines.ts, JOS-391). A second
+ * copy of this map in a generator is a second opinion about how the wiki spells Shadowknight.
+ */
+export function classAbbrForDisplayName(name: string): ClassAbbr | undefined {
+  return ABBR_BY_DISPLAY_NAME.get(name.trim().toLowerCase())
+}
+
 /** `Enchanter - Level 37 (Autogranted)` -> ENC 37. Trailing notes are ignored, not required. */
 const SEGMENT = /^([A-Za-z][A-Za-z ]*?)\s*-\s*Level\s*(\d+)\b/
 
