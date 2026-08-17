@@ -25,6 +25,7 @@
 
 import { CLASS_ABBRS, resolvedClasses, type ClassAbbr, type ComboInterval } from './classCombo'
 import { comboAt } from './comboIndex'
+import type { SpellMetrics } from './spellMetrics'
 
 /** What kind of thing unlocked. `skill`/`disc`/`innate` are classes.json's own words. */
 export type UnlockKind = 'spell' | 'skill' | 'disc' | 'innate'
@@ -43,6 +44,23 @@ export interface UnlockSpell {
   spellType?: string
   /** parsed duration in ms; absent for instants and unparseable formulas */
   durationMs?: number
+  /**
+   * WHAT THE SPELL IS WORTH (JOS-391), read off the effect lines MAIN-SIDE at the LOWEST level
+   * any class gains it (`shared/spellMetrics.ts`).
+   *
+   * The effect strings themselves stay behind: they are the bulk of the catalog, the renderer has
+   * `SpellTooltip` for the one spell a reader opens, and a row needs four numbers rather than a
+   * paragraph. Absent for every spell with no hitpoint line, which is most of them.
+   */
+  metrics?: SpellMetrics
+  /**
+   * The spell THIS one replaces, per class that gains it (JOS-391) — the shipped spell-line
+   * research, joined main-side (`src/main/data/spellLineLookup.ts`).
+   *
+   * Per class because the ladders differ: `Greater Healing` is followed by Superior Healing for a
+   * cleric and by Spirit Salve for a shaman. Absent when no class's line places it.
+   */
+  replaces?: { name: string; cls: ClassAbbr }[]
 }
 
 /** One skill / discipline / innate, as classes.json states it for ONE class. */
@@ -139,6 +157,11 @@ export interface UnlockRow {
   dispute?: string
   /** the spell's card fields, for the hover — absent on skill rows */
   spell?: UnlockSpell
+  /**
+   * Classes IN THE QUERIED SET that gain this spell EARLIER than this row's level (JOS-391),
+   * ascending — the `already yours` claim. Empty/absent when no class in the loadout has it yet.
+   */
+  earlier?: { cls: ClassAbbr; level: number }[]
 }
 
 /** Everything a level gives a loadout, split the way the panel draws it. */
@@ -175,13 +198,68 @@ function spellRows(data: LevelUnlockData, want: ReadonlySet<string>, level: numb
     const key = spell.name.toLowerCase()
     const row = byName.get(key)
     if (!row) {
-      byName.set(key, { kind: 'spell', name: spell.name, classes: [...new Set(classes)], level, spell })
+      const next: UnlockRow = { kind: 'spell', name: spell.name, classes: [...new Set(classes)], level, spell }
+      const earlier = earlierClasses(spell, want, level)
+      if (earlier.length > 0) next.earlier = earlier
+      byName.set(key, next)
       continue
     }
     for (const cls of classes) if (!row.classes.includes(cls)) row.classes.push(cls)
   }
   for (const row of byName.values()) row.classes.sort((a, b) => a.localeCompare(b))
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * The classes in the loadout that ALREADY have this spell — gained it below the level being
+ * viewed (JOS-391). Ascending by level, deduped by class at its lowest statement.
+ *
+ * IT IS A CLAIM ABOUT THIS CHARACTER, not about the game. A cleric/paladin/enchanter walking up
+ * to Paladin 30 does not need to be sold a spell their cleric bought at 24 — the DB states both
+ * rows and the loadout is what turns two facts into one answer. A class OUTSIDE the queried set
+ * contributes nothing, however loudly the DB states it: the row's whole point is what YOU own.
+ */
+function earlierClasses(
+  spell: UnlockSpell,
+  want: ReadonlySet<string>,
+  level: number
+): { cls: ClassAbbr; level: number }[] {
+  const lowest = new Map<ClassAbbr, number>()
+  for (const p of spell.at) {
+    if (p.level >= level || !want.has(p.cls)) continue
+    const seen = lowest.get(p.cls)
+    if (seen === undefined || p.level < seen) lowest.set(p.cls, p.level)
+  }
+  return [...lowest]
+    .map(([cls, at]) => ({ cls, level: at }))
+    .sort((a, b) => a.level - b.level || a.cls.localeCompare(b.cls))
+}
+
+/**
+ * THE ROW'S OWNERSHIP PHRASE, or null when the row makes no such claim.
+ *
+ *   `already yours (CLR 24)`   a class in the loadout bought it six levels ago
+ *   `also PAL 27`              a second loadout class gains it at THIS level too
+ *   `~already yours (CLR 24)`  the class that has it is only a CANDIDATE of an unresolved slot
+ *
+ * THE CLASS IS ITS /who CODE, not its display name, because the chips at the other end of the
+ * same row are `CLR` and a row that spells one class two ways in twelve characters is asking to
+ * be misread. The `~` is the app's existing marker for "over a loadout we only narrowed"
+ * (`~ambiguous`, ClassComboLabels) — the same claim, one word long.
+ *
+ * The `also` arm is deliberately quiet: the chips already state that two classes gain it here, so
+ * this only names the OTHER ones, and only when there is no stronger `already yours` to print.
+ */
+export function ownershipPhrase(row: UnlockRow, resolved: ReadonlySet<string>): string | null {
+  const earlier = row.earlier ?? []
+  if (earlier.length > 0) {
+    const uncertain = earlier.every((e) => !resolved.has(e.cls))
+    const parts = earlier.map((e) => `${e.cls} ${String(e.level)}`)
+    return `${uncertain ? '~' : ''}already yours (${parts.join(', ')})`
+  }
+  if (row.classes.length < 2) return null
+  const [, ...rest] = row.classes
+  return `also ${rest.map((c) => `${c} ${String(row.level)}`).join(', ')}`
 }
 
 /** Merge one class's skill row into the (name, kind) fold — a second class only adds a chip. */
@@ -232,6 +310,29 @@ export function unlocksAtLevel(
     classes,
     ambiguous: combo.ambiguous
   }
+}
+
+/**
+ * WHAT THIS ROW REPLACES, for the classes the row is drawn for — `replaces Minor Healing (CLR)`.
+ *
+ * SCOPED TO THE ROW'S OWN CLASSES. `UnlockSpell.replaces` is joined main-side for every class the
+ * DB places the spell for, because one dataset serves every loadout; a row drawn for a cleric must
+ * not print the shaman's answer. Two classes replacing DIFFERENT spells both print, which is the
+ * honest shape for a trio that gains the same upgrade from two ladders at once.
+ */
+export function replacesPhrase(row: UnlockRow): string | null {
+  const all = row.spell?.replaces ?? []
+  const mine = all.filter((r) => row.classes.includes(r.cls))
+  if (mine.length === 0) return null
+  const seen = new Set<string>()
+  const parts: string[] = []
+  for (const r of mine) {
+    const key = `${r.name}|${r.cls}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    parts.push(`${r.name} (${r.cls})`)
+  }
+  return `replaces ${parts.join(', ')}`
 }
 
 /** The two headline numbers: distinct spells, distinct skill-ish things. */

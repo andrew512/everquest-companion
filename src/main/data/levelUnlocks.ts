@@ -34,6 +34,8 @@ import { applySpellRemovals } from './spellRemovals'
 import { parseSpellClasses } from '../../shared/spellLevels'
 import { isClassAbbr, type ClassAbbr } from '../../shared/classCombo'
 import type { LevelUnlockData, UnlockSkill, UnlockSpell } from '../../shared/levelUnlocks'
+import { spellMetricsAt } from '../../shared/spellMetrics'
+import { replacedBy } from './spellLineLookup'
 import type { SpellDbFile } from '../../shared/types'
 
 interface RawUnlock {
@@ -137,7 +139,34 @@ function skillsFor(
   return out.sort((a, b) => a.level - b.level || a.name.localeCompare(b.name))
 }
 
-/** Every spell the DB places for at least one class at a stated level, with its card fields. */
+/**
+ * WHAT THE SPELL REPLACES, per class that gains it (JOS-391).
+ *
+ * Asked once per (spell, class) at fold time rather than per render: the lookup is a map read, but
+ * this runs over 2,001 (spell, class) pairs and the answer is a compile-time constant — there is
+ * nothing for it to become later. A class with no line for the spell contributes no entry, so the
+ * field is absent rather than a list of nulls.
+ */
+function replacesFor(name: string, at: readonly { cls: ClassAbbr }[]): UnlockSpell['replaces'] {
+  const out: { name: string; cls: ClassAbbr }[] = []
+  for (const cls of new Set(at.map((p) => p.cls))) {
+    const place = replacedBy(name, cls)
+    if (place.replaces !== null) out.push({ name: place.replaces, cls })
+  }
+  return out.length > 0 ? out.sort((a, b) => a.cls.localeCompare(b.cls)) : undefined
+}
+
+/**
+ * Every spell the DB places for at least one class at a stated level, with its card fields, its
+ * figures and what it replaces.
+ *
+ * THE METRICS ARE READ AT THE LOWEST LEVEL ANY CLASS GAINS IT, and that is the level the row is
+ * about: "New at this level" draws a spell at the level it becomes yours, so a ramp evaluated
+ * anywhere else would describe a spell you cannot cast yet. One dataset serves every loadout, so
+ * it cannot be per-class — and it does not need to be, because a spell's own gain level is the
+ * only level at which the panel ever introduces it. (The browsing case reads the SAME row: a
+ * cleric stepping to 30 sees the spells that unlock at 30, evaluated at 30.)
+ */
 function unlockSpells(): UnlockSpell[] {
   const file = spellsJson as SpellDbFile
   const out: UnlockSpell[] = []
@@ -150,6 +179,10 @@ function unlockSpells(): UnlockSpell[] {
     if (s.targetType) spell.targetType = s.targetType
     if (s.spellType) spell.spellType = s.spellType
     if (typeof s.durationMs === 'number') spell.durationMs = s.durationMs
+    const metrics = spellMetricsAt(s, Math.min(...at.map((p) => p.level)))
+    if (metrics) spell.metrics = metrics
+    const replaces = replacesFor(s.name, at)
+    if (replaces) spell.replaces = replaces
     out.push(spell)
   }
   return out.sort((a, b) => a.name.localeCompare(b.name))

@@ -65,21 +65,23 @@ test('R3 two members at the SAME level never replace one another', () => {
 
   // And the rule is structural, not a special case: no answer anywhere may name a member at the
   // same level as the spell asked about.
-  for (const cls of CLASS_ABBRS) {
-    for (const line of linesForClass(cls)) {
-      for (const m of line.members) {
-        const place = replacedBy(m.name, cls)
-        const at = (name: string): number | undefined => line.members.find((x) => x.name === name)?.level
-        if (place.replaces !== null && place.line === line.name) {
-          assert.ok((at(place.replaces) ?? -1) < m.level, `${cls} ${m.name} replaces ${place.replaces}`)
-        }
-        if (place.replacedBy !== null && place.line === line.name) {
-          assert.ok((at(place.replacedBy) ?? 99) > m.level, `${cls} ${m.name} is replaced by ${place.replacedBy}`)
-        }
-      }
+  for (const cls of CLASS_ABBRS) for (const line of linesForClass(cls)) checkNeighbours(cls, line)
+})
+
+/** Every member of one line: whatever it names must sit strictly above or strictly below it. */
+function checkNeighbours(cls: ClassAbbr, line: { name: string; members: { name: string; level: number }[] }): void {
+  const at = (name: string): number | undefined => line.members.find((x) => x.name === name)?.level
+  for (const m of line.members) {
+    const place = replacedBy(m.name, cls)
+    if (place.line !== line.name) continue
+    if (place.replaces !== null) {
+      assert.ok((at(place.replaces) ?? -1) < m.level, `${cls} ${m.name} replaces ${place.replaces}`)
+    }
+    if (place.replacedBy !== null) {
+      assert.ok((at(place.replacedBy) ?? 99) > m.level, `${cls} ${m.name} is replaced by ${place.replacedBy}`)
     }
   }
-})
+}
 
 test('R4 a destination set names its line and refuses to name a replacement', () => {
   // The druid Ring line is 20 teleport destinations filed as one line.
@@ -95,45 +97,50 @@ test('R4 a destination set names its line and refuses to name a replacement', ()
   assert.notEqual(replacedBy('Shock of Lightning', 'WIZ').replacedBy, null)
 })
 
+interface RawLine {
+  id: string
+  members?: { name: string; level: number; inDb?: boolean }[]
+}
+
+/** Repairs 1-3 for ONE research line, against the shipped line of the same id. Returns tallies. */
+function checkRepairs(cls: ClassAbbr, raw: RawLine, shipped: Map<string, { members: { name: string; level: number }[] }>): { dropped: number; deduped: number } {
+  const members = raw.members ?? []
+  const out = shipped.get(raw.id)
+  if (!out) {
+    // A line whose every member is absent from Legends ships as no line at all — the three rogue
+    // combat-venom lines, five members between them.
+    for (const m of members) {
+      assert.equal(m.inDb, false, `${cls} ${raw.id} was dropped, so every member must be off-Legends`)
+    }
+    return { dropped: members.length, deduped: 0 }
+  }
+  const names = new Set(out.members.map((m) => m.name.toLowerCase()))
+  const offLegends = members.filter((m) => m.inDb === false)
+  // 3. nothing EQ Legends does not have
+  for (const m of offLegends) assert.ok(!names.has(m.name.toLowerCase()), `${cls} ${raw.id}: ${m.name}`)
+  // 2. no twin survived
+  assert.equal(names.size, out.members.length, `${cls} ${raw.id} carries no duplicate name`)
+  // 1. ascending by level
+  for (let i = 1; i < out.members.length; i++) {
+    assert.ok(out.members[i].level >= out.members[i - 1].level, `${cls} ${raw.id} is level-ordered`)
+  }
+  return { dropped: offLegends.length, deduped: members.length - offLegends.length - out.members.length }
+}
+
 test('R5 the four repairs hold against the raw research files', () => {
   const files = readdirSync(RESEARCH).filter((f) => f.startsWith('lines-') && f !== 'lines-merged.json')
   assert.equal(files.length, 13, 'thirteen spell-casting classes')
   let droppedNotInDb = 0
   let dedupedTwins = 0
   for (const name of files) {
-    const raw = JSON.parse(readFileSync(join(RESEARCH, name), 'utf8')) as {
-      class?: string
-      lines?: { id: string; members?: { name: string; level: number; inDb?: boolean }[] }[]
-    }
+    const raw = JSON.parse(readFileSync(join(RESEARCH, name), 'utf8')) as { class?: string; lines?: RawLine[] }
     const cls = classAbbrForDisplayName(String(raw.class)) as ClassAbbr
     assert.ok(cls, `${name} names a class the /who table knows`)
     const shipped = new Map(linesForClass(cls).map((l) => [l.id, l]))
     for (const line of raw.lines ?? []) {
-      const out = shipped.get(line.id)
-      if (!out) {
-        // A line whose every member is absent from Legends ships as no line at all — the three
-        // rogue combat-venom lines, five members between them.
-        for (const m of line.members ?? []) {
-          assert.equal(m.inDb, false, `${cls} ${line.id} was dropped, so every member must be off-Legends`)
-          droppedNotInDb++
-        }
-        continue
-      }
-      const names = new Set(out.members.map((m) => m.name.toLowerCase()))
-      // 3. nothing EQ Legends does not have
-      for (const m of line.members ?? []) {
-        if (m.inDb === false) {
-          droppedNotInDb++
-          assert.ok(!names.has(m.name.toLowerCase()), `${cls} ${line.id}: ${m.name} is not on Legends`)
-        }
-      }
-      // 2. no twin survived
-      assert.equal(names.size, out.members.length, `${cls} ${line.id} carries no duplicate name`)
-      dedupedTwins += (line.members ?? []).filter((m) => m.inDb !== false).length - out.members.length
-      // 1. ascending by level
-      for (let i = 1; i < out.members.length; i++) {
-        assert.ok(out.members[i].level >= out.members[i - 1].level, `${cls} ${line.id} is level-ordered`)
-      }
+      const tally = checkRepairs(cls, line, shipped)
+      droppedNotInDb += tally.dropped
+      dedupedTwins += tally.deduped
     }
   }
   assert.equal(droppedNotInDb, 13, 'the eleven rogue poisons and two wizard familiars')

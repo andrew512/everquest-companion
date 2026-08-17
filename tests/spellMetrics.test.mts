@@ -30,6 +30,8 @@ import {
   spellMetricsAt,
   spellMetricsParts,
   ticksOf,
+  type HpLine,
+  type SpellMetrics,
   type SpellMetricsInput
 } from '../src/shared/spellMetrics.ts'
 
@@ -42,6 +44,25 @@ function entry(name: string): SpellMetricsInput {
   return s
 }
 
+/** A line that MUST read, so the assertions below can be about the number rather than the null. */
+function read(line: string, level: number): HpLine {
+  const out = parseHpLine(line, level)
+  assert.ok(out, `unread: ${line}`)
+  return out
+}
+
+/** Its magnitude, rounded to two places where a ramp lands between two integers. */
+function amount(line: string, level: number): number {
+  return Math.round(read(line, level).amount * 100) / 100
+}
+
+/** The figures for a spell that MUST produce some. */
+function metrics(spell: SpellMetricsInput, level: number): SpellMetrics {
+  const out = spellMetricsAt(spell, level)
+  assert.ok(out, 'expected figures')
+  return out
+}
+
 test('R1 the nine pinned shapes read to the right magnitude at a stated level', () => {
   // 1. the bare constant (160 rows; Asp Venom Strike states exactly this)
   assert.deepEqual(parseHpLine('Decrease Hitpoints by 100', 1), {
@@ -52,12 +73,12 @@ test('R1 the nine pinned shapes read to the right magnitude at a stated level', 
 
   // 2. the two-point ramp (161 rows) — linear inside, clamped outside
   const ramp = 'Decrease Hitpoints by 1 (L1) to 51 (L100)'
-  assert.equal(parseHpLine(ramp, 1)?.amount, 1)
-  assert.equal(parseHpLine(ramp, 100)?.amount, 51)
-  assert.equal(parseHpLine(ramp, 199)?.amount, 51, 'clamped above the last breakpoint')
-  assert.equal(parseHpLine(ramp, 0)?.amount, 1, 'clamped below the first')
+  assert.equal(amount(ramp, 1), 1)
+  assert.equal(amount(ramp, 100), 51)
+  assert.equal(amount(ramp, 199), 51, 'clamped above the last breakpoint')
+  assert.equal(amount(ramp, 0), 1, 'clamped below the first')
   // (100-1) levels carry (51-1) points, so L50 is 1 + 49*(50/99)
-  assert.equal(Math.round((parseHpLine(ramp, 50)?.amount ?? 0) * 100) / 100, 25.75)
+  assert.equal(amount(ramp, 50), 25.75)
 
   // 3. the per-tick constant (116 rows; Acid Jet)
   assert.deepEqual(parseHpLine('Decrease Hitpoints by 10 per tick', 40), {
@@ -68,18 +89,18 @@ test('R1 the nine pinned shapes read to the right magnitude at a stated level', 
 
   // 4. the per-tick ramp with the marker OUTSIDE the range clause (17 rows; Blood of Pain)
   const dotRamp = 'Decrease Hitpoints by 10 (L1) to 22 (L50) per tick'
-  assert.equal(parseHpLine(dotRamp, 50)?.amount, 22)
-  assert.equal(parseHpLine(dotRamp, 50)?.perTick, true)
+  assert.equal(amount(dotRamp, 50), 22)
+  assert.equal(read(dotRamp, 50).perTick, true)
 
   // 5. THREE breakpoints, NON-MONOTONIC (Stone Spider Stun) — the value falls to 0 at 70 and
   //    climbs again to 110, so the reader may not assume the values ascend, only the levels.
   const three = 'Decrease Hitpoints by 10 (L1) to 0 (L70) to 65 (L110)'
-  assert.equal(parseHpLine(three, 1)?.amount, 10)
-  assert.equal(parseHpLine(three, 70)?.amount, 0)
-  assert.equal(parseHpLine(three, 110)?.amount, 65)
+  assert.equal(amount(three, 1), 10)
+  assert.equal(amount(three, 70), 0)
+  assert.equal(amount(three, 110), 65)
   // L36 is 35/69 of the way down the first leg: 10 - 10*(35/69)
-  assert.equal(Math.round((parseHpLine(three, 36)?.amount ?? 0) * 100) / 100, 4.93)
-  assert.equal(parseHpLine(three, 90)?.amount, 32.5, 'halfway up the second leg')
+  assert.equal(amount(three, 36), 4.93)
+  assert.equal(amount(three, 90), 32.5, 'halfway up the second leg')
 
   // 6. the increase-side per-tick constant (37 rows; Aura of Battle)
   assert.deepEqual(parseHpLine('Increase Hitpoints by 1 per tick', 10), {
@@ -90,37 +111,42 @@ test('R1 the nine pinned shapes read to the right magnitude at a stated level', 
 
   // 7. the increase-side per-tick ramp (Chloroplast)
   const hotRamp = 'Increase Hitpoints by 10 (L39) to 16 (L50) per tick'
-  assert.equal(parseHpLine(hotRamp, 39)?.amount, 10)
-  assert.equal(parseHpLine(hotRamp, 50)?.amount, 16)
-  assert.equal(parseHpLine(hotRamp, 39)?.direction, 'up')
+  assert.equal(amount(hotRamp, 39), 10)
+  assert.equal(amount(hotRamp, 50), 16)
+  assert.equal(read(hotRamp, 39).direction, 'up')
 
   // 8. per-tick INSIDE the range clause, with a trailing parenthetical (Sebilite Pox)
   const inside = 'Increase Hitpoints by 1 per tick (L1) to 22 per tick (L65) (effect decreases over time)'
-  assert.equal(parseHpLine(inside, 65)?.amount, 22)
-  assert.equal(parseHpLine(inside, 65)?.perTick, true)
+  assert.equal(amount(inside, 65), 22)
+  assert.equal(read(inside, 65).perTick, true)
 
   // 9. the cleric Echo tail — a RANGE read at its midpoint, and a line that counts its own ticks
-  const echo = parseHpLine('Increase Hitpoints between 165 and 190 for two additional ticks.', 50)
-  assert.equal(echo?.amount, 177.5)
-  assert.equal(echo?.perTick, true)
-  assert.equal(echo?.statedTicks, 2)
+  assert.deepEqual(read('Increase Hitpoints between 165 and 190 for two additional ticks.', 50), {
+    amount: 177.5,
+    direction: 'up',
+    perTick: true,
+    statedTicks: 2
+  })
 })
 
 test('R2 the casing and spelling variants the thirteen scrape passes left behind', () => {
-  assert.equal(parseHpLine('Increase Current Hit Points by 60 per Tick', 1)?.amount, 60)
-  assert.equal(parseHpLine('Increase Hitpoints v2 by 175 per tick', 1)?.direction, 'up')
-  assert.equal(parseHpLine('Increases hitpoints by 4 per tick', 1)?.perTick, true)
-  assert.equal(parseHpLine('Decrease Hit Points by 154', 1)?.amount, 154)
-  assert.equal(parseHpLine('Decrease hitpoints by 20 per tick', 1)?.amount, 20)
+  assert.equal(amount('Increase Current Hit Points by 60 per Tick', 1), 60)
+  assert.equal(read('Increase Hitpoints v2 by 175 per tick', 1).direction, 'up')
+  assert.equal(read('Increases hitpoints by 4 per tick', 1).perTick, true)
+  assert.equal(amount('Decrease Hit Points by 154', 1), 154)
+  assert.equal(amount('Decrease hitpoints by 20 per tick', 1), 20)
   // `@L` is the same statement as `(L…)`
-  assert.equal(parseHpLine('Decrease Hitpoints by 6 @L1 to 70 @L60', 60)?.amount, 70)
+  assert.equal(amount('Decrease Hitpoints by 6 @L1 to 70 @L60', 60), 70)
   // a bare range (Lifespike) reads at its midpoint, like `between … and …`
-  assert.equal(parseHpLine('Decrease Hitpoints by 7 to 12', 1)?.amount, 9.5)
+  assert.equal(amount('Decrease Hitpoints by 7 to 12', 1), 9.5)
   // `after N ticks` is a DELAY, not a rate: Blooming Heal heals 300 once
-  const delayed = parseHpLine('Increase Hitpoints by 300 after 4 ticks', 1)
-  assert.equal(delayed?.amount, 300)
-  assert.equal(delayed?.perTick, false)
-  assert.equal(parseHpLine('Increase Hitpoints by 5000 after three ticks.', 1)?.perTick, false)
+  assert.deepEqual(read('Increase Hitpoints by 300 after 4 ticks', 1), {
+    amount: 300,
+    direction: 'up',
+    perTick: false,
+    statedTicks: 4
+  })
+  assert.equal(read('Increase Hitpoints by 5000 after three ticks.', 1).perTick, false)
 })
 
 test('R3 ticks come from the duration, and a rate with no duration states no total', () => {
@@ -140,58 +166,45 @@ test('R3 ticks come from the duration, and a rate with no duration states no tot
 })
 
 test('R4 the metrics arithmetic — damage, dps and per mana, on the real rows', () => {
-  // Anarchy: 273 (L34) to 288 (L39), 99 mana, 3.5s cast, instant.
-  const anarchy = spellMetricsAt(entry('Anarchy'), 39)
-  assert.equal(anarchy?.damage, 288)
-  assert.equal(anarchy?.damagePerMana, 2.9) // 288/99 = 2.909…
-  assert.equal(anarchy?.dps, 82.3) // 288 / 3.5
-  assert.equal(anarchy?.dot, undefined)
-  assert.equal(anarchy?.heal, undefined)
+  // Anarchy: 273 (L34) to 288 (L39), 99 mana, 3.5s cast, instant. 288/99 = 2.909…, 288/3.5 = 82.3
+  assert.deepEqual(metrics(entry('Anarchy'), 39), { damage: 288, damagePerMana: 2.9, dps: 82.3 })
 
-  // Blood of Pain: 56 (L41) to 65 (L50) per tick over its stated duration.
-  const dot = spellMetricsAt(
+  // Blood of Pain: 56 (L41) to 65 (L50) per tick over its stated duration. 650 / (3 + 60) = 10.3
+  const dot = metrics(
     { effects: ['Decrease Hitpoints by 56 (L41) to 65 (L50) per tick'], mana: 100, castTimeMs: 3000, durationMs: 60_000 },
     50
   )
-  assert.equal(dot?.damage, 650, '65 per tick x 10 ticks')
-  assert.equal(dot?.dot, true)
-  assert.equal(dot?.overSec, 60)
-  assert.equal(dot?.dps, 10.3) // 650 / (3 + 60)
-  assert.equal(dot?.damagePerMana, 6.5)
+  assert.deepEqual(dot, { damage: 650, damagePerMana: 6.5, dps: 10.3, dot: true, overSec: 60 })
 
-  // Chloroplast: a pure HoT — 16 per tick at L50 over 16 minutes, 200 mana, 6s cast.
-  const hot = spellMetricsAt(entry('Chloroplast'), 50)
-  assert.equal(hot?.heal, 2560, '16 x 160 ticks')
-  assert.equal(hot?.hot, true)
-  assert.equal(hot?.overSec, 960)
-  assert.equal(hot?.healPerMana, 12.8)
-  assert.equal(hot?.damage, undefined)
+  // Chloroplast: a pure HoT — 16 per tick at L50 over 16 minutes (160 ticks), 200 mana, 6s cast.
+  const hot = metrics(entry('Chloroplast'), 50)
+  // hps is over cast PLUS the whole duration: 2560 / (6 + 960) = 2.65
+  assert.deepEqual(hot, { heal: 2560, healPerMana: 12.8, hps: 2.7, hot: true, overSec: 960 })
 })
 
 test('R5 the Echo family sums its direct heal and its self-counted tail', () => {
   // Celestial Echo: `Increase Hitpoints by 262 (L34) to 310 (L50)` then
   // `Increase Hitpoints between 165 and 190 for two additional ticks.` — 310 + 177.5*2.
-  const echo = spellMetricsAt(entry('Celestial Echo'), 50)
-  assert.equal(echo?.heal, 665)
-  assert.equal(echo?.hot, true)
-  // 245 mana
-  assert.equal(echo?.healPerMana, 2.7)
+  const echo = metrics(entry('Celestial Echo'), 50)
+  assert.equal(echo.heal, 665)
+  assert.equal(echo.hot, true)
+  assert.equal(echo.healPerMana, 2.7) // 245 mana
 })
 
 test('R6 a lifetap is damage, and max-HP / HP-when-cast lines are not hit points arriving', () => {
   // Siphon: `Decrease Hitpoints by 80` + `Increase Hitpoints by 80 (Self)`, targetType Lifetap.
-  const siphon = spellMetricsAt(entry('Siphon'), 30)
-  assert.equal(siphon?.damage, 80)
-  assert.equal(siphon?.heal, undefined, 'the increase side is the same 80 written from the other end')
+  const siphon = metrics(entry('Siphon'), 30)
+  assert.equal(siphon.damage, 80)
+  assert.equal(siphon.heal, undefined, 'the increase side is the same 80 written from the other end')
 
   // The same two lines WITHOUT the Lifetap target type still read as both — the exclusion is a
   // claim about the catalog's own filing, not a guess from the strings.
-  const notATap = spellMetricsAt(
+  const notATap = metrics(
     { effects: ['Decrease Hitpoints by 80', 'Increase Hitpoints by 80'], mana: 40, castTimeMs: 1000 },
     30
   )
-  assert.equal(notATap?.damage, 80)
-  assert.equal(notATap?.heal, 80)
+  assert.equal(notATap.damage, 80)
+  assert.equal(notATap.heal, 80)
 
   // A MAX-HP buff is not a heal, however it is spelled.
   assert.equal(parseHpLine('Increase Max Hitpoints by 202 (L34) to 225 (L42)', 42), null)
@@ -207,6 +220,11 @@ test('R6 a lifetap is damage, and max-HP / HP-when-cast lines are not hit points
   assert.equal(parseHpLine('Charm (up to L37)', 1), null)
 })
 
+/** Every figure a SpellMetrics can carry, for the sweep's "no number nobody can hold" check. */
+function figuresOf(m: SpellMetrics | undefined): (number | undefined)[] {
+  return m === undefined ? [] : [m.damage, m.heal, m.dps, m.hps, m.damagePerMana, m.healPerMana]
+}
+
 test('R7 the whole committed catalog reads without producing a number nobody can hold', () => {
   let withMetrics = 0
   let hpLinesRead = 0
@@ -216,18 +234,16 @@ test('R7 the whole committed catalog reads without producing a number nobody can
     const m = spellMetricsAt(s, 50)
     if (m) withMetrics++
     for (const raw of s.effects ?? []) {
-      const isHpShaped = /hit\s?points?/i.test(raw)
-      const read = parseHpLine(raw, 50)
-      if (read) {
+      const line = parseHpLine(raw, 50)
+      if (line) {
         hpLinesRead++
-        assert.ok(Number.isFinite(read.amount), `${s.name}: ${raw}`)
-        assert.ok(read.amount >= 0, `${s.name}: ${raw}`)
-      } else if (isHpShaped) {
+        assert.ok(Number.isFinite(line.amount) && line.amount >= 0, `${s.name}: ${raw}`)
+      } else if (/hit\s?points?/i.test(raw)) {
         hpLinesDeclined++
         declined.add(raw.replace(/-?\d+(\.\d+)?/g, 'N'))
       }
     }
-    for (const v of [m?.damage, m?.heal, m?.dps, m?.hps, m?.damagePerMana, m?.healPerMana]) {
+    for (const v of figuresOf(m)) {
       if (v !== undefined) assert.ok(Number.isFinite(v) && v > 0, `${s.name}: ${String(v)}`)
     }
   }

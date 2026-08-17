@@ -342,7 +342,8 @@ export const TELEMETRY_BREADCRUMB_KINDS = [
   'death', 'playerDeath', 'damage', 'heal', 'healUnstated', 'mitigation', 'miss', 'resist',
   'charm', 'uncharm', 'cc', 'petClaim', 'petSay', 'castBegin', 'castFizzle', 'castInterrupted',
   'buffApply', 'buffFade', 'buffWearOff', 'illusionFade', 'buffExpired', 'spellEmote',
-  'stanceChange', 'invocationChange', 'consider', 'poisonProc', 'poisonCoat', 'poisonDry',
+  'stanceChange', 'invocationChange', 'spellMemorize', 'spellForget', 'spellSet',
+  'consider', 'poisonProc', 'poisonCoat', 'poisonDry',
   'epoch', 'unknown'
 ] as const
 export type TelemetryBreadcrumbKind = (typeof TELEMETRY_BREADCRUMB_KINDS)[number]

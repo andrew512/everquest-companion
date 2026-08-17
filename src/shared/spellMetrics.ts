@@ -47,7 +47,7 @@
 //     both fail the head test for free.
 
 /** A hitpoint line, read: how much, per tick or not, and over how many ticks the line states. */
-interface HpLine {
+export interface HpLine {
   /** Positive magnitude at the evaluation level. */
   amount: number
   /** `Increase` (a heal) or `Decrease` (damage). */
@@ -291,6 +291,45 @@ export function spellMetricsAt(spell: SpellMetricsInput, level: number): SpellMe
   return assemble(dmg, heal, spell, durationTicks)
 }
 
+/** One side's three derived figures: the total, per mana, per second. */
+interface SideFigures {
+  total: number
+  perMana?: number
+  perSecond?: number
+}
+
+/**
+ * One side, derived. The per-second window is the CAST plus, for an over-time side, the whole
+ * duration — the honest denominator for "how fast does this arrive", and the reason a DoT's dps
+ * is not its per-tick rate.
+ */
+function figures(side: Side, mana: number | null, castSec: number, overSec: number): SideFigures | null {
+  if (side.total <= 0) return null
+  const out: SideFigures = { total: r1(side.total) }
+  if (mana !== null) out.perMana = r1(side.total / mana)
+  const window = castSec + (side.overTime ? overSec : 0)
+  if (window > 0) out.perSecond = r1(side.total / window)
+  return out
+}
+
+/** The damage side's four fields, written onto the output. */
+function writeDamage(f: SideFigures | null, overTime: boolean, out: SpellMetrics): void {
+  if (!f) return
+  out.damage = f.total
+  if (f.perMana !== undefined) out.damagePerMana = f.perMana
+  if (f.perSecond !== undefined) out.dps = f.perSecond
+  if (overTime) out.dot = true
+}
+
+/** The heal side's four, spelled out separately rather than keyed, so the names stay checkable. */
+function writeHeal(f: SideFigures | null, overTime: boolean, out: SpellMetrics): void {
+  if (!f) return
+  out.heal = f.total
+  if (f.perMana !== undefined) out.healPerMana = f.perMana
+  if (f.perSecond !== undefined) out.hps = f.perSecond
+  if (overTime) out.hot = true
+}
+
 /** The per-mana and per-second derivations, once both sides are totalled. */
 function assemble(
   dmg: Side,
@@ -301,23 +340,14 @@ function assemble(
   const mana = typeof spell.mana === 'number' && spell.mana > 0 ? spell.mana : null
   const castSec = (spell.castTimeMs ?? 0) / 1000
   const overSec = durationTicks * (TICK_MS / 1000)
+  const d = figures(dmg, mana, castSec, overSec)
+  const h = figures(heal, mana, castSec, overSec)
+  if (!d && !h) return undefined
   const out: SpellMetrics = {}
-  if (dmg.total > 0) {
-    out.damage = r1(dmg.total)
-    if (mana !== null) out.damagePerMana = r1(dmg.total / mana)
-    const window = castSec + (dmg.overTime ? overSec : 0)
-    if (window > 0) out.dps = r1(dmg.total / window)
-    if (dmg.overTime) out.dot = true
-  }
-  if (heal.total > 0) {
-    out.heal = r1(heal.total)
-    if (mana !== null) out.healPerMana = r1(heal.total / mana)
-    const window = castSec + (heal.overTime ? overSec : 0)
-    if (window > 0) out.hps = r1(heal.total / window)
-    if (heal.overTime) out.hot = true
-  }
-  if ((out.dot === true || out.hot === true) && overSec > 0) out.overSec = Math.round(overSec)
-  return out.damage === undefined && out.heal === undefined ? undefined : out
+  writeDamage(d, dmg.overTime, out)
+  writeHeal(h, heal.overTime, out)
+  if ((dmg.overTime || heal.overTime) && overSec > 0) out.overSec = Math.round(overSec)
+  return out
 }
 
 /**
