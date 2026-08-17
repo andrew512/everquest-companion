@@ -119,7 +119,7 @@ async function main(): Promise<void> {
       )
       check(
         'the picker states the pick back before it is saved',
-        /SHD \/ ROG \/ DRU/.test(count) && /3 of 3/.test(count),
+        /Shadow Knight \/ Rogue \/ Druid/.test(count) && /3 of 3/.test(count),
         `count=${count}`
       )
       await page.click(SAVE)
