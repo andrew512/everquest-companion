@@ -113,12 +113,12 @@ test('one read answers every card in the pane, and it snaps the text size to the
   // The overlays' size (JOS-405), which is TWO facts read together for the toast pair's reason:
   // the shared stepper and the twelve rows are one control group, and a frame where the size was
   // right and the switch was still off would draw twelve rows disabled that are not.
-  assert.deepEqual(snap.overlayTextSize, { shared: 1.4, independent: true })
+  assert.deepEqual(snap.overlayTextSize, { shared: 1.4, independent: true, seeded: false })
   assert.equal(snap.overlayTextScales.fight, 1.6, 'and each window’s own size seeds the list')
   // The shared value arrives through the same normalizer main's store reader uses, so the cache
   // can never hold a size no overlay could draw at (the `uiScale` argument, on a different blob).
   const clamped = await readPrefsSnapshot(stubReader({ getOverlayTextSize: { shared: 9 } }).reader)
-  assert.deepEqual(clamped.overlayTextSize, { shared: 2, independent: false })
+  assert.deepEqual(clamped.overlayTextSize, { shared: 2, independent: false, seeded: false })
 
   // The resist-evidence switch (JOS-385), stored against its shipped ON. It is in the batch for
   // the `processPriority` reason, and it is asserted here for the same one.

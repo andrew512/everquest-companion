@@ -71,6 +71,9 @@ import {
 } from './appHarness.mjs'
 import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
 import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
+// The ceiling this card now has to survive (JOS-405): two 1.4.0 reports about THIS overlay asked
+// for bigger text, so the fit is proved at the largest size the app offers rather than halfway.
+import { TEXT_SCALE_MAX } from '../../src/shared/overlayTextScale'
 // The RESIST-CHIP steps and the LINK steps live next door, because this spec is at the repo's
 // max-lines budget and the rule is SPLIT, never ratchet. Each carries its own argument in its
 // header: the chips' two creatures, and the click that made the card a lily pad (JOS-390).
@@ -367,10 +370,17 @@ async function stepWindowFitsCard(app: ElectronApplication, card: Page): Promise
   // A TEXT-SCALE BUMP RE-FITS IT. The scale is applied as a CSS `zoom` on the card (overlayScale),
   // so the measured box really does grow — and the window has to follow, which is acceptance
   // criterion 3. Written through the overlay's own config door, the same one A+ uses.
-  await setTextScale(card, 1.5)
+  //
+  // AT THE CEILING, NOT HALFWAY (JOS-405). Two 1.4.0 reports about THIS card asked for bigger
+  // text, and the answer the ticket ships puts it one click from 200% — so 200% is the size the
+  // fit has to survive, and 1.5 was only ever the largest number this spec happened to try.
+  // The write also proves the JOS-405 ROUTE from a third window: the con card is not in the
+  // Overlay menu and has no footer, so this press lands on the shared preference and comes back
+  // as a broadcast, and the window still has to re-fit itself around what it then draws.
+  await setTextScale(card, TEXT_SCALE_MAX)
   const bigger = await settleFit(app, card)
   const big = bigger.bounds
-  if (check('a bigger text size re-fits the window', big !== null)) {
+  if (check('the biggest text size re-fits the window', big !== null)) {
     check('…and the window GREW with the card rather than clipping it',
       (big as Bounds).height > (b as Bounds).height &&
         Math.abs((big as Bounds).height - fittedTo(bigger.want)) <= FIT_SLACK,
@@ -380,6 +390,18 @@ async function stepWindowFitsCard(app: ElectronApplication, card: Page): Promise
       (big as Bounds).x === (b as Bounds).x && (big as Bounds).y === (b as Bounds).y &&
         (big as Bounds).width === (b as Bounds).width,
       `${JSON.stringify(b)} -> ${JSON.stringify(big)}`)
+    // NOTHING IS CUT OFF SIDEWAYS EITHER. The height is what main re-fits; the WIDTH is fixed, and
+    // `zoom` reflows rather than magnifying, so the honest question at 200% is whether the card
+    // still lives inside the window it is not allowed to widen. Measured on the card's own box.
+    const overflow = await card.evaluate(() => {
+      const el = document.querySelector('[data-testid="con-card"]') ?? document.body
+      return { scroll: el.scrollWidth, client: document.documentElement.clientWidth }
+    })
+    check('…and at 200% the card still fits ACROSS the window, with nothing clipped off the edge',
+      overflow.scroll <= overflow.client + 1,
+      `card ${String(overflow.scroll)}px wide in a ${String(overflow.client)}px window`)
+    // The picture of the case the reporters were describing, saved beside the shipped-size one.
+    await shootCard(app, card, 'con-card-200.png')
   }
   // Back to 1.0 so the screenshot below is the card at its shipped size.
   await setTextScale(card, 1)
@@ -403,8 +425,8 @@ async function stepWindowFitsCard(app: ElectronApplication, card: Page): Promise
  * capture and puts it back. Everything here is best-effort and reports through `note`, never a
  * check: a machine with no display owes this spec nothing.
  */
-async function stepScreenshot(app: ElectronApplication, card: Page): Promise<void> {
-  const path = join(ARTIFACTS, 'con-card.png')
+async function shootCard(app: ElectronApplication, card: Page, file: string): Promise<void> {
+  const path = join(ARTIFACTS, file)
   const setShown = (shown: boolean): Promise<void> =>
     app.evaluate(({ BrowserWindow }, show) => {
       for (const w of BrowserWindow.getAllWindows()) {
@@ -639,7 +661,7 @@ async function main(): Promise<void> {
       await stepBackToTheLich(log, card)
       await stepNotableChips(card)
       await stepWindowFitsCard(app, card)
-      await stepScreenshot(app, card)
+      await shootCard(app, card, 'con-card.png')
       // THE LINK (JOS-390), on the lich's card, which is the one on screen: a click opens its page
       // in the app and leaves the card up; unlocked, the same click navigates nothing.
       await stepClickOpensTheMobPage(card, page, MOB)

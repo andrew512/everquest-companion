@@ -66,6 +66,24 @@ function overlayTextScaleMap(): Record<OverlayKind, number> {
   return out
 }
 
+/**
+ * RE-STATE EVERY OPEN OVERLAY'S OWN CONFIG (JOS-405).
+ *
+ * An overlay window holds its config locally and only ever hears about changes it made or was
+ * echoed. The first opt-in to independent sizes SEEDS all twelve per-kind values in the store
+ * (storeOverlayTextSize.ts), which is a change no window made — MEASURED in
+ * tests/e2e/text-size.e2e.mts: without this the fight meter went independent still holding the
+ * `textScale` it was born with, and snapped to 100% under a store that said 120%.
+ *
+ * Called only from the prefs setter, not from every shared press: a press changes no kind's config
+ * at all, so echoing there would be twelve sends saying nothing.
+ */
+function echoOverlayConfigs(): void {
+  for (const k of OVERLAY_KINDS) {
+    getOverlayWindow(k)?.webContents.send(IPC.onOverlayConfig, { kind: k, config: getOverlayConfig(k) })
+  }
+}
+
 /** …and the push that keeps that list honest when a press is made on a WINDOW instead. Only the
  *  app window has rows to correct; an overlay's own config echo already told it about itself. */
 function broadcastOverlayTextScales(): void {
@@ -166,9 +184,13 @@ export function registerWindowIpc(): void {
       const prefs = setOverlayTextSize({ shared: p.textScale })
       broadcastOverlayTextSize(prefs)
       // Whatever ELSE the patch carried is still this kind's own business. `rest` is almost always
-      // empty (the stepper sends one field), and writing it through the ordinary door below is
-      // what keeps that "almost" from being a rule this handler quietly breaks.
+      // EMPTY (the stepper sends one field) and an empty write is not a no-op here: every write
+      // merges over `getOverlayConfig`, which clamps an absent scale to the default — so writing
+      // nothing would still stamp a `textScale` onto a kind that has never had one. Handling the
+      // other fields through the ordinary door is what keeps that "almost" from being a rule this
+      // handler quietly breaks.
       const { textScale: _routed, ...rest } = p
+      if (Object.keys(rest).length === 0) return getOverlayConfig(kind)
       const next = setOverlayConfig(kind, rest)
       getOverlayWindow(kind)?.webContents.send(IPC.onOverlayConfig, { kind, config: next })
       return next
@@ -234,6 +256,13 @@ export function registerWindowIpc(): void {
   ipcMain.handle(IPC.overlayTextSizeSet, (_e, patch: unknown) => {
     const prefs = setOverlayTextSize(patch)
     broadcastOverlayTextSize(prefs)
+    // …the per-kind map with it, because the FIRST opt-in seeds all twelve per-kind values
+    // (storeOverlayTextSize.ts `seedOnFirstOptIn`, so opting in resizes nothing) and Preferences'
+    // rows go live in that same instant and must state the seeded numbers…
+    broadcastOverlayTextScales()
+    // …and each window's own config, for the same seed: a change no window made is a change no
+    // window would otherwise hear about.
+    echoOverlayConfigs()
     return prefs
   })
 

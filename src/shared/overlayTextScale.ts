@@ -59,12 +59,36 @@ export interface OverlayTextSizePrefs {
   shared: number
   /** OFF ships: one size for everything, which is what every install before JOS-405 had. */
   independent: boolean
+  /**
+   * HAS THIS INSTALL EVER OPTED IN? Bookkeeping, not a setting — nothing in Preferences reads it.
+   *
+   * OPTING IN MUST NOT RESIZE ANYTHING, and on a store written entirely under sync it would have.
+   * The ticket's design reasons from an UPGRADING install, where the retired fan-out left twelve
+   * equal per-kind values, so switching to independent finds every window already at the shared
+   * size. A store written on 1.5.0 has no such history — nothing writes the per-kind fields while
+   * synced, which is the whole point — so a player who set the shared size to 150% and then asked
+   * for independent sizes would watch all twelve windows snap back to 100%. That is the opposite
+   * of what they asked for: they asked to start setting sizes SEPARATELY, from where things are.
+   *
+   * So the FIRST time independent is turned on, every kind adopts what it is currently drawing at
+   * (`storeOverlayTextSize.ts seedAbsentKinds`), and this flag is what makes that once-ever rather
+   * than every-time — which is what keeps the JOS-168 rule intact. A remembered 150% is never
+   * overwritten by a later flip, because a later flip does nothing at all.
+   *
+   * WHY A FLAG AND NOT "IS THE VALUE ABSENT". MEASURED: `setOverlayConfig` merges over
+   * `getOverlayConfig`, which clamps an absent `textScale` to the default — so ANY write to an
+   * overlay's config (a drag, a lock) materializes a `textScale` of 1. Absence is therefore not a
+   * fact this store can be asked about, and a seed keyed on it would skip exactly the windows
+   * somebody had moved.
+   */
+  seeded?: boolean
 }
 
 /** What an install with no opinion does — and, deliberately, what 1.4.0 already did. */
 export const DEFAULT_OVERLAY_TEXT_SIZE: OverlayTextSizePrefs = {
   shared: TEXT_SCALE_DEFAULT,
-  independent: false
+  independent: false,
+  seeded: false
 }
 
 /**
@@ -75,7 +99,8 @@ export function normalizeOverlayTextSize(v: unknown): OverlayTextSizePrefs {
   const raw = (v ?? {}) as Partial<OverlayTextSizePrefs>
   return {
     shared: clampTextScale(raw.shared),
-    independent: raw.independent === true
+    independent: raw.independent === true,
+    seeded: raw.seeded === true
   }
 }
 
@@ -92,7 +117,11 @@ export function mergeOverlayTextSize(
   const p = (patch ?? {}) as Partial<OverlayTextSizePrefs>
   return {
     shared: typeof p.shared === 'number' ? clampTextScale(p.shared) : base.shared,
-    independent: typeof p.independent === 'boolean' ? p.independent : base.independent
+    independent: typeof p.independent === 'boolean' ? p.independent : base.independent,
+    // ONE-WAY: bookkeeping a renderer must not be able to un-set. Nothing on the bridge sends it,
+    // and a hand-edited `false` over a stored `true` would re-seed twelve windows from a value
+    // their owner had already moved away from.
+    seeded: base.seeded === true || p.seeded === true
   }
 }
 

@@ -13,7 +13,8 @@
 // means "this store predates the switch", and the honest value for it is not a default but an
 // answer read off what the store already holds.
 
-import { settingsStore } from './store'
+import { setOverlayConfig, settingsStore } from './store'
+import { OVERLAY_KINDS } from '../shared/types'
 import {
   deriveSharedTextScale,
   mergeOverlayTextSize,
@@ -65,7 +66,39 @@ export function getOverlayTextSize(): OverlayTextSizePrefs {
  * shared size — and so the derivation above happens before the very first write, not after it.
  */
 export function setOverlayTextSize(patch: unknown): OverlayTextSizePrefs {
-  const next = mergeOverlayTextSize(patch, getOverlayTextSize())
+  const cur = getOverlayTextSize()
+  const next = mergeOverlayTextSize(patch, cur)
+  // OPTING IN CHANGES NOTHING ON SCREEN, once ever (see `seedOnFirstOptIn`).
+  if (next.independent && cur.seeded !== true) {
+    seedOnFirstOptIn(cur.shared)
+    next.seeded = true
+  }
   settingsStore.set('overlayTextSize', next)
   return next
+}
+
+/**
+ * OPTING IN RESIZES NOTHING — ONCE, EVER.
+ *
+ * The argument for why this exists at all is on `OverlayTextSizePrefs.seeded`
+ * (shared/overlayTextScale.ts), together with the measurement that produced it. What lives here is
+ * the mechanism, and its two rules:
+ *
+ *   - EVERY kind, not "the ones with no value". `setOverlayConfig` merges over `getOverlayConfig`,
+ *     which clamps an absent scale to the default — so any drag or lock has already materialized a
+ *     `textScale` of 1, and a seed keyed on absence would skip exactly the windows somebody had
+ *     moved. Seeding all twelve from what they are all currently drawing at is the same answer for
+ *     every one of them anyway: while synced, that is the shared size by definition.
+ *   - ONCE. The caller gates on `seeded`, so the SECOND flip does nothing and a remembered 150%
+ *     survives every later trip through the switch. That is the JOS-168 rule, intact.
+ *
+ * This is not the retired fan-out coming back: that wrote twelve kinds on EVERY PRESS, which is
+ * what flattened the twelve values and left nothing to unsync to. This writes them on a single
+ * opt-in, from the value every one of them is already showing.
+ *
+ * The writes go through the ordinary accessor, which fills the rest of each config from its own
+ * defaults — assembling a config literal here would be a second opinion about what an overlay is.
+ */
+function seedOnFirstOptIn(shared: number): void {
+  for (const kind of OVERLAY_KINDS) setOverlayConfig(kind, { textScale: shared })
 }

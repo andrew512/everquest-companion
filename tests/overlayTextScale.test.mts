@@ -198,15 +198,43 @@ test('the prefs normalizer defaults every field, from any garbage', () => {
 })
 
 test('a patch that names one field keeps the other — a switch flip cannot reset the size', () => {
-  const base = { shared: 1.5, independent: false }
-  assert.deepEqual(mergeOverlayTextSize({ independent: true }, base), { shared: 1.5, independent: true })
-  assert.deepEqual(mergeOverlayTextSize({ shared: 1.2 }, base), { shared: 1.2, independent: false })
+  const base = { shared: 1.5, independent: false, seeded: false }
+  assert.deepEqual(mergeOverlayTextSize({ independent: true }, base), { ...base, independent: true })
+  assert.deepEqual(mergeOverlayTextSize({ shared: 1.2 }, base), { ...base, shared: 1.2 })
   assert.deepEqual(mergeOverlayTextSize({}, base), base)
   // A wrong-typed field is the same as an absent one: it names nothing this base should give up.
   assert.deepEqual(mergeOverlayTextSize({ shared: 'big', independent: 1 }, base), base)
   // With no base at all it is a normalize, which is what makes it one door for a renderer, a
   // hand-edited file and the store reader.
-  assert.deepEqual(mergeOverlayTextSize({ shared: 1.4 }), { shared: 1.4, independent: false })
+  assert.deepEqual(mergeOverlayTextSize({ shared: 1.4 }), { shared: 1.4, independent: false, seeded: false })
+})
+
+test('the once-ever seed flag is ONE-WAY — a renderer cannot ask to be re-seeded', () => {
+  // It is bookkeeping, not a setting: nothing on the bridge sends it and nothing in Preferences
+  // reads it. A hand-edited `false` over a stored `true` would re-seed twelve windows from a value
+  // their owner had already moved away from — i.e. it would break the one rule the flag protects.
+  const seeded = { shared: 1.2, independent: true, seeded: true }
+  assert.equal(mergeOverlayTextSize({ seeded: false }, seeded).seeded, true)
+  assert.equal(mergeOverlayTextSize({ independent: false }, seeded).seeded, true, 'and it outlives syncing again')
+  assert.equal(mergeOverlayTextSize({ seeded: true }, { shared: 1, independent: false, seeded: false }).seeded, true)
+})
+
+test('OPTING IN RESIZES NOTHING, once ever — and the flag is what makes it once', () => {
+  // The measurement behind this is in tests/e2e/text-size.e2e.mts: on a store written entirely
+  // under sync, nothing has ever written a per-kind value, so the first flip to independent found
+  // twelve defaults and snapped every window back to 100%. The seed is keyed on the FLAG rather
+  // than on a value being absent, because `setOverlayConfig` merges over `getOverlayConfig` and
+  // therefore stamps a `textScale` onto any kind that has ever been dragged or locked.
+  const store = src('../src/main/storeOverlayTextSize.ts')
+  assert.match(
+    store,
+    /if \(next\.independent && cur\.seeded !== true\) \{\s*\n\s*seedOnFirstOptIn\(cur\.shared\)\s*\n\s*next\.seeded = true/,
+    'the first opt-in seeds from the shared size and records that it happened'
+  )
+  assert.match(store, /for \(const kind of OVERLAY_KINDS\) setOverlayConfig\(kind, \{ textScale: shared \}\)/)
+  // AND IT IS NOT THE FAN-OUT COMING BACK: the retired one wrote twelve kinds on every PRESS,
+  // which is what flattened the values and left nothing to unsync to. This is one opt-in.
+  assert.doesNotMatch(store, /textScale: p\.textScale/, 'no press path writes a per-kind value here')
 })
 
 test('THE EFFECTIVE SCALE IS THE WHOLE RULE: independent ? per-kind : shared', () => {
