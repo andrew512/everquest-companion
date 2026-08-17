@@ -265,6 +265,19 @@ export const IPC = {
   // and it is OFF unless somebody has turned it on — an absent key drags exactly as it always did.
   overlaySnapGet: 'overlaySnap:get',
   overlaySnapSet: 'overlaySnap:set',
+  // ---- the overlays' TEXT SIZE (JOS-405; shared/overlayTextScale.ts) ----
+  // renderer(main app OR any overlay window) -> main: read / patch `{ shared, independent }`.
+  // Returns OverlayTextSizePrefs, re-validated at the handler through the same normalizer the
+  // store reader uses. BOTH bridges carry the read, because both surfaces decide the same thing
+  // with it: Preferences paints the shared stepper and the twelve rows, and every overlay window
+  // resolves its own effective scale (`effectiveOverlayTextScale`) before it draws a row.
+  overlayTextSizeGet: 'overlayTextSize:get',
+  overlayTextSizeSet: 'overlayTextSize:set',
+  // main -> renderer(main app AND every open overlay window): the prefs changed somewhere this
+  // window could not see. Payload OverlayTextSizePrefs. It is the whole reason a pinned meter
+  // resizes when Preferences moves the shared size, and the reason the Preferences stepper agrees
+  // with a press made on a meter's own A+ — one value with thirteen controls needs one push.
+  onOverlayTextSize: 'overlayTextSize:changed',
   // ---- closing the window keeps the companion running (JOS-139; shared/closeToTray.ts) ----
   // renderer(main app) -> main: read / patch the close-to-tray preference. Returns
   // CloseToTrayPrefs, re-validated at the handler through the same normalizer the store uses.

@@ -97,6 +97,8 @@ import { respawnBridge } from './respawn'
 import { uiScaleBridge } from './uiScale'
 // …and the overlay-snapping preference (./overlaySnap.ts), likewise (JOS-217).
 import { overlaySnapBridge } from './overlaySnap'
+// …and the overlays' TEXT SIZE (./overlayTextSize.ts), likewise (JOS-405).
+import { overlayTextSizeBridge } from './overlayTextSize'
 // The dev-only restart button's one method (JOS-61), split out for the same file-mass reason.
 import { devBridge } from './dev'
 // What's new (JOS-73): the one store key behind the release-notes panel and its teaser strip.
@@ -297,6 +299,8 @@ const api = {
   ...uiScaleBridge,
   // …and the overlay-snapping switch (./overlaySnap.ts), likewise.
   ...overlaySnapBridge,
+  // …and the overlays' text size (./overlayTextSize.ts): the shared value, the switch, main's push.
+  ...overlayTextSizeBridge,
   // …and `restartApp` (./dev.ts), whose handler refuses in a packaged build.
   ...devBridge,
   // …and the two what's-new methods (./releaseNotes.ts), for the same file-size reason.

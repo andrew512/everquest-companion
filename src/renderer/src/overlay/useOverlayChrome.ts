@@ -19,6 +19,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { OverlayConfig, OverlayDrill } from '@shared/types'
 import { clampTextScale } from '@shared/types'
+import {
+  DEFAULT_OVERLAY_TEXT_SIZE,
+  effectiveOverlayTextScale,
+  type OverlayTextSizePrefs
+} from '@shared/overlayTextScale'
 import { onOverlayPointerExit, overlayPointerExited } from './pointerExit'
 
 /**
@@ -69,8 +74,15 @@ export interface OverlayChrome {
   /** click-through + no chrome; the persisted lock state */
   locked: boolean
   bgAlpha: number
-  /** Text size, 0.8..2. Remembered here, APPLIED by the surface: it goes on the content pane
-   *  (overlayScale.tsx) and never on the chrome, and the stepper prints it. */
+  /**
+   * Text size, 0.8..2 — the EFFECTIVE one (JOS-405), which is the shared preference unless the
+   * player has turned on independent sizes, and this window's own stored value if they have.
+   * Remembered here, APPLIED by the surface: it goes on the content pane (overlayScale.tsx) and
+   * never on the chrome, and the stepper prints it and disables its ends against it.
+   *
+   * Every caller is unchanged by the switch existing, which is the point of resolving it here:
+   * a surface asks "how big do I draw" and gets an answer, never a rule.
+   */
   textScale: number
   /** Config IS the drill state — no local mirror to drift. */
   drill: OverlayDrill | null
@@ -96,6 +108,16 @@ export interface OverlayChrome {
 
 export function useOverlayChrome(): OverlayChrome {
   const [cfg, setCfg] = useState<OverlayConfig | null>(null)
+  /**
+   * THE TEXT-SIZE PREFERENCE, which is not this window's config and does not gate `ready`.
+   *
+   * It starts at the shipped defaults rather than null on purpose, and that is not the JOS-340
+   * defect: `ready` exists for decisions a window must not make twice (the toast asking main to
+   * capture the mouse), and a SIZE is not one of them — it is a number the pane is drawn at, and
+   * arriving a hop later re-draws the same rows a little bigger. Gating the whole window on it
+   * would mean an overlay that paints nothing at all until a second IPC round trip lands.
+   */
+  const [textSize, setTextSize] = useState<OverlayTextSizePrefs>(DEFAULT_OVERLAY_TEXT_SIZE)
   const [hovering, setHovering] = useState(false)
   /** What is asking for the mouse right now. Capture is on exactly while this is non-empty. */
   const reasonsRef = useRef<Set<CaptureReason>>(new Set())
@@ -109,10 +131,19 @@ export function useOverlayChrome(): OverlayChrome {
     return window.eqOverlay.onConfig(setCfg)
   }, [])
 
+  // The same hydrate-then-subscribe shape one preference over (JOS-405). The push is what a PINNED
+  // window has instead of a stepper: locked means no chrome, so every change it obeys was made in
+  // Preferences or on another window.
+  useEffect(() => {
+    void window.eqOverlay.getTextSize().then(setTextSize)
+    return window.eqOverlay.onTextSize(setTextSize)
+  }, [])
+
   const locked = cfg?.locked ?? false
   const bgAlpha = cfg?.bgAlpha ?? 0.72
   const drill = cfg?.drill ?? null
-  const textScale = clampTextScale(cfg?.textScale)
+  // ONE FUNCTION DECIDES THIS, and it is not this file (shared/overlayTextScale.ts).
+  const textScale = effectiveOverlayTextScale(textSize, cfg?.textScale)
 
   /**
    * THE LOCK CHANGING IS A RESET, HOWEVER IT CHANGED.
@@ -134,6 +165,17 @@ export function useOverlayChrome(): OverlayChrome {
 
   const patch = (p: Partial<OverlayConfig>): void => {
     setCfg((c) => (c ? { ...c, ...p } : c))
+    // A TEXT-SIZE PRESS MOVES THE PREFERENCE WHILE SYNCED, so it moves THIS FRAME (JOS-405).
+    //
+    // Main routes the write for real — this side does not decide where it lands — but the value
+    // the window DRAWS at is `effectiveOverlayTextScale(textSize, …)`, and while the switch is off
+    // that reads the preference and never the config line above. Without this, A+ would do nothing
+    // visible until main's broadcast came back, which is the one thing a reading-distance control
+    // must not feel like. Main's answer arrives moments later and overwrites it, as always.
+    if (p.textScale !== undefined && !textSize.independent) {
+      const shared = clampTextScale(p.textScale)
+      setTextSize((t) => (t.independent ? t : { ...t, shared }))
+    }
     void window.eqOverlay.setConfig(p)
   }
 
