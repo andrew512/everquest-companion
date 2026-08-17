@@ -135,7 +135,10 @@ export interface SearchableSpell {
 }
 
 /** One (class, level) statement — the pairs the class/level facets are matched against. */
-export type SearchClassLevel = { cls: ClassAbbr; level: number }
+export interface SearchClassLevel {
+  cls: ClassAbbr
+  level: number
+}
 
 /**
  * `20-30` → the inclusive span, in any of the three spellings a player reaches for.

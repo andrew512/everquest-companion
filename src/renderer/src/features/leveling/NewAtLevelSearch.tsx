@@ -39,27 +39,29 @@ export function UnlockSearchField({
       value={query}
       onChange={(e) => onChange(e.target.value)}
       placeholder={PLACEHOLDER}
-      inputProps={{ 'data-testid': 'new-at-level-search', 'aria-label': 'search spells' }}
       sx={{ width: '100%', maxWidth: 380, mb: 0.75, '& .MuiInputBase-input': { fontSize: 12, py: 0.5 } }}
-      InputProps={{
-        startAdornment: (
-          <InputAdornment position="start">
-            <SearchIcon sx={{ fontSize: 15, color: 'text.disabled' }} />
-          </InputAdornment>
-        ),
-        endAdornment:
-          query === '' ? undefined : (
-            <InputAdornment position="end">
-              <IconButton
-                size="small"
-                aria-label="clear search"
-                data-testid="new-at-level-search-clear"
-                onClick={() => onChange('')}
-              >
-                <ClearIcon sx={{ fontSize: 14 }} />
-              </IconButton>
+      slotProps={{
+        htmlInput: { 'data-testid': 'new-at-level-search', 'aria-label': 'search spells' },
+        input: {
+          startAdornment: (
+            <InputAdornment position="start">
+              <SearchIcon sx={{ fontSize: 15, color: 'text.disabled' }} />
             </InputAdornment>
-          )
+          ),
+          endAdornment:
+            query === '' ? undefined : (
+              <InputAdornment position="end">
+                <IconButton
+                  size="small"
+                  aria-label="clear search"
+                  data-testid="new-at-level-search-clear"
+                  onClick={() => onChange('')}
+                >
+                  <ClearIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+              </InputAdornment>
+            )
+        }
       }}
     />
   )

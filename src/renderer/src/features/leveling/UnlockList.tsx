@@ -49,9 +49,9 @@
 import { type JSX } from 'react'
 import { Box, Chip, Stack, Typography } from '@mui/material'
 import type { ClassAbbr } from '@shared/classCombo'
-import { ownershipPhrase, replacesPhrase, type UnlockRow } from '@shared/levelUnlocks'
+import { ownershipPhrase, replacesEntries, replacesPhrase, type UnlockRow } from '@shared/levelUnlocks'
 import { spellMetricsParts } from '@shared/spellMetrics'
-import { memorizedPhrase, type SpellSetsSnap } from '@shared/spellSets'
+import { memorizedClause, type SpellSetsSnap } from '@shared/spellSets'
 import { classLevelLabel } from '@shared/unlockSearch'
 import { Tooltip } from '../../lib/Tooltip'
 import { SpellTooltip } from '../../lib/SpellCard'
@@ -112,14 +112,73 @@ function ClassChips({
 /** One clause of the detail line. `dim` is for the ones that are context rather than the answer. */
 function Note({ text, testid, dim }: { text: string; testid: string; dim?: boolean }): JSX.Element {
   return (
+    <NoteLine testid={testid} dim={dim}>
+      {text}
+    </NoteLine>
+  )
+}
+
+/** The same clause, when part of it is a hover target rather than a string (see `NoteSpell`). */
+function NoteLine({
+  children,
+  testid,
+  dim
+}: {
+  children: React.ReactNode
+  testid: string
+  dim?: boolean
+}): JSX.Element {
+  return (
     <Typography
       variant="caption"
       data-testid={testid}
       sx={{ fontSize: 10.5, color: dim === true ? 'text.disabled' : 'text.secondary' }}
       noWrap
     >
-      {text}
+      {children}
     </Typography>
+  )
+}
+
+/**
+ * A spell NAME inside a note, as a hover target (JOS-392, owner addition).
+ *
+ * The `replaces` and `memorized` clauses both name a spell that is not this row's — the rung below
+ * it, and where that rung currently sits — and a player choosing whether to buy the upgrade wants
+ * to read BOTH cards without leaving the panel. So the name inside the sentence gets the same
+ * `SpellTooltip` the row's own name has. The rest of the sentence stays plain text: `(CLR)` is a
+ * class and `is memorized now` is a state, and neither is a thing to open.
+ */
+function NoteSpell({ name }: { name: string }): JSX.Element {
+  return (
+    <SpellTooltip name={name} placement="top">
+      <Box component="span" data-testid="unlock-note-spell" sx={{ textDecoration: 'underline dotted', cursor: 'help' }}>
+        {name}
+      </Box>
+    </SpellTooltip>
+  )
+}
+
+/**
+ * `replaces Minor Healing (CLR)`, with the replaced NAME hoverable.
+ *
+ * The sentence is `shared/levelUnlocks.ts`'s (`replacesEntries` — the same list `replacesPhrase`
+ * joins), so the words here and the words a test pins cannot drift; this only decides which span
+ * of it opens a card.
+ */
+function ReplacesNote({ row }: { row: UnlockRow }): JSX.Element | null {
+  const entries = replacesEntries(row)
+  if (entries.length === 0) return null
+  return (
+    <NoteLine testid="unlock-replaces" dim>
+      replaces{' '}
+      {entries.map((e, i) => (
+        <Box component="span" key={`${e.name}|${e.cls}`}>
+          {i > 0 && ', '}
+          <NoteSpell name={e.name} /> ({e.cls})
+        </Box>
+      ))}
+    </NoteLine>
   )
 }
 
@@ -129,9 +188,16 @@ function Note({ text, testid, dim }: { text: string; testid: string; dim?: boole
  * The replaced spell is the one this row's own classes retire — a trio row can carry two, and the
  * first is the one the note is about, because the alternative is a sentence that names two bars.
  */
-function memorizedNote(row: UnlockRow, sets: SpellSetsSnap): string | null {
+function MemorizedNote({ row, sets }: { row: UnlockRow; sets: SpellSetsSnap }): JSX.Element | null {
   const mine = (row.spell?.replaces ?? []).find((r) => row.classes.includes(r.cls))
-  return mine === undefined ? null : memorizedPhrase(sets, mine.name)
+  const clause = mine === undefined ? null : memorizedClause(sets, mine.name)
+  if (mine === undefined || clause === null) return null
+  return (
+    <NoteLine testid="unlock-memorized" dim>
+      <NoteSpell name={mine.name} />
+      {clause}
+    </NoteLine>
+  )
 }
 
 /**
@@ -158,9 +224,9 @@ function RowDetail({
   const metrics = row.spell?.metrics
   const figures = metrics === undefined ? [] : spellMetricsParts(metrics)
   const owned = ownershipPhrase(row, resolved)
-  const replaces = replacesPhrase(row)
-  const memorized = memorizedNote(row, sets)
-  if (figures.length === 0 && owned === null && replaces === null && memorized === null) return null
+  const replaces = <ReplacesNote row={row} />
+  const memorized = <MemorizedNote row={row} sets={sets} />
+  if (figures.length === 0 && owned === null && replacesPhrase(row) === null) return null
   return (
     <Stack
       direction="row"
@@ -173,8 +239,8 @@ function RowDetail({
     >
       {figures.length > 0 && <Note text={figures.join(' · ')} testid="unlock-figures" />}
       {owned !== null && <Note text={owned} testid="unlock-already-yours" />}
-      {replaces !== null && <Note text={replaces} testid="unlock-replaces" dim />}
-      {memorized !== null && <Note text={memorized} testid="unlock-memorized" dim />}
+      {replaces}
+      {memorized}
     </Stack>
   )
 }

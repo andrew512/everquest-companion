@@ -95,8 +95,21 @@ export function setsHolding(snap: SpellSetsSnap, spell: string): string[] {
  * No em dashes; the comma is the join, per the copy rule.
  */
 export function memorizedPhrase(snap: SpellSetsSnap, spell: string): string | null {
+  const rest = memorizedClause(snap, spell)
+  return rest === null ? null : `${spell}${rest}`
+}
+
+/**
+ * The same sentence with the spell's OWN NAME lifted off the front — ` is memorized now, in set
+ * primary` — or null when there is nothing to say.
+ *
+ * IT EXISTS SO THE NAME CAN BE A HOVER TARGET (JOS-392, owner addition): the unlock row hangs the
+ * spell card off the spell this sentence is about, and a surface that had to slice the joined
+ * phrase by `spell.length` would be depending on how this function happens to build its string.
+ * `memorizedPhrase` is now composed FROM this, so the two can never drift.
+ */
+export function memorizedClause(snap: SpellSetsSnap, spell: string): string | null {
   if (!isMemorized(snap, spell)) return null
   const sets = setsHolding(snap, spell)
-  if (sets.length === 0) return `${spell} is memorized now`
-  return `${spell} is memorized now, in set ${sets.join(', ')}`
+  return sets.length === 0 ? ' is memorized now' : ` is memorized now, in set ${sets.join(', ')}`
 }

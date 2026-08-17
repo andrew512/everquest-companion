@@ -15,6 +15,7 @@
 // boundary that arrangement is honest about.
 
 import type { SpellDetail, SpellRankMember } from '../../shared/spellDetail'
+import { spellMetricsAt } from '../../shared/spellMetrics'
 import { parseSpellClassLevels, parseSpellRank, spellLineKey } from '../../shared/spellLines'
 import type { SpellEntry } from '../../shared/types'
 import { spellEffectClasses } from './spellEffectClass'
@@ -122,17 +123,38 @@ export function buildSpellDetail(
   if (!name) return notFound(queried)
   const entry: SpellEntry | undefined = dbRowFor(db, name)
   if (!entry) return notFound(name)
+  const classLevels = parseSpellClassLevels(entry.classes)
   return {
     queried: name,
     name: entry.name,
     found: true,
     ...statedFields(entry),
+    ...worthFields(entry, classLevels),
     nature: spellNature(entry.spellType),
     illusion: entry.illusion,
-    classLevels: parseSpellClassLevels(entry.classes),
+    classLevels,
     effectClasses: spellEffectClasses(entry),
     lineage: buildLineage(name, db, observedRanks, entry)
   }
+}
+
+/**
+ * WHAT IT IS WORTH, at the level it becomes yours (JOS-392, owner addition).
+ *
+ * The SAME reader the unlock rows use (`spellMetricsAt`) at the SAME evaluation level — the lowest
+ * level any class gains the line — so the figures on the card and the figures on the row beside it
+ * are the same numbers rather than two derivations that agree today. A spell the DB places for
+ * nobody is read at level 1, which is the only level it can honestly be read at.
+ *
+ * Absent for every spell with no hitpoint line, which is most of them, and the card draws nothing.
+ */
+function worthFields(
+  e: SpellEntry,
+  classLevels: readonly { level: number }[]
+): Partial<SpellDetail> {
+  const level = classLevels.length > 0 ? Math.min(...classLevels.map((c) => c.level)) : 1
+  const metrics = spellMetricsAt(e, level)
+  return metrics ? { metrics, metricsLevel: level } : {}
 }
 
 /**

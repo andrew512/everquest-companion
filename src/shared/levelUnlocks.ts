@@ -347,18 +347,30 @@ export function unlocksAtLevel(
  * honest shape for a trio that gains the same upgrade from two ladders at once.
  */
 export function replacesPhrase(row: UnlockRow): string | null {
-  const all = row.spell?.replaces ?? []
-  const mine = all.filter((r) => row.classes.includes(r.cls))
-  if (mine.length === 0) return null
+  const parts = replacesEntries(row).map((r) => `${r.name} (${r.cls})`)
+  return parts.length === 0 ? null : `replaces ${parts.join(', ')}`
+}
+
+/**
+ * The same answer, unjoined — the (spell, class) pairs the phrase is built from.
+ *
+ * IT EXISTS BECAUSE THE NAME IN THAT SENTENCE IS A THING YOU CAN LOOK AT (JOS-392, owner
+ * addition): the panel hangs the spell card off each replaced NAME, so a player deciding whether to
+ * buy the upgrade can read what they are giving up without leaving the tab. A joined string cannot
+ * carry a hover target, and a renderer re-splitting one on ` (` would be a second parser for a
+ * sentence this file already knows the parts of.
+ */
+export function replacesEntries(row: UnlockRow): { name: string; cls: ClassAbbr }[] {
+  const mine = (row.spell?.replaces ?? []).filter((r) => row.classes.includes(r.cls))
   const seen = new Set<string>()
-  const parts: string[] = []
+  const out: { name: string; cls: ClassAbbr }[] = []
   for (const r of mine) {
     const key = `${r.name}|${r.cls}`
     if (seen.has(key)) continue
     seen.add(key)
-    parts.push(`${r.name} (${r.cls})`)
+    out.push({ name: r.name, cls: r.cls })
   }
-  return `replaces ${parts.join(', ')}`
+  return out
 }
 
 /** The two headline numbers: distinct spells, distinct skill-ish things. */
