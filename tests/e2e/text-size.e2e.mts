@@ -48,6 +48,7 @@ import {
   openTwoMeters,
   stepIndependent,
   stepOverlaySizeCard,
+  stepPinnedMeterFollows,
   stepSharedAppliesLive,
   stepSurvivesTheSwitch,
   stepWindowMovesShared
@@ -308,6 +309,7 @@ async function main(): Promise<void> {
       const [fight, overall] = meters
       await stepSharedAppliesLive(page, fight, overall)
       await stepWindowMovesShared(page, fight, overall)
+      await stepPinnedMeterFollows(page, fight)
       const own = await stepIndependent(page, fight, overall)
       await stepSurvivesTheSwitch(page, fight, overall, own)
     }

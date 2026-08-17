@@ -195,6 +195,42 @@ export async function stepWindowMovesShared(page: Page, fight: Page, overall: Pa
 }
 
 /**
+ * THE PINNED METER — the player this whole ticket is for.
+ *
+ * Two 1.4.0 reports said the text was too small and that the text size options did not affect it.
+ * They were right about where they looked: a LOCKED overlay is click-through and draws no chrome at
+ * all, so it has no A− / A+ to press, and somebody who pinned their meters on day one has never
+ * seen the control that was supposed to be the answer. A control in Preferences is only a fix if it
+ * reaches THAT window, so this step pins the meter first and then presses.
+ *
+ * It is also the step that proves the push half of the design rather than the pull: a locked window
+ * cannot be asked to re-read anything, so the new size has to arrive as a broadcast.
+ */
+export async function stepPinnedMeterFollows(page: Page, fight: Page): Promise<void> {
+  await fight.evaluate(() =>
+    (window as unknown as { eqOverlay: { setLocked: (v: boolean) => void } }).eqOverlay.setLocked(true)
+  )
+  const locked = await settle(
+    () => fight.evaluate(() => document.querySelectorAll('button').length),
+    (n) => n === 0,
+    { timeoutMs: 15_000 }
+  ).catch(() => -1)
+  check('the fight meter is pinned — no chrome, so no stepper of its own to press', locked === 0, `${String(locked)} button(s) still drawn`)
+
+  const before = await paneZoom(fight)
+  await page.click(SHARED_PLUS, { timeout: 15_000 })
+  const want = Math.round((before + 0.1) * 100) / 100
+  const after = await zoomSettles(fight, want)
+  check('…and Preferences resizes it anyway — the control the reports could not find', Math.abs(after - want) < EPS,
+    `${String(before)} -> ${String(after)}`)
+
+  await fight.evaluate(() =>
+    (window as unknown as { eqOverlay: { setLocked: (v: boolean) => void } }).eqOverlay.setLocked(false)
+  )
+  await settle(() => fight.evaluate(() => document.querySelectorAll('button').length), (n) => n > 0, { timeoutMs: 15_000 }).catch(() => 0)
+}
+
+/**
  * ACCEPTANCE 3: with Independent on, a row moves ONLY that overlay.
  *
  * The holding half is the one that matters and it is an ABSENCE, so it is measured rather than
