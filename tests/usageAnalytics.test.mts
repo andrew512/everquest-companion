@@ -110,11 +110,8 @@ test('column mapping is TOTAL: a missing or wrong-typed column becomes a default
     // the fail-safe direction: an install nobody marked is a user.
     { day: '2026-08-01', cohort: 'user', metric: 'sessions', dim: '-', n: 12 }
   ])
-  // A string that is not a number is still 0, and so is an empty one: the rule reads a NUMBER
-  // written as text, it does not coerce whatever turns up.
-  assert.equal(toUsageRows([{ n: 'lots' }])[0].n, 0)
-  assert.equal(toUsageRows([{ n: '' }])[0].n, 0)
-  assert.equal(toUsageRows([{ n: Number.NaN }])[0].n, 0)
+  // The other direction — a string that is NOT a number, an empty one, a NaN — is pinned beside
+  // the change that caused it, in tests/telemetryShards.test.mts (this file is at the ceiling).
   assert.deepEqual(toFunnelRows([{}]), [
     { day: '', cohort: 'user', funnel: '', step: '', outcome: '-', appVersion: '?', n: 0 }
   ])

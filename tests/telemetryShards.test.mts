@@ -23,6 +23,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { toUsageRows } from '../src/main/triage/usageRows'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -99,6 +100,21 @@ test('every reader outside the Lambda reads the merged VIEW, never the frozen ta
   // goes through these two functions.
   assert.equal(/FROM usage_daily\b/.test(store), false)
   assert.equal(/FROM perf_daily\b/.test(store), false)
+})
+
+/**
+ * THE SILENT-ZERO GUARD, and it is here rather than beside the other row-mapping tests because
+ * the view is what made it necessary. A counter that arrives as `'12'` must read as 12 — the
+ * measurement that forced this is in the view's note in infra/schema.sql — and anything that is
+ * not a number written as text must still be 0, because the rule reads a number, it does not
+ * coerce whatever turns up. tests/usageAnalytics.test.mts pins the positive case.
+ */
+test('a counter written as text is a number; anything else is still 0', () => {
+  assert.equal(toUsageRows([{ n: '12' }])[0].n, 12)
+  assert.equal(toUsageRows([{ n: 'lots' }])[0].n, 0)
+  assert.equal(toUsageRows([{ n: '' }])[0].n, 0)
+  assert.equal(toUsageRows([{ n: Number.NaN }])[0].n, 0)
+  assert.equal(toUsageRows([{}])[0].n, 0)
 })
 
 test('the retry ladder is FULL JITTER and says so when it gives up', () => {
