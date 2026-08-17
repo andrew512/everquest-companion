@@ -281,7 +281,13 @@ const SKY_CARD = join(RENDERER, 'features', 'posky', 'SkyItemCard.tsx')
  * certainly not MUI's Tooltip. That is what keeps "the Sky tab's cards are click-through" a
  * property of one file rather than of whoever edits these next.
  */
-const CLICK_THROUGH_ONLY = ['features/posky/QuestAccordion.tsx', 'features/posky/QuestItemsTable.tsx']
+const CLICK_THROUGH_ONLY = [
+  'features/posky/QuestAccordion.tsx',
+  'features/posky/QuestItemsTable.tsx',
+  // The Cleanup tab (JOS-389) draws item names in a scrolling list under its own toolbar - which
+  // mounts the count-source dropdown - so it is the same geometry the rule was written for.
+  'features/posky/CleanupList.tsx'
+]
 
 test('the Sky tab draws its cards ONLY through SkyItemCard (JOS-181)', () => {
   for (const rel of CLICK_THROUGH_ONLY) {
