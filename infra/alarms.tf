@@ -8,6 +8,13 @@
 # The email subscription needs ONE manual confirmation click after the first
 # apply. Terraform shows it as `pending confirmation` until then, and an
 # unconfirmed subscription delivers nothing — check it before trusting the alarms.
+#
+# THREE MORE ALARMS LIVE ELSEWHERE, and this line is here so the inventory stays
+# findable from the file called alarms.tf: `backup.tf` carries the AWS Backup
+# job-failure alarm, and `export.tf` carries the nightly export's failure and
+# staleness pair. Both were kept beside their subsystem because each is one
+# mechanism a reader has to take in whole, not because the split is a preference.
+# They all publish to `aws_sns_topic.ops` below.
 # -----------------------------------------------------------------------------
 
 data "aws_caller_identity" "current" {}
