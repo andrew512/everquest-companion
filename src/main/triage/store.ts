@@ -100,6 +100,8 @@ export interface Stack {
   triage_role_arn: string
   lambda_role_arn: string
   telemetry_lambda_role_arn: string
+  /** JOS-398: the nightly export function's role, mapped to the read-only `analytics_export`. */
+  export_lambda_role_arn: string
   api_url: string
 }
 
@@ -128,6 +130,10 @@ const STACK_KEYS = [
   // it — the cache is read back without re-validating, deliberately (it is a cache, not a
   // contract), so `migrate` checks for an unsubstituted placeholder and says `--refresh`.
   'telemetry_lambda_role_arn',
+  // Added by JOS-398, on the same terms as the key above it: a stack.json cached before this
+  // output existed simply has no value for it, and `migrate` catches the unsubstituted
+  // `${EXPORT_LAMBDA_ROLE_ARN}` and says `--refresh` rather than mapping a role to nothing.
+  'export_lambda_role_arn',
   'api_url',
 ] as const
 

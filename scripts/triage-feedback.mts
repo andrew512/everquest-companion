@@ -235,6 +235,7 @@ async function cmdMigrate(ctx: Ctx): Promise<void> {
   const sql = readFileSync(SCHEMA_FILE, 'utf8')
     .replaceAll('${LAMBDA_ROLE_ARN}', text(c.stack.lambda_role_arn))
     .replaceAll('${TELEMETRY_LAMBDA_ROLE_ARN}', text(c.stack.telemetry_lambda_role_arn))
+    .replaceAll('${EXPORT_LAMBDA_ROLE_ARN}', text(c.stack.export_lambda_role_arn))
   // A CACHED .triage/stack.json written before a new output existed has no value for it, and
   // the cache is deliberately read back without re-validating (it is a cache, not a contract).
   // So the check is on the SUBSTITUTED text: an `AWS IAM GRANT … TO '${…}'` that reached the

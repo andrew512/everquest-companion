@@ -49,10 +49,11 @@ const ROOT = dirname(HERE)
 const OUT_DIR = join(HERE, 'dist')
 
 /**
- * TWO ENTRY POINTS, TWO ZIPS — one per Lambda function (lambda.tf explains why the telemetry
- * ingest is a second function rather than a second route on the first). They are built in one
- * pass and share nothing at run time; each zip carries its own copy of what it imports, which
- * is what makes "deploy one without touching the other" true.
+ * THREE ENTRY POINTS, THREE ZIPS — one per Lambda function (lambda.tf explains why the telemetry
+ * ingest is a second function rather than a second route on the first; export.tf explains why the
+ * nightly archive is a third). They are built in one pass and share nothing at run time; each zip
+ * carries its own copy of what it imports, which is what makes "deploy one without touching the
+ * other" true.
  *
  * `contract` is the shared module the entry point is not allowed to be built without. It is
  * checked before esbuild runs so the failure says WHICH promise broke ("one validator, client
@@ -70,6 +71,12 @@ const ENTRIES = [
     entry: join(HERE, 'lambda', 'telemetry.ts'),
     contract: join(ROOT, 'src', 'shared', 'telemetryValidate.ts'),
     why: 'infra/lambda/telemetry.ts imports validateTelemetryBatch from it on purpose — one validator, client and server.',
+  },
+  {
+    name: 'export',
+    entry: join(HERE, 'lambda', 'export.ts'),
+    contract: join(ROOT, 'src', 'shared', 'analyticsTables.ts'),
+    why: 'infra/lambda/export.ts and scripts/analyticsImport.mts import the SAME table registry on purpose — an exporter and an importer that disagree about a column are a backup that cannot be restored.',
   },
 ]
 

@@ -682,3 +682,55 @@ GRANT SELECT, INSERT, UPDATE ON perf_daily TO telemetry_ingest;
 GRANT SELECT, INSERT, UPDATE ON usage_daily_sharded TO telemetry_ingest;
 
 GRANT SELECT, INSERT, UPDATE ON perf_daily_sharded TO telemetry_ingest;
+
+-- ---- the EXPORT database role (JOS-398) --------------------------------------
+--
+-- A THIRD ROLE, AND IT IS THE ONLY READ-ONLY ONE. The nightly archive Lambda
+-- (infra/lambda/export.ts) copies every table to S3 so that a bad migration, a
+-- table-swapping script or a fat-fingered DROP is recoverable at the ROW level and
+-- not only through an AWS Backup restore. Owner ruling 2026-08-16: the analytics
+-- data must never be lost.
+--
+-- IT IS THE WIDEST READ IN THIS FILE AND THE NARROWEST WRITE. Note what is absent
+-- from every line below: INSERT, UPDATE and DELETE, on every table, without
+-- exception. A full compromise of the export function can read the corpus — that is
+-- its entire job — and cannot change one byte of it. That is the opposite shape from
+-- the two ingest roles, which may write a little and read almost nothing, and the
+-- asymmetry is the point: the thing with a public endpoint cannot read, and the thing
+-- that can read has no public endpoint (its only invoker is an EventBridge rule).
+--
+-- NO GRANT ON THE TWO MERGE VIEWS, deliberately. The export copies TABLES — the
+-- physical rows, each under its own name — because a restore has to put a row back
+-- where it came from, and `usage_daily_all` would hand back a SUM whose two legs can
+-- no longer be told apart. src/shared/analyticsTables.ts states the same rule from
+-- the other end.
+
+CREATE ROLE analytics_export WITH LOGIN;
+
+AWS IAM GRANT analytics_export TO '${EXPORT_LAMBDA_ROLE_ARN}';
+
+GRANT SELECT ON feedback_config TO analytics_export;
+
+GRANT SELECT ON install_profile TO analytics_export;
+
+GRANT SELECT ON report TO analytics_export;
+
+GRANT SELECT ON install_quota TO analytics_export;
+
+GRANT SELECT ON report_idempotency TO analytics_export;
+
+GRANT SELECT ON dedupe_probe TO analytics_export;
+
+GRANT SELECT ON usage_daily TO analytics_export;
+
+GRANT SELECT ON usage_daily_sharded TO analytics_export;
+
+GRANT SELECT ON usage_funnel_daily TO analytics_export;
+
+GRANT SELECT ON analytics_install TO analytics_export;
+
+GRANT SELECT ON error_report TO analytics_export;
+
+GRANT SELECT ON perf_daily TO analytics_export;
+
+GRANT SELECT ON perf_daily_sharded TO analytics_export;
