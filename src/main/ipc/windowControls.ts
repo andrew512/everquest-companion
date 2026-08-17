@@ -25,7 +25,7 @@ interface RendererErrorPayload {
   name?: string
   view?: string
 }
-import { fitOverlayHeight } from '../overlayBounds'
+import { fitOverlayHeight, refitStripsForTextScale } from '../overlayBounds'
 import {
   applyOverlayLocked,
   getMainWindow,
@@ -183,6 +183,11 @@ export function registerWindowIpc(): void {
     if (p.textScale !== undefined && !getOverlayTextSize().independent) {
       const prefs = setOverlayTextSize({ shared: p.textScale })
       broadcastOverlayTextSize(prefs)
+      // …and the THREE STRIPS grow their windows with it (JOS-406): for the toast, the banner and
+      // the con card the window IS the card, so a text size that only zoomed the content would lay
+      // the card out in half the room — which is the report this ticket comes from. Panels are
+      // untouched; they scroll.
+      refitStripsForTextScale()
       // Whatever ELSE the patch carried is still this kind's own business. `rest` is almost always
       // EMPTY (the stepper sends one field) and an empty write is not a no-op here: every write
       // merges over `getOverlayConfig`, which clamps an absent scale to the default — so writing
@@ -201,7 +206,12 @@ export function registerWindowIpc(): void {
     getOverlayWindow(kind)?.webContents.send(IPC.onOverlayConfig, { kind, config: next })
     // …and, when the thing that moved was a per-kind SIZE (independent mode), tell Preferences,
     // whose per-overlay list is the only other place that number is written down.
-    if (p.textScale !== undefined) broadcastOverlayTextScales()
+    if (p.textScale !== undefined) {
+      broadcastOverlayTextScales()
+      // …and the strip windows follow the size they are now drawing at (JOS-406), exactly as they
+      // do on the shared route above. This is the INDEPENDENT branch, so at most one window moves.
+      refitStripsForTextScale()
+    }
     return next
   })
   // Locked (click-through) vs interactive. Persist + apply to the live window + ECHO.
@@ -263,6 +273,10 @@ export function registerWindowIpc(): void {
     // …and each window's own config, for the same seed: a change no window made is a change no
     // window would otherwise hear about.
     echoOverlayConfigs()
+    // …and the three STRIP WINDOWS are re-placed at the size they now draw at (JOS-406). Last,
+    // after the seed has been written and told: `refitStripsForTextScale` reads each kind's
+    // effective scale out of the store, so it has to run on the store this write leaves behind.
+    refitStripsForTextScale()
     return prefs
   })
 
