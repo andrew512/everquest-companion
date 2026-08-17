@@ -289,6 +289,19 @@ const CLICK_THROUGH_ONLY = [
   'features/posky/CleanupList.tsx'
 ]
 
+/**
+ * TWO SPELLINGS OF THE SAME CARD, and both are the card (JOS-401).
+ *
+ * A file here either mounts `SkyItemCard` directly or mounts `ItemNameLink`, which is
+ * QuestItemsTable's exported item NAME - a name that hovers into `SkyItemCard` and clicks into the
+ * Loot drill-down. CleanupList went the second way when the owner asked for the reward names to
+ * hover too: a second local wrapper around the same card would have been a second place for the
+ * click-through mode to be forgotten, which is the exact failure this whole rule exists to stop.
+ * The rule is unchanged in substance - no file below may reach MUI's Tooltip, the shared Tooltip
+ * or `KnownItemTooltip`, and every card it draws still opens downward and takes no clicks.
+ */
+const SKY_CARD_MOUNT = /<(SkyItemCard|ItemNameLink)[\s>]/
+
 test('the Sky tab draws its cards ONLY through SkyItemCard (JOS-181)', () => {
   for (const rel of CLICK_THROUGH_ONLY) {
     const src = readFileSync(join(RENDERER, rel), 'utf8')
@@ -299,8 +312,16 @@ test('the Sky tab draws its cards ONLY through SkyItemCard (JOS-181)', () => {
       !/<KnownItemTooltip[\s>]/.test(src),
       `${rel} must go through SkyItemCard, not straight to the generic card`
     )
-    assert.ok(/<SkyItemCard[\s>]/.test(src), `${rel} should still mount the Sky item card`)
+    assert.ok(SKY_CARD_MOUNT.test(src), `${rel} should still mount the Sky item card`)
   }
+})
+
+test('the Sky item NAME is one component, so the card cannot be forgotten on a name (JOS-401)', () => {
+  // ItemNameLink is the second spelling allowed above, and it is only allowed because it mounts
+  // the card itself. If that stops being true, every file that reached for the link instead of the
+  // card silently loses its hover - so the claim is pinned where the component lives.
+  const src = readFileSync(join(RENDERER, 'features', 'posky', 'QuestItemsTable.tsx'), 'utf8')
+  assert.ok(/<SkyItemCard[\s>]/.test(src), 'ItemNameLink still wraps its name in SkyItemCard')
 })
 
 test('SkyItemCard always passes clickThrough — the mode is never a call-site decision (JOS-181)', () => {

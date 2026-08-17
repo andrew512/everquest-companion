@@ -218,8 +218,10 @@ export function cleanupRows(
   const rows: CleanupRow[] = []
   for (const [key, claim] of indexClaims(quests)) {
     const quantity = held[key] ?? 0
-    // Nothing in hand is nothing to decide about — and this is also what makes the "I destroyed
-    // these" override remove the row: the statement zeroes the count the whole tab reads.
+    // Nothing in hand is nothing to decide about — and this is also what makes a destroy remove
+    // the row (JOS-401): the log's own `You successfully destroyed …` lines are subtracted from
+    // the held count this tab reads, so destroying the last copy empties the row out of existence
+    // with no statement from anybody. It is what the hand-stated 0 used to do, from evidence.
     if (quantity <= 0) continue
     const times = claim.quests.map((entry) => progress[entry.quest.key] ?? 0)
     // ONE un-turned-in claimant keeps the item off this screen. See the header.
@@ -322,9 +324,15 @@ export function dumpLocationsFrom(rows: readonly CarryRow[] | null | undefined):
 export const CLEANUP_CAVEAT =
   'Cleanup lists items you could destroy because every Sky quest that needs them has been turned in. Destroying is permanent and happens in the game, not here. If you delete something you wanted, that is on you.'
 
-/** What a row says about where its copies are, or that the dump has never seen them. */
+/**
+ * What a row says about where its copies are, or that the dump has never seen them.
+ *
+ * The absent case is a CELL in a table now (JOS-401), not a clause in a sentence, so it is four
+ * words instead of six: the column header already says `Where`, and repeating "location" and
+ * "inventory dump" inside it was the sentence apologising for a table that had not been built yet.
+ */
 export function locationsLine(locations: readonly CleanupLocation[]): string {
-  if (locations.length === 0) return 'location not in the inventory dump'
+  if (locations.length === 0) return 'not in the export'
   return locations.map((l) => `${l.label} ${String(l.count)}`).join(', ')
 }
 
