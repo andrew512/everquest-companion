@@ -287,6 +287,41 @@ export interface ResistDebuffSlot {
 }
 
 /**
+ * ONE EFFECT-0 (HITPOINT) SLOT, unevaluated (JOS-396).
+ *
+ * `base`, `max` and `calc` are the file's own three numbers and nothing has been done to them: the
+ * magnitude at a level is `clientHpMagnitudeAt` in shared/spellMetrics.ts, which is where the
+ * formula table and the argument for it live. Kept raw here for the same reason `ResistDebuffSlot`
+ * is: a level is a property of the READER, not of the table, and a table that had already picked
+ * one could not answer for a spell being browsed at another.
+ */
+export interface SpellHpSlot {
+  base: number
+  max: number
+  calc: number
+  /**
+   * True when the magnitude lands EVERY TICK rather than once — that is, when the spell carries a
+   * duration formula at all. An effect-0 slot on a duration spell is how EQ spells a DoT, a HoT and
+   * a regen line alike; on an instant spell it is the whole of the hit.
+   */
+  perTick: boolean
+}
+
+/**
+ * THE CLIENT'S OWN DURATION STATEMENT (fields 11 and 12), unevaluated (JOS-396).
+ *
+ * Two numbers, because the client's duration is a FUNCTION OF LEVEL for most formulas (formula 7 is
+ * `level`, formula 3 is `level * 30`) capped by `value`. `clientDurationTicks` in
+ * shared/spellMetrics.ts evaluates it and says which formulas it will answer for.
+ */
+export interface SpellDurationSpec {
+  /** Field 11. 0 is an instant spell; 50 and 51 are the two permanent kinds. */
+  formula: number
+  /** Field 12. The cap the formula is clamped to, and the whole answer for formulas 4/5/15. */
+  value: number
+}
+
+/**
  * What the estimator needs to know about a spell, derived from the CLIENT'S `spells_us.txt` at
  * runtime. Never committed to this repo — see `src/main/resist/spellTable.ts`.
  */
@@ -297,6 +332,22 @@ export interface SpellResistInfo {
   targetType: number
   /** Slot-1-through-N effect 0 (hitpoints), when the spell has one. Drives fixed-vs-variable. */
   hpSlot?: { base: number; max: number; calc: number }
+  /**
+   * EVERY effect-0 slot, in file order, and the duration they run over (JOS-396).
+   *
+   * `hpSlot` above is the FIRST of these and stays exactly as it was: the resist estimator asks one
+   * question of it ("is this spell's damage a fixed number?") and a shape change there would ripple
+   * through the ledger, the fold and the con card for no gain. This is the second reader's shape —
+   * the spell card's and the unlock row's, which need the whole list, the per-tick verdict and the
+   * duration to answer "what is this spell worth". 523 rows in the owner's file carry more than one.
+   *
+   * Both fields are written ONLY on rows that have at least one effect-0 slot. The table is cached
+   * to disk per install (`spell-resist-cache.json`) and a duration recorded beside nothing that
+   * reads it is a megabyte of JSON nobody asked for.
+   */
+  hp?: SpellHpSlot[]
+  /** The duration `hp` runs over, when the client states a formula. See `SpellDurationSpec`. */
+  hpDuration?: SpellDurationSpec
   /** Present only on resist debuffs (tash/malo). */
   debuffSlots?: ResistDebuffSlot[]
   /**

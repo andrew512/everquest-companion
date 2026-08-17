@@ -13,6 +13,13 @@
 // (which is not a formula) and the cap would be 101 (a number Tashani has never produced).
 // Malaisement confirms it at -40 on all four axes, and Mesmerization puts its documented
 // "up to level 55" in the same position.
+//
+// JOS-396 ADDS TWO MORE FIELDS AND THE SAME RULE APPLIES TO THEM. Fields 11 and 12 are the buff
+// duration formula and its cap, and Odium's row (id 4093, transcribed below) is the measurement:
+// `11 = 7`, `12 = 5`, five ticks, thirty seconds — the duration the wiki's own Odium page states
+// and the duration the game's spell window prints. What the parser does with them is nothing:
+// it records the two numbers and the effect-0 slots beside them, and every evaluation happens at
+// a READER'S level in shared/spellMetrics.ts.
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -26,6 +33,10 @@ function row(spec: {
   id: number
   name: string
   castMs?: number
+  /** Field 11 — the buff duration formula. 0 (the default) is an instant spell. */
+  durationFormula?: number
+  /** Field 12 — the cap the formula clamps to. */
+  duration?: number
   resistType?: number
   targetType?: number
   resistAdj?: number
@@ -36,6 +47,8 @@ function row(spec: {
   f[0] = String(spec.id)
   f[1] = spec.name
   f[8] = String(spec.castMs ?? 0)
+  f[11] = String(spec.durationFormula ?? 0)
+  f[12] = String(spec.duration ?? 0)
   f[29] = String(spec.resistType ?? 0)
   f[30] = String(spec.targetType ?? 0)
   for (let i = 0; i < 16; i++) f[36 + i] = '255'
@@ -49,6 +62,8 @@ function row(spec: {
 const ENC = 13
 const BRD = 7
 const PAL = 2
+const SHM = 9
+const NEC = 10
 
 // Verbatim from the owner's install, 2026-08-16.
 const TASHANI = row({ id: 677, name: 'Tashani', castMs: 1000, resistType: 0, targetType: 5, classes: { [ENC]: 20 }, slots: '1|36|1|0|100|0$2|50|-10|0|101|23' })
@@ -61,9 +76,21 @@ const SCORCHING_ARROW = row({ id: 74042, name: 'Scorching Arrow', castMs: 500, r
 const SCORCHING_ARROW_IV = row({ id: 74045, name: 'Scorching Arrow IV', castMs: 500, resistType: 2, targetType: 5, slots: '1|79|-420|0|100|420$2|0|-210|0|100|210' })
 const CHORDS = row({ id: 703, name: 'Chords of Dissonance', castMs: 3000, resistType: 1, targetType: 5, resistAdj: -100, classes: { [BRD]: 2 }, slots: '1|334|-2|0|109|0' })
 const SMITE = row({ id: 1234, name: 'Divine Might Strike', castMs: 0, resistType: 1, targetType: 5, resistAdj: -150, classes: { [PAL]: 30 }, slots: '1|0|-40|0|100|40' })
+// JOS-396, verbatim from the owner's install 2026-08-16. THE TICKET'S CASE: the wiki's slot table
+// for Odium lists `Increase Curse Counter by 8` and no hitpoint line at all; the client carries
+// both, and slot 2 is the damage the shaman actually does.
+const ODIUM = row({ id: 4093, name: 'Odium', castMs: 3000, durationFormula: 7, duration: 5, resistType: 1, targetType: 5, classes: { [SHM]: 43 }, slots: '1|116|8|0|100|0$2|0|-217|0|103|325' })
+// A PERMANENT duration (formula 50) over a per-tick drain — the necromancer's Lich. The client
+// states a RATE and no length, which is a total nobody can compute; the fold refuses it, and the
+// parse's job is only to record the 50 faithfully so the fold can.
+const LICH = row({ id: 1735, name: 'Lich', castMs: 6000, durationFormula: 50, duration: 0, resistType: 0, targetType: 6, classes: { [NEC]: 49 }, slots: '1|0|-22|0|100|0$2|15|10|0|100|0' })
+// THREE effect-0 slots on one row (id 14234, cleric 77). 523 rows in the owner's file carry more
+// than one, which is why `hp` is a list and `hpSlot` — the estimator's single-slot reader — could
+// never have been widened in place.
+const DIVINE_CENSURE = row({ id: 14234, name: 'Divine Censure', castMs: 3000, resistType: 1, targetType: 5, classes: { [PAL]: 77 }, slots: '1|0|-2164|635|100|2164$2|0|-2878|603|100|2878$3|0|-2575|118|100|2575' })
 
 const TABLE = parseSpellsUs(
-  [TASHANI, MALAISEMENT, MESMERIZATION, CHAOS_FLUX, CHAOS_FLUX_NPC, SMITING_STRIKE, SCORCHING_ARROW, SCORCHING_ARROW_IV, CHORDS, SMITE].join('\n') + '\n'
+  [TASHANI, MALAISEMENT, MESMERIZATION, CHAOS_FLUX, CHAOS_FLUX_NPC, SMITING_STRIKE, SCORCHING_ARROW, SCORCHING_ARROW_IV, CHORDS, SMITE, ODIUM, LICH, DIVINE_CENSURE].join('\n') + '\n'
 )
 
 test('the axis comes from field 29, and the four unmodellable kinds come back null', () => {
@@ -142,6 +169,45 @@ test('ranks fold onto the base row, and a mob copy loses to a spell a player can
   // Chaos Flux 6850 is an NPC's copy with no class able to cast it; the enchanter's row wins even
   // though it comes first, because "no class can learn this" is what a mob copy looks like.
   assert.deepEqual(TABLE['chaos flux'].hpSlot, { base: -110, max: 175, calc: 103 })
+})
+
+test('JOS-396: Odium carries its hitpoint slot AND the client duration the wiki page omits', () => {
+  // The whole ticket in four numbers: -217 base, cap 325, formula code 103, five ticks.
+  assert.deepEqual(TABLE.odium.hp, [{ base: -217, max: 325, calc: 103, perTick: true }])
+  assert.deepEqual(TABLE.odium.hpDuration, { formula: 7, value: 5 })
+  // `hpSlot` is UNCHANGED — the resist estimator's reader keeps the shape it has always had, and
+  // `hp[0]` is the same slot said the other way.
+  assert.deepEqual(TABLE.odium.hpSlot, { base: -217, max: 325, calc: 103 })
+})
+
+test('JOS-396: a slot is per-tick when the ROW has a duration formula, and only then', () => {
+  // Chaos Flux is an instant nuke (formula 0): its effect-0 slot lands once, and there is no
+  // duration to record beside it.
+  assert.deepEqual(TABLE['chaos flux'].hp, [{ base: -110, max: 175, calc: 103, perTick: false }])
+  assert.equal(TABLE['chaos flux'].hpDuration, undefined)
+  // Lich is formula 50 — PERMANENT. The slot is per-tick and the duration says so; what to do
+  // with "a rate and no length" is the fold's problem, not the parse's.
+  assert.deepEqual(TABLE.lich.hp, [{ base: -22, max: 0, calc: 100, perTick: true }])
+  assert.deepEqual(TABLE.lich.hpDuration, { formula: 50, value: 0 })
+})
+
+test('JOS-396: every effect-0 slot comes through, in file order', () => {
+  assert.deepEqual(TABLE['divine censure'].hp, [
+    { base: -2164, max: 2164, calc: 100, perTick: false },
+    { base: -2878, max: 2878, calc: 100, perTick: false },
+    { base: -2575, max: 2575, calc: 100, perTick: false }
+  ])
+  // …and the single-slot reader still answers with the FIRST of them, unchanged.
+  assert.deepEqual(TABLE['divine censure'].hpSlot, { base: -2164, max: 2164, calc: 100 })
+})
+
+test('JOS-396: a row with no hitpoint slot carries neither field', () => {
+  // Smiting Strike's damage is a skill effect; Tashani moves a resist and nothing else. Writing an
+  // empty list or a duration beside nothing would put a megabyte of JSON in every install's cache.
+  assert.equal(TABLE['smiting strike'].hp, undefined)
+  assert.equal(TABLE['smiting strike'].hpDuration, undefined)
+  assert.equal(TABLE.tashani.hp, undefined)
+  assert.equal(TABLE.tashani.hpDuration, undefined)
 })
 
 test('a malformed row is skipped rather than half-read', () => {

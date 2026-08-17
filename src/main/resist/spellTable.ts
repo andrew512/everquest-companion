@@ -27,8 +27,16 @@ import { logError } from '../errorLog'
 import type { SpellResistTable } from '../../shared/resistTypes'
 import type { ResistTableWorkerReply } from '../resistTableWorker'
 
-/** Bump to invalidate every cached table in the field (a parser change, not a game patch). */
-export const SPELL_RESIST_CACHE_VERSION = 1
+/**
+ * Bump to invalidate every cached table in the field (a parser change, not a game patch).
+ *
+ *   1  JOS-382, the original table.
+ *   2  JOS-396 — every effect-0 slot and the client's duration statement (`hp`, `hpDuration`). A
+ *      version-1 cache is not upgradeable in place: the fields were never read out of the file, so
+ *      the only way to get them is the re-parse this bump forces. It costs one launch's worth of
+ *      worker time per install, once.
+ */
+export const SPELL_RESIST_CACHE_VERSION = 2
 
 interface CacheFile {
   version: number

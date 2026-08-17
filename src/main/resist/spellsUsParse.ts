@@ -14,9 +14,16 @@
 // THE FIELD MAP, verified by measurement against the owner's install (2026-08-16):
 //
 //   0    spell id                       1    name
-//   8    cast time, ms                  29   resist type (see axisFromResistType)
+//   8    cast time, ms                  11   buff duration formula (JOS-396)
+//   12   buff duration                  29   resist type (see axisFromResistType)
 //   30   target type                    36..51  class levels, WAR..BER (255 = cannot use)
 //   78   resist adjust                  172  effect slots, `$`-separated
+//
+// FIELDS 11 AND 12 WERE ADDED BY JOS-396 and are measured the same way: Odium (id 4093) reads
+// `11 = 7`, `12 = 5`, and formula 7 is "as many ticks as the caster's level, capped at field 12" —
+// five ticks, thirty seconds, which is the duration the wiki's own page for Odium states and the
+// duration the in-game spell window prints. `clientDurationTicks` (shared/spellMetrics.ts) holds
+// the formula table and the measurement behind it.
 //
 // AND ONE CORRECTION TO THE BRIEF, because it was measured rather than assumed: an effect slot is
 // `slot | effectId | base | limit | CALC | MAX`, not `… | max | calc`. The proof is Tashani
@@ -30,12 +37,14 @@
 // variable), 46 fire / 47 cold / 48 poison / 49 disease / 50 magic / 111 all (the tash and malo
 // family), 22 charm and 31 mesmerize (the two that carry a hard level cap).
 
-import { axisFromResistType, type ResistAxis, type ResistDebuffSlot, type SpellResistInfo, type SpellResistTable } from '../../shared/resistTypes'
+import { axisFromResistType, type ResistAxis, type ResistDebuffSlot, type SpellHpSlot, type SpellResistInfo, type SpellResistTable } from '../../shared/resistTypes'
 import { spellCanonKey } from '../log/parseCommon'
 
 const F_ID = 0
 const F_NAME = 1
 const F_CAST_MS = 8
+const F_DURATION_FORMULA = 11
+const F_DURATION = 12
 const F_RESIST_TYPE = 29
 const F_TARGET_TYPE = 30
 const F_CLASS_FIRST = 36
@@ -120,6 +129,23 @@ function hpSlotOf(slots: readonly Slot[]): SpellResistInfo['hpSlot'] {
   return undefined
 }
 
+/**
+ * EVERY effect-0 slot, in file order, marked per-tick or not (JOS-396).
+ *
+ * `perTick` is one question of the ROW rather than of the slot — does this spell have a duration at
+ * all — and it is written onto each slot because that is where the reader needs it: an effect-0 slot
+ * on a duration spell is a DoT/HoT/regen line that lands every tick, and on an instant spell it is
+ * the whole hit. Odium's `2|0|-217|0|103|325` with duration formula 7 is the first kind; Bolt of
+ * Karana's `1|0|-200|0|100|200` with formula 0 is the second.
+ */
+function hpSlotsOf(slots: readonly Slot[], perTick: boolean): SpellHpSlot[] | undefined {
+  const out: SpellHpSlot[] = []
+  for (const s of slots) {
+    if (s.effect === EFFECT_HITPOINTS) out.push({ base: s.base, max: s.max, calc: s.calc, perTick })
+  }
+  return out.length > 0 ? out : undefined
+}
+
 function classLevels(f: readonly string[]): { any: boolean; bardOnly: boolean } {
   let any = false
   let nonBard = false
@@ -145,6 +171,12 @@ function rowInfo(f: readonly string[]): SpellResistInfo {
   }
   const hp = hpSlotOf(slots)
   if (hp) info.hpSlot = hp
+  const formula = Number(f[F_DURATION_FORMULA]) || 0
+  const hpSlots = hpSlotsOf(slots, formula !== 0)
+  if (hpSlots) {
+    info.hp = hpSlots
+    if (formula !== 0) info.hpDuration = { formula, value: Number(f[F_DURATION]) || 0 }
+  }
   const debuffs = debuffSlots(slots)
   if (debuffs) info.debuffSlots = debuffs
   const cap = levelCapOf(slots)
