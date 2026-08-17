@@ -31,8 +31,11 @@
 //             ./EqFolderSetting.tsx, like Updates does — this file only names it.
 //   Text size — how big the MAIN window draws everything (JOS-123): a five-stop ladder from 90%
 //             to 150%, applied on the press and remembered. Second in the rail on purpose. Lives
-//             in ./TextSizeSetting.tsx, descriptor and all. The overlays' own text scaling is a
-//             separate control on the overlay itself.
+//             in ./TextSizeSetting.tsx, descriptor and all. SINCE JOS-405 IT IS BOTH SIZES: the
+//             overlays' shared size, the opt-in switch that unpins them from each other, and a
+//             persistent row per overlay window (./OverlayTextSizeSetting.tsx). The steppers on
+//             the overlays themselves are unchanged and write the same value — this is where a
+//             player who pinned their meters can reach it at all.
 //   Combat   — the meters' two shaping choices: WHOSE damage they show (You / Group / Everyone,
 //             default Everyone since JOS-229 — JOS-115 moved it here off every combat surface,
 //             JOS-229 changed which way it opens) and where the

@@ -10,6 +10,8 @@ import { getFightSelection, setFightSelection } from '../fightSelection'
 import { getScopeSelection, setScopeSelection } from '../scopeSelection'
 import { getOverlayConfig, setOverlayConfig } from '../store'
 import { getOverlaySnap, setOverlaySnap } from '../storeOverlaySnap'
+import { getOverlayTextSize, setOverlayTextSize } from '../storeOverlayTextSize'
+import type { OverlayTextSizePrefs } from '../../shared/overlayTextScale'
 import { getCloseToTray } from '../storeCloseToTray'
 import { applyCloseToTray } from '../tray'
 import { noteCurrentView } from '../telemetry/errorReports'
@@ -33,8 +35,61 @@ import {
   setOverlayIgnoreMouse,
   setOverlayOpen
 } from '../windows'
-import { OVERLAY_KINDS } from '../../shared/types'
+import { OVERLAY_KINDS, TEXT_SCALE_DEFAULT } from '../../shared/types'
 import type { AppFocus, AppFocusView, OverlayConfig, OverlayKind } from '../../shared/types'
+
+/**
+ * ONE VALUE, THIRTEEN CONTROLS — so every change is told to all of them (JOS-405).
+ *
+ * The overlays' text size can be moved from any of twelve windows' own A− / A+ and from three
+ * controls in Preferences, and the thing that decides what a window DRAWS is the preference rather
+ * than anything in that window. So a change goes to every OPEN overlay window (which is how a
+ * pinned meter — no chrome, no stepper, nothing to press — follows the shared size) and to the app
+ * window (so the Preferences stepper and the twelve rows agree with a press made on a meter).
+ *
+ * Closed windows need nothing: an overlay reads the prefs on mount, so the next one to open comes
+ * up at the current size by construction.
+ */
+function broadcastOverlayTextSize(prefs: OverlayTextSizePrefs): void {
+  for (const k of OVERLAY_KINDS) {
+    getOverlayWindow(k)?.webContents.send(IPC.onOverlayTextSize, prefs)
+  }
+  const app = getMainWindow()
+  if (app && !app.isDestroyed()) app.webContents.send(IPC.onOverlayTextSize, prefs)
+}
+
+/** Every kind's OWN stored scale, clamped by the store on the way out. What Preferences'
+ *  per-overlay list edits while independent sizes are on. */
+function overlayTextScaleMap(): Record<OverlayKind, number> {
+  const out = {} as Record<OverlayKind, number>
+  for (const k of OVERLAY_KINDS) out[k] = getOverlayConfig(k).textScale ?? TEXT_SCALE_DEFAULT
+  return out
+}
+
+/**
+ * RE-STATE EVERY OPEN OVERLAY'S OWN CONFIG (JOS-405).
+ *
+ * An overlay window holds its config locally and only ever hears about changes it made or was
+ * echoed. The first opt-in to independent sizes SEEDS all twelve per-kind values in the store
+ * (storeOverlayTextSize.ts), which is a change no window made — MEASURED in
+ * tests/e2e/text-size.e2e.mts: without this the fight meter went independent still holding the
+ * `textScale` it was born with, and snapped to 100% under a store that said 120%.
+ *
+ * Called only from the prefs setter, not from every shared press: a press changes no kind's config
+ * at all, so echoing there would be twelve sends saying nothing.
+ */
+function echoOverlayConfigs(): void {
+  for (const k of OVERLAY_KINDS) {
+    getOverlayWindow(k)?.webContents.send(IPC.onOverlayConfig, { kind: k, config: getOverlayConfig(k) })
+  }
+}
+
+/** …and the push that keeps that list honest when a press is made on a WINDOW instead. Only the
+ *  app window has rows to correct; an overlay's own config echo already told it about itself. */
+function broadcastOverlayTextScales(): void {
+  const app = getMainWindow()
+  if (app && !app.isDestroyed()) app.webContents.send(IPC.onOverlayTextScales, overlayTextScaleMap())
+}
 
 /** A non-empty display string, or undefined. Trimmed only for the emptiness test — the receiving
  *  view looks the value up verbatim, exactly as the sending window read it. */
@@ -107,26 +162,46 @@ export function registerWindowIpc(): void {
   ipcMain.handle(IPC.overlayGetState, () => overlayStateMap())
   ipcMain.handle(IPC.overlayGetConfig, (_e, kind: OverlayKind) => getOverlayConfig(kind))
   ipcMain.handle(IPC.overlaySetConfig, (_e, kind: OverlayKind, patch: Partial<OverlayConfig>) => {
-    // TEXT SCALE IS ONE VALUE ACROSS EVERY OVERLAY (owner, 2026-08-05: scaling the fight meter
-    // and watching the overall meter not move reads as broken). The field still LIVES per kind
-    // (config shape untouched, every reader unchanged) — this setter is the one door every
-    // patch walks through, so a textScale write simply fans out to all kinds and every open
-    // overlay window hears its own echo. A locked window with hidden controls follows along,
-    // which is half the point.
+    // TEXT SCALE IS ROUTED, NOT FANNED OUT (JOS-405).
+    //
+    // The 2026-08-05 rule was that one press moves every overlay, because scaling the fight meter
+    // and watching the overall meter not move reads as broken. It was implemented by WRITING all
+    // twelve per-kind fields on every press — which is right until somebody asks for them apart,
+    // and then the twelve copies have already been flattened into one and there is nothing to go
+    // back to. So the rule is now the DEFAULT of a switch rather than the law of this handler:
+    //
+    //   SYNCED (the shipped state)  — the press moves the SHARED preference and touches no kind's
+    //                                 stored value. Every open window is pushed the new prefs and
+    //                                 resolves its own effective scale; a locked window with
+    //                                 hidden controls follows along, which is half the point.
+    //   INDEPENDENT                 — the press writes THIS kind and echoes THIS window, exactly
+    //                                 as the field's own shape always said it would.
+    //
+    // Either way the per-kind value survives what the other mode does to it, which is the promise
+    // the switch makes: sync for a week, unsync, and your fight meter is 150% again.
     const p = patch ?? {}
-    if (p.textScale !== undefined) {
-      let out: OverlayConfig | null = null
-      for (const k of OVERLAY_KINDS) {
-        const merged = setOverlayConfig(k, k === kind ? p : { textScale: p.textScale })
-        getOverlayWindow(k)?.webContents.send(IPC.onOverlayConfig, { kind: k, config: merged })
-        if (k === kind) out = merged
-      }
-      return out ?? setOverlayConfig(kind, {})
+    if (p.textScale !== undefined && !getOverlayTextSize().independent) {
+      const prefs = setOverlayTextSize({ shared: p.textScale })
+      broadcastOverlayTextSize(prefs)
+      // Whatever ELSE the patch carried is still this kind's own business. `rest` is almost always
+      // EMPTY (the stepper sends one field) and an empty write is not a no-op here: every write
+      // merges over `getOverlayConfig`, which clamps an absent scale to the default — so writing
+      // nothing would still stamp a `textScale` onto a kind that has never had one. Handling the
+      // other fields through the ordinary door is what keeps that "almost" from being a rule this
+      // handler quietly breaks.
+      const { textScale: _routed, ...rest } = p
+      if (Object.keys(rest).length === 0) return getOverlayConfig(kind)
+      const next = setOverlayConfig(kind, rest)
+      getOverlayWindow(kind)?.webContents.send(IPC.onOverlayConfig, { kind, config: next })
+      return next
     }
     const next = setOverlayConfig(kind, p)
     // Echo the merged config to that kind's overlay window so its UI stays in sync if the change
     // originated elsewhere (keeps the contract honest and cheap).
     getOverlayWindow(kind)?.webContents.send(IPC.onOverlayConfig, { kind, config: next })
+    // …and, when the thing that moved was a per-kind SIZE (independent mode), tell Preferences,
+    // whose per-overlay list is the only other place that number is written down.
+    if (p.textScale !== undefined) broadcastOverlayTextScales()
     return next
   })
   // Locked (click-through) vs interactive. Persist + apply to the live window + ECHO.
@@ -165,6 +240,31 @@ export function registerWindowIpc(): void {
   // hand-edited file and a renderer cannot disagree about what this setting is.
   ipcMain.handle(IPC.overlaySnapGet, () => getOverlaySnap())
   ipcMain.handle(IPC.overlaySnapSet, (_e, patch: unknown) => setOverlaySnap(patch))
+
+  // ---- the overlays' text size (JOS-405) ----
+  // The read every overlay window makes on mount and Preferences seeds its three controls from,
+  // and the write Preferences makes (a window's own A− / A+ arrives through `overlay:setConfig`
+  // above, which routes it here). The patch is renderer input and is re-validated inside
+  // `setOverlayTextSize` through the shared normalizer, so a hand-edited file and a renderer
+  // cannot disagree about what this setting is.
+  //
+  // THE WRITE ALWAYS BROADCASTS, including the `independent` flip that carries no number: turning
+  // the switch off is what puts every window back on the shared size, and no window can observe
+  // that for itself.
+  ipcMain.handle(IPC.overlayTextSizeGet, () => getOverlayTextSize())
+  ipcMain.handle(IPC.overlayTextScalesGet, () => overlayTextScaleMap())
+  ipcMain.handle(IPC.overlayTextSizeSet, (_e, patch: unknown) => {
+    const prefs = setOverlayTextSize(patch)
+    broadcastOverlayTextSize(prefs)
+    // …the per-kind map with it, because the FIRST opt-in seeds all twelve per-kind values
+    // (storeOverlayTextSize.ts `seedOnFirstOptIn`, so opting in resizes nothing) and Preferences'
+    // rows go live in that same instant and must state the seeded numbers…
+    broadcastOverlayTextScales()
+    // …and each window's own config, for the same seed: a change no window made is a change no
+    // window would otherwise hear about.
+    echoOverlayConfigs()
+    return prefs
+  })
 
   // ---- what the X does (JOS-139) ----
   // The preference behind the close interceptor (src/main/tray.ts). The patch is renderer input

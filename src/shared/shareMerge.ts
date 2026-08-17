@@ -8,6 +8,7 @@
 // still the one import site for consumers and no import path changed.
 
 import type { AlertDef, OverlayKind, AlertPrefs } from './types'
+import { OVERLAY_KIND_LABEL } from './overlayLabels'
 import {
   canonicalJson,
   checksum,
@@ -192,46 +193,18 @@ export interface ScalarContext {
   ui: Record<string, string>
 }
 
-const OVERLAY_KIND_LABEL: Record<OverlayKind, string> = {
-  fight: 'Fight meter',
-  overall: 'Overall meter',
-  'heal-fight': 'Healing (fight)',
-  'heal-overall': 'Healing (overall)',
-  events: 'Event feed',
-  // The toast strip has no bgAlpha row to share today (src/main/share.ts's KINDS list
-  // does not include it), but the label map is keyed by the whole union, so it is named here
-  // rather than letting a future shared field render as a raw kind id.
-  toast: 'Celebration toasts',
-  // Same as the toast row above: the buff/timer overlay (JOS-89) has no shared field today —
-  // `src/main/share.ts`'s KINDS list does not include it — but the map is keyed by the whole
-  // union on purpose, so it is named here rather than letting a future shared field render as
-  // a raw kind id.
-  buffs: 'Buff timers',
-  // The debuff/CC half of the JOS-119 split. Same story as the two rows above: no shared field
-  // today, named here because the map is keyed by the whole union on purpose.
-  debuffs: 'Debuff timers',
-  // And the XP window (JOS-195). Same story a third time: no shared field today — `src/main/
-  // share.ts`'s KINDS list does not include it — but the map is keyed by the whole union on
-  // purpose, so it is named here rather than letting a future shared field render as a raw id.
-  xp: 'XP and motes',
-  // And the respawn clocks (JOS-194). Same story a fourth time: no shared field today —
-  // `src/main/share.ts`'s KINDS list does not include it — but the map is keyed by the whole
-  // union on purpose, so it is named here rather than letting a future shared field render as a
-  // raw kind id. The WATCH LIST is deliberately not shareable either: it names the mobs somebody
-  // camps, which is a fact about their play, not a setting.
-  respawn: 'Respawn clocks',
-  // And the alert banner (JOS-378). Same story a fifth time: no shared field today — `src/main/
-  // share.ts`'s KINDS list does not include it — but the map is keyed by the whole union on
-  // purpose, so it is named here rather than letting a future shared field render as a raw kind
-  // id. The PER-ALERT half of this feature (`showOnScreen` / `bannerText` / `bannerColor`) does
-  // travel in a shared bundle, because it lives on the alert def and an alert def is the thing
-  // sharing exists for.
-  alertBanner: 'Alert banner',
-  // And the con card (JOS-383). Same story a sixth time: no shared field today — `src/main/
-  // share.ts`'s KINDS list does not include it — but the map is keyed by the whole union on
-  // purpose, so it is named here rather than letting a future shared field render as a raw kind id.
-  conCard: 'Mob card on con'
-}
+// THE KIND LABELS ARE NOT THIS FILE'S ANY MORE (JOS-405).
+//
+// There were two maps — this one and the title bar's Overlay menu — and they DISAGREED about two
+// windows: a bundle offered to change the opacity of an "Overall meter" and an "Event feed" that
+// the menu, three inches away, calls the Zone meter and the Event log. Neither spelling was wrong;
+// having two was, because an import preview is read beside the menu it describes.
+//
+// `shared/overlayLabels.ts` now holds the one map, in the MENU's wording — the name a user meets
+// first, because it is what they clicked to make the window exist. It is keyed by the WHOLE union
+// for the reason every row of the local copy said it was: kinds with no shared field today are
+// named there too (only `EXPORTABLE_OVERLAY_KINDS` below decides what actually travels), so a
+// future shared field can never render as a raw kind id.
 
 /**
  * Everything a scalar row compares is a PRIMITIVE (a volume, a flag, a density, a JSON
