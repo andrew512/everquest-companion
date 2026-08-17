@@ -406,7 +406,10 @@ test('the ingest handler runs the SHARED validator and the SHARED rollup', () =>
 
 test('every counter UPSERT is ADDITIVE, so a retried transaction cannot double-count', () => {
   const src = readFileSync(join(ROOT, 'infra', 'lambda', 'telemetry.ts'), 'utf8')
-  assert.match(src, /ON CONFLICT \(day, cohort, metric, dim\) DO UPDATE SET n = usage_daily\.n \+ EXCLUDED\.n/)
+  // The conflict target gained the SHARD (JOS-394) and must still be EXACTLY the sharded
+  // table's primary key, or postgres answers 42P10 and the UPSERT resolves against nothing.
+  assert.match(src, /ON CONFLICT \(shard, day, cohort, metric, dim\) DO UPDATE/)
+  assert.match(src, /SET n = usage_daily_sharded\.n \+ EXCLUDED\.n/)
   assert.match(src, /ON CONFLICT \(day, cohort, funnel, step, outcome, app_version\) DO UPDATE/)
   assert.match(src, /SET n = usage_funnel_daily\.n \+ EXCLUDED\.n/)
   // The install UPSERT's guard IS the daily cap; without the WHERE it would never refuse.
@@ -450,17 +453,34 @@ test('THE FIVE TABLES, AND NO SIXTH: the handler writes exactly the plan’s sto
   // TRAIL; `error_report` is keyed on (day, cohort, version, FINGERPRINT) and `perf_daily` on
   // seven dims with no id among them, so a hundred installs on the same class of box write ONE
   // row. There is still nothing here that could reconstruct what one install did.
+  //
+  // JOS-394 DID NOT ADD A SIXTH KIND. Two of the five are written under their SHARDED names now
+  // (`usage_daily_sharded`, `perf_daily_sharded`) — same columns, same meaning, one extra key
+  // column that spreads a hot counter over 32 rows — and the pre-cutover tables are frozen and
+  // merged back by a view at read time. The storage SHAPE is unchanged: still five kinds of
+  // fact, still no per-user trail, and the new column is a random integer that carries no
+  // information about the sender (the test below pins that).
   const src = readFileSync(join(ROOT, 'infra', 'lambda', 'telemetry.ts'), 'utf8')
   const tables = [...src.matchAll(/INSERT INTO (\w+)/g)].map((m) => m[1])
   assert.deepEqual(
     [...new Set(tables)].sort(),
-    ['analytics_install', 'error_report', 'perf_daily', 'usage_daily', 'usage_funnel_daily']
+    [
+      'analytics_install',
+      'error_report',
+      'perf_daily_sharded',
+      'usage_daily_sharded',
+      'usage_funnel_daily'
+    ]
   )
   // The cube's CONFLICT TARGET and the schema's PRIMARY KEY have to agree, or the UPSERT
   // resolves against nothing (42P10, on a cluster, weeks later) — the pin the cohort test above
   // makes for the two counter tables, made for the fifth.
-  const cubeKey = 'day, cohort, window_mode, machine_class, locked, stall_bucket, tail_bucket'
-  assert.ok(src.includes(`ON CONFLICT (${cubeKey})`))
+  const cubeKey =
+    'shard, day, cohort, window_mode, machine_class, locked, stall_bucket, tail_bucket'
+  // The statement is assembled from concatenated literals, so the pin is over the JOINED text:
+  // a key that only matches because of where the source happens to wrap is not a pin.
+  const joined = src.replace(/' \+\s+'/g, '')
+  assert.ok(joined.includes(`ON CONFLICT (${cubeKey})`))
   assert.ok(readFileSync(join(ROOT, 'infra', 'schema.sql'), 'utf8').includes(`PRIMARY KEY (${cubeKey})`))
   // The cube carries no id either, and the two install-level dims it needs live on the row that
   // already exists rather than in a table of their own.
@@ -509,6 +529,92 @@ test('schema.sql declares the three tables, the kill switch and a role that cann
   assert.ok(grants.some((g) => /error_report/.test(g)), 'the error store IS granted')
   assert.equal(grants.some((g) => /DELETE/.test(g)), false)
   assert.equal(grants.some((g) => /install_profile/.test(g)), false)
+})
+
+// ---- the sharded counters (JOS-394) -----------------------------------------------------------
+//
+// THE PRIVACY LAW IS THE FIRST TEST HERE, not the last. A shard column is a new column on the
+// counter tables, and the ONE way it could become a problem is by being derived from the sender.
+// It is drawn from `Math.random()` per request; a hash of the analyticsId would spread writes
+// equally well and would ALSO partition every day's counters into per-install buckets, which is
+// the per-user trail the whole aggregate-on-arrival design refuses to keep.
+
+test('the shard is RANDOM, and no function of the analyticsId reaches a counter table', () => {
+  const src = readFileSync(join(ROOT, 'infra', 'lambda', 'telemetry.ts'), 'utf8')
+  assert.match(src, /function pickShard\(\): number \{\s*return Math\.floor\(Math\.random\(\) \* SHARD_COUNT\)/)
+  // The shard reaches SQL as a bound parameter of writeCounters and nowhere else, and the only
+  // value that produces it is the call above.
+  assert.equal((src.match(/pickShard\(\)/g) ?? []).length, 2, 'declared once, called once')
+  // NOTHING in this file may hash, digest or otherwise fold an id into a shard.
+  assert.equal(/createHash|sha256|md5|hashCode/.test(src), false, 'no hashing primitive at all')
+  const shardLines = src.split('\n').filter((l) => /shard/i.test(l) && !l.trimStart().startsWith('*'))
+  for (const line of shardLines) {
+    assert.equal(
+      /analyticsId|analytics_id|installId/.test(line),
+      false,
+      `the shard may never be derived from an id: ${line}`
+    )
+  }
+})
+
+test('SHARD_COUNT is 32, and the sharded key is the conflict target in both files', () => {
+  const src = readFileSync(join(ROOT, 'infra', 'lambda', 'telemetry.ts'), 'utf8')
+  const sql = readSource(join(ROOT, 'infra', 'schema.sql'))
+  assert.match(src, /const SHARD_COUNT = 32/)
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS usage_daily_sharded/)
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS perf_daily_sharded/)
+  assert.match(sql, /PRIMARY KEY \(shard, day, cohort, metric, dim\)/)
+  // The frozen originals are NOT dropped: they still carry every counter written before cutover
+  // and the views below add them back. A schema.sql that dropped one would fail here.
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS usage_daily \(/)
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS perf_daily \(/)
+  assert.equal(/DROP TABLE/.test(sql), false, 'this file drops nothing, ever')
+  // The Lambda writes the sharded tables and no longer writes the frozen ones.
+  assert.equal(/INSERT INTO usage_daily \(/.test(src), false)
+  assert.equal(/INSERT INTO perf_daily \(/.test(src), false)
+})
+
+test('the merge views exist, sum both legs, and CAST the sum back to bigint', () => {
+  const sql = readSource(join(ROOT, 'infra', 'schema.sql'))
+  for (const view of ['usage_daily_all', 'perf_daily_all']) {
+    assert.match(sql, new RegExp(`CREATE VIEW ${view} AS`))
+  }
+  // THE CAST IS LOAD-BEARING AND MEASURED (JOS-394): an uncast SUM(bigint) is NUMERIC (OID
+  // 1700), which no type parser covers, so the counter arrives as a STRING and the readouts'
+  // `num()` would have turned it into a silent zero. Two occurrences, one per view.
+  assert.equal((sql.match(/SUM\(n\)::bigint AS n/g) ?? []).length, 2)
+  // Both legs, and the old one first — the view is what makes the cutover DAY, whose counters
+  // live half in each table, invisible to every reader.
+  assert.match(sql, /FROM usage_daily\n\s*UNION ALL\n\s*SELECT day, cohort, metric, dim, n FROM usage_daily_sharded/)
+  assert.match(sql, /FROM perf_daily\n\s*UNION ALL/)
+})
+
+test('every reader outside the Lambda reads the merged VIEW, never the frozen table', () => {
+  const store = readFileSync(join(ROOT, 'src', 'main', 'triage', 'usageStore.ts'), 'utf8')
+  assert.match(store, /FROM usage_daily_all WHERE day >= \$1/)
+  assert.match(store, /FROM perf_daily_all WHERE day >= \$1/)
+  // No SELECT anywhere in the app's read surface may still name the frozen tables: that read
+  // would report the fleet as it was at cutover and nothing since, which looks like a quiet week
+  // rather than like a bug.
+  assert.equal(/FROM usage_daily\b/.test(store), false)
+  assert.equal(/FROM perf_daily\b/.test(store), false)
+})
+
+test('the retry ladder is FULL JITTER and says so when it gives up', () => {
+  const db = readFileSync(join(ROOT, 'infra', 'lambda', 'db.ts'), 'utf8')
+  assert.match(db, /const MAX_ATTEMPTS = 5/)
+  // Full jitter: uniform over [0, BASE * 2^attempt). A fixed step (`BACKOFF_MS * attempt`) is
+  // the shape that RE-SYNCHRONISES two racers, which is what this replaced.
+  assert.match(db, /Math\.floor\(Math\.random\(\) \* BACKOFF_MS \* 2 \*\* attempt\)/)
+  assert.equal(/BACKOFF_MS \* attempt/.test(db), false, 'no fixed-step backoff may come back')
+  // Exhaustion is a METRIC, not just a log line — `alarms.tf` alarms on it at >= 1 because it
+  // is the only place a LOST aggregate write is ever reported.
+  assert.match(db, /emit\(\{\}, \[\{ name: 'DbRetryExhausted', value: 1 \}\]/)
+  const tf = readFileSync(join(ROOT, 'infra', 'alarms.tf'), 'utf8')
+  assert.match(tf, /metric_name\s*=\s*"DbRetryExhausted"/)
+  // And the conflict alarm is a RATIO now: a raw count fired all day at a 5% conflict rate that
+  // lost nothing, which is how an alarm stops being read.
+  assert.match(tf, /expression\s*=\s*"IF\(invocations > 0, conflicts \/ invocations, 0\)"/)
 })
 
 test('every statement in schema.sql still ends on its own line — the splitter law', () => {

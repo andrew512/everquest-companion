@@ -51,15 +51,15 @@ variable "lambda_reserved_concurrency" {
 }
 
 variable "api_rate_limit" {
-  description = "Stage-wide steady-state request rate (rps) across every route on this API."
+  description = "Stage-wide steady-state request rate (rps) across every route on this API. JOS-394 (2026-08-16): 5 -> 15. It has to stay ABOVE the per-route ceilings it contains, or the stage throttles a route that is inside its own budget — measured live at 4.5 RPS steady on /v1/telemetry alone, i.e. ~10% headroom under the old 5."
   type        = number
-  default     = 5
+  default     = 15
 }
 
 variable "api_burst_limit" {
-  description = "Stage-wide burst capacity."
+  description = "Stage-wide burst capacity. Raised with the rate (JOS-394), keeping the same 2x relationship."
   type        = number
-  default     = 10
+  default     = 30
 }
 
 variable "route_rate_limit" {
@@ -107,15 +107,15 @@ variable "telemetry_reserved_concurrency" {
 }
 
 variable "telemetry_route_rate_limit" {
-  description = "Steady-state rate (rps) for POST /v1/telemetry. Wider than feedback's because every install is a caller on a flush timer, not a human pressing a button. Owner 2026-08-12: halved 10 -> 5 alongside the client flush going 60s -> 5min (JOS-269); throttled callers buffer and retry by design, and unanswered 429s are unbilled, so this is the account's de facto spend ceiling (~$1/day worst case)."
+  description = "Steady-state rate (rps) for POST /v1/telemetry. Wider than feedback's because every install is a caller on a flush timer, not a human pressing a button. Owner 2026-08-12: halved 10 -> 5 alongside the client flush going 60s -> 5min (JOS-269); throttled callers buffer and retry by design, and unanswered 429s are unbilled, so this is the account's de facto spend ceiling. JOS-394 (2026-08-16): back to 10, on a MEASUREMENT rather than a guess — the live route sits at 4.5 RPS (~1,350 requests per 5 min, flat) with 4xx at 2-12 per 5 min, so the old 5 left ~10% headroom and the next few installs would have started throttling real flushes. 10 RPS worst case is ~$2/day, still bounded by this ceiling and alarmed within five minutes."
   type        = number
-  default     = 5
+  default     = 10
 }
 
 variable "telemetry_route_burst_limit" {
-  description = "Burst capacity for POST /v1/telemetry. Halved with the rate limit (owner 2026-08-12)."
+  description = "Burst capacity for POST /v1/telemetry. Doubled with the rate limit (JOS-394), keeping the same 2x relationship it has had since it was halved."
   type        = number
-  default     = 10
+  default     = 20
 }
 
 variable "default_max_events_per_id_per_day" {
