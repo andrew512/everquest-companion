@@ -524,6 +524,31 @@ interface RowInputs {
   windowed: (at: number) => Consumption
 }
 
+/**
+ * THE HAND-STATED WITNESS for one key — the statement, plus what the log has seen happen to the
+ * item since it was made.
+ *
+ * Its own function because it is the one witness with three forward rules on it (loot adds,
+ * destroys subtract, turn-ins subtract) and `witnessesFor` sits under the measured complexity
+ * ceiling. The statement is a witness like any other, so it is discounted the same way — by what
+ * the log recorded you destroying after you made it, floored (JOS-401). Saying "I hold 3" and then
+ * destroying 5 leaves 0, not -2.
+ */
+function overrideWitness(
+  k: string,
+  statement: ItemCountOverride,
+  x: RowInputs
+): NonNullable<Witnesses['override']> {
+  return {
+    statement,
+    base: Math.max(
+      0,
+      statement.count + (x.overrideSince[k] ?? 0) - (x.destroyedSinceOverride[k] ?? 0)
+    ),
+    consumed: x.windowed(statement.setAt).consumed[k] ?? 0
+  }
+}
+
 /** Gather one key's witnesses, building only the windows that actually apply to it. */
 function witnessesFor(k: string, x: RowInputs): Witnesses {
   const w: Witnesses = {
@@ -540,19 +565,7 @@ function witnessesFor(k: string, x: RowInputs): Witnesses {
     }
   }
   const statement = x.overrides[k]
-  if (statement) {
-    w.override = {
-      statement,
-      // The statement is a witness like any other, so it is discounted the same way — by what the
-      // log recorded you destroying after you made it, floored (JOS-401). Saying "I hold 3" and
-      // then destroying 5 leaves 0, not -2.
-      base: Math.max(
-        0,
-        statement.count + (x.overrideSince[k] ?? 0) - (x.destroyedSinceOverride[k] ?? 0)
-      ),
-      consumed: x.windowed(statement.setAt).consumed[k] ?? 0
-    }
-  }
+  if (statement) w.override = overrideWitness(k, statement, x)
   return w
 }
 
@@ -628,6 +641,22 @@ function buildRows(x: RowInputs): ReconcileResult {
 }
 
 /**
+ * THE DUMP'S INSTANT, AND THE TURN-IN WINDOW IT ANCHORS (JOS-403).
+ *
+ * `log` reads the file for nothing at all, so it never pays for the pass. Null means the dump is
+ * undatable (or there is no dump) and no window can be computed — the no-discount degradation the
+ * destroy window already makes, rather than a guessed instant that would discount the witness by
+ * turn-ins that may well predate it.
+ */
+function dumpTurnInWindow(
+  input: ReconcileInput,
+  windowed: (at: number) => Consumption
+): { at: number | null; window: Consumption | null } {
+  const at = input.countSource === 'log' ? null : (input.rebaselineAt ?? null)
+  return { at, window: at === null ? null : windowed(at) }
+}
+
+/**
  * Reconcile held items from the loot log and the inventory export, then subtract
  * everything consumed by the quest turn-ins — so a drop that was handed in for one quest no
  * longer counts toward another quest that needs it, and a quest handed in twice has eaten its
@@ -652,11 +681,7 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
 
   const windowed = windowedConsumption(quests, input.turnInInstants ?? {})
   const all = questConsumption(quests, (k) => input.turnIns[k] ?? 0)
-  // THE DUMP'S INSTANT, for every source that reads the dump (JOS-403). `log` reads it for nothing,
-  // so it does not pay for the pass; null means the dump is undatable and no window can be computed,
-  // which is the no-discount degradation the destroy window already makes.
-  const dumpAt = countSource === 'log' ? null : (input.rebaselineAt ?? null)
-  const dumpWindow = dumpAt === null ? null : windowed(dumpAt)
+  const { at: dumpAt, window: dumpWindow } = dumpTurnInWindow(input, windowed)
   // Anchored only where the user asked for it AND something can date the dump. `null` there is the
   // fallback to `both` the base/net rules spell out, never a baseline of zero. Same instant as
   // `dumpAt` under `rebaseline`, and `windowed` is memoized, so this is one pass and not two.
