@@ -29,7 +29,7 @@
 // Stacks.
 
 import { type JSX, useCallback, useEffect, useState } from 'react'
-import { Box, FormControlLabel, IconButton, Stack, Switch, Tooltip, Typography } from '@mui/material'
+import { Box, FormControlLabel, IconButton, Stack, Switch, Typography } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import RemoveIcon from '@mui/icons-material/Remove'
 import {
@@ -42,6 +42,10 @@ import {
 } from '@shared/overlayTextScale'
 import { OVERLAY_KIND_LABEL, OVERLAY_LABEL_ORDER, OVERLAY_STRIP_KINDS } from '@shared/overlayLabels'
 import type { OverlayKind } from '@shared/types'
+// THE app's Tooltip, never MUI's (owner rule 2026-08-04, pinned by tests/tooltipCursor.test.mts):
+// anything wearing a tooltip shows the hand, and a DISABLED anchor keeps `not-allowed` — which is
+// exactly the state every row below is in while the overlays share one size.
+import { Tooltip } from '../../lib/Tooltip'
 import { recordPref, usePrefsSeed } from './prefsHydration'
 
 /** The percentage, which is the vocabulary the window's own ladder already taught this pane. */

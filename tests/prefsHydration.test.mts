@@ -58,6 +58,15 @@ function stubReader(over: Partial<Record<keyof PrefsReader, unknown>> = {}): {
     getGraphicsEnvironment: answer('getGraphicsEnvironment', { wine: false, auto: { safeMode: false, opaqueOverlays: false } }),
     getOverlayAutoHide: answer('getOverlayAutoHide', { hideWhenNotRunning: false, hideWhenUnfocused: true }),
     getOverlaySnap: answer('getOverlaySnap', { enabled: true }),
+    // The overlays' text size (JOS-405). Stored ABOVE the shipped 100% and with the switch ON,
+    // because both of those are what somebody who used this feature would have: the person who
+    // opens this section is the person who cannot read their meters, so a stepper painting 100%
+    // first would be wrong for exactly the audience the card is for.
+    getOverlayTextSize: answer('getOverlayTextSize', { shared: 1.4, independent: true }),
+    // …and the twelve per-kind values the list edits, which under that switch are what each of
+    // those windows is genuinely drawing at. Deliberately NOT all equal: the flattened-by-fan-out
+    // store is the OLD shape, and this stub is a store somebody has since taken apart.
+    getOverlayTextScales: answer('getOverlayTextScales', { fight: 1.6, overall: 1, events: 0.9 }),
     // Stored ON against a compiled-in default of OFF (JOS-139; OFF since the owner's 2026-08-16
     // reversal) — and the one with TWO other controls (the tray menu's checkbox and the title bar's
     // overlay-menu row) that can move it while this pane is closed.
@@ -96,9 +105,20 @@ test('one read answers every card in the pane, and it snaps the text size to the
   const { reader, calls } = stubReader()
   const snap = await readPrefsSnapshot(reader)
 
-  // TWENTY-TWO reads, one batch. The number is not the claim; the claim is that the gate asks each
-  // question exactly once, so a pane that mounts does not stampede the store.
-  assert.equal(calls(), 22, 'every read fires exactly once')
+  // TWENTY-FOUR reads, one batch (JOS-405 added the overlays' text size and its twelve per-kind
+  // values). The number is not the claim; the claim is that the gate asks each question exactly
+  // once, so a pane that mounts does not stampede the store.
+  assert.equal(calls(), 24, 'every read fires exactly once')
+
+  // The overlays' size (JOS-405), which is TWO facts read together for the toast pair's reason:
+  // the shared stepper and the twelve rows are one control group, and a frame where the size was
+  // right and the switch was still off would draw twelve rows disabled that are not.
+  assert.deepEqual(snap.overlayTextSize, { shared: 1.4, independent: true })
+  assert.equal(snap.overlayTextScales.fight, 1.6, 'and each window’s own size seeds the list')
+  // The shared value arrives through the same normalizer main's store reader uses, so the cache
+  // can never hold a size no overlay could draw at (the `uiScale` argument, on a different blob).
+  const clamped = await readPrefsSnapshot(stubReader({ getOverlayTextSize: { shared: 9 } }).reader)
+  assert.deepEqual(clamped.overlayTextSize, { shared: 2, independent: false })
 
   // The resist-evidence switch (JOS-385), stored against its shipped ON. It is in the batch for
   // the `processPriority` reason, and it is asserted here for the same one.
@@ -158,7 +178,7 @@ test('two mounts in one frame share ONE batch', async () => {
   resetPrefsSnapshotForTests()
   const { reader, calls } = stubReader()
   const [a, b] = await Promise.all([loadPrefsSnapshot(reader), loadPrefsSnapshot(reader)])
-  assert.equal(calls(), 22, 'not forty-four')
+  assert.equal(calls(), 24, 'not forty-eight')
   assert.equal(a, b)
   resetPrefsSnapshotForTests()
 })
@@ -226,6 +246,10 @@ test('every Preferences card seeds from the gate, and none of them re-reads main
     'BuffTrustSetting.tsx',
     'ResistEvidenceSetting.tsx',
     'TextSizeSetting.tsx',
+    // JOS-405's two: the shared overlay size + the switch, and the twelve-row list. The list is
+    // the one this rule is sharpest about — twelve rows that painted a default first would be the
+    // JOS-340 defect twelve times over on one card.
+    'OverlayTextSizeSetting.tsx',
     'ToastSetting.tsx',
     'VoiceSetting.tsx',
     'TelemetrySetting.tsx',
