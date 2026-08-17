@@ -125,6 +125,25 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.4.0',
+    date: '2026-08-17',
+    entries: [
+      {
+        kind: 'new',
+        text: 'The buff and debuff windows can track only what you choose. On the Buffs tab, turn on Only track buffs and debuffs I check: a checkbox appears on every buff and debuff card and on every row of the durations tables, which you can search - and the windows draw only what you have checked. Off, and everything shows as before.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'Destroying an item in the game now counts. The log records the destroy, so Plane of Sky and inventory counts go down by what you destroyed - and the Cleanup tab no longer needs a button for it. Cleanup is also live from your log and inventory export like every other Sky tab, is laid out as a table, and the reward names open the item card on hover.'
+      },
+      {
+        kind: 'changed',
+        text: 'Wherever you pick classes - Gear, the Planner, your loadout - the choices read Warrior and Shadow Knight rather than WAR and SHD.'
+      }
+    ]
+  },
+  {
     version: '1.3.0',
     date: '2026-08-16',
     entries: [
