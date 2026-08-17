@@ -22,6 +22,7 @@ import { resolveMobIdentity } from '../mobAliases'
 import { characterModule, resistModule } from '../pipeline'
 import { mobResistCell, mobResistProfile, type ProfileDeps } from '../resist/profile'
 import { fullDamageRefs, unobservableSpells } from '../../shared/resistModel'
+import type { DamageRef } from '../../shared/resistDamage'
 import { spellTable, spellTableNow, spellTableStatus } from '../resist/spellTable'
 import { baselineFrozenAt, resistLedger } from '../resist/store'
 import { getResistPrefs, setResistPrefs } from '../storeResists'
@@ -62,8 +63,8 @@ function unobservable(): ReadonlySet<string> {
  * reason and with the same lifetime as the blindness verdict above. It moves only when the fold
  * files damage at a value it has not seen before, and the profile reads it on every draw.
  */
-let modesCache: ReadonlyMap<string, number> | null = null
-function modes(): ReadonlyMap<string, number> {
+let modesCache: ReadonlyMap<string, DamageRef> | null = null
+function modes(): ReadonlyMap<string, DamageRef> {
   modesCache ??= fullDamageRefs(allLedgerRows())
   return modesCache
 }

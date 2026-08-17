@@ -31,15 +31,30 @@
 //
 // ── AND SOMETIMES THE MODEL SIMPLY DOES NOT FIT ────────────────────────────────────────────────
 //
-// `fitPinned` is the guard the same review asked for. A posterior whose median has slid to the
-// floor or the ceiling of the grid is not an estimate — it is the fitter saying "no R in the range
-// this game can express explains what you showed me". MEASURED: Bzzazzt (a charmed level-50 spider)
-// throwing Deadly Poison at the level-70 Eye of Veeshan is resisted 52% of the time, and at that
-// level gap `levelMod` alone is +200 — so every R at or above zero predicts 100% resisted, the
-// fitter slides to the bottom of the grid looking for the negative R that would explain a 52% rate,
-// and the display clamped that to `R 0 … weak`. A creature that resists half of everything thrown at
-// it was being reported as WEAK. The honest output is not a number; it is the resist rate and a
-// sentence saying the model could not fit it.
+// `pinned` is the guard the same review asked for, and MEASURING THE CASE MOVED THE TEST. The
+// review's diagnosis was "the posterior slid to the grid floor"; the arithmetic says it slides to
+// the PHYSICAL floor instead, and stops there because the model can still trade a bad fit for a
+// slightly-less-bad one at a negative resistance.
+//
+// Eye of Veeshan, poison. Bzzazzt (a charmed level-50 spider) throws Deadly Poison at a level-70
+// creature: 31 resists, 27 full ticks, 1 landing. `levelMod` alone is +200 at that gap, so the
+// model predicts 100% resisted at every R a creature can have — and the best it can do is slide R
+// to about -50, where it still predicts a quarter of the casts resisted against the half that were.
+// The display clamped that to `R 0 (0-0)` and the tag called it WEAK: a creature that resists half
+// of everything thrown at it, reported as the easiest thing on the card.
+//
+// So the guard is TWO tests, and both are about whether an answer may be printed at all:
+//
+//   THE GRID RAN OUT — the median is within a step of an edge. The fitter had nowhere further to
+//   go, so its answer is a boundary artifact rather than an estimate.
+//   THE ANSWER IS UNPHYSICAL OR THE MODEL MISSES — the whole credible interval sits at or below
+//   zero (a creature cannot have negative resistance), or the resist count the fit predicts is
+//   `RESIDUAL_SIGMAS` standard deviations away from the count the game actually printed. The second
+//   is an ordinary goodness-of-fit residual and it is what catches the Eye: no amount of sliding R
+//   reconciles 52% resisted with a level term of +200.
+//
+// The honest output in either case is not a number; it is the resist rate and a sentence saying the
+// model could not fit it.
 
 /** Grid search bounds and step for R. Step 2 is the resolution every printed interval carries. */
 export const R_MIN = -150
@@ -48,6 +63,45 @@ export const R_STEP = 2
 
 /** The central credible interval the surfaces print. */
 export const CREDIBLE_MASS = 0.95
+
+/**
+ * How far the model's own predicted resist count may sit from the observed one before the fit is
+ * refused. Four sigma is a one-in-sixteen-thousand event under the model, so it fires on a model
+ * that is wrong and never on a cell that was merely unlucky.
+ */
+export const RESIDUAL_SIGMAS = 4
+
+/** Below this many observations a residual is noise, whatever it looks like. */
+export const RESIDUAL_MIN_N = 10
+
+/**
+ * AND IT HAS TO BE A BIG MISS, not merely a certain one. MEASURED, and the measurement is why this
+ * threshold exists at all: four sigma on a cell with 348 observations is a nine-percent
+ * disagreement, and a thunder spirit princess's magic — a perfectly ordinary cell, 348 casts by
+ * charmed pets at a spread of levels — trips it. The model is deliberately approximate (the
+ * charisma term is not modelled at all, a cell pools several spells, and an npc caster's level
+ * comes off a catalog), so a few points of systematic slack is expected everywhere and is not a
+ * reason to withhold an answer.
+ *
+ * What IS a reason is a disagreement no amount of R can close: the Eye of Veeshan predicts a
+ * quarter resisted against the half that were. Fifteen points of resist rate separates the two
+ * cleanly, and requiring BOTH tests means a large cell needs a large miss and a small cell needs a
+ * certain one.
+ */
+export const RESIDUAL_MIN_RATE_GAP = 0.15
+
+/**
+ * A NEGATIVE FIT IS ONLY A FAILURE IF THE CREATURE RESISTS THINGS, and MEASURING THE BASELINE IS
+ * WHAT SETTLED THAT. R below zero is how the model spells "nothing you cast is ever refused", and
+ * twenty-one cells of the shipped baseline sit there honestly — `a basalt gargoyle`, poison, 0 of
+ * 19 — where the right row is `R 0 · should land` and refusing to print one would be absurd.
+ *
+ * The failure is the OTHER shape: a whole credible interval below zero on a creature that visibly
+ * resisted a good share of what was thrown at it, which is the fitter reaching for a resistance the
+ * game does not have because some other term of `rc` is wrong. That is the Eye of Veeshan at 52%
+ * resisted, and this rate is the line between the two populations.
+ */
+export const UNPHYSICAL_MIN_RESIST_RATE = 0.15
 
 /** One cell's answer: the posterior median, its central interval, and whether it may be believed. */
 export interface GridFit {
@@ -78,7 +132,13 @@ export function posteriorLogs(logDensity: (R: number) => number): { Rs: number[]
  * Normalised by the maximum before exponentiating, which is the standard trick and the only reason
  * a cell with six hundred observations does not underflow to a vector of zeros.
  */
-export function gridFit(logDensity: (R: number) => number): GridFit {
+export function gridFit(
+  logDensity: (R: number) => number,
+  /** How many resists the model predicts at an R. Omitted, the residual test is skipped. */
+  predictedResists?: (R: number) => number,
+  /** What the game actually printed. Omitted, the residual test is skipped. */
+  observed?: { resisted: number; total: number }
+): GridFit {
   const { Rs, logs } = posteriorLogs(logDensity)
   let max = -Infinity
   for (const l of logs) if (l > max) max = l
@@ -101,19 +161,45 @@ export function gridFit(logDensity: (R: number) => number): GridFit {
   const R = at(0.5)
   const lo = at(tail)
   const hi = at(1 - tail)
-  return { R, lo, hi, pinned: fitPinned(R, lo, hi) }
+  const misfit =
+    predictedResists !== undefined && observed !== undefined
+      ? doesNotFit(predictedResists(R), observed) || unphysical(hi, observed)
+      : false
+  return { R, lo, hi, pinned: fitPinned(R) || misfit }
+}
+
+/** The whole answer is below zero on a creature that demonstrably resists. See the constant. */
+export function unphysical(hi: number, observed: { resisted: number; total: number }): boolean {
+  if (observed.total < RESIDUAL_MIN_N) return false
+  return hi <= 0 && observed.resisted / observed.total >= UNPHYSICAL_MIN_RESIST_RATE
 }
 
 /**
- * Has the posterior slid off the end of the grid? See the header for the measured case.
- *
- * A ZERO-WIDTH INTERVAL COUNTS ONLY AT AN EDGE. In the middle of the grid a collapsed interval is a
- * cell so well determined that 95% of the posterior sits on one grid point, which is a fine answer
- * and not a failure; at an edge it is the fitter pinned against the wall with nowhere to spread.
+ * How many standard deviations the model's predicted resist count sits from the observed one.
+ * A binomial normal approximation, floored so a degenerate variance cannot answer Infinity on a
+ * cell that matched exactly.
  */
-export function fitPinned(R: number, lo: number, hi: number): boolean {
-  const atFloor = R <= R_MIN + R_STEP
-  const atCeiling = R >= R_MAX - R_STEP
-  if (atFloor || atCeiling) return true
-  return hi === lo && (lo <= R_MIN + R_STEP || hi >= R_MAX - R_STEP)
+/**
+ * BOTH TESTS, and both have to hold: the miss is big (`RESIDUAL_MIN_RATE_GAP` of resist rate) and it
+ * is certain (`RESIDUAL_SIGMAS`). Either alone misfires — the first on a thin cell that was merely
+ * unlucky, the second on any large cell, where the model's ordinary slack becomes statistically
+ * overwhelming without becoming important.
+ */
+export function doesNotFit(expected: number, observed: { resisted: number; total: number }): boolean {
+  if (observed.total < RESIDUAL_MIN_N) return false
+  const gap = Math.abs(observed.resisted - expected) / observed.total
+  return gap >= RESIDUAL_MIN_RATE_GAP && residualSigmas(expected, observed) > RESIDUAL_SIGMAS
+}
+
+export function residualSigmas(expected: number, observed: { resisted: number; total: number }): number {
+  if (observed.total < RESIDUAL_MIN_N) return 0
+  const p = Math.min(Math.max(expected / observed.total, 1 / observed.total), 1 - 1 / observed.total)
+  const sd = Math.sqrt(observed.total * p * (1 - p))
+  if (!(sd > 0)) return 0
+  return Math.abs(observed.resisted - expected) / sd
+}
+
+/** Did the fitter run out of grid? Its answer is then a boundary artifact, not an estimate. */
+export function fitPinned(R: number): boolean {
+  return R <= R_MIN + R_STEP || R >= R_MAX - R_STEP
 }

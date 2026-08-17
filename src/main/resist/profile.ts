@@ -33,6 +33,7 @@ import {
   type SpellResistTable,
 } from '../../shared/resistTypes'
 import { estimate, hasAnswer } from '../../shared/resistModel'
+import type { DamageRef } from '../../shared/resistDamage'
 import { resistBenchmark } from '../../shared/resistFormula'
 import { BASELINE_SOURCE_KEY } from '../../shared/resistTypes'
 import type { MobLevelFact } from './world'
@@ -94,7 +95,7 @@ export interface ProfileDeps {
    * reason `unobservable` is (`shared/resistDamage.ts` states it): a mob with four hits of a nuke
    * cannot establish what that nuke hits for, and does not have to.
    */
-  damageModes: () => ReadonlyMap<string, number>
+  damageModes: () => ReadonlyMap<string, DamageRef>
   frozenAt: () => string | null
   /**
    * Whether charmed pets and NPC casters weigh in the numbers (JOS-385). READ AT ESTIMATE TIME,
@@ -128,7 +129,7 @@ interface AxisCtx {
   /** The level the benchmark is evaluated at: the tailed character's, or null when unknown. */
   viewerLevel: number | null
   unobservable: ReadonlySet<string>
-  modes: ReadonlyMap<string, number>
+  modes: ReadonlyMap<string, DamageRef>
   includeNpcCasters: boolean
 }
 

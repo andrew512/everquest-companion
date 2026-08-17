@@ -91,8 +91,8 @@ import {
   pResistMessage,
   priorResist,
 } from './resistFormula'
-import { damageKind, damageRefKey, fullDamageRefs, splitDamage } from './resistDamage'
-import { R_MAX, R_MIN, R_STEP, gridFit } from './resistFit'
+import { type DamageRef, damageKind, damageRefKey, fullDamageRefs, splitDamage } from './resistDamage'
+import { type GridFit, gridFit } from './resistFit'
 
 /** Baseline down-weighting: one baseline observation weighs K/(K + nUser). */
 export const BASELINE_K = 20
@@ -168,8 +168,30 @@ function totalLogL(terms: Term[], R: number): number {
  * maximum (a saturating likelihood has PLATEAUX, and the argmax sits at the weakest edge of one),
  * lives in `resistFit.ts`.
  */
-function fitGrid(terms: Term[], prior: Term | null): { R: number; lo: number; hi: number; pinned: boolean } {
-  return gridFit((R) => totalLogL(terms, R) + (prior ? termLogL(prior, R) : 0))
+function fitGrid(terms: Term[], prior: (R: number) => number): GridFit {
+  return gridFit((R) => totalLogL(terms, R) + prior(R), (R) => expectedResists(terms, R), obsResists(terms))
+}
+
+/** How many resist messages the model expects across these terms at this R. */
+function expectedResists(terms: Term[], R: number): number {
+  let sum = 0
+  for (const t of terms) {
+    const rc = R + t.offset
+    const p = t.kind === 'aon' ? pResistAon(rc) : pResistMessage(rc)
+    sum += t.weight * termN(t) * p
+  }
+  return sum
+}
+
+/** How many the game actually printed, weighted the same way. */
+function obsResists(terms: Term[]): { resisted: number; total: number } {
+  let resisted = 0
+  let total = 0
+  for (const t of terms) {
+    resisted += t.weight * t.resist
+    total += t.weight * termN(t)
+  }
+  return { resisted, total }
 }
 
 /** The debuff amount one slot delivers on this axis at this caster level. */
@@ -232,11 +254,12 @@ interface RowCtx {
   axis: ResistAxis
   spells: SpellResistTable
   /**
-   * The full-damage reference for this (spell, caster level) over the whole ledger
-   * (shared/resistDamage.ts). Undefined means the histogram could not name one, and the row is
-   * then read as variable damage: resist-or-not, no partial information.
+   * What the whole ledger knows about this (spell, caster level)'s damage
+   * (shared/resistDamage.ts): the full-damage reference, and whether the spell produces partials at
+   * all. Undefined means the histogram could not name a reference, and the row is then read as
+   * variable damage: resist-or-not, no partial information.
    */
-  mode: number | undefined
+  mode: DamageRef | undefined
 }
 
 /** One row -> one likelihood term, or null when the row cannot say anything about R. */
@@ -250,13 +273,16 @@ function rowTerm(row: ResistRow, ctx: RowCtx): Term | null {
   // counts. The row carries them so a baseline observation is read at the offset it was MADE under.
   const adj = effectiveResistAdj(info.resistAdj, row)
   const offset = lm + adj - debuffAmount(row.debuffs, axis, row.casterLevel, spells)
-  const fixed = damageKind(row, info, mode) === 'ddFix'
-  const { total, full, partial } = splitDamage(row, fixed ? mode : undefined)
+  const kind = damageKind(row, info, mode)
+  const { total, full, partial } = splitDamage(row, kind === 'ddFix' ? mode?.value : undefined)
   if (total === 0) {
     if (row.resist + row.land === 0) return null
     return { kind: 'aon', offset, resist: row.resist, land: row.land, weight: 1 }
   }
-  if (fixed) return { kind: 'ddFix', offset, full, partial, resist: row.resist, weight: 1 }
+  // A DoT OR A PROC LANDS OR IS REFUSED, so its damage lines are LANDINGS and the clean Bernoulli
+  // is the right likelihood for them (JOS-387; see `PARTIAL_FREE_AT`).
+  if (kind === 'aon') return { kind: 'aon', offset, resist: row.resist, land: total + row.land, weight: 1 }
+  if (kind === 'ddFix') return { kind: 'ddFix', offset, full, partial, resist: row.resist, weight: 1 }
   return { kind: 'ddVar', offset, land: total + row.land, resist: row.resist, weight: 1 }
 }
 
@@ -286,7 +312,7 @@ function differs(userFit: ResistFit | null, baselineFit: ResistFit | null): bool
 
 function fitFrom(terms: Term[], axis: ResistAxis, mobLevel: number | null): ResistFit {
   const n = terms.reduce((acc, t) => acc + termN(t), 0)
-  const { R, lo, hi } = fitGrid(terms, priorTerm(axis, mobLevel))
+  const { R, lo, hi } = fitGrid(terms, priorLog(axis, mobLevel))
   return { R, lo, hi, n }
 }
 
@@ -314,14 +340,28 @@ function empiricalOf(terms: Term[]): { total: number; resisted: number; hard: nu
   return { total, resisted, hard }
 }
 
-function priorTerm(axis: ResistAxis, mobLevel: number | null): Term {
-  const p = pResistAon(priorResist(axis, mobLevel))
-  return {
-    kind: 'aon',
-    offset: 0,
-    resist: PRIOR_OBSERVATIONS * p,
-    land: PRIOR_OBSERVATIONS * (1 - p),
-    weight: 1,
+/**
+ * THE PRIOR IS NOW A WEAK PENALTY ON R ITSELF, not four pseudo-observations (JOS-387).
+ *
+ * The pseudo-observation prior was written for a fitter that used it ONLY to pick a point out of
+ * the likelihood's maximum and computed the interval from the likelihood alone — and it had to be,
+ * because it is pathological at the model's own boundary: its four pseudo-LANDINGS are impossible
+ * once rc reaches 200, so their log-likelihood floors at -6 apiece and the prior charges 22 log
+ * units to say "this mob resists everything". That is not shrinkage, it is a wall, and the file's
+ * own header measured what it did to a near-immune mob.
+ *
+ * Once the point AND the interval both come off one posterior (`resistFit.ts`), that wall would
+ * decide both. So the prior is what it always meant: a broad Gaussian pull toward the Torven
+ * typical value, which never says a resistance is impossible, costs about a log unit at 140 points
+ * away from the baseline, and is swamped by any real evidence.
+ */
+export const PRIOR_SIGMA = 100
+
+function priorLog(axis: ResistAxis, mobLevel: number | null): (R: number) => number {
+  const centre = priorResist(axis, mobLevel)
+  return (R) => {
+    const d = R - centre
+    return -(d * d) / (2 * PRIOR_SIGMA * PRIOR_SIGMA)
   }
 }
 
@@ -366,7 +406,7 @@ export interface EstimateOpts {
    * `rows` alone can say — right for a unit test, and too narrow for a mob page, where a cell with
    * four hits would be asked to establish a reference the rest of the ledger already knows.
    */
-  modes?: ReadonlyMap<string, number>
+  modes?: ReadonlyMap<string, DamageRef>
 }
 
 /** One term, with the two things about its ROW the estimate has to report on afterwards. */
@@ -461,11 +501,11 @@ export function unobservableSpells(rows: readonly ResistRow[]): Set<string> {
   return out
 }
 
-function noteEvidence(prep: Prepared, row: ResistRow, info: SpellResistInfo, mode: number | undefined): void {
+function noteEvidence(prep: Prepared, row: ResistRow, info: SpellResistInfo, mode: DamageRef | undefined): void {
   const key = row.spellKey + '|' + row.family
   const ev = prep.evidence.get(key) ?? blankEvidence(row, info)
   const fixed = damageKind(row, info, mode) === 'ddFix'
-  const { total: dmgTotal, full, partial } = splitDamage(row, fixed ? mode : undefined)
+  const { total: dmgTotal, full, partial } = splitDamage(row, fixed ? mode?.value : undefined)
   ev.resisted += row.resist
   ev.full += full
   ev.partial += partial
@@ -625,7 +665,7 @@ export function estimate(
     ...userTerms,
     ...baseTerms.map((t) => ({ ...t, weight: baselineWeight })),
   ]
-  const merged = fitGrid(weighted, priorTerm(opts.axis, mobLevel))
+  const merged = fitGrid(weighted, priorLog(opts.axis, mobLevel))
   const userFit = fromYou > 0 ? fitFrom(userTerms, opts.axis, mobLevel) : null
   const baselineFit = fromBaseline > 0 ? fitFrom(baseTerms, opts.axis, mobLevel) : null
   const evidence = verdicts(prep)

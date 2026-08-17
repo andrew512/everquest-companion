@@ -94,6 +94,37 @@ export const FOCUS_BAND_TOP = 1.35
  */
 export const BAND_MIN_SHARE = 0.6
 
+/**
+ * A SPELL THAT NEVER PRODUCES A PARTIAL IS NOT A PARTIAL-CAPABLE SPELL, and the ledger says which
+ * is which (JOS-387, found by the pinned-fit guard rather than by reasoning).
+ *
+ * The direct-damage model has three outcomes — full, silently reduced, and the resist message — and
+ * at any rc that produces resists it also produces a great many partials. A DoT and a proc do not
+ * work that way: they land or they are refused, and when they land they deal their number. Reading
+ * one as direct damage asks the fitter to explain zero partials beside a 75% resist rate, which no
+ * rc can do, and the answer comes out incoherent in both directions at once.
+ *
+ * MEASURED on the shipped baseline: of 207 (spell, caster level) histograms with 20 or more hits,
+ * 50 carry essentially no partials — and they are exactly the DoTs (poison, deadly poison, sicken,
+ * choking, tainted breath, strong disease) and the procs (every `… Strike`, puma maw). The 157 with
+ * partials are the ordinary nukes, and their partial share runs 14% to 20%, nowhere near this line.
+ * The case that found it: a thunder spirit princess's magic is 262 resists and 86 hits of Choking,
+ * all at exactly 20, which reads as an all-or-nothing spell resisted three quarters of the time and
+ * as an impossibility under direct damage.
+ */
+export const PARTIAL_FREE_AT = 0.02
+
+/** Below this many hits, "no partials" is not a fact about the spell. */
+export const PARTIAL_FREE_MIN_HITS = 20
+
+/** What the ledger knows about one (spell, caster level)'s damage. */
+export interface DamageRef {
+  /** Full damage: the base of the upper cluster. */
+  value: number
+  /** This spell lands or is refused; its damage lines are LANDINGS. See `PARTIAL_FREE_AT`. */
+  allOrNothing: boolean
+}
+
 /** The pooling key: a spell's damage is a fact about the spell and the caster, never the target. */
 export function damageRefKey(spellKey: string, casterLevel: number | null): string {
   return `${spellKey}|${casterLevel ?? ''}`
@@ -135,7 +166,7 @@ export function clusterBase(hist: Histogram): number | undefined {
  * for the blindness verdict. Scoped to one mob it would answer from a handful of hits and would
  * find a cluster in what is really a partial band.
  */
-export function fullDamageRefs(rows: readonly ResistRow[]): Map<string, number> {
+export function fullDamageRefs(rows: readonly ResistRow[]): Map<string, DamageRef> {
   const hist = new Map<string, Histogram>()
   for (const row of rows) {
     const key = damageRefKey(row.spellKey, row.casterLevel)
@@ -149,12 +180,26 @@ export function fullDamageRefs(rows: readonly ResistRow[]): Map<string, number> 
       h.set(v, (h.get(v) ?? 0) + count)
     }
   }
-  const out = new Map<string, number>()
+  const out = new Map<string, DamageRef>()
   for (const [key, h] of hist) {
-    const base = clusterBase(h)
-    if (base !== undefined) out.set(key, base)
+    const value = clusterBase(h)
+    if (value === undefined) continue
+    out.set(key, { value, allOrNothing: partialFree(h, value) })
   }
   return out
+}
+
+/** Does this pooled histogram carry partials at all? See `PARTIAL_FREE_AT`. */
+function partialFree(hist: Histogram, value: number): boolean {
+  const floor = value * FULL_AT_LEAST
+  let hits = 0
+  let partial = 0
+  for (const [v, count] of hist) {
+    hits += count
+    if (v < floor) partial += count
+  }
+  if (hits < PARTIAL_FREE_MIN_HITS) return false
+  return partial / hits <= PARTIAL_FREE_AT
 }
 
 /** One row's damage, split against the reference. `full` counts focused hits too. */
@@ -174,16 +219,20 @@ export function splitDamage(row: ResistRow, ref: number | undefined): { total: n
 }
 
 /**
- * Fixed-damage spells expose partial information; variable ones do not.
+ * Which likelihood a row's damage belongs to.
  *
- * THREE WAYS TO BE VARIABLE, and each is a different thing the app does not know: the row gave up
- * on its own histogram (`variable`, past MAX_DISTINCT_DAMAGE_VALUES), the client's spell data shows
- * no hitpoint slot so this is not a damage spell in the modelled sense, or the pooled histogram has
- * no focus band tall enough to anchor a reference. The last one replaced a check on this row alone
- * — "the largest value is also the most common" — which a focus item breaks by construction.
+ * `aon`    the spell lands or is refused and its hits are landings — a DoT or a proc. See
+ *          `PARTIAL_FREE_AT` for how the ledger recognises one and why it matters.
+ * `ddFix`  a partial-capable nuke with a known full-damage reference: full, partial and resist are
+ *          three distinguishable outcomes and the cell is pinned from both sides.
+ * `ddVar`  no partial information at all. THREE WAYS TO GET HERE, each a different thing the app
+ *          does not know: the row gave up on its own histogram (`variable`, past
+ *          MAX_DISTINCT_DAMAGE_VALUES), the client's spell data shows no hitpoint slot, or the
+ *          pooled histogram has no focus band tall enough to anchor a reference.
  */
-export function damageKind(row: ResistRow, info: SpellResistInfo, ref: number | undefined): 'ddFix' | 'ddVar' {
+export function damageKind(row: ResistRow, info: SpellResistInfo, ref: DamageRef | undefined): 'aon' | 'ddFix' | 'ddVar' {
   if (row.variable) return 'ddVar'
   if (!info.hpSlot) return 'ddVar'
-  return ref === undefined ? 'ddVar' : 'ddFix'
+  if (ref === undefined) return 'ddVar'
+  return ref.allOrNothing ? 'aon' : 'ddFix'
 }
