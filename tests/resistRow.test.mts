@@ -8,10 +8,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  AT_MOB_LEVEL_NOTE,
   BAR_MAX,
   DIFFERS_NOTE,
+  FROM_RESIST_RATE_NOTE,
+  NPC_ONLY_NOTE,
   bandFraction,
   barFraction,
+  benchmarkRangeText,
+  benchmarkText,
+  doesNotFitText,
+  pct,
+  resistRateText,
   NOT_OBSERVABLE_NOTE,
   countText,
   estimateText,
@@ -154,6 +162,9 @@ function ev(spec: Partial<ResistSpellEvidence> & Pick<ResistSpellEvidence, 'spel
     fromYou: 0,
     resistAdj: 0,
     informative: true,
+    ranks: [],
+    overchannel: null,
+    unknownInvocation: 0,
     ...spec
   }
 }
@@ -294,4 +305,77 @@ test('the five axis colours clear WCAG AA against the app paper background', () 
     const ratio = (hi + 0.05) / (lo + 0.05)
     assert.ok(ratio >= 4.5, `${axis} ${hex} contrast ${ratio.toFixed(2)} against the paper background`)
   }
+})
+
+// ---------------------------------------------------------------------------------------------
+// JOS-387: the two percentages, the guidance sentence, and what a row says when the model does not
+// fit. Every string here is copy a player reads, so the honesty rules apply to all of it.
+
+const BENCH_END = {
+  level: 50,
+  mobLevel: 55,
+  atMobLevel: false,
+  tag: 'resistant' as const,
+  guidance: 'needs overchannel' as const
+}
+
+test('THE TWO PERCENTAGES PRINT BESIDE THE BAND, on every row and every chip', () => {
+  const bench = {
+    ...BENCH_END,
+    pPlain: 0.34,
+    pOver: 0.96,
+    atLo: { ...BENCH_END, pPlain: 0.49, pOver: 1 },
+    atHi: { ...BENCH_END, pPlain: 0.21, pOver: 0.9 }
+  }
+  assert.equal(benchmarkText(bench), 'lands 34% · with overchannel 96%')
+  // THE INTERVAL IN THE READER'S OWN UNITS. The ends CROSS when they are mapped — a LOW resistance
+  // is the optimistic case — so the range is re-ordered here and never at a call site.
+  assert.equal(benchmarkRangeText(bench), 'lands 21% to 49%')
+  assert.equal(pct(0), '0%')
+  assert.equal(pct(1), '100%')
+  // No acronyms, no em dashes, and nothing about our own bookkeeping.
+  for (const text of [benchmarkText(bench), benchmarkRangeText(bench), AT_MOB_LEVEL_NOTE, NPC_ONLY_NOTE]) {
+    assert.doesNotMatch(text, /[–—]/)
+    assert.doesNotMatch(text, /\b(MR|FR|CR|DR|PR)\b/)
+  }
+})
+
+test('WHAT A ROW SAYS WHEN THE MODEL DOES NOT FIT: the observations, and no number', () => {
+  // The Eye of Veeshan's own numbers as the owner read them off the live page.
+  assert.equal(doesNotFitText({ total: 118, resisted: 62 }), 'does not fit the model: 62 of 118 resisted')
+  // The con card has no room for the sentence, so it prints the rate and says where it came from.
+  assert.equal(resistRateText({ total: 118, resisted: 62 }), 'resists 53% of casts')
+  assert.equal(resistRateText({ total: 0, resisted: 0 }), 'no resist rate yet')
+  assert.equal(FROM_RESIST_RATE_NOTE, 'from resist rate')
+})
+
+test('the evidence line carries the rank and the invocation (JOS-387 acceptance)', () => {
+  // A rank-IV cast modelled at -60, and overchannel casts at -150 plus -15 per non-hybrid caster
+  // class. This is the drilldown line the ticket's acceptance names.
+  const line = evidenceText(
+    ev({
+      spellKey: 'scorching arrow',
+      casts: 804,
+      resisted: 96,
+      ranks: [4],
+      overchannel: { casts: 210, adj: -195, casterClasses: 3 }
+    })
+  )
+  assert.match(line, /rank 4 at -60 adjust/)
+  assert.match(line, /210 in overchannel at -195 adjust \(3 caster classes\)/)
+
+  // AND WHEN THE LOADOUT WAS NEVER STATED IT SAYS SO, because the -150 is certain and the rest is
+  // not: a zero there is a thing we do not know rather than a thing that is zero.
+  const unknownClasses = evidenceText(
+    ev({ spellKey: 'scorching arrow', casts: 10, overchannel: { casts: 10, adj: -150, casterClasses: 0 } })
+  )
+  assert.match(unknownClasses, /never stated/)
+
+  // AND THE CASTS THAT PREDATE THE FIRST INVOCATION LINE ARE SHOWN, and said to be out of the fit.
+  const unknownInvocation = evidenceText(ev({ spellKey: 'scorching arrow', casts: 13, unknownInvocation: 13 }))
+  assert.match(unknownInvocation, /13 before the log said which invocation was up - counted, not in the number/)
+
+  // A spell with neither says neither: no line grows a clause it has no number for.
+  const plain = evidenceText(ev({ spellKey: 'scorching arrow', casts: 5 }))
+  assert.equal(plain, 'Scorching Arrow: 5 casts')
 })

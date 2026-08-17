@@ -23,7 +23,14 @@
 // it. Everything here is a type, a constant or a total function, so `npm test` exercises every rule.
 
 import { isPlayerShapedName } from './playerShape'
-import { RESIST_AXES, type MobResistProfile, type ResistAxis, type ResistTag } from './resistTypes'
+import {
+  RESIST_AXES,
+  type MobResistAxis,
+  type MobResistProfile,
+  type ResistAxis,
+  type ResistAxisBenchmark,
+  type ResistTag
+} from './resistTypes'
 // TYPE-ONLY, so the cycle it closes (types.ts names this file's config blob) is erased at compile
 // time. `shared/buffTimers.ts` takes the same shape for the same reason: the knob-applier belongs
 // beside the kind's own vocabulary, not inside a store module at its factoring ceiling.
@@ -166,8 +173,23 @@ export function conCardHoldMs(cfg: ConCardOverlayConfig): number {
  */
 export interface ConCardChip {
   axis: ResistAxis
-  /** The plain-language tag, or null only when nothing at all has been observed on this axis. */
+  /**
+   * The guidance band. Null when nothing at all has been observed on this axis — and, since
+   * JOS-387, also when the fit is PINNED: a posterior that slid off the end of the grid is the
+   * model saying it cannot answer, and a card that printed a band anyway would be inventing one.
+   */
   tag: ResistTag | null
+  /**
+   * The two landing chances behind the band, at the viewer's level. Present exactly when `tag` is;
+   * the chip prints both numbers under the band so a player can scale their own case.
+   */
+  benchmark: ResistAxisBenchmark | null
+  /** The fit ran out of grid: no number, no band, and the raw resist rate instead (JOS-387). */
+  pinned: boolean
+  /** What the informative observations said, with no model in the way: total, and how many resisted. */
+  empirical: { total: number; resisted: number }
+  /** Every observation behind this axis came from a pet or another creature. The chip says so. */
+  npcOnly: boolean
   /**
    * OBSERVATIONS THAT COULD HAVE GONE EITHER WAY (JOS-385): the count the chip prints and the count
    * its low-samples caveat keys off. It is `ResistEstimate.nInformative`, not `n`, and the two are
@@ -255,21 +277,43 @@ export const CON_CARD_WIRE_DROPS = 24
  */
 export function conCardChips(profile: MobResistProfile): ConCardChip[] {
   const byAxis = new Map(profile.axes.map((a) => [a.axis, a]))
-  return RESIST_AXES.map((axis) => {
-    const row = byAxis.get(axis)
-    const est = row?.estimate ?? null
-    const tag = row?.tag ?? null
-    return {
-      axis,
-      tag,
-      // THE SAME TWO NUMBERS THE MOB PAGE PRINTS, and taken off the same estimate rather than
-      // recomputed: a chip that counted a -250 proc's casts and a row that did not would be two
-      // surfaces disagreeing about how much this app knows (JOS-385).
-      n: row?.nInformative ?? 0,
-      nTotal: row?.n ?? 0,
-      fit: est && tag ? { R: est.R, lo: est.lo, hi: est.hi } : null
-    }
-  })
+  return RESIST_AXES.map((axis) => chipFor(axis, byAxis.get(axis)))
+}
+
+/** The empty chip: what an axis the profile omits, or has nothing behind, looks like on the wire. */
+function blankChip(axis: ResistAxis): ConCardChip {
+  return {
+    axis,
+    tag: null,
+    benchmark: null,
+    pinned: false,
+    empirical: { total: 0, resisted: 0 },
+    npcOnly: false,
+    n: 0,
+    nTotal: 0,
+    fit: null
+  }
+}
+
+/** One axis row projected onto the wire. An axis the profile omits is an EMPTY chip, never absent. */
+function chipFor(axis: ResistAxis, row: MobResistAxis | undefined): ConCardChip {
+  if (!row) return blankChip(axis)
+  const est = row.estimate
+  if (!est) return { ...blankChip(axis), n: row.nInformative, nTotal: row.n }
+  return {
+    axis,
+    tag: row.tag,
+    benchmark: row.benchmark,
+    pinned: est.pinned,
+    empirical: est.empirical,
+    npcOnly: est.npcOnly,
+    // THE SAME TWO NUMBERS THE MOB PAGE PRINTS, and taken off the same estimate rather than
+    // recomputed: a chip that counted a -250 proc's casts and a row that did not would be two
+    // surfaces disagreeing about how much this app knows (JOS-385).
+    n: row.nInformative,
+    nTotal: row.n,
+    fit: row.tag === null ? null : { R: est.R, lo: est.lo, hi: est.hi }
+  }
 }
 
 /** Rendering guarantees, not taste: a 40 kB mob name cannot push a card off the screen. */

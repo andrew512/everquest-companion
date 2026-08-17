@@ -19,9 +19,10 @@ import { RESIST_AXES, type ResistAxis, type ResistRow } from '../../shared/resis
 import { BASELINE_SOURCE_KEY } from '../../shared/resistTypes'
 import { mobKey } from '../../shared/mobKey'
 import { resolveMobIdentity } from '../mobAliases'
-import { resistModule } from '../pipeline'
+import { characterModule, resistModule } from '../pipeline'
 import { mobResistCell, mobResistProfile, type ProfileDeps } from '../resist/profile'
-import { damageModes, unobservableSpells } from '../../shared/resistModel'
+import { fullDamageRefs, unobservableSpells } from '../../shared/resistModel'
+import type { DamageRef } from '../../shared/resistDamage'
 import { spellTable, spellTableNow, spellTableStatus } from '../resist/spellTable'
 import { baselineFrozenAt, resistLedger } from '../resist/store'
 import { getResistPrefs, setResistPrefs } from '../storeResists'
@@ -62,9 +63,9 @@ function unobservable(): ReadonlySet<string> {
  * reason and with the same lifetime as the blindness verdict above. It moves only when the fold
  * files damage at a value it has not seen before, and the profile reads it on every draw.
  */
-let modesCache: ReadonlyMap<string, number> | null = null
-function modes(): ReadonlyMap<string, number> {
-  modesCache ??= damageModes(allLedgerRows())
+let modesCache: ReadonlyMap<string, DamageRef> | null = null
+function modes(): ReadonlyMap<string, DamageRef> {
+  modesCache ??= fullDamageRefs(allLedgerRows())
   return modesCache
 }
 
@@ -90,6 +91,10 @@ export function resistProfileDeps(): ProfileDeps {
     damageModes: modes,
     spells: () => spellTableNow(),
     levelOf: (key, display) => resistModule.levelOf(key, display),
+    // THE VIEWER'S LEVEL, read live for the same reason the preference is (JOS-387): the tag is a
+    // benchmark at that level, so a ding has to move every card on the next draw with no re-fold.
+    // The character module already resolves ding-versus-`/who` by recency (shared/currentLevel.ts).
+    viewerLevel: () => characterModule.snapshot().state.level?.level ?? null,
     frozenAt: () => baselineFrozenAt(),
     // READ HERE, ON EVERY DRAW (JOS-385). The ledger folded those rows whatever this says; this is
     // the one place the answer is consulted, which is what makes the switch free to flip.

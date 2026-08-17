@@ -8,7 +8,10 @@
 // no caption explaining our own bookkeeping. A row says what the log saw, and where a row has too
 // little it says how little rather than drawing a zero.
 
-import type { ResistEstimate, ResistSpellEvidence } from '@shared/resistTypes'
+import type { ResistAxisBenchmark, ResistEstimate, ResistSpellEvidence } from '@shared/resistTypes'
+// VALUE import, so it is spelled RELATIVELY — the node suite imports this module directly and the
+// `@shared/*` alias is a bundler fact (AGENTS.md; `features/mobs/seenVariants.ts`'s own rule).
+import { RANK_RESIST_ADJ } from '../../../../shared/resistFormula'
 
 /**
  * The bar runs 0 to 200 because that is the whole range of the roll: at rc 200 an all-or-nothing
@@ -59,6 +62,71 @@ export function countText(nInformative: number, nTotal = nInformative): string {
   if (nInformative === nTotal) return `n=${String(nTotal)}`
   return `n=${String(nInformative)} informative · ${String(nTotal)} total`
 }
+
+// ---- the benchmark, in words (JOS-387) --------------------------------------------------------
+
+/** A probability as a whole-number percentage. One vocabulary, so two surfaces cannot round twice. */
+export function pct(p: number): string {
+  return `${String(Math.round(p * 100))}%`
+}
+
+/**
+ * `lands 34% · with overchannel 96%` — THE TWO NUMBERS, on every row and every chip, beside the
+ * band (owner ruling, 2026-08-16).
+ *
+ * The band is a summary of the common case and the numbers are what a player scales their own case
+ * from: a rank-10 spell is another -150 on top of overchannel, and a tash or a malo is another 40
+ * to 60 off. Printing only the band would answer one question and hide the arithmetic behind it.
+ */
+export function benchmarkText(b: Pick<ResistAxisBenchmark, 'pPlain' | 'pOver'>): string {
+  return `lands ${pct(b.pPlain)} · with overchannel ${pct(b.pOver)}`
+}
+
+/**
+ * The interval, mapped through the same benchmark: `lands 21% to 49%`. The ends CROSS when they are
+ * mapped (a low R is the optimistic case), which is why the two are named after the R they came
+ * from and re-ordered here rather than at the call site.
+ */
+export function benchmarkRangeText(b: ResistAxisBenchmark): string {
+  const lo = Math.min(b.atLo.pPlain, b.atHi.pPlain)
+  const hi = Math.max(b.atLo.pPlain, b.atHi.pPlain)
+  return `lands ${pct(lo)} to ${pct(hi)}`
+}
+
+/** Said when the viewer's own level is unknown, so the benchmark is an even-level reading. */
+export const AT_MOB_LEVEL_NOTE = "at the mob's level"
+
+/**
+ * WHAT A ROW SAYS WHEN THE MODEL DOES NOT FIT (owner review, 2026-08-16).
+ *
+ * `does not fit the model: 62 of 118 resisted`. No number, no interval, no band — the posterior slid
+ * off the end of the grid, which means no resistance value this game can express explains what was
+ * observed, and the honest output is the observations. The measured case is an Eye of Veeshan
+ * resisting 52% of a level-50 pet's Deadly Poison at a twenty-level gap, where the model predicts
+ * 100% resisted at every R and the display used to clamp the failure to `R 0 … weak`.
+ */
+export function doesNotFitText(empirical: { total: number; resisted: number }): string {
+  return `does not fit the model: ${String(empirical.resisted)} of ${String(empirical.total)} resisted`
+}
+
+/** The empirical rate on its own, for the con card's fallback chip: `resists 53% of casts`. */
+export function resistRateText(empirical: { total: number; resisted: number }): string {
+  if (empirical.total === 0) return 'no resist rate yet'
+  return `resists ${pct(empirical.resisted / empirical.total)} of casts`
+}
+
+/** Marks a claim that came from the raw rate rather than from the model. */
+export const FROM_RESIST_RATE_NOTE = 'from resist rate'
+
+/**
+ * Every observation behind this number was cast by a pet or another creature (owner review).
+ *
+ * It is a caveat rather than an exclusion because the switch that excludes them is the user's
+ * (JOS-385) and the measurement said keep them ON. What it warns about is the LEVEL term: an npc
+ * caster's level comes from the committed catalog rather than from the game's own statement, and
+ * the Eye of Veeshan cell is what a wrong one costs.
+ */
+export const NPC_ONLY_NOTE = 'from pets and other creatures only'
 
 /**
  * What an EMPTY cell says (owner ruling, 2026-08-16). Two words, and it is the only case left where
@@ -151,10 +219,40 @@ export function cannotBeResistedNote(resistAdj: number): string {
   return `cannot be resisted at this level: ${String(resistAdj)} adjust`
 }
 
+/**
+ * THE RANK AND THE INVOCATION, on the spell's own line (JOS-387). This is where the ticket's
+ * acceptance is visible: `rank 4 at -60 adjust` says a ranked cast was modelled at -15 a rank, and
+ * `210 in overchannel at -195 adjust` says the invocation's -150 plus -15 per non-hybrid caster
+ * class was on those casts. When the class count is zero the line says the loadout was never
+ * stated, because the -150 is certain and the rest is not.
+ */
+export function castTermsText(ev: ResistSpellEvidence): string[] {
+  const parts: string[] = []
+  if (ev.ranks.length > 0) {
+    const ranks = ev.ranks.map((r) => String(r)).join('/')
+    const adjust = ev.ranks.map((r) => String(r * RANK_RESIST_ADJ)).join('/')
+    parts.push(`rank ${ranks} at ${adjust} adjust`)
+  }
+  if (ev.overchannel) {
+    const tail =
+      ev.overchannel.casterClasses > 0
+        ? ` (${String(ev.overchannel.casterClasses)} caster classes)`
+        : ' (your caster classes were never stated, so only the flat 150 is counted)'
+    parts.push(`${String(ev.overchannel.casts)} in overchannel at ${String(ev.overchannel.adj)} adjust${tail}`)
+  }
+  if (ev.unknownInvocation > 0) {
+    parts.push(
+      `${String(ev.unknownInvocation)} before the log said which invocation was up - counted, not in the number`
+    )
+  }
+  return parts
+}
+
 export function evidenceText(ev: ResistSpellEvidence): string {
   const parts = [`${String(ev.casts)} cast${ev.casts === 1 ? '' : 's'}`]
   if (ev.resisted > 0) parts.push(`${String(ev.resisted)} resisted`)
   if (ev.partial > 0) parts.push(`${String(ev.partial)} partial`)
+  parts.push(...castTermsText(ev))
   // Say WHY it is not in the number, on the very line the number is missing from.
   if (ev.landingsNotObservable === true) parts.push(NOT_OBSERVABLE_NOTE)
   if (!ev.informative) parts.push(cannotBeResistedNote(ev.resistAdj))

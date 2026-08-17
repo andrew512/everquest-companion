@@ -117,6 +117,37 @@ export interface ResistRow {
   mobLevelHi?: number
   /** Sorted, '|'-joined canonical spell keys of the resist debuffs up at that moment. */
   debuffs: string
+  /**
+   * THE SPELL UPGRADE RANK the log printed on the cast line, or 0 when it printed none (JOS-387).
+   *
+   * A rank is -15 of resist adjust each, so it is a term of `rc` exactly like `casterLevel` and it
+   * belongs on the row for the same reason: the key has to separate a rank-IV Scorching Arrow from
+   * a rank-0 one, because they rolled against different numbers. It is parsed BEFORE canonising —
+   * `spellCanonKey` strips the numeral so a cast can still be joined to the fade and fizzle lines
+   * that never carry one, and nothing about that changes here.
+   */
+  rank: number
+  /**
+   * WAS THE OVERCHANNEL INVOCATION UP for this cast (JOS-387)? -150 of resist adjust, plus -15 per
+   * non-hybrid caster class, on CAST spells.
+   *
+   *   true   the last invocation this character recited was overchannel
+   *   false  it was one of the other eight (they are mutually exclusive), or the row is a song or
+   *          a proc, which the wiki's "cast spells" does not cover
+   *   null   NOT KNOWN, and never assumed. Before the log's first `You begin reciting the …
+   *          invocation.` line nothing has stated the state, and a relog carries the invocation the
+   *          character already had — which this app cannot see. Other players and NPC casters are
+   *          null too, because nothing states theirs either.
+   */
+  overchannel: boolean | null
+  /**
+   * The caster's non-hybrid caster classes, present only where it changes `rc` — that is, only on a
+   * row with `overchannel: true`. It rides the ROW rather than being supplied at estimate time
+   * because it is a fact about the caster at the time of the cast, like `casterLevel`: the shipped
+   * baseline is one player's log, and evaluating his overchannel casts against a READER's class
+   * loadout would be inventing an offset the observation was never made under.
+   */
+  casterClasses?: number
   resist: number
   land: number
   /** damage value -> count. Keys are the decimal number as written. */
@@ -137,7 +168,13 @@ export const MAX_DISTINCT_DAMAGE_VALUES = 32
  * `key` is a character id, or `BASELINE_SOURCE_KEY` for the shipped file.
  */
 export interface ResistLedger {
-  schema: 1
+  /**
+   * SCHEMA 2 (JOS-387): rows carry the upgrade rank and the invocation state. A schema-1 row is not
+   * upgradeable in place — its counts were pooled across ranks and across invocation states, and
+   * nothing can un-pool them — so a bump means a RE-FOLD, which this app does from the log on every
+   * launch anyway. `ResistLedgerStore.seed` refuses anything else.
+   */
+  schema: typeof RESIST_LEDGER_SCHEMA
   sources: { key: string; rows: ResistRow[] }[]
   /** Baseline only: when it was mined, and against which `spells_us.txt`. */
   frozenAt?: string
@@ -145,6 +182,9 @@ export interface ResistLedger {
 }
 
 export const BASELINE_SOURCE_KEY = 'baseline'
+
+/** The one place the ledger's schema number is written. See `ResistLedger.schema`. */
+export const RESIST_LEDGER_SCHEMA = 2
 
 /** A resist-debuff slot, as read off `spells_us.txt` field 172. */
 export interface ResistDebuffSlot {
@@ -205,6 +245,24 @@ export interface ResistSpellEvidence {
    */
   informative: boolean
   /**
+   * THE UPGRADE RANKS this spell's rows were filed under, ascending, empty when every cast was
+   * unranked (JOS-387). It is the drilldown's proof that a rank-IV cast was modelled at -60 rather
+   * than at the base adjust — the acceptance the ticket names.
+   */
+  ranks: number[]
+  /**
+   * Casts made with the overchannel invocation up, and the adjust they were modelled at. Null when
+   * none were. `casterClasses` is what the -15-per-class half was computed from; 0 means the log
+   * never stated the loadout, and the surfaces say so rather than passing a guess off as an offset.
+   */
+  overchannel: { casts: number; adj: number; casterClasses: number } | null
+  /**
+   * SELF casts made before the log's first invocation line, whose invocation state therefore
+   * nothing states. Counted here, never weighed (resistModel.ts `isHeldOut`): an unknown -150 is
+   * not evidence, and guessing either way would bias every number in one direction.
+   */
+  unknownInvocation: number
+  /**
    * THE EVIDENCE-SYMMETRY VERDICT. Every observation of this spell across the whole ledger is a
    * RESIST: no landing, no damage number, nothing. That is never a mob that resists 100% of
    * everything — it is a spell whose landings this app cannot see, and treating it as evidence
@@ -223,6 +281,30 @@ export interface ResistFit {
 
 export interface ResistEstimate extends ResistFit {
   /**
+   * THE POSTERIOR RAN OUT OF GRID and no R this game can express explains the observations (owner
+   * review, 2026-08-16 — `resistFit.ts fitPinned` carries the measured case). The surfaces must NOT
+   * print `R`, the interval or a tag when this is true: they print the observations instead.
+   */
+  pinned: boolean
+  /**
+   * WHAT THE INFORMATIVE OBSERVATIONS SAID, with no model in the way: how many entered the fit and
+   * how many of them the game answered with a resist message. It is what the "does not fit the
+   * model" row prints, and what the con card falls back to when the fit is pinned.
+   */
+  empirical: { total: number; resisted: number }
+  /**
+   * THE HARD DATA RULE FIRED (owner review, 2026-08-16): at least `ALL_RESISTED_MIN_N` informative
+   * observations, and at least `ALL_RESISTED_SHARE` of them resisted (partials count for a damage
+   * spell). The tag is forced to the top band whatever the fit says — see resistModel.ts.
+   */
+  resistsAlmostEverything: boolean
+  /**
+   * EVERY OBSERVATION BEHIND THIS NUMBER WAS CAST BY A PET OR ANOTHER CREATURE. Their level comes
+   * from a catalog rather than from the game's own statement, so the level term behind `rc` is the
+   * least trustworthy part of such a cell — the surfaces carry a visible caveat.
+   */
+  npcOnly: boolean
+  /**
    * OBSERVATIONS THAT COULD HAVE GONE EITHER WAY (JOS-385). `n` counts everything the fit saw;
    * this counts only the casts of spells that could actually have been resisted
    * (`isInformativeSpell`). The two differ by an order of magnitude on any cell a proc dominates —
@@ -237,6 +319,11 @@ export interface ResistEstimate extends ResistFit {
   droppedNoLevel: number
   /** Observations held out because their spell's landings are not observable (resistModel.ts). */
   droppedUnobservable: number
+  /**
+   * Your own casts held out because the log had not yet said which invocation was up (JOS-387).
+   * They are real observations of a real cast; what is missing is whether -150 was on it.
+   */
+  droppedUnknownInvocation: number
   byFamily: Record<ResistFamily, { n: number; resist: number; land: number }>
   /**
    * The same tally, split by WHO CAST IT (JOS-385). Counted for every kind whether or not it
@@ -261,17 +348,80 @@ export interface ResistEstimate extends ResistFit {
   nearlyImmune: boolean
 }
 
-/** The plain-language tag beside the number. Thresholds and their argument: resistModel.ts. */
-export type ResistTag = 'weak' | 'normal' | 'resistant' | 'very resistant' | 'nearly immune'
+/**
+ * THE SHORT WORD a chip and a row are labelled with. It is SCANNABLE — one or two words the eye
+ * picks out of a card over a running game — and since JOS-387 it is derived from the viewer-relative
+ * benchmark rather than from a band of R: the same creature is `normal` to a level-50 and
+ * `very resistant` to a level-30, which is the whole point of the change.
+ *
+ * `weak` is the one split that is still about R itself (under `WEAK_BELOW`), kept because "this
+ * thing has no magic resistance at all" and "this lands fine at your level" are different facts and
+ * a player who is planning ahead wants the first.
+ */
+export type ResistTag = 'weak' | 'normal' | 'resistant' | 'very resistant'
+
+/**
+ * THE GUIDANCE SENTENCE under the word: what to actually do about it (owner ruling, 2026-08-16).
+ * The tag is the label and this is the advice, and they are the same three bands read two ways —
+ * `resistant` means `needs overchannel`, every time, on every surface.
+ */
+export type ResistGuidance = 'should land' | 'needs overchannel' | 'may not land even with overchannel'
 
 /** One axis row on the card. `tag` is null ONLY at n = 0, which draws as "no data". */
 export interface MobResistAxis {
   axis: ResistAxis
   estimate: ResistEstimate | null
   tag: ResistTag | null
+  /**
+   * The two landing chances the tag is drawn from, evaluated at the viewer's level, plus the same
+   * pair at each end of the interval. Present exactly when `tag` is. Every surface prints both
+   * numbers beside the tag: `resistant · lands 34% · with overchannel 96%`.
+   */
+  benchmark: ResistAxisBenchmark | null
   n: number
   /** The half of `n` that could have gone either way — see `ResistEstimate.nInformative`. */
   nInformative: number
+}
+
+/**
+ * The benchmark for one axis row: the answer at the estimate, and the answer at each end of the
+ * 95% interval, so a surface can print the uncertainty in the reader's own units rather than
+ * leaving them to map `R 58 (36-102)` through the level formula by hand.
+ *
+ * `atLo` is the OPTIMISTIC end (the low R) and `atHi` the pessimistic one; the interval's ends
+ * cross when they are mapped, and naming them after the R they came from is what stops a surface
+ * printing the range backwards.
+ */
+export interface ResistAxisBenchmark extends ResistBenchmark {
+  atLo: ResistBenchmark
+  atHi: ResistBenchmark
+}
+
+/**
+ * ONE EVALUATION OF THE BENCHMARK: the two probabilities the tag is drawn from, and how they were
+ * evaluated. The arithmetic that produces it, and the argument for every threshold in it, is
+ * `resistBenchmark` in resistFormula.ts — the shape lives here because this is the vocabulary file
+ * both the preload and the con-card wire have to name.
+ */
+export interface ResistBenchmark {
+  /** The caster level `rc0` was computed at. */
+  level: number
+  /** The mob's level, when one is known. */
+  mobLevel: number | null
+  /**
+   * The viewer's own level was not known, so the benchmark is an EVEN-LEVEL cast and the surfaces
+   * say `at the mob's level`. Also true when nothing states the mob's level, where the arithmetic
+   * is identical (levelMod 0) and the sentence is the closest true thing that can be said.
+   */
+  atMobLevel: boolean
+  /** P(a rank-0, adjust-0, all-or-nothing spell lands), 0..1. */
+  pPlain: number
+  /** The same, with the overchannel invocation up. */
+  pOver: number
+  /** The scannable word. */
+  tag: ResistTag
+  /** The sentence under it. */
+  guidance: ResistGuidance
 }
 
 export interface MobResistProfile {

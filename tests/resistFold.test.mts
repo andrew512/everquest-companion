@@ -256,7 +256,9 @@ test('a bucket for a character you are NOT folding survives untouched', () => {
       casterKind: 'self',
       casterLevel: 20,
       mobLevel: 15,
-      debuffs: ''
+      debuffs: '',
+      rank: 0,
+      overchannel: false
     },
     1
   ).resist += 4
@@ -273,4 +275,107 @@ test('a bucket for a character you are NOT folding survives untouched', () => {
   const kept = store.rowsFor('a kodiak', 'baseline').filter((r) => r.casterLevel === 20)
   assert.equal(kept.length, 1, 'knowledge nothing can re-derive is never discarded')
   assert.equal(kept[0].resist, 4)
+})
+
+// ---------------------------------------------------------------------------------------------
+// JOS-387: the two Legends terms the fold now records, and the debuff windows they are read with.
+
+/** Fold a handful of hand-written lines. Every line here is a shape the real log prints. */
+function foldLines(lines: readonly string[]): ResistRow[] {
+  const db = loadSpellDb()
+  installSpellDb(db)
+  installCharacterName('Primitive')
+  const fold = new ResistFold({ spellDb: db })
+  fold.beginSource()
+  let seq = 0
+  for (const line of lines) {
+    const ev = parseEvent(line, seq++)
+    if (ev) fold.onEvent(ev)
+  }
+  fold.finish()
+  return fold.rows()
+}
+
+const at = (secs: number, text: string): string =>
+  `[Sat Aug 15 16:${String(50 + Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')} 2026] ${text}`
+
+/** The owner's own `/who` row: three classes, exactly one of them a non-hybrid caster. */
+const WHO = at(1, '[50 PAL/MNK/ENC] Primitive (Dark Elf)  ZONE: East Freeport (freporte)  ')
+
+test('THE UPGRADE RANK RIDES THE ROW, off the cast line and off the resist line (JOS-387)', () => {
+  const rows = foldLines([
+    WHO,
+    at(10, 'You begin casting Scorching Arrow IV.'),
+    at(12, 'A lava guardian resisted your Scorching Arrow IV!'),
+    at(20, 'You begin casting Scorching Arrow.'),
+    at(22, 'A lava guardian resisted your Scorching Arrow!')
+  ])
+  const ranked = rows.find((r) => r.spellKey === 'scorching arrow' && r.rank === 4)
+  const plain = rows.find((r) => r.spellKey === 'scorching arrow' && r.rank === 0)
+  assert.ok(ranked, 'the rank-IV cast is its own row')
+  assert.ok(plain, 'and the unranked one is another')
+  assert.equal(ranked.resist, 1)
+  assert.equal(plain.resist, 1)
+  // The KEY is untouched: both are one spell to every other consumer, which is the whole reason
+  // `spellRank` is a second function rather than a change to `spellCanonKey`.
+  assert.equal(ranked.spellKey, plain.spellKey)
+})
+
+test('THE INVOCATION IS A STATE MACHINE: unknown, then exclusive, and never assumed', () => {
+  const rows = foldLines([
+    WHO,
+    // BEFORE THE FIRST INVOCATION LINE nothing states the state, and this app refuses to guess it.
+    at(10, 'You begin casting Scorching Arrow.'),
+    at(12, 'A lava guardian resisted your Scorching Arrow!'),
+    at(20, 'You begin reciting the overchannel invocation.'),
+    at(30, 'You begin casting Scorching Arrow.'),
+    at(32, 'A lava guardian resisted your Scorching Arrow!'),
+    // ANY OTHER INVOCATION TURNS IT OFF: the nine are mutually exclusive.
+    at(40, 'You begin reciting the inversion invocation.'),
+    at(50, 'You begin casting Scorching Arrow.'),
+    at(52, 'A lava guardian resisted your Scorching Arrow!')
+  ])
+  const states = rows.filter((r) => r.spellKey === 'scorching arrow').map((r) => r.overchannel)
+  assert.equal(states.filter((s) => s === null).length, 1, 'exactly one row predates the first line')
+  assert.equal(states.filter((s) => s === true).length, 1, 'exactly one was made in overchannel')
+  assert.equal(states.filter((s) => s === false).length, 1, 'and one after it was switched away')
+
+  // THE CLASS COUNT IS ON THE OVERCHANNEL ROW AND NOWHERE ELSE, because that is the only row it
+  // changes rc on. PAL/MNK/ENC is three classes and exactly one non-hybrid caster.
+  const over = rows.find((r) => r.overchannel === true)
+  assert.equal(over?.casterClasses, 1)
+  assert.equal(rows.find((r) => r.overchannel === false)?.casterClasses, undefined)
+})
+
+test('A PROC IS NOT A CAST SPELL, so the invocation does not ride it', () => {
+  // The wiki's -150 is on CAST spells, and the log says which is which by whether an observation
+  // joins a cast line: measured, a proc prints none. So a proc's row answers `false` even while the
+  // character is demonstrably overchannelling.
+  const rows = foldLines([
+    WHO,
+    at(10, 'You begin reciting the overchannel invocation.'),
+    at(20, 'You hit a lava guardian for 193 points of magic damage by Condemnation of Nife.'),
+    at(30, 'You begin casting Scorching Arrow.'),
+    at(32, 'A lava guardian resisted your Scorching Arrow!')
+  ])
+  assert.equal(rows.find((r) => r.spellKey === 'condemnation of nife')?.overchannel, false)
+  assert.equal(rows.find((r) => r.spellKey === 'scorching arrow')?.overchannel, true)
+})
+
+test('THE DEBUFF WINDOW COVERS THE SCENT LINE, not just tash and malo', () => {
+  // The necromancer Scent ladder lowers fire, poison and disease resist, and the fold recognises a
+  // resist debuff GENERICALLY — off the catalog's verbatim `Decrease <Axis> Resist` effect lines —
+  // so it needs no per-spell list. Asserted here because the owner asked for the proof rather than
+  // the reasoning: the whole Scent line, the whole tash ladder and the whole malo ladder are
+  // recognised, and `Malaisement` was the only member of any of them that was not (a catalog
+  // spelling the game does not use, corrected in spellCorrectionsList.ts by this ticket).
+  const rows = foldLines([
+    WHO,
+    at(10, 'You begin casting Scent of Terris.'),
+    at(13, 'A lava guardian is surrounded by a dark haze.'),
+    at(20, 'You begin casting Scorching Arrow.'),
+    at(22, 'A lava guardian resisted your Scorching Arrow!')
+  ])
+  const arrow = rows.find((r) => r.spellKey === 'scorching arrow')
+  assert.equal(arrow?.debuffs, 'scent of terris', 'the Scent window was open when the arrow rolled')
 })

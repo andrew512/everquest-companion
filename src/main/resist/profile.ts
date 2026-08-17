@@ -27,12 +27,14 @@ import {
   type MobResistCell,
   type MobResistProfile,
   type ResistAxis,
+  type ResistAxisBenchmark,
   type ResistEstimate,
   type ResistRow,
   type SpellResistTable,
 } from '../../shared/resistTypes'
 import { estimate, hasAnswer } from '../../shared/resistModel'
-import { resistTag } from '../../shared/resistFormula'
+import type { DamageRef } from '../../shared/resistDamage'
+import { resistBenchmark } from '../../shared/resistFormula'
 import { BASELINE_SOURCE_KEY } from '../../shared/resistTypes'
 import type { MobLevelFact } from './world'
 import type { SpellTableState } from './spellTable'
@@ -77,6 +79,13 @@ export interface ProfileDeps {
   /** The mob's level: a `/con` this session beats the catalog beats nothing. */
   levelOf: (key: string, display: string) => MobLevelFact | null
   /**
+   * THE VIEWER'S OWN LEVEL, which is what makes the tag advice rather than trivia (JOS-387). It is
+   * the character module's `currentLevel` statement — a ding or the character's own `/who` row,
+   * whichever is later — and null when neither has been seen, where the benchmark falls back to an
+   * even-level reading and says so.
+   */
+  viewerLevel: () => number | null
+  /**
    * Spells whose landings are not observable, decided over the WHOLE ledger rather than over one
    * mob's rows (resistModel.ts `unobservableSpells` states why the scope matters).
    */
@@ -86,7 +95,7 @@ export interface ProfileDeps {
    * reason `unobservable` is (`shared/resistDamage.ts` states it): a mob with four hits of a nuke
    * cannot establish what that nuke hits for, and does not have to.
    */
-  damageModes: () => ReadonlyMap<string, number>
+  damageModes: () => ReadonlyMap<string, DamageRef>
   frozenAt: () => string | null
   /**
    * Whether charmed pets and NPC casters weigh in the numbers (JOS-385). READ AT ESTIMATE TIME,
@@ -117,9 +126,37 @@ function clampFit(est: ResistEstimate): ResistEstimate {
 /** Everything the five axis fits share, resolved once per profile rather than five times. */
 interface AxisCtx {
   mobLevel: number | null
+  /** The level the benchmark is evaluated at: the tailed character's, or null when unknown. */
+  viewerLevel: number | null
   unobservable: ReadonlySet<string>
-  modes: ReadonlyMap<string, number>
+  modes: ReadonlyMap<string, DamageRef>
   includeNpcCasters: boolean
+}
+
+/**
+ * THE BENCHMARK FOR ONE AXIS: the answer at the estimate, and the same answer at each end of the
+ * interval so a surface can print the uncertainty in landing chances rather than in R.
+ *
+ * THE HARD DATA RULE OVERRIDES THE TAG AND NOTHING ELSE (owner review, 2026-08-16). When a cell
+ * with real evidence was resisted at least nine times in ten, the word is `very resistant` whatever
+ * the fitter produced — but the two percentages beside it stay the model's own, because they are
+ * the model's claim and quietly rewriting them would hide the disagreement rather than report it.
+ * A surface that sees a forced tag beside a cheerful percentage is seeing something real.
+ */
+function axisBenchmark(est: ResistEstimate, ctx: AxisCtx): ResistAxisBenchmark {
+  const at = (R: number): ReturnType<typeof resistBenchmark> =>
+    resistBenchmark(R, ctx.viewerLevel, ctx.mobLevel)
+  const main = at(est.R)
+  const forced = est.resistsAlmostEverything
+  return {
+    ...main,
+    // BOTH HALVES MOVE TOGETHER: the word and the sentence are one band read two ways, and a chip
+    // that said `resistant · may not land even with overchannel` would be two answers on one line.
+    tag: forced ? 'very resistant' : main.tag,
+    guidance: forced ? 'may not land even with overchannel' : main.guidance,
+    atLo: at(est.lo),
+    atHi: at(est.hi),
+  }
 }
 
 function axisRow(
@@ -137,10 +174,17 @@ function axisRow(
       includeNpcCasters: ctx.includeNpcCasters,
     })
   )
+  // A PINNED FIT PRINTS NO NUMBER AND NO TAG (owner review, 2026-08-16). The posterior slid to an
+  // edge of the grid, which means no R this game can express explains what was observed — and the
+  // display used to clamp that to `R 0` and call it `weak`, on a creature that resisted half of
+  // everything thrown at it. The estimate still travels, because the row prints the OBSERVATIONS
+  // instead (`est.empirical`), and the drilldown is unchanged.
+  const bench = hasAnswer(est.n) && !est.pinned ? axisBenchmark(est, ctx) : null
   return {
     axis,
     estimate: est,
-    tag: hasAnswer(est.n) ? resistTag(est.R) : null,
+    tag: bench?.tag ?? null,
+    benchmark: bench,
     n: est.n,
     nInformative: est.nInformative,
   }
@@ -155,6 +199,7 @@ export function mobResistProfile(displayName: string, deps: ProfileDeps): MobRes
   const level = fact ? { lo: fact.lo, hi: fact.hi, from: fact.from } : null
   const ctx: AxisCtx = {
     mobLevel: fact?.level ?? null,
+    viewerLevel: deps.viewerLevel(),
     unobservable: deps.unobservable(),
     modes: deps.damageModes(),
     includeNpcCasters: deps.includeNpcCasters(),
@@ -162,7 +207,8 @@ export function mobResistProfile(displayName: string, deps: ProfileDeps): MobRes
   const axes = spells
     ? RESIST_AXES.map((axis) => axisRow(rows, spells, axis, ctx))
     : RESIST_AXES.map(
-        (axis) => ({ axis, estimate: null, tag: null, n: 0, nInformative: 0 }) satisfies MobResistAxis
+        (axis) =>
+          ({ axis, estimate: null, tag: null, benchmark: null, n: 0, nInformative: 0 }) satisfies MobResistAxis
       )
   return {
     mobKey: key,

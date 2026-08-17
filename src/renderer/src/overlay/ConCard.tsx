@@ -33,7 +33,15 @@ import { CON_CARD_MAX_DROPS, type ConCardPayload } from '@shared/conCard'
 import { RESIST_AXIS_WORDS } from '@shared/resistTypes'
 import { lowSamples } from '@shared/resistModel'
 import { RESIST_AXIS_COLORS } from '../features/resists/resistColors'
-import { LOW_SAMPLE_NOTE, countText, estimateText } from '../features/resists/resistRow'
+import {
+  FROM_RESIST_RATE_NOTE,
+  LOW_SAMPLE_NOTE,
+  NPC_ONLY_NOTE,
+  benchmarkText,
+  countText,
+  estimateText,
+  resistRateText
+} from '../features/resists/resistRow'
 import { formatDropsPerKill } from '../lib/formatRate'
 import { CARD_ENTER_MS, CARD_EXIT_MS } from './cardQueue'
 import {
@@ -112,25 +120,44 @@ function Chip({ chip }: { chip: ConCardNotableChip }): JSX.Element {
         <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: color, flex: '0 0 auto' }} />
         <span style={{ color, fontSize: 11, fontWeight: 700 }}>{RESIST_AXIS_WORDS[chip.axis]}</span>
       </div>
-      {/* THE TAG IS WORDS, ALWAYS. `overflowWrap` rather than an ellipsis: "very resistant"
-          truncated to "very resis…" is the acronym problem wearing different clothes. */}
+      {/* THE BAND IS WORDS, ALWAYS. `overflowWrap` rather than an ellipsis: "may not land even
+          with overchannel" truncated to "may not land…" is the acronym problem wearing different
+          clothes, and it would invert the sentence's meaning rather than merely shorten it. */}
       <div
         data-testid={`con-chip-tag-${chip.axis}`}
         style={{ color, fontSize: 11, marginTop: 2, overflowWrap: 'anywhere' }}
       >
-        {chip.tag}
+        {chip.from === 'benchmark' ? chip.tag : resistRateText(chip.empirical)}
         {lowSamples(chip.n) && <span style={{ color: DIM }}>{` · ${LOW_SAMPLE_NOTE}`}</span>}
       </div>
-      {/* The number and its interval, with the count beside them — never one without the others.
+      {/* THE GUIDANCE SENTENCE, under the word (owner ruling, 2026-08-16). The word is what the eye
+          picks out of a card over a running game; this is what to do about it, and the two are one
+          band read two ways. */}
+      {chip.benchmark && (
+        <div
+          data-testid={`con-chip-guidance-${chip.axis}`}
+          style={{ color: MUTED, fontSize: 10, marginTop: 1, overflowWrap: 'anywhere' }}
+        >
+          {chip.benchmark.guidance}
+        </div>
+      )}
+      {/* THE TWO PERCENTAGES, under the band, on the card as on the page (owner ruling): the band
+          answers the common case and these let a player scale their own — a rank-10 spell is another
+          -150, a malo another 45.
+
+          WHEN THE FIT DID NOT FIT there is no benchmark to print and no number to print either; the
+          chip says where its claim came from instead, which is the whole point of the pinned guard.
 
           THE COUNT HERE IS THE INFORMATIVE ONE AND ONLY THAT (JOS-385). `chip.n` is the half of the
-          evidence that could have gone either way, which is the number the caveat above keys off
-          and the honest answer to "how much does this rest on". The mob page prints the total
-          beside it because it has a column to print it in; a 9px chip does not, and the two-number
-          sentence wraps to three lines there. The total still crosses the wire (`chip.nTotal`) —
-          this is a layout decision, not a shorter truth. */}
+          evidence that could have gone either way. The mob page prints the total beside it because
+          it has a column to print it in; a 9px chip does not. The total still crosses the wire
+          (`chip.nTotal`) — a layout decision, not a shorter truth. */}
+      <div data-testid={`con-chip-bench-${chip.axis}`} style={{ color: MUTED, fontSize: 10, marginTop: 1 }}>
+        {chip.benchmark ? benchmarkText(chip.benchmark) : FROM_RESIST_RATE_NOTE}
+      </div>
       <div data-testid={`con-chip-detail-${chip.axis}`} style={{ color: DIM, fontSize: 9, marginTop: 1 }}>
-        {`${estimateText(chip.fit)} ${countText(chip.n)}`}
+        {chip.fit ? `${estimateText(chip.fit)} ${countText(chip.n)}` : countText(chip.n)}
+        {chip.npcOnly && ` · ${NPC_ONLY_NOTE}`}
       </div>
     </div>
   )

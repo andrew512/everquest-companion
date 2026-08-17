@@ -617,6 +617,19 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
     attribution: 'sole',
     evidence:
       'The wiki page`s `spellname` is `Solon`s Bravura`; the game has never printed it. Owner log: 20 lines naming `Solon`s Bewitching Bravura` (5 own-guild casts by the bard Enzee, 14 sung AT the player by fire giants, 1 resist) and 0 naming `Solon`s Bravura`. Reporter slice 01KZAG2QAW885YJNRTDDND8BF2 adds `You begin singing Solon`s Bewitching Bravura IX.` x5 and `Your Solon`s Bewitching Bravura spell has worn off of a fire giant warrior.` x5; slice 01KZM7F36JD12WYF15DHCCWNEE ends on `You have finished memorizing Solon`s Bewitching Bravura.`. A dropped word, never a different spell: nothing else in the DB is named Bravura (src/main/log/rulesets.ts says so too), the level, class, cast time, duration and all three messages are untouched, and the entry`s own `You are captivated by the bewitching tune.` carries the missing word already. Both level-39 rows (18 s and the April-2000 1 Min) are renamed together.'
+  },
+  // Found by the JOS-387 audit of what the resist fold recognises as a RESIST DEBUFF. The tash
+  // ladder, the malo ladder and the whole Scent line are recognised correctly off the catalog`s
+  // verbatim `Decrease <Axis> Resist` effect lines; this one name is the only member of any of them
+  // that the log and the wiki spell differently, so it was the only one whose windows never opened.
+  {
+    spells: ['Malisement'],
+    field: 'name',
+    to: 'Malaisement',
+    from: 'Malisement',
+    attribution: 'sole',
+    evidence:
+      'The shaman malo ladder`s level-32 rung. Owner log, whole file (2,026,223 lines): 229 lines naming `Malaisement` (123 `<mob> begins casting Malaisement.`, 5 `You begin casting Malaisement.`, the rest interrupts and fades) and 0 naming `Malisement`. One inserted vowel, never a different spell: nothing else in the DB is named Mal*sement, and the entry`s four `Decrease Cold/Magic/Poison/Fire Resist by 36-40` effect lines are exactly the rung between Malaise (15-20) and Malosi (59-60), which the log casts 136 and 63 times under names the catalog already matches. Until this correction `isResistDebuff` (main/resist/world.ts) answered false for all 229 lines, so the debuff was never recorded against a mob and every observation made under it was fitted at an offset 36 to 40 points too small.'
   }
 ]
 

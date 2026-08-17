@@ -26,118 +26,27 @@ import {
 // The FORWARD half moved to its own module when JOS-385 pushed the pair past the line ceiling.
 // The tests below still read as one subject, because the calibration claim spans both.
 import {
+  BENCHMARK_LANDS_AT,
   IMMUNE_LEVEL_MOD,
+  OVERCHANNEL_PER_CASTER_CLASS,
+  OVERCHANNEL_RESIST_ADJ,
+  RANK_RESIST_ADJ,
+  benchmarkGuidance,
+  benchmarkTag,
+  WEAK_BELOW,
+  casterClassCount,
+  effectiveResistAdj,
   expectedDamageFraction,
   levelMod,
   predict,
   priorResist,
-  resistTag,
+  resistBenchmark,
 } from '../src/shared/resistFormula'
-import type { ResistRow, SpellResistTable } from '../src/shared/resistTypes'
+// The synthetic world moved to its own module when JOS-387 split this suite at the line ceiling;
+// tests/resistGuards.test.mts drives the same one, so "be the server for a moment" has one meaning.
+import { LANDS_ELSEWHERE, SPELLS, blank, playAon, playDd, rng } from './resistFixtures.mts'
+import type { ResistRow } from '../src/shared/resistTypes'
 
-// ---------------------------------------------------------------------------------------------
-// The world under test: one fixed-damage nuke, one all-or-nothing hold, one lure with a big
-// negative adjust, and one malo-shaped debuff whose amount the estimator has to join in itself.
-
-const FULL_DAMAGE = 150
-
-const SPELLS: SpellResistTable = {
-  'test nuke': {
-    axis: 'magic',
-    resistAdj: 0,
-    castMs: 3000,
-    targetType: 5,
-    hpSlot: { base: -110, max: FULL_DAMAGE, calc: 103 },
-  },
-  'test lure': {
-    axis: 'fire',
-    resistAdj: -200,
-    castMs: 3000,
-    targetType: 5,
-    hpSlot: { base: -110, max: FULL_DAMAGE, calc: 103 },
-  },
-  'test hold': { axis: 'magic', resistAdj: 0, castMs: 3000, targetType: 5 },
-  'test proc': { axis: 'magic', resistAdj: -250, castMs: 0, targetType: 5 },
-  'test hold b': { axis: 'magic', resistAdj: 0, castMs: 3000, targetType: 5 },
-  'test mez': { axis: 'magic', resistAdj: 0, castMs: 3000, targetType: 8, levelCap: 55 },
-  'test malo': {
-    axis: null,
-    resistAdj: 0,
-    castMs: 3000,
-    targetType: 5,
-    debuffSlots: [{ axis: 'all', base: -20, calc: 101, max: 40 }],
-  },
-}
-
-/**
- * Every test below hands `estimate()` ONE cell's rows. The evidence-symmetry guard is a
- * whole-ledger verdict (resistModel.ts `unobservableSpells`), and a single simulated cell where a
- * mob genuinely resisted every cast looks exactly like a spell we cannot see land. So the tests
- * that are about the MODEL say what the wider ledger knows — that these spells do land elsewhere —
- * and the guard gets its own tests, which say the opposite on purpose.
- */
-const LANDS_ELSEWHERE: ReadonlySet<string> = new Set<string>()
-
-/** A fixed-seed generator: the same failure twice, or it is not a test. */
-function rng(seed: number): () => number {
-  let s = seed >>> 0
-  return () => {
-    s = (Math.imul(s, 1664525) + 1013904223) >>> 0
-    return s / 4294967296
-  }
-}
-
-const roll = (next: () => number): number => 1 + Math.floor(next() * 200)
-
-function blank(spec: Partial<ResistRow> & Pick<ResistRow, 'spellKey' | 'family'>): ResistRow {
-  return {
-    mobKey: 'a test mob',
-    casterKind: 'self',
-    casterLevel: 50,
-    mobLevel: 50,
-    debuffs: '',
-    resist: 0,
-    land: 0,
-    dmg: {},
-    firstTs: 0,
-    lastTs: 0,
-    ...spec,
-  }
-}
-
-/** Play `n` all-or-nothing casts at this rc and report what the log would have shown. */
-function playAon(R: number, offset: number, n: number, next: () => number): { resist: number; land: number } {
-  const rc = R + offset
-  let resist = 0
-  for (let i = 0; i < n; i++) {
-    if (roll(next) <= rc) resist++
-  }
-  return { resist, land: n - resist }
-}
-
-/** Play `n` fixed-damage casts at this rc: the resist message, a silent partial, or full damage. */
-function playDd(R: number, offset: number, n: number, next: () => number): { resist: number; dmg: Record<string, number> } {
-  const rc = R + offset
-  let resist = 0
-  const dmg: Record<string, number> = {}
-  for (let i = 0; i < n; i++) {
-    const r = roll(next)
-    if (r > rc) {
-      dmg[String(FULL_DAMAGE)] = (dmg[String(FULL_DAMAGE)] ?? 0) + 1
-      continue
-    }
-    const resisted = (150 * (rc - r)) / rc
-    if (resisted >= 100) {
-      resist++
-      continue
-    }
-    const value = Math.max(1, Math.floor((FULL_DAMAGE * (100 - resisted)) / 100))
-    dmg[String(value)] = (dmg[String(value)] ?? 0) + 1
-  }
-  return { resist, dmg }
-}
-
-// ---------------------------------------------------------------------------------------------
 
 test('levelMod is the server formula, including both of its cliffs', () => {
   assert.equal(levelMod(50, 50), 0)
@@ -160,15 +69,94 @@ test('the prior is Torven, and it is the only place a number is assumed', () => 
   assert.equal(priorResist('disease', 10), 15)
 })
 
-test('the plain-language tags sit where the rc arithmetic puts them', () => {
-  assert.equal(resistTag(0), 'weak')
-  assert.equal(resistTag(9), 'weak')
-  assert.equal(resistTag(25), 'normal')
-  assert.equal(resistTag(35), 'normal')
-  assert.equal(resistTag(60), 'resistant')
-  assert.equal(resistTag(150), 'very resistant')
-  assert.equal(resistTag(200), 'nearly immune')
-  assert.equal(resistTag(400), 'nearly immune')
+test('THE GUIDANCE IS THREE BANDS, drawn at 60% of a plain cast (JOS-387)', () => {
+  assert.equal(BENCHMARK_LANDS_AT, 0.6)
+  // The boundary belongs to the more optimistic band, in both places it is drawn.
+  assert.equal(benchmarkGuidance(0.6, 1), 'should land')
+  assert.equal(benchmarkGuidance(0.59, 1), 'needs overchannel')
+  assert.equal(benchmarkGuidance(0.59, 0.6), 'needs overchannel')
+  assert.equal(benchmarkGuidance(0.59, 0.59), 'may not land even with overchannel')
+  assert.equal(benchmarkGuidance(0, 0), 'may not land even with overchannel')
+
+  // AND THE SCANNABLE WORD IS THE OTHER READING OF THE SAME BAND (owner ruling, 2026-08-16): the
+  // chip carries the word, the sub-line carries the sentence, and `weak` is the one split still
+  // drawn on R itself.
+  assert.equal(WEAK_BELOW, 10)
+  assert.equal(benchmarkTag(40, 'should land'), 'normal')
+  assert.equal(benchmarkTag(9, 'should land'), 'weak')
+  assert.equal(benchmarkTag(9, 'needs overchannel'), 'resistant', 'weak never survives a harder band')
+  assert.equal(benchmarkTag(200, 'may not land even with overchannel'), 'very resistant')
+})
+
+test('THE BENCHMARK IS EVALUATED AT THE VIEWER LEVEL, and the level term alone can decide it', () => {
+  // An even-level cast against an ordinary creature: R 40 means rc 40, so 80% of casts land.
+  const even = resistBenchmark(40, 50, 50)
+  assert.equal(even.pPlain, 0.8)
+  assert.equal(even.pOver, 1)
+  assert.equal(even.guidance, 'should land')
+  assert.equal(even.tag, 'normal')
+  assert.equal(even.atMobLevel, false)
+
+  // THE OWNER'S CALIBRATION CASE. The player cap is 50 and the Eye of Veeshan is 70, so levelMod
+  // alone is +200 before the creature's own resistance is counted — which is why his tashed,
+  // maloed, overchannelled slows still fail. This is correct and intended, not a symptom. R 182 is
+  // what the shipped baseline fits for its magic.
+  assert.equal(levelMod(50, 70), 200)
+  const eye = resistBenchmark(182, 50, 70)
+  assert.equal(eye.pPlain, 0)
+  assert.equal(eye.pOver, 0)
+  assert.equal(eye.guidance, 'may not land even with overchannel')
+  assert.equal(eye.tag, 'very resistant')
+  // The level term ALONE, on an unremarkable creature, is already most of the way there: at +200 a
+  // plain cast never lands whatever R is, and only overchannel can bring it back.
+  assert.equal(resistBenchmark(0, 50, 70).pPlain, 0)
+  assert.equal(resistBenchmark(0, 50, 70).guidance, 'needs overchannel')
+
+  // The middle band is exactly "overchannel is what makes this work".
+  const middle = resistBenchmark(120, 50, 53)
+  assert.ok(middle.pPlain < BENCHMARK_LANDS_AT && middle.pOver >= BENCHMARK_LANDS_AT)
+  assert.equal(middle.guidance, 'needs overchannel')
+  assert.equal(middle.tag, 'resistant')
+
+  // No viewer level: an even-level reading, and the surfaces say `at the mob's level`.
+  const unknown = resistBenchmark(40, null, 53)
+  assert.equal(unknown.atMobLevel, true)
+  assert.equal(unknown.pPlain, 0.8, 'levelMod is zero when the two levels are the same')
+})
+
+test('A RANK IS -15 AND OVERCHANNEL IS -150 PLUS -15 A CASTER CLASS (JOS-387)', () => {
+  assert.equal(RANK_RESIST_ADJ, -15)
+  assert.equal(OVERCHANNEL_RESIST_ADJ, -150)
+  assert.equal(OVERCHANNEL_PER_CASTER_CLASS, -15)
+  // The ticket's own worked examples: Scorching Arrow IV is -60, Frost Shard VI is -90, and a
+  // Siphon Life at -215 reads -260 at rank III.
+  assert.equal(effectiveResistAdj(0, { rank: 4 }), -60)
+  assert.equal(effectiveResistAdj(0, { rank: 6 }), -90)
+  assert.equal(effectiveResistAdj(-215, { rank: 3 }), -260)
+  // Overchannel, with and without a stated loadout. Zero classes is the honest floor: the -150 is
+  // certain and the rest is not.
+  assert.equal(effectiveResistAdj(0, { overchannel: true }), -150)
+  assert.equal(effectiveResistAdj(0, { overchannel: true, casterClasses: 3 }), -195)
+  assert.equal(effectiveResistAdj(0, { overchannel: false, casterClasses: 3 }), 0)
+  assert.equal(effectiveResistAdj(0, { overchannel: null, casterClasses: 3 }), 0)
+  // And the two stack, which is the case the estimator meets most.
+  assert.equal(effectiveResistAdj(0, { rank: 4, overchannel: true, casterClasses: 2 }), -240)
+  // The class count is the non-hybrid casters of a `/who` row, and nothing else.
+  assert.equal(casterClassCount(['CLR', 'WIZ', 'ENC']), 3)
+  assert.equal(casterClassCount(['PAL', 'MNK', 'BRD']), 0, 'hybrids and the bard do not count')
+  assert.equal(casterClassCount(['pal', 'nec', 'shd']), 1, 'case does not matter')
+  assert.equal(casterClassCount(undefined), 0)
+})
+
+test('predict() carries the rank and the invocation into rc', () => {
+  const base = { R: 100, casterLevel: 50, mobLevel: 50, resistAdj: 0, kind: 'aon' as const }
+  // rc = 100: half the casts land.
+  assert.equal(predict(base).pLand, 0.5)
+  // Rank 4 takes 60 off rc, so 80% land.
+  assert.equal(predict({ ...base, rank: 4 }).pLand, 0.8)
+  // Overchannel takes rc below zero entirely.
+  assert.equal(predict({ ...base, overchannel: true }).pLand, 1)
+  assert.equal(predict({ ...base, overchannel: null }).pLand, 0.5, 'unknown is never assumed')
 })
 
 test('SYNTHETIC ROLLS: the interval covers the true R at least 90% of the time', () => {
@@ -439,8 +427,9 @@ test('EVIDENCE SYMMETRY: a spell we never see land is not a mob that resists eve
   // and stated in the units a player reads it in: the word beside the bar changes.
   const naive = estimate(rows, SPELLS, { axis: 'magic', mobLevel: 50, unobservable: new Set() })
   assert.ok(naive.R > 100, `R=${String(naive.R)} - without the guard one blind spell decides it`)
-  assert.equal(resistTag(naive.R), 'very resistant')
-  assert.equal(resistTag(guarded.R), 'normal')
+  // Stated in the units a player reads it in: the guidance beside the bar changes band.
+  assert.equal(resistBenchmark(guarded.R, 50, 50).guidance, 'should land')
+  assert.equal(resistBenchmark(naive.R, 50, 50).guidance, 'needs overchannel')
 })
 
 test('the verdict is about the SPELL, and the caller decides the scope', () => {
@@ -473,8 +462,11 @@ test('a thin cell does not scream immune', () => {
   })
   assert.equal(est.n, 5)
   assert.ok(est.R < 200, `R=${String(est.R)} — the prior has to pull this down`)
-  // And the interval, which comes from the evidence alone, has to admit how little it rules out:
-  // five resists cannot distinguish "resistant" from "immune", so it runs to the top of the grid.
-  assert.ok(est.hi >= 400, `hi=${String(est.hi)} — the evidence rules out nothing above`)
+  // And the interval has to admit how little it rules out: five resists cannot distinguish
+  // "resistant" from "immune", so it runs far above the point estimate. (Its top is now finite
+  // because the interval is the central 95% of a posterior with a broad prior on it rather than a
+  // likelihood cut — JOS-387 — so the claim is about WIDTH, which is the honest one.)
+  assert.ok(est.hi >= 250, `hi=${String(est.hi)} — the evidence rules out very little above`)
+  assert.ok(est.hi - est.lo > 200, `interval width ${String(est.hi - est.lo)} — five casts know nothing`)
   assert.equal(est.nearlyImmune, false)
 })
