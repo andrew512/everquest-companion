@@ -99,11 +99,22 @@ const build = (
 
 test('column mapping is TOTAL: a missing or wrong-typed column becomes a default, never a throw', () => {
   assert.deepEqual(toUsageRows([{ day: '2026-08-01', metric: 'sessions', dim: null, n: '12' }]), [
-    // `n` arrives as a number (store.ts sets the int8 parser); a string is not trusted into one.
+    // `n` normally arrives as a number (store.ts sets the int8 parser on OID 20). A NUMERIC
+    // STRING is now read as the number it is, and that reversal is measured rather than
+    // preferred (JOS-394): an uncast `SUM(bigint)` in a view comes back NUMERIC — OID 1700,
+    // which no parser covers — so postgres hands `'12'` over, and the old rule turned a real
+    // counter into 0. A readout full of honest-looking zeros is the worst answer a panel can
+    // give, and it is indistinguishable from a quiet fleet. `usage_daily_all` casts its sum
+    // back to bigint so this cannot happen from our own schema; this is the second line.
     // An ABSENT `cohort` (a cluster mid-migration, or the nullable install column) is 'user' —
     // the fail-safe direction: an install nobody marked is a user.
-    { day: '2026-08-01', cohort: 'user', metric: 'sessions', dim: '-', n: 0 }
+    { day: '2026-08-01', cohort: 'user', metric: 'sessions', dim: '-', n: 12 }
   ])
+  // A string that is not a number is still 0, and so is an empty one: the rule reads a NUMBER
+  // written as text, it does not coerce whatever turns up.
+  assert.equal(toUsageRows([{ n: 'lots' }])[0].n, 0)
+  assert.equal(toUsageRows([{ n: '' }])[0].n, 0)
+  assert.equal(toUsageRows([{ n: Number.NaN }])[0].n, 0)
   assert.deepEqual(toFunnelRows([{}]), [
     { day: '', cohort: 'user', funnel: '', step: '', outcome: '-', appVersion: '?', n: 0 }
   ])
