@@ -121,6 +121,9 @@ export interface ClientHpFacts {
  */
 const CALC_STEPS: Record<number, number> = { 100: 0, 101: 0.5, 102: 1, 103: 2, 104: 3, 105: 4 }
 
+/** A client hitpoint slot below this magnitude is a rider, not the spell's purpose (see clientLine). */
+const MIN_CLIENT_HP_MAGNITUDE = 2
+
 /** A client slot's magnitude at a level: always positive, and honest about a formula it cannot read. */
 export function clientHpMagnitudeAt(
   slot: ClientHpSlot,
@@ -475,7 +478,13 @@ function clientLine(
   lifetap: boolean
 ): (HpLine & { formulaUnknown: boolean }) | null {
   const read = clientHpMagnitudeAt(slot, level)
-  if (read.amount <= 0) return null
+  // A ONE-POINT RIDER IS NOT A DAMAGE OR HEALING SPELL - the same floor `MIN_DEBUFF_MAGNITUDE`
+  // draws for resist riders. Measured against the owner's client file: exactly two of the
+  // fifteen wiki-less spells fall under it - Rage of Zomm (a pet summon with a 1 hp rider,
+  // "dmg 1 - dps 0") and Illusion: Iksar (the racial 1 hp/tick regen over 36 minutes) - and
+  // nothing else in the catalog moves. A slot under a formula this reader does not evaluate is
+  // exempt: its base IS a floor and is already flagged as one (Soul Bond, calc 4005).
+  if (read.amount < MIN_CLIENT_HP_MAGNITUDE && !read.formulaUnknown) return null
   const direction: HpLine['direction'] = lifetap || slot.base < 0 ? 'down' : 'up'
   return {
     amount: read.amount,
