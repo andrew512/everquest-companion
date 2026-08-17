@@ -78,6 +78,13 @@ import { TEXT_SCALE_MAX } from '../../src/shared/overlayTextScale'
 // max-lines budget and the rule is SPLIT, never ratchet. Each carries its own argument in its
 // header: the chips' two creatures, and the click that made the card a lily pad (JOS-390).
 import { stepNotableChips, stepResistantChip } from './conCardChipSteps.mjs'
+// …and the SIZE steps (JOS-406), for the same reason: the window scaling with the text, the chip
+// grid wrapping instead of squeezing, and a drag at 150% remembered as the 100% box.
+import {
+  stepChipGridWraps,
+  stepResizeRecordsLayoutBox,
+  stepWindowScalesWithText
+} from './conCardScaleSteps.mjs'
 import {
   stepClickOpensTheMobPage,
   stepCloseDoesNotNavigate,
@@ -662,6 +669,15 @@ async function main(): Promise<void> {
       await stepNotableChips(card)
       await stepWindowFitsCard(app, card)
       await shootCard(app, card, 'con-card.png')
+      // THE SIZE (JOS-406): the window IS the card, so it scales with the text and the chips wrap
+      // rather than squeeze. These three drive SYNTHETIC payloads (five chips, then one) because
+      // the chip count of a real creature is a fact about the resist baseline rather than about
+      // this feature — the argument is in conCardScaleSteps.mts's header. They put the lich back
+      // afterwards, so every step below reads the card the rest of this spec is about.
+      const columns = await stepChipGridWraps(app, card)
+      await stepWindowScalesWithText(app, card, columns)
+      await stepResizeRecordsLayoutBox(app, card)
+      await stepBackToTheLich(log, card)
       // THE LINK (JOS-390), on the lich's card, which is the one on screen: a click opens its page
       // in the app and leaves the card up; unlocked, the same click navigates nothing.
       await stepClickOpensTheMobPage(card, page, MOB)
