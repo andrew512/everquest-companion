@@ -18,16 +18,29 @@
 # it logs in as (`analytics_export`, infra/schema.sql) holds SELECT and no INSERT,
 # UPDATE or DELETE anywhere.
 #
-# WHAT IT WRITES: `exports/<table>/<YYYY-MM-DD>.json.gz`, one gzipped JSON bundle
-# per table, plus `exports/_manifest/<YYYY-MM-DD>.json` listing the night. The
-# format is deliberately boring — `gunzip | jq` reads it with no AWS, no restore
-# job and no code from this repo. `triage-feedback analytics import <dir>` is the
-# supported way back in.
+# WHAT IT WRITES, AND WHY IN TWO PREFIXES:
 #
-# IT IS A COPY, NOT A NEW COLLECTION. Every byte was already in the cluster; the
-# column lists come from src/shared/analyticsTables.ts, so the retired
-# `report.title`/`contact` columns the live cluster still physically carries are
-# not copied out. SECURITY.md states this in the user's own words.
+#   exports/<YYYY-MM-DD>/<table>.json.gz  + manifest.json   the counters and ops tables
+#   backlog/<YYYY-MM-DD>/report.json.gz   + manifest.json   the one table of human text
+#
+# The FORMAT is byte-for-byte what `triage-feedback analytics export` writes to the
+# operator's own disk (JOS-399): a gzipped JSON array with one row per line, and a
+# manifest carrying row counts, a sha256 per file, the cluster id and the schema
+# revision. So `aws s3 sync` of one night into a directory and then
+# `triage-feedback analytics import <dir>` restores it with no S3-specific code
+# anywhere — one restore path, shared, verified by checksum before the first write.
+# `gunzip | jq` also reads it, with no AWS and no code from this repo at all.
+#
+# The SPLIT is a promise rather than a filing system. An S3 lifecycle filter is a
+# PREFIX and cannot pick one file out of a shared directory, and SECURITY.md
+# promises a deletion request is honoured — so the one table holding anything a
+# person wrote gets its own top level, where a rule can expire it. The lifecycle
+# block below argues it where it happens.
+#
+# IT IS A COPY, NOT A NEW COLLECTION. Every byte was already in the cluster: the
+# same tables, the same columns, nothing derived and nothing added. SECURITY.md
+# states this in the user's own words, and states both retention windows rather
+# than implying instant erasure.
 # -----------------------------------------------------------------------------
 
 locals {
@@ -133,37 +146,36 @@ resource "aws_s3_bucket_lifecycle_configuration" "archive" {
   }
 
   # ---------------------------------------------------------------------------
-  # THE ONE PREFIX THAT EXPIRES, AND WHY IT HAS TO
+  # THE ONE PREFIX THAT EXPIRES, AND WHY IT EXISTS AS A SEPARATE PREFIX AT ALL
   # ---------------------------------------------------------------------------
   # `report` is the one table in this cluster that holds HUMAN-WRITTEN TEXT, and
   # SECURITY.md makes an unconditional promise about it: ask for a report to be
   # deleted and the report and its slice both go. A versioned archive with no
-  # expiry would quietly turn that promise into "the live row goes and a copy of
-  # your words stays in a bucket forever", which is not what anyone was told.
+  # expiry would quietly turn that into "the live row goes and a copy of your
+  # words stays in a bucket forever", which is not what anyone was told.
   #
-  # So the backlog's exports expire, on the SAME 90-day window the attached log
-  # slice already has in s3.tf — one published number rather than a second one to
-  # explain. A deletion request is therefore true in the live database
-  # immediately and true everywhere within 90 days, and SECURITY.md says exactly
-  # that rather than implying instant erasure.
+  # AN S3 LIFECYCLE FILTER IS A PREFIX. It has no wildcard and cannot select one
+  # file out of a per-night directory — which is why `report` is written under its
+  # own TOP-LEVEL prefix by infra/lambda/export.ts rather than beside the
+  # counters. The object layout is shaped by this rule, not the other way round,
+  # and that is the honest ordering: the retention promise is the requirement.
   #
-  # THE PRICED COST, stated so nobody "fixes" it: this rule overlaps the transition
-  # above, so a report export spends its last ~60 days in GLACIER_IR and incurs
-  # that class's 90-day early-delete charge. On a table measured in megabytes that
-  # is a fraction of a cent a month, and the alternative — moving one table out of
-  # the `exports/` layout so the prefixes stop overlapping — would make the object
-  # layout irregular to save nothing.
+  # 90 days is the window the attached log slice already has in s3.tf — one
+  # published number rather than a second one to explain. Because the prefixes do
+  # not overlap, nothing here transitions to GLACIER_IR first, so there is no
+  # early-delete charge to reason about either.
   #
   # AWS BACKUP IS THE OTHER HALF OF THIS SENTENCE. A monthly recovery point in
   # infra/backup.tf holds the whole cluster for 12 months, so a deleted report can
   # survive there for up to a year. That is inherent to having backups at all;
-  # what matters is that it is STATED rather than discovered.
+  # what matters is that SECURITY.md STATES it rather than leaving it to be
+  # discovered.
   rule {
     id     = "expire-backlog-exports"
     status = "Enabled"
 
     filter {
-      prefix = "exports/report/"
+      prefix = "backlog/"
     }
 
     expiration {
@@ -172,6 +184,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "archive" {
 
     noncurrent_version_expiration {
       noncurrent_days = var.archive_backlog_retention_days
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
     }
   }
 
@@ -185,7 +201,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "archive" {
     status = "Enabled"
 
     filter {
-      prefix = "exports/report/"
+      prefix = "backlog/"
     }
 
     expiration {
@@ -293,11 +309,19 @@ data "aws_iam_policy_document" "export_inline" {
     resources = [aws_dsql_cluster.feedback.arn]
   }
 
+  # The TWO prefixes it writes, listed rather than a wildcard on the bucket. This
+  # list IS the set of paths the function can create an object at, and naming them
+  # keeps the retention split (kept vs 90 days) enforceable rather than a
+  # convention the code happens to follow.
   statement {
-    sid       = "ExportWriteArchiveObjects"
-    effect    = "Allow"
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.archive.arn}/exports/*"]
+    sid     = "ExportWriteArchiveObjects"
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+
+    resources = [
+      "${aws_s3_bucket.archive.arn}/exports/*",
+      "${aws_s3_bucket.archive.arn}/backlog/*",
+    ]
   }
 }
 

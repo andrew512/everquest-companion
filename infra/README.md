@@ -38,7 +38,7 @@ the runbook.
 | `iam.tf` | the two ingest roles (`dsql:DbConnect` only; telemetry has no S3 at all) and `EqCompanionFeedbackTriageRole` (`dsql:DbConnectAdmin`) |
 | `alarms.tf` | `EqCompanionOpsAlerts` SNS topic + email sub + 9 alarms (the OCC one is metric math over a RATIO since JOS-394) + the monthly budget |
 | `backup.tf` | **JOS-398** — AWS Backup vault + plan (daily 35 d, monthly 12 mo) + selection on the cluster ARN + the service role + a job-failure alarm |
-| `export.tf` | **JOS-398** — `eqcompanion-analytics-archive-<acct>` (versioned, BPA, SSE, lifecycle, encryption-deny policy), `eqcompanion-analytics-export` + its role and log group, the 09:30 UTC EventBridge rule, and two alarms |
+| `export.tf` | **JOS-398** — `eqcompanion-analytics-archive-<acct>` (versioned, BPA, SSE, two-prefix lifecycle, encryption-deny policy), `eqcompanion-analytics-export` + its read-only role and log group, the 09:30 UTC EventBridge rule, and two alarms |
 | `dashboard.tf` | `eqcompanion-telemetry` CloudWatch dashboard, fed by the ingest handler's EMF documents |
 | `outputs.tf` | `api_url`, `telemetry_api_url`, `cluster_endpoint`, `bucket_name`, `triage_role_arn`, all three `*_role_arn`s, log group names, `archive_bucket_name`, `backup_vault_name` |
 | `build.mjs` | esbuild bundles of `lambda/submit.ts`, `lambda/telemetry.ts` and `lambda/export.ts` → **deterministic** `dist/submit.zip` + `dist/telemetry.zip` + `dist/export.zip` |
@@ -462,10 +462,17 @@ bucket, or any existing IAM role, stop — nothing in this change touches them.
 ### 2. Then the schema
 
 ```bash
+# JOS-399's guard: `migrate` REFUSES without an offline copy from the last six hours.
+npx tsx scripts/triage-feedback.mts analytics export --profile <profile>
 npx tsx scripts/triage-feedback.mts migrate --profile <profile> --refresh
 ```
 
-`--refresh` is not optional here: there is a **new Terraform output**
+**Take the export first, and take it seriously** — this migration adds a role and thirteen grants
+to the live cluster, which is exactly the class of change the guard was built for. (The escape
+hatch is `--no-export-check`, which prints the refusal anyway; there is no reason to reach for it
+here.)
+
+`--refresh` is not optional either: there is a **new Terraform output**
 (`export_lambda_role_arn`), and `.triage/stack.json` is a cache that is read back without
 re-validating. Without it, `migrate` finds the unsubstituted `${EXPORT_LAMBDA_ROLE_ARN}` and stops
 saying exactly this. It applies, all idempotent:
@@ -486,7 +493,10 @@ would hand back a sum whose two legs can no longer be told apart.
 # The export, on demand rather than waiting for 09:30 UTC.
 aws lambda invoke --function-name "$(cd infra && terraform output -raw export_function_name)" /dev/null
 aws logs tail "$(cd infra && terraform output -raw export_log_group)" --since 5m
-aws s3 ls "s3://$(cd infra && terraform output -raw archive_bucket_name)/exports/" --recursive | head -20
+ARCHIVE=$(cd infra && terraform output -raw archive_bucket_name)
+aws s3 ls "s3://$ARCHIVE/exports/$(date -u +%F)/"
+aws s3 ls "s3://$ARCHIVE/backlog/$(date -u +%F)/"
+aws s3 cp "s3://$ARCHIVE/exports/$(date -u +%F)/manifest.json" - | head -40
 
 # The backup, after the first 09:00 UTC run.
 aws backup list-recovery-points-by-backup-vault \
@@ -499,15 +509,25 @@ The log's `export.table` lines carry a row count per table and never a row. The
 `ExportRows`** — that is correct rather than a misconfiguration, because until then there has not
 been one.
 
-**Rehearsed end to end on a real, EPHEMERAL DSQL cluster** (`sruag4muogppcljre5lmjsyu2q`, created
-and deleted for the ticket — prod was not touched), with a throwaway bucket carrying this
-policy: the schema applied (46 statements), the handler exported **13 tables / 14 objects**
-connecting as `analytics_export`, every counter and the backlog were then DELETED, and
-`analytics import` restored `usage_daily_all SUM(n)` to **exactly 65**, its pre-wipe value, with
-the frozen and sharded rows folded into 5 sharded rows. A second import changed nothing. The
-read-only role answered `42501 permission denied` to INSERT, UPDATE, DELETE and to a SELECT on
-`usage_daily_all`. A `PutObject` without the encryption header was refused with *"explicit deny in
-a resource-based policy"*; the same put with `AES256` succeeded.
+**REHEARSED END TO END ON A REAL, EPHEMERAL DSQL CLUSTER** — `dzuag6oc2hgx5nczqvvbnte4ba`, created
+and deleted for the ticket, with a throwaway bucket carrying the same policy. **Production was not
+touched.** What was actually measured:
+
+| Step | Result |
+| --- | --- |
+| `migrate` on a fresh cluster | 46 applied, 15 already present — 61 statements |
+| The BUILT bundle (`dist/export.mjs`), connecting as `analytics_export` | `tables=13 rows=11 missing=[]` |
+| Objects written | `exports/<day>/` **13 files** (12 tables + `manifest.json`), `backlog/<day>/` **2** (`report.json.gz` + its manifest) |
+| The manifest | `clusterId=dzuag6oc2hgx5…`, `schemaRevision=61` (read from the schema bundled into the zip), a sha256 per file |
+| Before | `usage_daily_all SUM(n)=65` · `usage_daily=3` · `usage_daily_sharded=3` · `perf_daily_all SUM(n)=6` · `report=1` |
+| After DELETE FROM every table | `usage_daily_all SUM(n)=null` · everything 0 |
+| `analytics import` (JOS-399's, checksums verified first) | `usage_daily_all SUM(n)=65` · `usage_daily=3` · `usage_daily_sharded=3` · `perf_daily_all SUM(n)=6` · `report=1` — **table for table, byte for byte** |
+| Importing the same directories AGAIN | identical — idempotent |
+| The read-only role | `42501 permission denied` to INSERT, UPDATE, DELETE **and** to a SELECT on `usage_daily_all` (ungranted on purpose); SELECT on `report` and the counters allowed |
+| `PutObject` with no encryption header | refused — *"explicit deny in a resource-based policy"*. The same put with `AES256` succeeded |
+
+The restore is what makes this a backup rather than a copy, and it was run against the artifact
+the apply uploads rather than against the TypeScript.
 
 **Rollback** is `terraform destroy -target` on the new resources, and it is not needed for
 anything: nothing in this change alters an existing resource, an existing bundle, or an existing
@@ -827,8 +847,21 @@ Two layers. **Neither is a substitute for the other**, and the split is the desi
 | --- | --- | --- |
 | What it holds | the WHOLE cluster, as a recovery point | every table's rows, as gzipped JSON |
 | When | **09:00 UTC** daily (kept 35 days) and the **1st of the month** (kept 12 months) | **09:30 UTC** daily |
-| Where | vault `eqcompanion-analytics` | `s3://eqcompanion-analytics-archive-<acct>/exports/<table>/<YYYY-MM-DD>.json.gz` + `exports/_manifest/<day>.json` |
-| Restores | to a **NEW cluster** — AWS Backup cannot restore DSQL in place, which is also why it is safe | into any cluster, one table or all of them, with `analytics import` |
+| Where | vault `eqcompanion-analytics` | `s3://eqcompanion-analytics-archive-<acct>/` — **two prefixes**, each a complete export with its own `manifest.json`: `exports/<YYYY-MM-DD>/<table>.json.gz` (the counters, kept) and `backlog/<YYYY-MM-DD>/report.json.gz` (the one human-text table, 90 days) |
+| Restores | to a **NEW cluster** — AWS Backup cannot restore DSQL in place, which is also why it is safe | into any cluster, with the SAME `analytics import` the operator-side export uses |
+
+**THE NIGHTLY JOB WRITES JOS-399's FORMAT, EXACTLY.** A gzipped JSON array with one row per line
+plus a checksummed manifest — byte-for-byte what `triage-feedback analytics export` puts on the
+operator's own disk. So `aws s3 sync` of one night into a directory and then
+`analytics import <dir>` restores it with no S3-specific code anywhere: checksums verified before
+the first INSERT, then the same idempotent keyed upsert. There is ONE importer, `analytics import`,
+and both backup tickets use it (`scripts/analyticsImport.mts`).
+
+**WHY TWO PREFIXES.** An S3 lifecycle filter is a prefix and has no wildcard, so it cannot pick one
+file out of a per-night directory. `report` is the only table holding anything a person wrote and
+SECURITY.md promises a deletion request is honoured, so it needs a rule of its own — which means a
+prefix of its own. The object layout is shaped by the retention promise rather than the other way
+round.
 | Answers | "the cluster is wrong and I want yesterday's, all of it" | "one table is wrong", "I want to look without standing up a cluster", "the recovery point is the thing that is missing" |
 | Alarms | `eqcompanion-backup-jobs-failed` | `…-analytics-export-failed` (it ran and broke) and `…-analytics-export-stale` (it never ran) |
 
@@ -849,14 +882,19 @@ aws backup list-recovery-points-by-backup-vault --backup-vault-name "$VAULT" \
   --query 'reverse(sort_by(RecoveryPoints,&CreationDate))[].[CreationDate,Status,RecoveryPointArn]' \
   --output table
 
-# Last night's export, and what it contained.
-aws s3 ls "s3://$ARCHIVE/exports/" --recursive | tail -20
-aws s3 cp "s3://$ARCHIVE/exports/_manifest/$(date -u +%F).json" - | head -40
+# Last night's export, both prefixes, and what each contained.
+DAY=$(date -u +%F)
+aws s3 ls "s3://$ARCHIVE/exports/$DAY/"
+aws s3 cp "s3://$ARCHIVE/exports/$DAY/manifest.json" - | head -60
+aws s3 cp "s3://$ARCHIVE/backlog/$DAY/manifest.json" - | head -20
 ```
 
-The manifest is the index: per table, the object keys, the row count and the compressed size. It
-is the fastest way to answer "did last night's export actually contain the backlog" without
-downloading anything.
+A manifest is the index: per table, the file, the row count, the compressed size and a sha256 of
+the bytes in the object. It also carries `schemaRevision` (the statement count of the
+`infra/schema.sql` the deployed bundle was built from) and a `missing` list — tables the schema
+declares that the cluster answered `42P01` for, which is a genuinely different fact from "empty"
+and which a missing file alone could not tell you. It is the fastest way to answer "did last
+night's export actually contain everything" without downloading a byte.
 
 ### Restore path A — AWS Backup, to a NEW cluster
 
@@ -901,57 +939,80 @@ Use this when one table is wrong, when the damage is recent and narrow, or when 
 recovery point. It writes into whatever cluster `.triage/stack.json` names, so **check that
 first**.
 
+**Each prefix is its own export**, with its own manifest, so each is one `sync` and one `import`.
+Restore the counters, the backlog, or both — nothing depends on the other.
+
 ```bash
 DAY=2026-08-16
-mkdir -p .triage/restore
 
-# Everything from that night...
-aws s3 sync "s3://$ARCHIVE/exports/" .triage/restore --exclude "*" --include "*$DAY*"
-# ...or exactly one table.
-aws s3 cp "s3://$ARCHIVE/exports/usage_daily_sharded/$DAY.json.gz" .triage/restore/
+# The counters, the install rows and the config.
+aws s3 sync "s3://$ARCHIVE/exports/$DAY/"  .triage/restore-counters
+npx tsx scripts/triage-feedback.mts analytics import .triage/restore-counters --dry-run --profile <profile>
+npx tsx scripts/triage-feedback.mts analytics import .triage/restore-counters --profile <profile>
 
-# Read, parse and fold everything; write nothing.
-npx tsx scripts/triage-feedback.mts analytics import .triage/restore --dry-run --profile <profile>
-npx tsx scripts/triage-feedback.mts analytics import .triage/restore --profile <profile>
+# The backlog, if that is what was lost.
+aws s3 sync "s3://$ARCHIVE/backlog/$DAY/" .triage/restore-backlog
+npx tsx scripts/triage-feedback.mts analytics import .triage/restore-backlog --profile <profile>
 ```
+
+**Always `--dry-run` first.** It re-computes every file's sha256 against the manifest and counts
+the rows without issuing a statement, so a truncated download is discovered before the first
+INSERT rather than three tables into the restore.
 
 Three properties worth knowing before you run it:
 
-- **It is idempotent.** Rows are folded in memory and written by ASSIGNMENT, so running the same
-  directory in twice converges instead of doubling a counter. A restore that dies halfway is safe
-  to simply run again.
-- **The frozen counters move.** `usage_daily` / `perf_daily` rows land in the `_sharded` twins
-  under shard 0 — one live table per counter instead of two — and `usage_daily_all` /
-  `perf_daily_all` make that invisible to every reader. Nothing is written back to the frozen
-  tables.
-- **The kill switches come back CLOSED**, whatever the export held. `triage-feedback closed off`
-  and `analytics open` are the two deliberate commands that reopen the endpoints once you have
-  looked at the data.
+- **It verifies before it writes.** A checksum mismatch stops the whole run having touched
+  nothing, and says so.
+- **It is idempotent.** Every write is `ON CONFLICT (<primary key>) DO UPDATE SET <every non-key
+  column> = EXCLUDED.<column>` — assignment, never the ingest path's addition — so running the
+  same directory in twice leaves the cluster identical. That is what makes "it died halfway, just
+  run it again" a safe instruction.
+- **It restores TABLE FOR TABLE.** `usage_daily`'s rows go back to `usage_daily` (the frozen
+  pre-shard table) and `usage_daily_sharded`'s go back carrying their own shards. Because
+  `usage_daily_all` is the two summed, that is the only routing that cannot double a counter. (An
+  export taken from the merged VIEW has no shard column at all, and those rows land under shard 0 —
+  `scripts/analyticsImport.mts` handles both spellings.)
+- **The switches are not restored for you.** `feedback_config` comes back as it was exported, so
+  check `triage-feedback closed` afterwards and set both switches deliberately.
 
 ### The drill — run it against an ephemeral cluster, not against prod
 
 A backup nobody has restored is a hypothesis. This is the whole loop, and it is what was run to
-land JOS-398 (cluster `sruag4muogppcljre5lmjsyu2q`, created and deleted for the ticket).
+land JOS-398 — **last run 2026-08-17**, cluster `dzuag6oc2hgx5nczqvvbnte4ba`, created and deleted
+for the ticket. Take the numbers from production BEFORE you start, so step 6 has something to
+compare against.
 
 1. **Stand one up.** `aws dsql create-cluster --no-deletion-protection-enabled --tags Ephemeral=true`
    — note the identifier, and wait for `aws dsql get-cluster --identifier <id> --query status` to
-   read `ACTIVE`.
+   read `ACTIVE` (a minute or two).
 2. **Point a COPY of the cache at it.** `cp .triage/stack.json .triage/stack.prod.json` first, then
-   edit `cluster_endpoint`. Getting this backwards is the one way this drill can touch production,
-   so do it before anything else and read the file back.
-3. **Migrate.** `npx tsx scripts/triage-feedback.mts migrate --profile <profile>` — expect ~46
-   applied on a fresh cluster.
-4. **Pull last night down.** `aws s3 sync "s3://$ARCHIVE/exports/" .triage/drill --exclude "*" --include "*$(date -u -d yesterday +%F)*"`
-5. **Dry run, then import.** The dry run must name every table you expected and refuse nothing.
-6. **Read it back.** `npx tsx scripts/triage-feedback.mts analytics digest --cohort all --days 30 --profile <profile>`
-   against the drill cluster. The numbers must match what the same command prints against
-   production for the same window — that comparison **is** the drill's pass condition, and it is
-   the only step that proves the export is complete rather than merely present.
-7. **Tear it down and put the cache back.** `aws dsql delete-cluster --identifier <id>`, confirm
-   `status` reads `DELETING`, then `mv .triage/stack.prod.json .triage/stack.json`.
+   edit `cluster_endpoint` to `<new-id>.dsql.us-east-1.on.aws`. Getting this backwards is the one
+   way this drill can touch production, so do it before anything else and read the file back.
+3. **Migrate.** `npx tsx scripts/triage-feedback.mts migrate --profile <profile> --no-export-check`
+   — a fresh cluster has nothing to export, which is the one honest use of that flag. Expect **46
+   applied, 15 already present** on today's schema.
+4. **Pull last night down**, both prefixes:
 
-Do it after any change to `schema.sql`, to `src/shared/analyticsTables.ts`, or to either half of
-the pair — and note the date here when you do.
+   ```bash
+   DAY=$(date -u -d yesterday +%F)
+   aws s3 sync "s3://$ARCHIVE/exports/$DAY/"  .triage/drill-counters
+   aws s3 sync "s3://$ARCHIVE/backlog/$DAY/" .triage/drill-backlog
+   ```
+
+5. **Dry run, then import.** `analytics import .triage/drill-counters --dry-run` must verify every
+   checksum and name every table you expected; then the same without the flag, and again for the
+   backlog directory.
+6. **Read it back.** `npx tsx scripts/triage-feedback.mts analytics digest --cohort all --days 30 --profile <profile>`
+   against the drill cluster. The numbers must match what the same command printed against
+   production for the same window — that comparison **is** the drill's pass condition, and it is
+   the only step that proves the export is COMPLETE rather than merely present. A restore that
+   loads without error and is missing a table still loads without error.
+7. **Tear it down and put the cache back.** `aws dsql delete-cluster --identifier <id>`, confirm
+   `status` reads `DELETING`, then `mv .triage/stack.prod.json .triage/stack.json`. Do the move
+   even if the drill failed.
+
+Do it after any change to `infra/schema.sql`, to `src/shared/analyticsSchema.ts`, or to either
+half of the pair — and note the date above when you do.
 
 ## Retention, and the one thing DSQL does not do
 
@@ -963,8 +1024,8 @@ the pair — and note the date here when you do.
 | Log object | 90 days | **S3 lifecycle — unchanged**; `triage-feedback forget <id>` deletes one on request |
 | Quota counters (3 d), idempotency keys (7 d), dedupe probes (2 d) | lazy | swept by the ingest handler |
 | Lambda / API access logs | 14 days | CloudWatch retention |
-| **Nightly export objects** (JOS-398) | indefinite, GLACIER_IR after 30 days; superseded versions 365 days | S3 lifecycle on `eqcompanion-analytics-archive-<acct>`. They are anonymous daily sums with no id in them, and "the series starts 2026-08-04 and there will never be earlier data" is what makes an old copy worth keeping |
-| **`exports/report/`** — the ONE prefix that expires | **90 days** | The same window the attached log slice already has, and it exists because `report` is the only table holding human-written text: a versioned archive with no expiry would turn SECURITY.md's deletion promise into "the live row goes and a copy of your words stays forever" |
+| **`exports/`** — the nightly counter archive (JOS-398) | indefinite, GLACIER_IR after 30 days; superseded versions 365 days | S3 lifecycle on `eqcompanion-analytics-archive-<acct>`. They are anonymous daily sums with no id in them, and "the series starts 2026-08-04 and there will never be earlier data" is what makes an old copy worth keeping |
+| **`backlog/`** — the ONE prefix that expires | **90 days** | The same window the attached log slice already has, and it is a separate prefix precisely so a lifecycle rule can reach it: `report` is the only table holding human-written text, and a versioned archive with no expiry would turn SECURITY.md's deletion promise into "the live row goes and a copy of your words stays forever" |
 | **AWS Backup recovery points** | daily 35 days, monthly 12 months | `backup.tf`. They hold the whole cluster, so a deleted report can survive in a monthly point for up to a year. That is inherent to having backups at all; SECURITY.md **states** it rather than leaving it to be discovered |
 
 **DynamoDB had TTL. DSQL has nothing.** So the three counter tables are swept by
@@ -1011,7 +1072,7 @@ Lambda/DSQL, under the $10 budget and alarmed within five minutes.
 - **A DELETION REQUEST IS TRUE IN THE DATABASE IMMEDIATELY AND EVERYWHERE WITHIN 90 DAYS.**
   `forget` / `wipe` remove the live row and the S3 object, as they always have — but since
   JOS-398 a copy of the `report` row also sits in each nightly export, and the whole cluster sits
-  in a monthly recovery point. `exports/report/` therefore expires at 90 days (the one lifecycle
+  in a monthly recovery point. The `backlog/` prefix therefore expires at 90 days (the one lifecycle
   carve-out in the archive bucket), and SECURITY.md states both windows in the user's own words.
   Raising `archive_backlog_retention_days` is a change to a published promise, not a tuning knob.
 - **The export role can read everything, and that is the point of it having no trigger.**
@@ -1033,6 +1094,14 @@ Lambda/DSQL, under the $10 budget and alarmed within five minutes.
 - **The zip is byte-deterministic** (fixed 1980 timestamps). Rebuilding without a
   source change produces the same hash and therefore no redeploy. Do not "fix"
   that by stamping the current time.
+- **…BUT ONLY FROM `infra/`. `cd infra && node build.mjs`, never `node infra/build.mjs`.**
+  MEASURED 2026-08-17 while proving a plan touched no existing function: esbuild resolves
+  `absWorkingDir` from the process cwd and writes cwd-relative module paths into the bundle, so
+  the *same sources* produce **different bytes** from the two directories. Run from the repo root,
+  `dist/submit.zip` hashes `18cf6849…` and from `infra/` it hashes `fea5fde4…` — a plan that then
+  redeploys both ingest functions for no source change at all, which is exactly the noise
+  `source_code_hash` determinism exists to prevent. Every command in this file already says
+  `cd infra`; that is why.
 - **`pg` is bundled pure-JS.** `build.mjs` replaces `pg-native` and
   `cloudflare:sockets` with a stub that throws if anything ever evaluates it.
   Nothing does; do not "fix" it by installing `pg-native`.

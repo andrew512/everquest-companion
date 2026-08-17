@@ -189,7 +189,7 @@ you can edit is not a backup. Concretely:
 | --- | --- |
 | The live database | immediately, when you ask |
 | The attached log slice in S3 | immediately (the object is deleted outright; that bucket is unversioned on purpose) |
-| The nightly copies of the reports table | **within 90 days** — the same window the attached slice already had. This is the only part of the archive that expires, and it expires *because* it is the only part holding anything anyone wrote |
+| The nightly copies of the reports table | **within 90 days** — the same window the attached slice already had. Reports are archived under their own storage prefix, separate from the counters, for exactly this reason: it is the only part of the archive that expires, and it expires *because* it is the only part holding anything anyone wrote |
 | The whole-database point-in-time copies | **within 12 months**, when the last monthly one carrying it rolls off |
 
 The counters are not on this list because there is nothing in them to delete: they are

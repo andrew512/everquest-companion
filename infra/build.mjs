@@ -75,8 +75,8 @@ const ENTRIES = [
   {
     name: 'export',
     entry: join(HERE, 'lambda', 'export.ts'),
-    contract: join(ROOT, 'src', 'shared', 'analyticsTables.ts'),
-    why: 'infra/lambda/export.ts and scripts/analyticsImport.mts import the SAME table registry on purpose — an exporter and an importer that disagree about a column are a backup that cannot be restored.',
+    contract: join(ROOT, 'src', 'shared', 'analyticsSchema.ts'),
+    why: 'infra/lambda/export.ts, scripts/analyticsExport.mts and scripts/analyticsImport.mts share that module on purpose — an exporter and an importer that disagree about a table, a manifest field or the file format are a backup that cannot be restored.',
   },
 ]
 
@@ -211,6 +211,11 @@ async function bundleOne(esbuild, { name, entry, contract, why }) {
     platform: 'node',
     format: 'esm',
     target: 'node22',
+    // `.sql` AS A STRING (JOS-398). The export handler puts the schema's statement count in every
+    // manifest, and a Lambda cannot read the repo at run time — so `infra/schema.sql` travels
+    // inside the bundle. `infra/lambda/sql.d.ts` is the matching TypeScript declaration. It costs
+    // the two ingest bundles nothing: neither imports a `.sql` file, so neither changes.
+    loader: { '.sql': 'text' },
     plugins: [stubNativeBackends],
     // Parts of the AWS SDK are CJS and call `require` after bundling into ESM.
     banner: {

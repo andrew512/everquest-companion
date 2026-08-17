@@ -57,64 +57,33 @@ import { join } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { createGzip } from 'node:zlib'
+import { SCHEMA_FILE, TRIAGE_DIR, type Clients, type Row } from '../src/main/triage/store'
+// THE TABLE LIST, THE MANIFEST SHAPE AND THE FILE FORMAT MOVED TO src/shared (JOS-398) and are
+// re-exported below, so nothing that imported them from here had to change. They moved because a
+// THIRD consumer appeared that cannot reach this module: the nightly S3 export Lambda. Importing
+// this file into a Lambda would drag `store.ts` in with it — S3 clients, IAM role assumption and
+// a `terraform` shell-out, bundled into a function that must only read rows and write objects,
+// and redeployed every time this CLI changes. A leaf module with no imports is what all three can
+// share; the header of src/shared/analyticsSchema.ts carries the argument.
 import {
-  SCHEMA_FILE,
-  splitStatements,
-  TRIAGE_DIR,
-  type Clients,
-  type Row,
-} from '../src/main/triage/store'
+  clusterIdOf,
+  EXPORT_TABLES,
+  MANIFEST_FILE,
+  schemaRevision,
+  type ExportManifest,
+  type ExportTable,
+  type ManifestEntry,
+} from '../src/shared/analyticsSchema'
 import type { AnalyticsCtx } from './triageAnalytics.mjs'
 
-/**
- * EVERY TABLE IN infra/schema.sql, WITH ITS PRIMARY KEY — a CLOSED list, because each name
- * reaches SQL as an identifier (a table name cannot be a parameter) and the only thing that keeps
- * that safe is that no caller can add one. The key is here to ORDER the paged read, and the
- * importer reuses it as the `ON CONFLICT` target.
- *
- * THE VIEWS ARE NOT HERE ON PURPOSE. `usage_daily_all` / `perf_daily_all` are
- * `usage_daily UNION ALL usage_daily_sharded` summed back to the old key (JOS-394): exporting
- * them as well would write every counter TWICE into the same directory, and a restore of both
- * would double the fleet. The two physical tables under a view are the backup; the view is a
- * projection of them and is rebuilt by `migrate`.
- */
-export const EXPORT_TABLES = [
-  { table: 'feedback_config', key: ['id'] },
-  { table: 'install_profile', key: ['install_id'] },
-  { table: 'report', key: ['report_id'] },
-  { table: 'install_quota', key: ['install_id', 'quota_day'] },
-  { table: 'report_idempotency', key: ['install_id', 'client_report_id'] },
-  { table: 'dedupe_probe', key: ['hash', 'probe_day'] },
-  { table: 'usage_daily', key: ['day', 'cohort', 'metric', 'dim'] },
-  { table: 'usage_daily_sharded', key: ['shard', 'day', 'cohort', 'metric', 'dim'] },
-  {
-    table: 'usage_funnel_daily',
-    key: ['day', 'cohort', 'funnel', 'step', 'outcome', 'app_version'],
-  },
-  {
-    table: 'perf_daily',
-    key: ['day', 'cohort', 'window_mode', 'machine_class', 'locked', 'stall_bucket', 'tail_bucket'],
-  },
-  {
-    table: 'perf_daily_sharded',
-    key: [
-      'shard',
-      'day',
-      'cohort',
-      'window_mode',
-      'machine_class',
-      'locked',
-      'stall_bucket',
-      'tail_bucket',
-    ],
-  },
-  { table: 'error_report', key: ['day', 'cohort', 'version', 'fingerprint'] },
-  { table: 'analytics_install', key: ['analytics_id'] },
-] as const
-
-export interface ExportTable {
-  table: string
-  key: readonly string[]
+export {
+  clusterIdOf,
+  EXPORT_TABLES,
+  MANIFEST_FILE,
+  schemaRevision,
+  type ExportManifest,
+  type ExportTable,
+  type ManifestEntry,
 }
 
 /** Rows per SELECT. Bigger than the backfill's 500 because nothing here MODIFIES a row, so
@@ -133,56 +102,12 @@ const codeOf = (err: unknown): string | null => {
   return typeof code === 'string' ? code : null
 }
 
-export interface ManifestEntry {
-  table: string
-  file: string
-  rows: number
-  /** Bytes ON DISK, i.e. of the gzipped file — the number `sha256` is taken over. */
-  bytes: number
-  sha256: string
-}
-
-export interface ExportManifest {
-  version: 1
-  /** ISO 8601, UTC. THE GUARD READS THIS FIELD and nothing else — never a file mtime, which a
-   *  copy or a sync would reset without the data behind it having been re-read. */
-  createdAt: string
-  /** The cluster the rows came from: the first label of the DSQL endpoint. A restore into a
-   *  DIFFERENT cluster is legitimate (that is what a restore usually is), so this is recorded
-   *  and printed rather than enforced. */
-  clusterId: string
-  /**
-   * SCHEMA REVISION = the number of statements in infra/schema.sql at export time, which is
-   * exactly the statement count the last `migrate` applied (migrate walks the whole file and is
-   * idempotent, so "applied" and "present in the file" are the same set). It is the number that
-   * answers "was this copy taken from the shape the code expects" during a restore.
-   */
-  schemaRevision: number
-  tables: ManifestEntry[]
-  /** Tables schema.sql declares that this cluster does not have (42P01) — recorded so a restore
-   *  can tell "empty" from "was never there", which a missing file alone cannot. */
-  missing: string[]
-}
-
-export const MANIFEST_FILE = 'manifest.json'
-
 /** The default destination: `.triage/exports/`, inside the gitignored triage working dir. */
 export const EXPORTS_DIR = join(TRIAGE_DIR, 'exports')
 
 /** `2026-08-16T1432` — sortable, minute-grained, and legal on every filesystem (no colons). */
 export function stampOf(nowMs: number): string {
   return new Date(nowMs).toISOString().slice(0, 16).replace(/:/g, '')
-}
-
-/** The cluster id out of `<id>.dsql.<region>.on.aws`. Endpoint-shaped input only; anything else
- *  is passed through, because this is a label in a manifest and not a lookup key. */
-export function clusterIdOf(endpoint: string): string {
-  return endpoint.split('.')[0] ?? endpoint
-}
-
-/** How many statements the schema file carries — see `schemaRevision`. */
-export function schemaRevision(sql: string): number {
-  return splitStatements(sql).length
 }
 
 // ---- the paged read ---------------------------------------------------------------------------
