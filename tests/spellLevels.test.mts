@@ -17,6 +17,8 @@ import classes from '../src/main/data/classes.json'
 import spellsJson from '../src/main/data/spells.json'
 import { CLASS_ABBRS } from '../src/shared/classCombo'
 import {
+  classAbbrForDisplayName,
+  classDisplayName,
   knownClassDisplayNames,
   parseSpellClasses,
   scanSpellClasses,
@@ -172,4 +174,22 @@ test('the display-name table matches classes.json name-for-name', () => {
     ['shadowknight']
   )
   assert.equal(known.length, wiki.length + 1)
+})
+
+test('classDisplayName answers for all 16 codes, exactly as classes.json spells them (JOS-402)', () => {
+  // The UI's labels are this table (every class filter, offer chip and loadout picker since
+  // JOS-402), so a drift from the scrape is a wrong word on screen, not just a stale constant.
+  const names: Record<string, string> = classes.names
+  for (const abbr of CLASS_ABBRS) {
+    assert.equal(classDisplayName(abbr), names[abbr], `${abbr} is not spelled as classes.json does`)
+  }
+  assert.equal(classDisplayName('SHD'), 'Shadow Knight')
+})
+
+test('every display name round-trips back to its own code', () => {
+  // The reverse direction is the parse the wiki fields go through, so the two tables in
+  // spellLevels.ts have to agree: a name this app PRINTS must be a name it can READ.
+  for (const abbr of CLASS_ABBRS) {
+    assert.equal(classAbbrForDisplayName(classDisplayName(abbr)), abbr, `${abbr} does not round-trip`)
+  }
 })
