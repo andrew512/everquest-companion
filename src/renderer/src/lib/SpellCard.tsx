@@ -40,6 +40,25 @@ import { Tooltip } from './Tooltip'
 /** How many effect lines / rank members the card lists before collapsing to "+N more". */
 const MAX_LISTED = 8
 
+/**
+ * THE OUT-OF-ERA PILL (JOS-393) — the words the item rows already wear (`PlannerChips.EraChip`
+ * says `out of era` in MUI's warning outline), drawn in this card's own MUI-free vocabulary.
+ *
+ * It sits beside the NAME rather than in the stat block, because it is not a property of the spell
+ * the way its mana is: it is a statement about whether this server has the content at all, and that
+ * governs everything under it. `true`-or-absent (see `SpellDetail.outOfEra`), so an unclassified
+ * page draws nothing at all rather than an "in era" claim nobody made.
+ */
+const ERA_PILL: React.CSSProperties = {
+  color: '#e0b070',
+  border: '1px solid #e0b07066',
+  borderRadius: 3,
+  fontSize: 9,
+  lineHeight: 1.4,
+  padding: '0 3px',
+  whiteSpace: 'nowrap'
+}
+
 /** The header colour says what KIND of spell it is - the same question the row's chip answers. */
 const NATURE_COLOR: Record<SpellDetail['nature'], string> = {
   beneficial: '#7fd8a0',
@@ -243,7 +262,14 @@ export function SpellCard({ name }: { name: string }): JSX.Element {
         boxShadow: '0 6px 20px rgba(0,0,0,0.6)'
       }}
     >
-      <div style={{ color: accent, fontSize: 12, fontWeight: 700 }}>{name}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <div style={{ color: accent, fontSize: 12, fontWeight: 700 }}>{name}</div>
+        {data?.outOfEra === true && (
+          <span style={ERA_PILL} data-testid="spell-card-out-of-era">
+            out of era
+          </span>
+        )}
+      </div>
       {classLine !== null && (
         <div style={LABEL_STYLE} data-testid="spell-card-classes-levels">
           {classLine}

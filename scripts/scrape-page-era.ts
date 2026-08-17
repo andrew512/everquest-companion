@@ -497,6 +497,20 @@ function entryFor(
   }
 }
 
+/**
+ * The boolean tables (`mobs`, `spells`), built the one way: a key per title the endpoint ANSWERED
+ * for, and nothing at all for the ones it did not. Shared by both so the two cannot come to mean
+ * different things about an absent row.
+ */
+function answered(titles: readonly string[], verdicts: ReadonlyMap<string, boolean>): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
+  for (const title of titles) {
+    const v = verdicts.get(pageEraKey(title))
+    if (v !== undefined) out[pageEraKey(title)] = v
+  }
+  return out
+}
+
 function printCensus(refs: Map<string, string[]>, targets: readonly string[]): void {
   const byTarget = new Map<string, number>()
   for (const list of refs.values()) for (const t of list) byTarget.set(t, (byTarget.get(t) ?? 0) + 1)
@@ -567,19 +581,10 @@ async function main(): Promise<void> {
   for (const title of titles) {
     pages[pageEraKey(title)] = entryFor(title, targetText.get(title), verdicts.get(pageEraKey(title)), by)
   }
-  // ASKED, not answered: a dropper the endpoint did not name at all stays out of the table, and
-  // the derivation reads its absence as silence rather than as `false` (law 1, and see pageEraDb).
-  const mobs: Record<string, boolean> = {}
-  for (const name of droppers) {
-    const v = mobVerdicts.get(pageEraKey(name))
-    if (v !== undefined) mobs[pageEraKey(name)] = v
-  }
-  // Same rule for the spell pages: asked and answered, or absent.
-  const spells: Record<string, boolean> = {}
-  for (const title of spellTitles) {
-    const v = spellVerdicts.get(pageEraKey(title))
-    if (v !== undefined) spells[pageEraKey(title)] = v
-  }
+  // ASKED, not answered: a target the endpoint did not name at all stays out of its table, and the
+  // readers take its absence as silence rather than as `false` (law 1, and see pageEraDb).
+  const mobs = answered(droppers, mobVerdicts)
+  const spells = answered(spellTitles, spellVerdicts)
 
   const out: PageEraFile = {
     scrapedAt: new Date().toISOString(),

@@ -73,6 +73,17 @@ export interface UnlockSpell {
    * cleric and by Spirit Salve for a shaman. Absent when no class's line places it.
    */
   replaces?: { name: string; cls: ClassAbbr }[]
+  /**
+   * THE WIKI BADGES THIS SPELL'S PAGE OUT OF ERA (JOS-393) — `true` or absent, never `false`, which
+   * is `SpellEntry.outOfEra`'s own law carried across the wire.
+   *
+   * It is what `unlocksAtLevel` folds a row out of the level lists on, and what a SEARCH row wears
+   * as a chip instead. The two treatments are one rule read from two directions: a level list
+   * answers "what is new for me now" and an expansion this server has not opened is not part of
+   * that answer; a search answers a question the player typed, and hiding the row would be
+   * answering a different one.
+   */
+  outOfEra?: boolean
 }
 
 /** One skill / discipline / innate, as classes.json states it for ONE class. */
@@ -188,7 +199,22 @@ export interface UnlockRow {
 /** Everything a level gives a loadout, split the way the panel draws it. */
 export interface LevelUnlocks {
   level: number
+  /** the spells this level gives, MINUS the ones the wiki badges out of era */
   spells: UnlockRow[]
+  /**
+   * THE ONES THE WIKI BADGES OUT OF ERA (JOS-393) — folded, never dropped.
+   *
+   * THE DROPS PRECEDENT, EXACTLY (`features/mobs/dropEra.ts`, JOS-377): a positively out-of-era row
+   * sits behind a `+N out of era` disclosure that expands to the rows; an UNKNOWN row renders
+   * plainly beside the rest. The difference between the two surfaces is only which way silence
+   * falls, and it falls the same way here — a spell the era sidecar has no verdict for carries no
+   * flag and stays in `spells`, because "we cannot say" must never be drawn as "no".
+   *
+   * FOLDED RATHER THAN HIDDEN because the wiki's claim is still a fact about the game: a shaman at
+   * 50 should not be sent to a vendor for `Sloths Healing`, and should also not be left wondering
+   * why the spell his friend mentions is missing from the list.
+   */
+  outOfEraSpells: UnlockRow[]
   /** skills, disciplines and innates in one list — the panel chips the kind */
   skills: UnlockRow[]
   /** the set the join ran over (may be empty) */
@@ -199,7 +225,7 @@ export interface LevelUnlocks {
 
 /** A class set with nothing in it answers honestly rather than scanning the whole game. */
 function emptyUnlocks(level: number, ambiguous: boolean): LevelUnlocks {
-  return { level, spells: [], skills: [], classes: [], ambiguous }
+  return { level, spells: [], outOfEraSpells: [], skills: [], classes: [], ambiguous }
 }
 
 /**
@@ -329,13 +355,29 @@ export function unlocksAtLevel(
   const classes = comboClassSet(combo)
   if (classes.length === 0 || !Number.isFinite(level)) return emptyUnlocks(level, combo.ambiguous)
   const want = new Set<string>(classes)
+  const { shown, out } = splitRowsByEra(spellRows(data, want, level))
   return {
     level,
-    spells: spellRows(data, want, level),
+    spells: shown,
+    outOfEraSpells: out,
     skills: skillRows(data, classes, level),
     classes,
     ambiguous: combo.ambiguous
   }
+}
+
+/**
+ * The era split (JOS-393) — `splitDropsByEra`'s shape, over unlock rows.
+ *
+ * POSITIVE CLAIMS ONLY. `outOfEra` is `true` or absent by construction, so this partition can never
+ * fold a row on an absence: a spell the sidecar was never asked about, or answered `false` for,
+ * stays in `shown`. Both halves keep the list's own order.
+ */
+function splitRowsByEra(rows: readonly UnlockRow[]): { shown: UnlockRow[]; out: UnlockRow[] } {
+  const shown: UnlockRow[] = []
+  const out: UnlockRow[] = []
+  for (const row of rows) (row.spell?.outOfEra === true ? out : shown).push(row)
+  return { shown, out }
 }
 
 /**
@@ -373,7 +415,13 @@ export function replacesEntries(row: UnlockRow): { name: string; cls: ClassAbbr 
   return out
 }
 
-/** The two headline numbers: distinct spells, distinct skill-ish things. */
+/**
+ * The two headline numbers: distinct spells, distinct skill-ish things.
+ *
+ * THE SPELL COUNT IS THE SHOWN ONES (JOS-393). `3 new spells` on a toast is an invitation to go and
+ * buy three spells, so a number that included one the wiki badges out of era would be a promise the
+ * game cannot keep. The folded rows are still on the panel, wearing their own count.
+ */
 export function unlockCounts(u: LevelUnlocks): { spells: number; skills: number } {
   return { spells: u.spells.length, skills: u.skills.length }
 }
