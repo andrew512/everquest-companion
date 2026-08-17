@@ -65,6 +65,116 @@ export interface HpLine {
   statedTicks?: number
 }
 
+// ── AND WHERE THE WIKI'S SLOT TABLE IS SIMPLY MISSING A LINE (JOS-396) ─────────────────────────
+//
+// Odium's page lists one effect — `Increase Curse Counter by 8` — and no hitpoint line at all, so
+// the reader above correctly answers "no figures" and the owner correctly reported a shaman nuke
+// showing no damage. The number is not missing from the GAME, only from the page: the client's own
+// `spells_us.txt` carries `2|0|-217|0|103|325` on spell 4093, which is 217 plus twice the caster's
+// level, capped at 325, every tick for five ticks.
+//
+// So there is a SECOND source, and it is strictly a FALLBACK: the wiki's lines win wherever they
+// exist, because they carry the level range the way the wiki states it and because they are the
+// source every existing figure in the app was computed from. The client is consulted only for a
+// spell whose wiki lines yield nothing. Fifteen spells in the committed catalog change; every other
+// figure is byte-identical.
+//
+// THE SLOTS ARE READ IN THE CLIENT'S UNITS, WHICH ARE NOT THE WIKI'S:
+//
+//   * a magnitude is `|base| + step x level`, capped at `|max|` when max is non-zero. `calc` names
+//     the step (see `CALC_STEPS`) and the SIGN OF `base` says which side it lands on. Reading
+//     `base + 2L` literally off a negative base would give Odium 131 rather than 303.
+//   * a slot lands EVERY TICK when the spell has a duration formula at all, and the tick count is
+//     the CLIENT'S (`clientDurationTicks`), never the wiki's `durationMs`. One source states the
+//     slot and the same source states how long it runs; crossing them would let a page's duration
+//     multiply a magnitude the page does not know about.
+//   * a permanent duration (formula 50/51) is a RATE WITH NO LENGTH and therefore contributes
+//     NOTHING, exactly as `foldLine` already refuses a wiki per-tick line with no duration. This is
+//     what keeps Lich, Call of Bones, Dark Pact and the nine other shapeshift self-buffs — whose
+//     effect-0 slot is a permanent per-tick drain — from printing a total nobody can state.
+
+/** One effect-0 slot of the client's spell table. A subset of `SpellHpSlot` (shared/resistTypes). */
+export interface ClientHpSlot {
+  base: number
+  max: number
+  calc: number
+  perTick: boolean
+}
+
+/**
+ * The client facts this reader needs. A subset of `SpellResistInfo`, so a caller can pass one —
+ * the same arrangement `SpellMetricsInput` has with `SpellEntry`, and for the same reason: this
+ * file imports nothing, so that the node tests, main and the renderer all read one copy of it.
+ */
+export interface ClientHpFacts {
+  hp?: readonly ClientHpSlot[]
+  hpDuration?: { formula: number; value: number }
+}
+
+/**
+ * `calc` -> how much the magnitude grows per level of the caster.
+ *
+ * The six the ticket names and no more (EQEmu's `CalcSpellEffectValue_formula` is the reference):
+ * 100 flat, 101 half a point a level, 102 one, 103 two, 104 three, 105 four. They cover 24,442 of
+ * the effect-0 slots in the owner's file; every other code answers `formulaUnknown` and falls back
+ * to the base rather than guessing a curve. The division is INTEGER, like the client's.
+ */
+const CALC_STEPS: Record<number, number> = { 100: 0, 101: 0.5, 102: 1, 103: 2, 104: 3, 105: 4 }
+
+/** A client slot's magnitude at a level: always positive, and honest about a formula it cannot read. */
+export function clientHpMagnitudeAt(
+  slot: ClientHpSlot,
+  level: number
+): { amount: number; formulaUnknown: boolean } {
+  const base = Math.abs(slot.base)
+  const step = CALC_STEPS[slot.calc]
+  if (step === undefined) return { amount: base, formulaUnknown: true }
+  const cap = Math.abs(slot.max)
+  const raw = Math.floor(base + step * level)
+  return { amount: cap > 0 && raw > cap ? cap : raw, formulaUnknown: false }
+}
+
+/**
+ * THE DURATION FORMULAS, in ticks, and what each one is capped by.
+ *
+ * Every entry is EQEmu's `CalcBuffDuration_formula`, and each was CHECKED against the committed
+ * catalog's own `durationMs` before being written here: over the 1,270 player spells the two
+ * sources both describe, the formula reproduces the wiki's tick count wherever the two are read at
+ * the same level, and the disagreements are all the wiki quoting a spell's duration at a HIGHER
+ * level than the one it is gained at (`Berserker Spirit`, formula 7, cap 50: 47 ticks at 47 and the
+ * page's 50 at 50). Formula 7 with cap 5 is Odium's, and gives five ticks at every level.
+ *
+ * NOT IN THE TABLE, ON PURPOSE: 0 (an instant spell — no ticks to state), 50 and 51 (PERMANENT,
+ * until cancelled or until you zone), and every code the file carries that this list does not name.
+ * All of them answer null, which the fold reads as "a rate with no length" and refuses to total.
+ */
+const DURATION_FORMULAS: Record<number, (level: number, value: number) => number> = {
+  1: (l) => Math.max(1, Math.floor(l / 2)),
+  2: (l) => Math.max(6, Math.floor(l / 2) + 5),
+  3: (l) => l * 30,
+  4: (_l, v) => (v > 0 ? v : 50),
+  5: (_l, v) => Math.max(3, v),
+  6: (l) => Math.max(1, Math.floor(l / 2)),
+  7: (l) => Math.max(1, l),
+  8: (l) => l + 10,
+  9: (l) => l * 2 + 10,
+  10: (l) => l * 3 + 10,
+  11: (l) => l * 30 + 90,
+  12: (l) => Math.max(1, Math.floor(l / 4)),
+  15: (_l, v) => v
+}
+
+/** The client's duration in whole ticks at a level, or null for a formula this reader will not read. */
+export function clientDurationTicks(
+  spec: { formula: number; value: number },
+  level: number
+): number | null {
+  const fn = DURATION_FORMULAS[spec.formula]
+  if (!fn) return null
+  const ticks = fn(level, spec.value)
+  return spec.value > 0 && ticks > spec.value ? spec.value : ticks
+}
+
 /** The figures a row draws. Absent fields mean "this spell has no such line", never zero. */
 export interface SpellMetrics {
   /** Total base damage at the evaluation level, DoT ticks included. */
@@ -85,6 +195,22 @@ export interface SpellMetrics {
   hot?: boolean
   /** The duration the ticks run over, in whole seconds. Present only with `dot`/`hot`. */
   overSec?: number
+  /**
+   * WHERE THE FIGURES CAME FROM (JOS-396). Absent means the wiki's own effect lines, which is every
+   * figure this app drew before the client fallback existed; `'client'` means the page states no
+   * hitpoint line and these numbers were read off the player's own `spells_us.txt`.
+   *
+   * A FLAG IN THE DATA, NOT A CAPTION ON THE SCREEN — the caveat diet. It rides across the wire so
+   * a surface CAN say one quiet word about it if the owner ever asks for one, and so a test can
+   * assert which source answered without re-deriving the join.
+   */
+  source?: 'client'
+  /**
+   * A contributing client slot used a `calc` code this reader does not model, so its magnitude is
+   * the slot's BASE with no level curve applied — a floor rather than an answer. One spell in the
+   * committed catalog (`Soul Bond`, calc 4005) is in this state today.
+   */
+  formulaUnknown?: true
 }
 
 /** The catalog fields this reader needs. A subset of `SpellEntry`, so a caller can pass one. */
@@ -274,7 +400,11 @@ function foldLine(side: Side, line: HpLine, durationTicks: number): void {
  * detrimental spell. The catalog files all 28 such rows under `targetType: 'Lifetap'`, so the
  * increase side is dropped there and the damage side stands alone.
  */
-export function spellMetricsAt(spell: SpellMetricsInput, level: number): SpellMetrics | undefined {
+export function spellMetricsAt(
+  spell: SpellMetricsInput,
+  level: number,
+  client?: ClientHpFacts
+): SpellMetrics | undefined {
   const lifetap = spell.targetType === 'Lifetap'
   const durationTicks = ticksOf(spell.durationMs)
   const dmg: Side = { total: 0, overTime: false }
@@ -287,8 +417,72 @@ export function spellMetricsAt(spell: SpellMetricsInput, level: number): SpellMe
     any = true
     foldLine(line.direction === 'down' ? dmg : heal, line, durationTicks)
   }
-  if (!any) return undefined
-  return assemble(dmg, heal, spell, durationTicks)
+  if (any) return assemble(dmg, heal, spell, durationTicks)
+  return client ? clientMetricsAt(spell, level, client) : undefined
+}
+
+/**
+ * THE SAME FIGURES, READ OFF THE CLIENT'S SLOTS — reached only when the wiki's lines yielded none.
+ *
+ * It folds through the SAME `foldLine`/`assemble` the wiki path uses, so a client-sourced row and a
+ * wiki-sourced one beside it are the same arithmetic and the same rounding rather than two
+ * derivations that agree today. The only two differences are stated in the file header: the
+ * magnitude comes from `|base| + step x level` capped at `|max|`, and the tick count comes from the
+ * CLIENT'S duration rather than the page's.
+ *
+ * LIFETAPS ARE DAMAGE-ONLY HERE TOO, but by a different route. The wiki path DROPS a lifetap's
+ * increase line because the page states the transfer twice, once from each end; the client states
+ * it ONCE, so dropping it would throw away the only statement there is. An effect-0 slot on a
+ * `Lifetap` spell is therefore counted as damage whatever its sign — `Soul Bond` is the one spell
+ * in the catalog this decides.
+ */
+function clientMetricsAt(
+  spell: SpellMetricsInput,
+  level: number,
+  client: ClientHpFacts
+): SpellMetrics | undefined {
+  const slots = client.hp ?? []
+  if (slots.length === 0) return undefined
+  const lifetap = spell.targetType === 'Lifetap'
+  const ticks = client.hpDuration ? (clientDurationTicks(client.hpDuration, level) ?? 0) : 0
+  const dmg: Side = { total: 0, overTime: false }
+  const heal: Side = { total: 0, overTime: false }
+  let unknownFormula = false
+  for (const slot of slots) {
+    const line = clientLine(slot, level, lifetap)
+    if (!line) continue
+    if (line.formulaUnknown) unknownFormula = true
+    foldLine(line.direction === 'down' ? dmg : heal, line, ticks)
+  }
+  const out = assemble(dmg, heal, spell, ticks)
+  if (!out) return undefined
+  out.source = 'client'
+  if (unknownFormula) out.formulaUnknown = true
+  return out
+}
+
+/**
+ * ONE CLIENT SLOT, read into the same shape a wiki line reads into — which is what lets both paths
+ * share `foldLine` — or null when the slot states no magnitude at all.
+ *
+ * The SIGN OF `base` picks the side, except on a lifetap where everything is damage (see above).
+ * `formulaUnknown` is reported only for a slot that CONTRIBUTES: a zero-magnitude slot under an
+ * unread calc changes no figure, so flagging it would put a caveat on a number it never touched.
+ */
+function clientLine(
+  slot: ClientHpSlot,
+  level: number,
+  lifetap: boolean
+): (HpLine & { formulaUnknown: boolean }) | null {
+  const read = clientHpMagnitudeAt(slot, level)
+  if (read.amount <= 0) return null
+  const direction: HpLine['direction'] = lifetap || slot.base < 0 ? 'down' : 'up'
+  return {
+    amount: read.amount,
+    direction,
+    perTick: slot.perTick,
+    formulaUnknown: read.formulaUnknown
+  }
 }
 
 /** One side's three derived figures: the total, per mana, per second. */

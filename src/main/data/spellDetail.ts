@@ -17,7 +17,9 @@
 import type { SpellDetail, SpellRankMember } from '../../shared/spellDetail'
 import { spellMetricsAt } from '../../shared/spellMetrics'
 import { parseSpellClassLevels, parseSpellRank, spellLineKey } from '../../shared/spellLines'
+import type { SpellResistTable } from '../../shared/resistTypes'
 import type { SpellEntry } from '../../shared/types'
+import { clientHpFor } from './clientSpellHp'
 import { spellEffectClasses } from './spellEffectClass'
 import { spellNature, type SpellDb } from './spellDb'
 
@@ -117,7 +119,8 @@ function dbRowFor(db: SpellDb, name: string): SpellEntry | undefined {
 export function buildSpellDetail(
   db: SpellDb,
   queried: string,
-  observedRanks: readonly string[] = []
+  observedRanks: readonly string[] = [],
+  client: SpellResistTable | null = null
 ): SpellDetail {
   const name = queried.trim()
   if (!name) return notFound(queried)
@@ -129,7 +132,7 @@ export function buildSpellDetail(
     name: entry.name,
     found: true,
     ...statedFields(entry),
-    ...worthFields(entry, classLevels),
+    ...worthFields(entry, classLevels, client),
     nature: spellNature(entry.spellType),
     illusion: entry.illusion,
     classLevels,
@@ -147,13 +150,21 @@ export function buildSpellDetail(
  * nobody is read at level 1, which is the only level it can honestly be read at.
  *
  * Absent for every spell with no hitpoint line, which is most of them, and the card draws nothing.
+ *
+ * AND SINCE JOS-396 THE CLIENT'S SLOTS ANSWER WHERE THE PAGE DOES NOT. `client` is the parsed
+ * `spells_us.txt` table or null; it is a FALLBACK inside `spellMetricsAt`, so a spell whose page
+ * states a hitpoint line is byte-identical to what it was. Null (no install, or the worker has not
+ * finished) simply means the card behaves exactly as it did before this ticket — and because this
+ * record is rebuilt on every invoke rather than cached, the next hover after the table resolves
+ * carries the figures with no invalidation to arrange.
  */
 function worthFields(
   e: SpellEntry,
-  classLevels: readonly { level: number }[]
+  classLevels: readonly { level: number }[],
+  client: SpellResistTable | null
 ): Partial<SpellDetail> {
   const level = classLevels.length > 0 ? Math.min(...classLevels.map((c) => c.level)) : 1
-  const metrics = spellMetricsAt(e, level)
+  const metrics = spellMetricsAt(e, level, clientHpFor(client, e.name))
   return metrics ? { metrics, metricsLevel: level } : {}
 }
 
