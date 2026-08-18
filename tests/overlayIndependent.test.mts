@@ -219,6 +219,35 @@ test('the CARD reads the derived boolean and writes through the one call', () =>
   assert.doesNotMatch(card, /display: 'none'|visibility:/, 'a hidden control is still a control')
 })
 
+test('WHERE A PRESS CANNOT MOVE ANYTHING YET, THE CARD SAYS SO — both shapes', () => {
+  // The JOS-408 confusion audit's rule, applied to the two places a live control's effect is
+  // DEFERRED rather than absent. Hiding either would be worse than explaining it: the value being
+  // set is what that window will open at, which is a real reason to be on this page.
+  const card = code('../src/renderer/src/features/preferences/OverlaysAppearanceSetting.tsx')
+  // Per ROW, when that one window is closed.
+  assert.match(card, /tag=\{open \? undefined : 'closed'\}/)
+  // …and for the two SHARED steppers, whose equivalent is every window being closed. Only in that
+  // shape: with the switch on, twelve rows already carry their own tag.
+  assert.match(card, /const nothingOpen = OVERLAY_LABEL_ORDER\.every\(\(kind\) => !open\[kind\]\)/)
+  assert.match(card, /!independent && nothingOpen &&/)
+  // The open-state is LIVE, not a snapshot: overlays are opened from the title bar's menu while
+  // this pane is on screen, and App.tsx keeps the warm snapshot right for the next mount.
+  assert.match(card, /window\.eq\.onOverlayState/)
+  assert.match(code('../src/renderer/src/App.tsx'), /recordPref\('overlayOpen'/)
+})
+
+test('the transparency stepper’s accessible names are whole sentences', () => {
+  // WHAT THE AUDIT CAUGHT. Reading every aria-label in the section out of the real DOM found
+  // "More see-through the overlays" — a screen reader announces exactly that string, so the
+  // missing preposition is the entire sentence a blind user gets. Both kinds end in `for`.
+  const stepper = src('../src/renderer/src/features/preferences/PrefStepper.tsx')
+  for (const name of ['Smaller text for', 'Larger text for', 'More see-through for', 'More solid for']) {
+    assert.ok(stepper.includes(`'${name}'`), `${name} is not the label`)
+  }
+  assert.match(stepper, /aria-label=\{`\$\{words\.lessName\} \$\{name\}`\}/)
+  assert.match(stepper, /aria-label=\{`\$\{words\.moreName\} \$\{name\}`\}/)
+})
+
 test('NOTHING IN THE SECTION IS DISABLED EXCEPT A STEPPER AT A CLAMP', () => {
   // The owner's review, in one assertion: "our first pass had enabled controls when they didn't do
   // anything." The answer was to stop rendering them, so the `disabled` prop and its explanatory

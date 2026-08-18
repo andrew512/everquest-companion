@@ -32,15 +32,23 @@ import RemoveIcon from '@mui/icons-material/Remove'
 /** What this stepper is stepping — which decides the button faces and how they are spoken. */
 export type StepperKind = 'size' | 'transparency'
 
-/** The two words each kind uses, in one table so a button face and its accessible name can never
- *  drift apart. `%s` is the thing being stepped, spoken: "the overlays", or one window's name. */
+/**
+ * The two words each kind uses, in one table so a button face and its accessible name can never
+ * drift apart. The name is completed by `name` — the thing being stepped, spoken: "the overlays",
+ * or one window's own label.
+ *
+ * BOTH KINDS END IN `for`, and that is not a detail: the JOS-408 confusion audit read every
+ * accessible name in the section out of the real DOM and caught this one saying "More see-through
+ * the overlays". A screen reader announces exactly that string, so a missing preposition is the
+ * whole sentence a blind user gets.
+ */
 const WORDS: Record<StepperKind, { less: string; more: string; lessName: string; moreName: string }> = {
   size: { less: 'A−', more: 'A+', lessName: 'Smaller text for', moreName: 'Larger text for' },
   transparency: {
     less: '−',
     more: '+',
-    lessName: 'More see-through',
-    moreName: 'More solid'
+    lessName: 'More see-through for',
+    moreName: 'More solid for'
   }
 }
 

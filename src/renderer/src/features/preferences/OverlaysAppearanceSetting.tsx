@@ -328,14 +328,15 @@ function OverlayRow({
  */
 function PerOverlayRows({
   size,
-  alpha
+  alpha,
+  open
 }: {
   size: OverlayTextSizePrefs
   alpha: OverlayBgAlphaPrefs
+  open: Record<OverlayKind, boolean>
 }): JSX.Element {
   const [scales, setScale] = useKindScales()
   const [alphas, setAlpha] = useKindAlphas()
-  const open = useOverlayOpen()
 
   return (
     <Stack spacing={0.25}>
@@ -382,7 +383,15 @@ function PerOverlayRows({
 export function OverlaysAppearanceSetting(): JSX.Element {
   const size = useOverlayTextSize()
   const alpha = useOverlayBgAlpha()
+  const open = useOverlayOpen()
   const independent = overlayIndependent({ text: size.prefs.independent, bg: alpha.prefs.independent })
+  // THE SHARED STEPPERS' VERSION OF THE `closed` TAG (JOS-408 confusion audit). Every row that
+  // governs a closed window says so; the two SHARED steppers govern all twelve at once, so the
+  // equivalent state is "none of them is open" — and there the honest answer to "what changes on
+  // screen when I press this" is "nothing yet". Hiding the steppers would be worse than saying so:
+  // the value they set is what those windows will open at, which is a real thing to come here for.
+  // It is a rare state (the mob card ships open) and it is one sentence, not a control.
+  const nothingOpen = OVERLAY_LABEL_ORDER.every((kind) => !open[kind])
 
   const flip = (on: boolean): void => {
     // Optimistic, so the switch moves under the finger rather than after an IPC round trip; main's
@@ -415,11 +424,14 @@ export function OverlaysAppearanceSetting(): JSX.Element {
           {independent
             ? 'Each overlay keeps its own text size and transparency.'
             : 'All overlays share one text size and one transparency.'}
+          {/* Only in the shared shape: with the switch on, every row already carries its own
+              `closed` tag and this sentence would repeat twelve of them. */}
+          {!independent && nothingOpen && ' None is open right now, so this is what they will open at.'}
         </Typography>
       </Stack>
 
       {independent ? (
-        <PerOverlayRows size={size.prefs} alpha={alpha.prefs} />
+        <PerOverlayRows size={size.prefs} alpha={alpha.prefs} open={open} />
       ) : (
         <SharedRows size={size} alpha={alpha} />
       )}
