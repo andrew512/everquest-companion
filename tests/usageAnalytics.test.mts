@@ -99,11 +99,19 @@ const build = (
 
 test('column mapping is TOTAL: a missing or wrong-typed column becomes a default, never a throw', () => {
   assert.deepEqual(toUsageRows([{ day: '2026-08-01', metric: 'sessions', dim: null, n: '12' }]), [
-    // `n` arrives as a number (store.ts sets the int8 parser); a string is not trusted into one.
+    // `n` normally arrives as a number (store.ts sets the int8 parser on OID 20). A NUMERIC
+    // STRING is now read as the number it is, and that reversal is measured rather than
+    // preferred (JOS-394): an uncast `SUM(bigint)` in a view comes back NUMERIC — OID 1700,
+    // which no parser covers — so postgres hands `'12'` over, and the old rule turned a real
+    // counter into 0. A readout full of honest-looking zeros is the worst answer a panel can
+    // give, and it is indistinguishable from a quiet fleet. `usage_daily_all` casts its sum
+    // back to bigint so this cannot happen from our own schema; this is the second line.
     // An ABSENT `cohort` (a cluster mid-migration, or the nullable install column) is 'user' —
     // the fail-safe direction: an install nobody marked is a user.
-    { day: '2026-08-01', cohort: 'user', metric: 'sessions', dim: '-', n: 0 }
+    { day: '2026-08-01', cohort: 'user', metric: 'sessions', dim: '-', n: 12 }
   ])
+  // The other direction — a string that is NOT a number, an empty one, a NaN — is pinned beside
+  // the change that caused it, in tests/telemetryShards.test.mts (this file is at the ceiling).
   assert.deepEqual(toFunnelRows([{}]), [
     { day: '', cohort: 'user', funnel: '', step: '', outcome: '-', appVersion: '?', n: 0 }
   ])
@@ -216,6 +224,33 @@ test('the mixes are sorted by count and deterministic on ties', () => {
     u(TODAY, USAGE_METRICS.overlayOpen, 'overall', 9)
   ]).adoption
   assert.deepEqual(d.overlays.map((o) => o.id), ['overall', 'events', 'fight'])
+})
+
+test('THE MACHINE CLASS arrives LABELLED — a bucket index is meaningless to a reader (JOS-364)', () => {
+  const M = USAGE_METRICS
+  const d = build([
+    u(TODAY, M.setupCpu, '4', 12), u(TODAY, M.setupCpu, '7', 3), u(TODAY, M.setupMem, '4', 9),
+    u(TODAY, M.setupGpuVendor, 'nvidia', 11), u(TODAY, M.setupCompositing, 'software', 2),
+    u(TODAY, M.setupSafeMode, 'on', 1), u(TODAY, M.setupDisplays, '2', 6),
+    u(TODAY, M.setupScale, '0', 1), u(TODAY, M.setupScale, '2', 4),
+    u(TODAY, M.setupEqWindowMode, 'fullscreen', 8)
+  ]).adoption
+  // A COUNT ladder prints the INCLUSIVE integer span it covers — bucket 4 of [2,4,6,8,12,16,24]
+  // holds 8 through 11, and "8 - 12" would be a lie a reader would act on — while the measured
+  // ladders print the half-open range they really are.
+  //
+  // AND THE LADDERS ARE IN LADDER ORDER, not sorted by count: they are a DISTRIBUTION, and the
+  // `scale` pair is the pin — 125-150% has four installs and < 100% has one, and the low bucket
+  // still comes first. The enum mixes beside them keep `mixRows`' biggest-first order, where the
+  // biggest slice really is the reading.
+  assert.deepEqual(d.machine.map((r) => `${r.id} = ${String(r.n)}`), [
+    'cpus 8 - 11 = 12', 'cpus ≥ 24 = 3', 'RAM 16 GB - 24 GB = 9', 'gpu nvidia = 11',
+    'compositing software = 2', 'safe mode on = 1', 'displays 2 = 6', 'scale < 100% = 1',
+    'scale 125% - 150% = 4', 'EQ fullscreen = 8'
+  ])
+  // A fleet that has not reported one yet renders NOTHING, never a row of zeros: this ships in a
+  // build most installs do not have, and a zeroed section would read as "nobody has a GPU".
+  assert.deepEqual(build([u(TODAY, USAGE_METRICS.sessions, '-', 5)]).adoption.machine, [])
 })
 
 // ---- funnels -------------------------------------------------------------------------------------

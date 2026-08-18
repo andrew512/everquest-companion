@@ -46,12 +46,22 @@ import { installSpeechCacheProtocol } from './speech/cache'
 import { registerIpc } from './ipc'
 import { DATA_READY_MS, bus, buffsModule, epoch, sendWorldRebuilt, sessionDetector } from './pipeline'
 import { markStartupPhase, startPerfSampler, stopPerf } from './perf'
+import { initProcessPriority } from './processPriority'
+import { getProcessPriorityPrefs } from './storeProcessPriority'
 import { initPresenceEffects, stopPresenceEffects } from './presenceEffects'
 import { provisionDefaultPacks } from './provisionPacks'
 import { removedPackIds } from './storeSoundPacks'
 import { getActiveCharacter, markTailPosition, startTailing, stopSession } from './session'
 import { runSmokeFeedback } from './smokeFeedback'
 import { STORE_READY_MS, getOverlayConfig, getPerfHudPrefs } from './store'
+// The z-order guard's tally, read once at quit (JOS-368; see `logTopmostSavings`).
+import { topmostStats } from './topmost'
+// The notification-area icon and the close interceptor (JOS-139). Its own module beside windows.ts
+// for the reason stated in its header; the composition root only decides WHEN it is armed.
+import { installCloseToTray } from './tray'
+// The overlays' two independent-mode flags, made to agree before any window can read either of
+// them (JOS-408). See storeOverlayIndependent.ts for why it runs here and nowhere else.
+import { reconcileOverlayIndependentOnce } from './storeOverlayIndependent'
 import { initUpdater } from './updater'
 import {
   createMainWindow,
@@ -207,6 +217,13 @@ const gotSingleInstanceLock = E2E || app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
 } else {
+  // …AND THE SAME THREE LINES ALREADY COVER A WINDOW THAT IS HIDDEN IN THE TRAY (JOS-139).
+  // Re-launching the app is one of the ways a player asks for the window back, and since close-
+  // to-tray the window they are asking for may be hidden rather than minimized. `show()` is
+  // unconditional here, and on a hidden window that IS the restore — so this handler needed no
+  // change; the brief's suggested `if (!w.isVisible()) w.show()` would have been the same call
+  // behind a guard. Not something the harness can drive (a second instance is a second launch,
+  // and E2E skips the lock outright), so it is on the hands-on list for the packaged build.
   app.on('second-instance', () => {
     const mainWindow = getMainWindow()
     if (!mainWindow) return
@@ -226,6 +243,22 @@ if (!gotSingleInstanceLock) {
     // webContents this process will ever create (main window, each overlay, anything a future
     // feature adds), which is the only placement that can't be forgotten later.
     app.on('web-contents-created', (_e, wc) => hardenWebContents(wc))
+    // The companion yields the CPU to the game (JOS-366). Wired HERE, before the first window
+    // exists, for the same reason the line above is: both subscriptions must catch every
+    // webContents this process will ever create. Everything about WHICH processes and WHY the GPU
+    // is not one of them lives in ./processPriority.ts; this is the composition root handing that
+    // mechanism its three Electron facts and the policy (the stored switch). A no-op on any
+    // platform but Windows and under EQ_E2E, decided inside the module.
+    initProcessPriority({
+      mainPid: process.pid,
+      enabled: getProcessPriorityPrefs().yieldToGame,
+      onWebContentsCreated: (cb) => app.on('web-contents-created', (_e, wc) => cb(wc)),
+      onWindowCreated: (cb) => app.on('browser-window-created', (_e, win) => cb(win)),
+      // The read-back line is DEV-ONLY: it is one line per window load, and its whole job is to
+      // make a silent re-raise by Chromium's priority manager visible while someone is watching.
+      debug: app.isPackaged ? undefined : (line) => logInfo(`[everquest-companion] ${line}`),
+      onError: (err: unknown) => logError('main:processPriority', err)
+    })
     // Permissions are a SESSION property; every window here uses the default session (no
     // custom `partition` anywhere — the same fact that lets one eqimg:// handler serve them all).
     hardenSession(session.defaultSession)
@@ -260,8 +293,21 @@ if (!gotSingleInstanceLock) {
       onError: (msg, err) => logError('main:speechCache', { message: msg, err })
     })
     markStartupPhase('protocols')
+    // ONE SWITCH NOW GOVERNS BOTH OVERLAY APPEARANCE FLAGS (JOS-408), so the two of them have to
+    // agree before anything reads either. BEFORE the first window, deliberately: the reconcile
+    // writes the store and broadcasts nothing, which is only safe while there is nobody to tell.
+    // It changes nothing on screen by construction — the direction it resolves in seeds the twelve
+    // per-kind sizes from what every window is already drawing (shared/overlayIndependent.ts).
+    if (reconcileOverlayIndependentOnce()) {
+      logInfo('[everquest-companion] Overlay appearance: the two independent flags disagreed and are now both on')
+    }
     createMainWindow()
     markStartupPhase('windowCreated')
+    // THE TRAY, AND WHAT THE X MEANS (JOS-139). Straight after the window exists, because the
+    // icon's whole job is to bring that window back — and because the quitting latch it arms has
+    // to be in place before anything can ask this process to quit. It creates no icon under
+    // EQ_E2E, where a close still closes; everything else about the app is unchanged either way.
+    installCloseToTray()
     // `replayDone` is the LONG one on a real log (a full historical scan), so it is marked when
     // the session's promise settles — with the event count, because "6 s" means something very
     // different for 40k events than for 1.1M. `tailAttached` is marked immediately after the
@@ -395,7 +441,24 @@ if (!gotSingleInstanceLock) {
 app.on('before-quit', () => {
   teardownStep('main:stopPresence', stopPresenceEffects)
   flushStoreForQuit()
+  logTopmostSavings()
 })
+
+/**
+ * WHAT THE Z-ORDER GUARD SAVED THIS SESSION, in dev only (JOS-368).
+ *
+ * The guard's whole claim is a count — how many `SetWindowPos` calls over the game did NOT happen
+ * — and a claim like that should be readable rather than argued about. It is logged ONCE, at quit,
+ * because that is the only moment the number is final, and it is gated on `!app.isPackaged`
+ * (main's own dev discriminator, `channel.ts`) because a player has no use for it and a shipped
+ * build should not narrate its own bookkeeping. The counting itself is two integers and runs
+ * everywhere: a counter that only counted in dev could not be checked against a real session.
+ */
+function logTopmostSavings(): void {
+  if (app.isPackaged) return
+  const { issued, avoided } = topmostStats()
+  logInfo(`[everquest-companion] topmost: ${avoided} SetWindowPos avoided, ${issued} issued`)
+}
 
 /**
  * EVERY STORE WRITE THIS PROCESS STILL OWES, DONE NOW.

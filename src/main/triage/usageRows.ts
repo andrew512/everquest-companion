@@ -17,8 +17,23 @@ import type { UsageDayPoint } from '../../shared/triage'
 export type Row = Record<string, unknown>
 
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback)
-/** `bigint` comes back as a number (store.ts sets the int8 parser); anything else is 0. */
-const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+/**
+ * `bigint` comes back as a number (store.ts sets the int8 parser on OID 20); anything else is 0.
+ *
+ * A NUMERIC STRING IS ALSO A NUMBER HERE, and that is a fix, not a loosening (JOS-394). MEASURED
+ * against a real DSQL cluster: an uncast `SUM(bigint)` in a view is NUMERIC — OID 1700, which no
+ * type parser is set for — so node-postgres hands the counter over as `'12'`. The old predicate
+ * turned that into 0 SILENTLY, and a readout full of honest-looking zeros is the worst answer a
+ * panel can give. `usage_daily_all` casts its sum back to bigint precisely so this cannot happen
+ * (infra/schema.sql says so at the view), and this is the second line of defence for the next
+ * aggregate somebody adds without reading that note.
+ */
+const num = (v: unknown): number => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0
+  if (typeof v !== 'string' || v.trim().length === 0) return 0
+  const parsed = Number(v)
+  return Number.isFinite(parsed) ? parsed : 0
+}
 
 /**
  * Every row carries its cohort ('user' or 'owner'), normalized through `cohortOf` so a NULL
@@ -148,6 +163,47 @@ export function toErrorIssueRows(rows: readonly Row[]): ErrorIssueRow[] {
     fingerprint: str(r.fingerprint),
     n: num(r.count),
     exemplar: str(r.exemplar, '')
+  }))
+}
+
+/**
+ * ONE `perf_daily` ROW (JOS-372) — the only row shape here that carries more than one dimension,
+ * which is the entire reason that table exists.
+ *
+ * `stallBucket` is parsed to a NUMBER because the readout compares it against a rung of
+ * `LIVE_STALL_MS_EDGES` ("was this report's worst tick at least half a second"), and -1 is what an
+ * unparseable value becomes: such a row still counts in its slice's denominator (it was a real
+ * report) and can never count as a stall, which is the fail-safe direction. `tailBucket` stays a
+ * string — it is a dim like the other three, and '-' (the session tailed nothing) is one of its
+ * legal values.
+ */
+export interface PerfRow {
+  day: string
+  cohort: UsageCohort
+  windowMode: string
+  machineClass: string
+  locked: string
+  stallBucket: number
+  tailBucket: string
+  n: number
+}
+
+/** A bucket index column, or -1 for anything that is not one. */
+const idx = (v: unknown): number => {
+  const i = Number(str(v, ''))
+  return Number.isInteger(i) && i >= 0 ? i : -1
+}
+
+export function toPerfRows(rows: readonly Row[]): PerfRow[] {
+  return rows.map((r) => ({
+    day: str(r.day),
+    cohort: cohortOf(r.cohort),
+    windowMode: str(r.window_mode, 'unknown'),
+    machineClass: str(r.machine_class, 'unknown'),
+    locked: str(r.locked, DIM_NONE),
+    stallBucket: idx(r.stall_bucket),
+    tailBucket: str(r.tail_bucket, DIM_NONE),
+    n: num(r.n)
   }))
 }
 

@@ -47,7 +47,7 @@ export default defineConfig({
         include: ['pg', '@aws-sdk/client-s3', '@aws-sdk/credential-providers', '@aws-sdk/dsql-signer']
       },
       rollupOptions: {
-        // THREE main-process bundles. `index` is the app; the other two are worker_threads,
+        // FOUR main-process bundles. `index` is the app; the other three are worker_threads,
         // and each is a separate entry for the same reason: `new Worker(path)` loads a FILE, so
         // rolling one into index.js would give the worker no file to load, and bundling it as a
         // data-url string would put a native `require` inside an eval. Each is emitted beside
@@ -60,10 +60,21 @@ export default defineConfig({
         //     its 5 s process scan is a measured 8.4 ms of `EnumProcesses`, which main cannot
         //     spend. It replaced a `powershell.exe` child, and this entry is what lets that
         //     child's job move in-process without moving onto main's thread.
+        //   * resistTableWorker — the client's spells_us.txt (JOS-382). 38 MB and 73,963 rows,
+        //     parsed once per game patch. Same rule as speechWorker's: the thread that tails the
+        //     log cannot spend a few hundred milliseconds of uninterruptible splitting, and
+        //     JOS-371 says so in general terms.
+        //   * perfProbeWorker — the SECOND CLOCK (JOS-367). Not offloaded work: it is a 250 ms
+        //     timer measuring its own lateness, and its whole value is that it runs somewhere
+        //     main does not. Two threads late in the same half second means the MACHINE stalled;
+        //     only main late means we did. A rollup into index.js would leave the verdict
+        //     unmeasurable, which is the strongest form of "this needs its own entry".
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           speechWorker: resolve(__dirname, 'src/main/speech/worker.ts'),
-          presenceWorker: resolve(__dirname, 'src/main/presenceWorker.ts')
+          presenceWorker: resolve(__dirname, 'src/main/presenceWorker.ts'),
+          perfProbeWorker: resolve(__dirname, 'src/main/perfProbeWorker.ts'),
+          resistTableWorker: resolve(__dirname, 'src/main/resistTableWorker.ts')
         }
       }
     }
@@ -75,14 +86,17 @@ export default defineConfig({
       // Sourcemaps, for the reason spelled out on the main bundle above.
       sourcemap: true,
       rollupOptions: {
-        // Three preloads: the full app bridge (index), a minimal overlay bridge (overlay)
-        // that exposes only the combat snapshot + overlay window controls (Task #52), and
+        // Four preloads: the full app bridge (index), a minimal overlay bridge (overlay)
+        // that exposes only the combat snapshot + overlay window controls (Task #52),
         // the receive-only cursor-ring bridge (cursor) — three methods, none of which can
-        // change anything. electron-vite emits out/preload/{index,overlay,cursor}.js.
+        // change anything — and the tray popover's send-only bridge (tray, JOS-139): three
+        // verbs and no reads at all. electron-vite emits
+        // out/preload/{index,overlay,cursor,tray}.js.
         input: {
           index: resolve(__dirname, 'src/preload/index.ts'),
           overlay: resolve(__dirname, 'src/preload/overlay.ts'),
-          cursor: resolve(__dirname, 'src/preload/cursor.ts')
+          cursor: resolve(__dirname, 'src/preload/cursor.ts'),
+          tray: resolve(__dirname, 'src/preload/tray.ts')
         }
       }
     }
@@ -119,13 +133,15 @@ export default defineConfig({
       // the bundle a minifier renames and re-lines most aggressively.
       sourcemap: true,
       rollupOptions: {
-        // Three HTML entries: the main app (index), the floating overlay meters (overlay,
-        // Task #52) and the cursor ring (cursor) — one <div> and no framework.
-        // electron-vite emits out/renderer/{index,overlay,cursor}.html.
+        // Four HTML entries: the main app (index), the floating overlay meters (overlay,
+        // Task #52), the cursor ring (cursor) — one <div> and no framework — and the tray
+        // popover (tray, JOS-139), one static card with no MUI.
+        // electron-vite emits out/renderer/{index,overlay,cursor,tray}.html.
         input: {
           index: resolve(__dirname, 'src/renderer/index.html'),
           overlay: resolve(__dirname, 'src/renderer/overlay.html'),
-          cursor: resolve(__dirname, 'src/renderer/cursor.html')
+          cursor: resolve(__dirname, 'src/renderer/cursor.html'),
+          tray: resolve(__dirname, 'src/renderer/tray.html')
         }
       }
     }

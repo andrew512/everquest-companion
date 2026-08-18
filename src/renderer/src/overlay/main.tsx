@@ -4,6 +4,8 @@ import OverlayMeter from './OverlayMeter'
 import EventLogOverlay from './EventLogOverlay'
 import HealMeter from './HealMeter'
 import ToastOverlay from './ToastOverlay'
+import AlertBannerOverlay from './AlertBannerOverlay'
+import ConCardOverlay from './ConCardOverlay'
 import BuffsOverlay from './BuffsOverlay'
 import XpOverlay from './XpOverlay'
 import RespawnOverlay from './RespawnOverlay'
@@ -30,6 +32,13 @@ import { installOverlayPointerExit } from './pointerExit'
 //   'xp'                              → the progress read (JOS-195): xp/hr, next level (or the AA
 //                                       pace at the cap) and motes per hour, over the app-wide
 //                                       slice vocabulary with `session` as its own default
+//   'alertBanner'                     → the alert banner (JOS-378): one large line per firing of an
+//                                       alert marked "Show on screen", where the eyes are. Shares
+//                                       the toast's queue (./cardQueue.ts), not its window
+//   'conCard'                         → the mob card (JOS-383): one tooltip-shaped card per `/con`
+//                                       — level, zone, five resist chips, top drops, respawn.
+//                                       Shares the same queue at a cap of one, so the next con
+//                                       replaces it
 //   'respawn'                         → the respawn clocks (JOS-194): one countdown per watched
 //                                       mob that has died, started by the death message and
 //                                       numbered from your own kills
@@ -39,6 +48,8 @@ const kind = window.eqOverlay?.kind ?? 'fight'
 function Surface(): React.JSX.Element {
   if (kind === 'events') return <EventLogOverlay />
   if (kind === 'toast') return <ToastOverlay />
+  if (kind === 'alertBanner') return <AlertBannerOverlay />
+  if (kind === 'conCard') return <ConCardOverlay />
   if (kind === 'xp') return <XpOverlay />
   if (kind === 'respawn') return <RespawnOverlay />
   if (isTimerOverlayKind(kind)) return <BuffsOverlay kind={kind} />

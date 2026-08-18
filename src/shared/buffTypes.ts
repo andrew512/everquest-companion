@@ -50,11 +50,18 @@ export type BuffClass = 'buff' | 'debuff'
  *                It is a separate label from 'observed' on purpose: the two answers are read off
  *                the same samples but they make opposite claims about the database row, and a UI
  *                that said "longer than the baseline" for both would be lying about one of them.
+ *   'deathBound' — a mob DIED still carrying the debuff and the log never printed a wear-off for
+ *                it, so the app knows the spell lasted AT LEAST that long and does not know what
+ *                it would have lasted (JOS-379, owner ruling 2026-08-15). It is the only source
+ *                that is a BOUND rather than an answer, which is why it is not spelled
+ *                'observed': a surface that draws it must say "at least", the way
+ *                `shared/respawn.ts` prints its death-gap estimates with a `≤`.
  *
  * Every consumer that is not asking specifically about the DB floor should treat 'cluster' the
- * way it treats 'observed' — both are this caster's own measured cycles.
+ * way it treats 'observed' — both are this caster's own measured cycles. 'deathBound' is the one
+ * that needs its own sentence, because the claim it makes is weaker than either.
  */
-export type EstimatorSource = 'db' | 'observed' | 'cluster'
+export type EstimatorSource = 'db' | 'observed' | 'cluster' | 'deathBound'
 
 /** Per-spell mined duration statistics (milliseconds). */
 export interface BuffStat {
@@ -368,6 +375,21 @@ export interface SpellEntry {
    * non-song) that have no such row.
    */
   instrumentEnhanced?: string
+  /**
+   * THE WIKI BADGES THIS SPELL'S PAGE OUT OF ERA (JOS-393) — DERIVED AT LOAD, never in spells.json.
+   *
+   * `src/main/data/spellEra.ts` joins it from the era sidecar (`pageEra.json`, written by
+   * `scripts/scrape-page-era.ts` off eqlwiki's own `action=eqlmetadata` predicate — the same one
+   * that decides whether the wiki draws its red pill on a link). The spell scrape rewrites
+   * `spells.json` wholesale, so a verdict from a DIFFERENT scrape cannot live in it; the field is
+   * attached by the loader, exactly as the corrections and removals overlays are applied there.
+   *
+   * `true` OR ABSENT, and never `false`. The endpoint answers `false` both for a page it files as
+   * classic and for a page nobody has classified, and the table is silent for a name it was never
+   * asked about — so the only thing worth carrying is the positive claim. A surface reads an absent
+   * field as "nothing to say", which is exactly what it is.
+   */
+  outOfEra?: boolean
 }
 
 /** The committed spells.json shape: metadata + the spell list. */

@@ -1,5 +1,5 @@
 import { type JSX, useEffect, useRef, useState } from 'react'
-import { Box, Checkbox, Chip, ListItemText, ListSubheader, Menu, MenuItem, Select, Typography } from '@mui/material'
+import { Box, Checkbox, Chip, Divider, ListItemText, ListSubheader, Menu, MenuItem, Select, Typography } from '@mui/material'
 import CircleIcon from '@mui/icons-material/Circle'
 import MinimizeIcon from '@mui/icons-material/Remove'
 import CropSquareIcon from '@mui/icons-material/CropSquare'
@@ -7,9 +7,12 @@ import FilterNoneIcon from '@mui/icons-material/FilterNone'
 import CloseIcon from '@mui/icons-material/Close'
 import PictureInPictureAltIcon from '@mui/icons-material/PictureInPictureAlt'
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown'
-import SettingsIcon from '@mui/icons-material/Settings'
 import type { CharacterRef, OverlayKind } from '@shared/types'
+import type { CloseToTrayPrefs } from '@shared/closeToTray'
 import { OVERLAY_KINDS } from '@shared/types'
+// The ONE kind-label map (JOS-405). This menu's wording is what it says, because this menu is
+// where a user meets the window in the first place.
+import { OVERLAY_KIND_LABEL } from '@shared/overlayLabels'
 import { track } from '../lib/telemetry'
 import PerfChip from './PerfChip'
 import { isDragSurfaceDoubleClick } from './titleBarDrag'
@@ -105,20 +108,60 @@ function CaptionButton({
  *   respawn                    JOS-194 — the respawn clocks, and the window this feature is
  *                              actually read in: the Timers tab is where you choose what to clock.
  *
- * Every kind from `buffs` onward ships DEFAULT OFF and this menu is the ONLY way to meet it. The
- * 'toast' kind is deliberately absent: it is a notifier, not a window a user places.
+ *   conCard                    JOS-383 — the card that appears when you `/con` a creature.
+ *
+ * Every kind from `buffs` through `respawn` ships DEFAULT OFF and this menu is the ONLY way to meet
+ * it; `conCard` is the exception in both directions — it ships ON, so this row is how you turn it
+ * OFF without going through Preferences. The 'toast' kind is deliberately absent: it is a notifier,
+ * not a window a user places.
  */
-const OVERLAY_MENU_ROWS: readonly (readonly [OverlayKind, string, string])[] = [
-  ['fight', 'Fight meter', 'Current fight + fight selector'],
-  ['overall', 'Zone meter', 'Zone total + zone selector'],
-  ['heal-fight', 'Fight healing', 'Healing + absorption, current fight'],
-  ['heal-overall', 'Zone healing', 'Healing + absorption, zone total'],
-  ['events', 'Event log', 'Alerts, notable loot, quest completions'],
-  ['buffs', 'Buffs', 'Buffs you have running, with timers'],
-  ['debuffs', 'Debuffs', 'Debuffs and mez you are holding, per target'],
-  ['xp', 'XP', 'XP per hour, next level, motes per hour'],
-  ['respawn', 'Respawn', 'Countdowns started by your own kills']
+// THE NAMES COME FROM shared/overlayLabels.ts (JOS-405); only the DESCRIPTIONS live here. There
+// used to be two label maps in this repo — this menu and shareMerge.ts — and they disagreed about
+// two windows, so an imported settings bundle offered to change something whose name appeared
+// nowhere in the menu you open to find it. The descriptions stay because they are this menu's own
+// job: a row here has to say what the window is FOR, and nowhere else needs that sentence.
+const OVERLAY_MENU_ROWS: readonly (readonly [OverlayKind, string])[] = [
+  ['fight', 'Current fight + fight selector'],
+  ['overall', 'Zone total + zone selector'],
+  ['heal-fight', 'Healing + absorption, current fight'],
+  ['heal-overall', 'Healing + absorption, zone total'],
+  ['events', 'Alerts, notable loot, quest completions'],
+  ['buffs', 'Buffs you have running, with timers'],
+  ['debuffs', 'Debuffs and mez you are holding, per target'],
+  ['xp', 'XP per hour, next level, motes per hour'],
+  ['respawn', 'Countdowns started by your own kills'],
+  // JOS-383, and the first row here for a kind that ships ON. It is in this menu on the owner's
+  // instruction (2026-08-16, the JOS-139 mirroring precedent): a window that appears by itself
+  // needs its off switch within reach of the place you are already looking when you want it gone.
+  // The 'toast' kind stays absent for its own stated reason — nobody places a celebration strip.
+  ['conCard', 'Resists, drops and level when you con']
 ]
+
+/**
+ * The close-to-tray preference as this bar sees it: read once at mount, then kept current by main's
+ * push - which fires for the Preferences switch, the tray icon's checkbox, the popover's buttons,
+ * AND this row's own write (main echoes the renderer's set back to it, so the switch in Preferences
+ * and this checkbox move together without either knowing the other exists). `null` until the first
+ * read answers, so the row can render nothing it does not know (the JOS-340 law, in menu form).
+ */
+function useCloseToTrayMirror(): [CloseToTrayPrefs | null, (patch: Partial<CloseToTrayPrefs>) => void] {
+  const [prefs, setPrefs] = useState<CloseToTrayPrefs | null>(null)
+  useEffect(() => {
+    let alive = true
+    void window.eq.getCloseToTray().then((p) => {
+      if (alive) setPrefs(p)
+    })
+    const off = window.eq.onCloseToTray(setPrefs)
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
+  const update = (patch: Partial<CloseToTrayPrefs>): void => {
+    void window.eq.setCloseToTray(patch).then(setPrefs)
+  }
+  return [prefs, update]
+}
 
 /**
  * Floating DPS overlay menu (Task #52; two kinds in Task #54). A compact menu toggles the
@@ -130,6 +173,7 @@ function OverlayMenu({ overlayState }: { overlayState: Record<OverlayKind, boole
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
   const anyOverlayOpen = Object.values(overlayState).some(Boolean)
+  const [tray, setTray] = useCloseToTrayMirror()
 
   /**
    * Toggle one overlay and record WHICH and WHETHER (usage-analytics §2 `overlayToggle`) — the
@@ -191,12 +235,33 @@ function OverlayMenu({ overlayState }: { overlayState: Record<OverlayKind, boole
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
       >
-        {OVERLAY_MENU_ROWS.map(([kind, primary, secondary]) => (
+        {OVERLAY_MENU_ROWS.map(([kind, secondary]) => (
           <MenuItem dense key={kind} data-testid={`overlay-menu-${kind}`} onClick={() => { toggle(kind) }}>
             <Checkbox size="small" edge="start" checked={overlayState[kind]} tabIndex={-1} disableRipple />
-            <ListItemText primary={primary} secondary={secondary} />
+            <ListItemText primary={OVERLAY_KIND_LABEL[kind]} secondary={secondary} />
           </MenuItem>
         ))}
+        <Divider />
+        {/* THE THIRD MIRROR of "what the X does" (JOS-139; owner, 2026-08-16: "add a mirror to this
+            preference in the overlay dropdown menu"). It sits in THIS menu because it is the
+            overlays' promise: closing the window keeps them running. Same store, same value as the
+            Preferences switch and the tray icon's checkbox - main pushes every change to all three,
+            so none of them can be a stale answer. Disabled only until the first read lands, which
+            is before anyone can open this menu. */}
+        <MenuItem
+          dense
+          data-testid="overlay-menu-close-to-tray"
+          disabled={tray === null}
+          onClick={() => {
+            if (tray) setTray({ enabled: !tray.enabled })
+          }}
+        >
+          <Checkbox size="small" edge="start" checked={tray?.enabled === true} tabIndex={-1} disableRipple />
+          <ListItemText
+            primary="Keep running in the tray when the window closes"
+            secondary="Overlays stay up; the tray icon brings the window back"
+          />
+        </MenuItem>
       </Menu>
     </Box>
   )
@@ -248,44 +313,6 @@ function CharacterPicker({
   )
 }
 
-/** Preferences gear — opens the Preferences view (EQ folder, updates). */
-function PreferencesButton({ onOpen }: { onOpen: () => void }): JSX.Element {
-  return (
-    <Box data-no-drag sx={{ WebkitAppRegion: 'no-drag', display: 'flex', alignItems: 'center', pr: 0.5 }}>
-      {/* Popper-free with the rest of the bar (JOS-143). The gear shares this row with the
-          character Select, and the UpdateChip beside it lost its popper for exactly this reason
-          in JOS-127 — a title bar whose controls are one rank apart is not a place for cards. */}
-      <Box
-        component="button"
-        type="button"
-        aria-label="Open preferences"
-        title="Preferences"
-        onClick={onOpen}
-        sx={{
-          WebkitAppRegion: 'no-drag',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: 28,
-          width: 28,
-          p: 0,
-          borderRadius: 1,
-          border: 'none',
-          background: 'transparent',
-          color: 'text.secondary',
-          cursor: 'pointer',
-          outline: 'none',
-          transition: 'background-color 120ms, color 120ms',
-          '& svg': { fontSize: 18 },
-          '&:hover': { bgcolor: 'rgba(255,255,255,0.08)', color: 'text.primary' }
-        }}
-      >
-        <SettingsIcon />
-      </Box>
-    </Box>
-  )
-}
-
 /** Minimize / maximize / close, far right. */
 function WindowControls({ maximized }: { maximized: boolean }): JSX.Element {
   return (
@@ -308,16 +335,13 @@ export interface TitleBarProps {
   character: CharacterRef | null
   characters: CharacterRef[]
   onSelectCharacter: (logPath: string) => void
-  /** Navigate to the Preferences view (EQ install folder, updates) — Task #55. */
-  onOpenPreferences: () => void
 }
 
 export default function TitleBar({
   live,
   character,
   characters,
-  onSelectCharacter,
-  onOpenPreferences
+  onSelectCharacter
 }: TitleBarProps): JSX.Element {
   const [maximized, setMaximized] = useState(false)
   // Per-kind overlay open-state (Task #52; kinds in Task #54/#59): reflected on the compact
@@ -388,8 +412,6 @@ export default function TitleBar({
         characters={characters}
         onSelectCharacter={onSelectCharacter}
       />
-
-      <PreferencesButton onOpen={onOpenPreferences} />
 
       <WindowControls maximized={maximized} />
     </Box>

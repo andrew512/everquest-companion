@@ -21,12 +21,23 @@
 // that has to load under a plain node test (the mobSearch.ts precedent). Type-only imports may
 // keep the alias, and do.
 import { normalizeUiScale } from '../../../../shared/uiScale'
+import { normalizeAlertBannerConfig } from '../../../../shared/alertBanner'
+import { normalizeConCardConfig } from '../../../../shared/conCard'
+import { normalizeOverlayTextSize } from '../../../../shared/overlayTextScale'
+import { normalizeOverlayBgAlpha } from '../../../../shared/overlayBgAlpha'
+import type { AlertBannerOverlayConfig } from '@shared/alertBanner'
+import type { ConCardOverlayConfig } from '@shared/conCard'
 import type { BuffTrustPrefs } from '@shared/buffTrust'
 import type { GraphicsPrefs } from '@shared/graphicsPrefs'
 import type { GraphicsEnvironment } from '@shared/wineDetect'
 import type { CursorRingPrefs, OverlayAutoHidePrefs } from '@shared/presencePrefs'
 import type { OverlaySnapPrefs } from '@shared/overlaySnap'
+import type { OverlayTextSizePrefs } from '@shared/overlayTextScale'
+import type { OverlayBgAlphaPrefs } from '@shared/overlayBgAlpha'
+import type { CloseToTrayPrefs } from '@shared/closeToTray'
 import type { PerfHudPrefs, StartupProfile } from '@shared/perf'
+import type { ProcessPriorityPrefs } from '@shared/processPriority'
+import type { ResistPrefs } from '@shared/resistPrefs'
 import type { TelemetryPayloadView } from '@shared/telemetry'
 import type { AlertDef, EqConfig, OverlayConfig, OverlayKind, UpdateStatus, VoicePrefs } from '@shared/types'
 
@@ -34,6 +45,30 @@ import type { AlertDef, EqConfig, OverlayConfig, OverlayKind, UpdateStatus, Voic
 export interface ToastSeed {
   open: boolean
   locked: boolean
+}
+
+/**
+ * The alert banner's three facts (JOS-378): open-state and lock, exactly the toast's pair, plus the
+ * knobs blob (hold, lines). Read together for the reason the toast's are: the card is one control
+ * group and a frame where the switch was right and the hold was still the default is the same
+ * defect on a smaller control.
+ */
+export interface AlertBannerSeed {
+  open: boolean
+  locked: boolean
+  cfg: AlertBannerOverlayConfig
+}
+
+/**
+ * The con card's three facts (JOS-383), the same shape one kind over. It matters MORE here than it
+ * does for the banner: this kind ships ON, so a card that mounted on a shipped default would paint
+ * the switch correctly for a fresh install and wrongly for the only people who have ever touched it
+ * — the ones who turned it off.
+ */
+export interface ConCardSeed {
+  open: boolean
+  locked: boolean
+  cfg: ConCardOverlayConfig
 }
 
 /**
@@ -58,8 +93,59 @@ export interface PrefsSnapshot {
   overlayAutoHide: OverlayAutoHidePrefs
   /** Overlays — the opt-in drag magnetism (JOS-217). */
   overlaySnap: OverlaySnapPrefs
+  /**
+   * Text size — the OVERLAYS' size (JOS-405): the shared value and whether it is in force.
+   *
+   * In the batch for the `uiScale` reason next door, and rather more sharply: the person opening
+   * this section is the person who cannot read their meters, so their shared size is by definition
+   * not 100% — a stepper that painted 100% first would be wrong for exactly the audience the card
+   * is for.
+   */
+  overlayTextSize: OverlayTextSizePrefs
+  /**
+   * …and every kind's OWN size, for the persistent twelve-row list. Seeded here rather than read
+   * on mount for the same reason everything else in this object is: the rows state a size, and a
+   * row that states the wrong one for a frame is this gate's whole subject.
+   */
+  overlayTextScales: Record<OverlayKind, number>
+  /**
+   * Text size & transparency — the OVERLAYS' background alpha (JOS-407): the shared value and
+   * whether it is in force.
+   *
+   * Here for the `overlayTextSize` reason next door, with one of its own: this preference's
+   * `independent` is the first switch in the pane whose stored value is decided by a MIGRATION, so
+   * an install that comes up independent would watch its switch paint OFF and rise — which is the
+   * JOS-340 defect on the one control that has to be believed.
+   */
+  overlayBgAlpha: OverlayBgAlphaPrefs
+  /** …and every kind's OWN alpha, for the same twelve-row list, on the `overlayTextScales`
+   *  argument: a row states a value, and one that states the wrong one for a frame is this gate's
+   *  whole subject. */
+  overlayBgAlphas: Record<OverlayKind, number>
+  /**
+   * …and WHICH OF THOSE WINDOWS ARE OPEN (JOS-408), for the rows' `closed` tag.
+   *
+   * The only non-stored fact in this object, and it is here rather than read on mount for the
+   * reason everything else is: the tag is a SENTENCE about a row, and a row that says `closed`
+   * for a frame about a window the user has open is the same defect as a switch that flashes.
+   * It costs no extra IPC — `getOverlayState` is already in the batch for the toast, banner and
+   * con-card cards; this keeps the whole map instead of three fields out of it.
+   */
+  overlayOpen: Record<OverlayKind, boolean>
+  /** Window — what the X does (JOS-139). OFF by default (owner reversal, 2026-08-16), and it has
+   *  TWO other controls (the tray menu's checkbox and the title bar's overlay-menu row), so this
+   *  entry is kept current by main's pushes as well as by the card's own writes — see App.tsx. */
+  closeToTray: CloseToTrayPrefs
   /** Overlays — the celebration toast's open-state and its lock. */
   toast: ToastSeed
+  /** Overlays — the alert banner's open-state, lock and knobs. It ships OFF, which is exactly the
+   *  argument its card once used for mounting on defaults — and exactly wrong for anyone who has
+   *  turned it on: their switch was born OFF and rose (owner, hands-on, 2026-08-16). */
+  alertBanner: AlertBannerSeed
+  /** Overlays — the con card's open-state, lock and auto-hide. It ships ON, which is why it is
+   *  here rather than mounting on a default: the only stored answer that differs from the shipped
+   *  one is somebody having switched it OFF, and that is the one the switch must not get wrong. */
+  conCard: ConCardSeed
   /** Buff trust — the external-caster allowlist. */
   buffTrust: BuffTrustPrefs
   /** Cursor ring — the switch, the two sliders and the colour. */
@@ -71,6 +157,14 @@ export interface PrefsSnapshot {
   /** Performance — the HUD switch and this launch's startup breakdown. */
   perfHud: PerfHudPrefs
   startup: StartupProfile
+  /** Performance — "yield CPU to the game" (JOS-366). ON by default, which is exactly why it has
+   *  to come through the gate: a switch whose default is `true` flashing OFF is the JOS-340
+   *  defect wearing its loudest clothes. */
+  processPriority: ProcessPriorityPrefs
+  /** Combat — which casters teach the resist profiles (JOS-385). ON by default, so it is here for
+   *  the `processPriority` reason: a switch whose default is `true` flashing OFF is this gate's
+   *  own defect. */
+  resists: ResistPrefs
   /** Updates — the version row and the status chip's starting value (pushes follow). */
   version: string
   updateStatus: UpdateStatus
@@ -93,14 +187,23 @@ export interface PrefsReader {
   getGraphicsEnvironment: () => Promise<GraphicsEnvironment>
   getOverlayAutoHide: () => Promise<OverlayAutoHidePrefs>
   getOverlaySnap: () => Promise<OverlaySnapPrefs>
+  getOverlayTextSize: () => Promise<OverlayTextSizePrefs>
+  getOverlayTextScales: () => Promise<Record<OverlayKind, number>>
+  getOverlayBgAlpha: () => Promise<OverlayBgAlphaPrefs>
+  getOverlayBgAlphas: () => Promise<Record<OverlayKind, number>>
+  getCloseToTray: () => Promise<CloseToTrayPrefs>
   getOverlayState: () => Promise<Record<OverlayKind, boolean>>
   getToastConfig: () => Promise<OverlayConfig>
+  getAlertBannerConfig: () => Promise<OverlayConfig>
+  getConCardConfig: () => Promise<OverlayConfig>
   getBuffTrust: () => Promise<BuffTrustPrefs>
   getCursorRing: () => Promise<CursorRingPrefs>
   getVoicePrefs: () => Promise<VoicePrefs>
   getTelemetryPayload: () => Promise<TelemetryPayloadView>
   getPerfPrefs: () => Promise<PerfHudPrefs>
   getStartupProfile: () => Promise<StartupProfile>
+  getProcessPriority: () => Promise<ProcessPriorityPrefs>
+  getResistPrefs: () => Promise<ResistPrefs>
   getAppVersion: () => Promise<string>
   getUpdateStatus: () => Promise<UpdateStatus>
   listAlerts: () => Promise<AlertDef[]>
@@ -122,14 +225,23 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     graphicsEnv,
     overlayAutoHide,
     overlaySnap,
+    overlayTextSize,
+    overlayTextScales,
+    overlayBgAlpha,
+    overlayBgAlphas,
+    closeToTray,
     overlayState,
     toastConfig,
+    bannerConfig,
+    conCardConfig,
     buffTrust,
     cursorRing,
     voice,
     telemetry,
     perfHud,
     startup,
+    processPriority,
+    resists,
     version,
     updateStatus,
     alerts
@@ -140,14 +252,23 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     eq.getGraphicsEnvironment(),
     eq.getOverlayAutoHide(),
     eq.getOverlaySnap(),
+    eq.getOverlayTextSize(),
+    eq.getOverlayTextScales(),
+    eq.getOverlayBgAlpha(),
+    eq.getOverlayBgAlphas(),
+    eq.getCloseToTray(),
     eq.getOverlayState(),
     eq.getToastConfig(),
+    eq.getAlertBannerConfig(),
+    eq.getConCardConfig(),
     eq.getBuffTrust(),
     eq.getCursorRing(),
     eq.getVoicePrefs(),
     eq.getTelemetryPayload(),
     eq.getPerfPrefs(),
     eq.getStartupProfile(),
+    eq.getProcessPriority(),
+    eq.getResistPrefs(),
     eq.getAppVersion(),
     eq.getUpdateStatus(),
     eq.listAlerts()
@@ -160,13 +281,37 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     graphicsEnv,
     overlayAutoHide,
     overlaySnap,
+    // Through the same normalizer main's store reader uses, for the `uiScale` reason next door:
+    // the cache can never hold a shared size that is not a legal one.
+    overlayTextSize: normalizeOverlayTextSize(overlayTextSize),
+    overlayTextScales,
+    // …and through its own normalizer, for the same reason: the cache can never hold a shared
+    // alpha the slider could not express.
+    overlayBgAlpha: normalizeOverlayBgAlpha(overlayBgAlpha),
+    overlayBgAlphas,
+    overlayOpen: overlayState,
+    closeToTray,
     toast: { open: overlayState.toast, locked: toastConfig.locked },
+    // The knobs go through the same normalizer main's store reads with, so the cache can never
+    // hold an out-of-range hold or line count (the `uiScale` argument, on a different blob).
+    alertBanner: {
+      open: overlayState.alertBanner,
+      locked: bannerConfig.locked,
+      cfg: normalizeAlertBannerConfig(bannerConfig.alertBanner)
+    },
+    conCard: {
+      open: overlayState.conCard,
+      locked: conCardConfig.locked,
+      cfg: normalizeConCardConfig(conCardConfig.conCard)
+    },
     buffTrust,
     cursorRing,
     voice,
     telemetry,
     perfHud,
     startup,
+    processPriority,
+    resists,
     version,
     updateStatus,
     alertCount: alerts.length

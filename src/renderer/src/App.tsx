@@ -34,6 +34,11 @@ import AlertsView from './features/alerts/AlertsView'
 import BuffsView from './features/buffs/BuffsView'
 import TimersView from './features/timers/TimersView'
 import PreferencesView from './features/preferences/PreferencesView'
+// TWO FACTS THE PREFERENCES SNAPSHOT CANNOT LEARN FROM A CARD: what the X does (JOS-139 — the tray
+// menu carries the same checkbox) and WHICH OVERLAYS ARE OPEN (JOS-408 — the title bar's Overlay
+// menu opens them, and the Appearance rows tag a closed one). Both are recorded HERE, at the root.
+// See the effect.
+import { peekPrefsSnapshot, recordPref } from './features/preferences/prefsSnapshot'
 import FeedbackDialog from './features/feedback/FeedbackDialog'
 // OWNER-ONLY. `devTriage` holds the single `DEV_TOOLS ? lazy(() => import(…)) : null` — the
 // STRIP, which is a compile-time question and stays on `DEV_TOOLS`; in a build without the flag
@@ -90,7 +95,8 @@ function PlainView({
   view,
   viewKey,
   routing,
-  onOpenVoicePrefs
+  onOpenVoicePrefs,
+  onOpenOverlayPrefs
 }: {
   view: View
   viewKey: string
@@ -98,6 +104,9 @@ function PlainView({
   /** CONTRACT with the alerts wave: AlertsView's optional "take me to the voice settings" hook.
    *  Spread rather than named so this tree compiles whether or not that prop exists yet. */
   onOpenVoicePrefs: () => void
+  /** The same contract for Preferences → Overlays (JOS-378): the alert editor's on-screen block
+   *  links there when the banner overlay is off. */
+  onOpenOverlayPrefs: () => void
 }): JSX.Element {
   return (
     <>
@@ -149,7 +158,7 @@ function PlainView({
           whole contract, since the watch list lives in the store and the clocks are re-derived
           by the fold the character switch kicks off. */}
       {view === 'timers' && <TimersView key={viewKey} />}
-      {view === 'alerts' && <AlertsView key={viewKey} {...{ onOpenVoicePrefs }} />}
+      {view === 'alerts' && <AlertsView key={viewKey} {...{ onOpenVoicePrefs, onOpenOverlayPrefs }} />}
       {/* CHARACTER (JOS-45, released JOS-327). It sits HERE, below the no-characters gate, and not
           beside the triage branch: unlike triage this tab reads the game log (name, level, loadout)
           and the character's own inventory dump, so a machine with no EverQuest install has nothing
@@ -203,6 +212,7 @@ function ViewContent({
         viewKey={viewKey}
         routing={routing}
         onOpenVoicePrefs={() => prefs.openSection('voice')}
+        onOpenOverlayPrefs={() => prefs.openSection('overlays')}
       />
       {/* The Mobs tab stays MOUNTED across a deep link (no `key` churn on target
           change) — remounting per character rebuild only, like every other view. */}
@@ -468,6 +478,38 @@ function applyDeepLink(focus: AppFocus | null, open: DeepLinkOpeners): void {
   else open.selectView('mobs')
 }
 
+/**
+ * THE TWO PREFERENCES FACTS THAT CHANGE WHERE THE PREFERENCES PANE CANNOT SEE THEM.
+ *
+ * The pane's cards seed from a warm snapshot (JOS-340, features/preferences/prefsSnapshot.ts) and
+ * that cache is otherwise only ever written by a card's OWN reply — so anything moved from another
+ * surface would be invisible in the pane until the next launch. Two things are:
+ *
+ *   * WHAT THE X DOES (JOS-139). The tray icon's menu carries the same checkbox, and it is used
+ *     precisely while this window is hidden.
+ *   * WHICH OVERLAYS ARE OPEN (JOS-408). The Appearance section's rows tag a row whose window is
+ *     closed — the one control there whose honest answer to "what does pressing this change on
+ *     screen" is "nothing yet" — and the thing that opens those windows is the TITLE BAR's Overlay
+ *     menu, used with Preferences nowhere in sight. The card subscribes too, for a pane that is
+ *     already open; this is what makes the NEXT mount right.
+ *
+ * Its own function rather than two more `const off…`s inside App's effect: that component is at the
+ * repo's 100-code-line-per-function ceiling, and these two subscriptions are one idea.
+ */
+function keepPrefsSnapshotCurrent(): () => void {
+  const offTray = window.eq.onCloseToTray((p) => {
+    recordPref('closeToTray', p)
+  })
+  const offOverlays = window.eq.onOverlayState((s) => {
+    const cur = peekPrefsSnapshot()?.overlayOpen
+    if (cur) recordPref('overlayOpen', { ...cur, [s.kind]: s.open })
+  })
+  return () => {
+    offTray()
+    offOverlays()
+  }
+}
+
 export default function App(): JSX.Element {
   const [view, setView] = useState<View>(loadView)
   const [character, setCharacter] = useState<CharacterRef | null>(null)
@@ -545,11 +587,13 @@ export default function App(): JSX.Element {
     const offFocus = window.eq.onFocusView((focus) =>
       applyDeepLink(focus, { openMob, openQuest, openLeveling, selectView })
     )
+    const offPrefs = keepPrefsSnapshotCurrent()
     return () => {
       offDelta()
       offChar()
       offEqConfig()
       offFocus()
+      offPrefs()
     }
   }, [openMob, openQuest, openLeveling, selectView])
 
@@ -571,7 +615,6 @@ export default function App(): JSX.Element {
         character={character}
         characters={characters}
         onSelectCharacter={(logPath) => void selectCharacter(logPath, onCharacterSwitched)}
-        onOpenPreferences={() => selectView('preferences')}
       />
 
       {/* Everything below the bar: nav drawer + main content, side by side. */}

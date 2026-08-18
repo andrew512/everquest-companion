@@ -125,6 +125,183 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.5.0',
+    date: '2026-08-17',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Preferences has an Appearance section. In-app text size steps with A- / A+. Below it, the overlays: one text size and one transparency for all of them, or turn on Independent per overlay and set each window - the meters, the buffs and debuffs, XP, respawn, the event log, the celebration toasts, the alert banner and the mob card - on its own row. Every overlay\'s own A- / A+ and background slider still work and stay in step with the page, and the toasts, banner and mob card get a transparency slider for the first time. Whatever sizes and transparency you have today are exactly what you have after the update.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'The mob card, the celebration toasts and the alert banner grow with their text size: at 200% the mob card is the same card, twice as big, instead of the same width with the text crammed into it. Its resist chips wrap into rows when there is not room for them across, rather than squeezing.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Plane of Sky counts after an inventory export: handing a quest in after the export now lowers the count and the Cleanup row, the same way destroying an item does. Before, an item the export had seen stayed counted until you exported again.',
+        fromReport: true
+      }
+    ]
+  },
+  {
+    version: '1.4.0',
+    date: '2026-08-17',
+    entries: [
+      {
+        kind: 'new',
+        text: 'The buff and debuff windows can track only what you choose. On the Buffs tab, turn on Only track buffs and debuffs I check: a checkbox appears on every buff and debuff card and on every row of the durations tables, which you can search - and the windows draw only what you have checked. Off, and everything shows as before.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'Destroying an item in the game now counts. The log records the destroy, so Plane of Sky and inventory counts go down by what you destroyed - and the Cleanup tab no longer needs a button for it. Cleanup is also live from your log and inventory export like every other Sky tab, is laid out as a table, and the reward names open the item card on hover.'
+      },
+      {
+        kind: 'changed',
+        text: 'Wherever you pick classes - Gear, the Planner, your loadout - the choices read Warrior and Shadow Knight rather than WAR and SHD.'
+      }
+    ]
+  },
+  {
+    version: '1.3.0',
+    date: '2026-08-16',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Every mob’s page now shows what it resists, mined from your own game log over a shipped baseline: magic, fire, cold, poison and disease, each with a plain verdict - should land, needs overchannel, or may not land even with overchannel - the chance with and without overchannel at your level, and how much evidence stands behind it. Your own casts outweigh the shipped data, and recent casts outweigh old ones.'
+      },
+      {
+        kind: 'new',
+        text: 'Every cast is read for what it had going for it - the spell’s own resist adjust, its upgrade rank, overchannel, and any tash, malo or scent on the target - so a resist under overchannel counts for more than one without.'
+      },
+      {
+        kind: 'new',
+        text: '/con a creature and a small card appears at the top of the screen with its name, level and only the resists that would change what you cast. Click it to open the mob’s page, or the X to dismiss it. It stays a few seconds, is on by default, and Preferences, Overlays turns it off.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Plane of Sky has a Cleanup tab: the quest items you could destroy because every quest that needs them has been turned in, with the quantity, where they sit, and the turn-in and reward you would give up by destroying them. Mark a stack destroyed and the counts follow.'
+      },
+      {
+        kind: 'new',
+        text: 'New at this level now says what each spell is worth - damage and healing, per second and per point of mana - whether another of your classes already has it, which spell in your repertoire it replaces (hover the name to compare), and whether that spell is memorized right now and in which named spell set.'
+      },
+      {
+        kind: 'new',
+        text: 'Search spells from the same panel: type a name, a class, a level or a range in any order - 27-28 cleric shaman - and the matches list the level every class gets them, with the same figures.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Spells that are not yet in era on this server, Sloths Healing at 50 among them, no longer appear as new at a level; they fold under an out-of-era line, and search and the spell card mark them.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Spells whose damage the wiki page leaves out - Odium and a dozen more - now show it, read from the game’s own spell data.'
+      }
+    ]
+  },
+  {
+    version: '1.2.0',
+    date: '2026-08-16',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Closing the window can keep the companion running in the system tray - your timers, alerts and overlays carry on, and the window is out of the taskbar and out of Alt-Tab. It is off until you turn it on: Preferences, Window, or the row at the foot of the title bar’s Overlay menu.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'With it on, click the tray icon to bring the window back, or right-click it to quit. The first time a close hides the window, a small card above the tray icon says so and offers Quit now, Always quit instead, or Got it.'
+      },
+      {
+        kind: 'fixed',
+        text: 'A locked overlay whose controls came out while the Alt-Tab switcher was open no longer stays that way: it lets go and returns to click-through by itself once your pointer has left it.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The Alert banner switch in Preferences opens showing your real setting instead of flashing off and then on.'
+      },
+      {
+        kind: 'changed',
+        text: 'Overlays show no hover tooltips anywhere, the title bar included, and a locked overlay’s title bar keeps its height when the unlock pin appears.'
+      },
+      {
+        kind: 'changed',
+        text: 'The preferences gear has left the window title bar - Preferences lives in the left navigation.'
+      }
+    ]
+  },
+  {
+    version: '1.1.0',
+    date: '2026-08-16',
+    entries: [
+      {
+        kind: 'new',
+        text: 'A new Alert banner overlay puts your alerts on screen as large text - for the moments a voice line is lost under Discord. It is off until you turn it on in Preferences, Overlays; then each alert gets a Show on screen switch and an optional on-screen wording of its own (the alert name is used until you write one). Early-warning alerts count down on the banner.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'A debuff on a mob learns its real length from the corpse: when the mob dies with your slow or debuff still on it and no wear-off ever printed, the timer knows it lasted at least that long, says "at least" on the bar, and warns you later next time instead of guessing early off the spell list.'
+      },
+      {
+        kind: 'changed',
+        text: 'A mob page and the current-mob card fold out-of-era loot away - Cazic Thule stops offering the Fear revamp table - with a small "out of era" disclosure if you want to see it anyway.'
+      },
+      {
+        kind: 'fixed',
+        text: 'A raid-target defeat celebrated exactly once: alerts fired by the app itself (raid target defeated, quest complete) were quietly playing twice, and they no longer also put a banner line beside the celebration card unless you ask.'
+      }
+    ]
+  },
+  {
+    version: '1.0.1',
+    date: '2026-08-15',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'The cursor ring lines up with the pointer under Windows display scaling and on multi-monitor setups, and it stays on the monitor the game is on - it no longer shows up offset when the pointer crosses to a second screen.',
+        fromReport: true
+      }
+    ]
+  },
+  {
+    version: '1.0.0',
+    date: '2026-08-15',
+    entries: [
+      {
+        kind: 'new',
+        text: 'A Performance setting, on by default, has the companion yield the CPU to EverQuest: every companion window runs at below-normal priority, so a busy moment on this side is never a fair fight with the game for a frame. Preferences, Performance, if you ever want it off.'
+      },
+      {
+        kind: 'new',
+        text: 'A bug report now carries a ten-minute performance timeline - how late the companion ran, how long each read of your log took, and what was open at the time - shown in the report preview before it goes, so "it hitched" can actually be diagnosed.'
+      },
+      {
+        kind: 'changed',
+        text: 'The log is read through one open handle in small bounded slices instead of being reopened up to twice a second and read in one gulp - less contention with the game writing the same file, and less for antivirus to look at again.'
+      },
+      {
+        kind: 'changed',
+        text: 'The natural voice speaks from a single core. It used to take every core for a second per new phrase and finish no sooner; a new phrase now arrives just as fast and leaves the rest of the machine to the game.'
+      },
+      {
+        kind: 'changed',
+        text: 'Overlays re-assert "always on top" only when Windows has actually taken it away, not on every show and hide - fewer window-order changes over the game.'
+      },
+      {
+        kind: 'changed',
+        text: 'Anonymous usage counts gain a few bucketed machine facts (cores, memory, graphics vendor, displays, the game display mode) and per-session smoothness numbers - still nothing from your log, still nothing typed. What this app measures lists every field.'
+      },
+      {
+        kind: 'fixed',
+        text: 'A name with an accented or non-Latin character can no longer be garbled when the first read of your history happens to split it across a read boundary.'
+      }
+    ]
+  },
+  {
     version: '0.28.0',
     date: '2026-08-14',
     entries: [
