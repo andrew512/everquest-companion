@@ -56,7 +56,7 @@ import {
 import { overlayIndependent } from '@shared/overlayIndependent'
 import { OVERLAY_KIND_LABEL, OVERLAY_LABEL_ORDER, OVERLAY_STRIP_KINDS } from '@shared/overlayLabels'
 import type { OverlayKind } from '@shared/types'
-import { PrefStepper } from './PrefStepper'
+import { PREF_STEPPER_W, PrefStepper } from './PrefStepper'
 import { recordPref, usePrefsSeed } from './prefsHydration'
 
 /** The percentage, which is the vocabulary the whole Appearance section speaks. */
@@ -297,26 +297,61 @@ function OverlayRow({
   return (
     <Box data-testid={`pref-overlay-row-${kind}`}>
       <StepperRow label={OVERLAY_KIND_LABEL[kind]} tag={open ? undefined : 'closed'} dim={!open}>
-        <PrefStepper
-          kind="size"
-          value={pct(scale)}
-          name={OVERLAY_KIND_LABEL[kind]}
-          atMin={scale <= TEXT_SCALE_MIN}
-          atMax={scale >= TEXT_SCALE_MAX}
-          onStep={onStep}
-          testid={`pref-overlay-text-size-${kind}`}
-        />
-        <PrefStepper
-          kind="transparency"
-          value={pct(alpha)}
-          name={OVERLAY_KIND_LABEL[kind]}
-          atMin={alpha <= BG_ALPHA_MIN}
-          atMax={alpha >= BG_ALPHA_MAX}
-          onStep={onAlpha}
-          testid={`pref-overlay-bg-alpha-${kind}`}
-        />
+        {/* TWO COLUMNS UNDER TWO HEADERS (owner, 2026-08-17). The steppers sit `COLUMN_GAP` apart
+            so the header row above can name each column without the labels running together, and
+            their faces are the plain − / + because the header is the label — see PrefStepper. */}
+        <Stack direction="row" alignItems="center" spacing={COLUMN_GAP}>
+          <PrefStepper
+            kind="size"
+            plain
+            value={pct(scale)}
+            name={OVERLAY_KIND_LABEL[kind]}
+            atMin={scale <= TEXT_SCALE_MIN}
+            atMax={scale >= TEXT_SCALE_MAX}
+            onStep={onStep}
+            testid={`pref-overlay-text-size-${kind}`}
+          />
+          <PrefStepper
+            kind="transparency"
+            plain
+            value={pct(alpha)}
+            name={OVERLAY_KIND_LABEL[kind]}
+            atMin={alpha <= BG_ALPHA_MIN}
+            atMax={alpha >= BG_ALPHA_MAX}
+            onStep={onAlpha}
+            testid={`pref-overlay-bg-alpha-${kind}`}
+          />
+        </Stack>
       </StepperRow>
     </Box>
+  )
+}
+
+/** The room between the two stepper columns, in theme spacing units — enough for two headers. */
+const COLUMN_GAP = 3
+
+/**
+ * THE HEADER ROW over the per-overlay list: nothing over the names, then `Text size` and `Opacity`
+ * each centred over its column of steppers. Sized from the stepper's own exported width and the
+ * same gap, so the words sit over the controls they name at any pane width.
+ */
+function ColumnHeaders(): JSX.Element {
+  return (
+    <Stack direction="row" alignItems="center" spacing={1} data-testid="pref-overlay-columns">
+      <Box sx={{ flexGrow: 1, minWidth: 0 }} />
+      <Stack direction="row" spacing={COLUMN_GAP}>
+        {(['Text size', 'Opacity'] as const).map((h) => (
+          <Typography
+            key={h}
+            variant="caption"
+            color="text.secondary"
+            sx={{ width: PREF_STEPPER_W, textAlign: 'center', flexShrink: 0 }}
+          >
+            {h}
+          </Typography>
+        ))}
+      </Stack>
+    </Stack>
   )
 }
 
@@ -340,6 +375,7 @@ function PerOverlayRows({
 
   return (
     <Stack spacing={0.25}>
+      <ColumnHeaders />
       {OVERLAY_LABEL_ORDER.map((kind) => {
         // IN FORCE, never remembered — the one rule the rows keep from the retired list. Under this
         // switch that is the kind's own value, which is also what the window is drawing.

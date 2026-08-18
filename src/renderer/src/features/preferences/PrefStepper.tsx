@@ -59,6 +59,13 @@ const WORDS: Record<StepperKind, { less: string; more: string; lessName: string;
  * the in-app ladder ends at its own five stops, the overlay size at TEXT_SCALE_MIN / MAX, the
  * transparency at the slider's 10 / 100%.
  */
+/**
+ * The width one stepper occupies: two small icon buttons, the 44px value, and the two gaps between.
+ * EXPORTED so a header row above a column of these can size its labels to the same box (the
+ * per-overlay list, owner 2026-08-17: "a label along the top of the columns").
+ */
+export const PREF_STEPPER_W = 112
+
 export function PrefStepper({
   kind,
   value,
@@ -66,7 +73,8 @@ export function PrefStepper({
   atMin,
   atMax,
   onStep,
-  testid
+  testid,
+  plain = false
 }: {
   kind: StepperKind
   /** Already said: "125%". This component never formats a number. */
@@ -76,10 +84,25 @@ export function PrefStepper({
   atMax: boolean
   onStep: (dir: 1 | -1) => void
   testid: string
+  /**
+   * PLAIN − / + FACES FOR BOTH KINDS (owner, 2026-08-17). In the per-overlay list a column header
+   * already says which column is text size, so the `A` on the size buttons is a second label for
+   * the same thing; the faces go plain and the header does the naming. The accessible names are
+   * unchanged either way — a screen reader still hears "Larger text for Fight meter".
+   */
+  plain?: boolean
 }): JSX.Element {
   const words = WORDS[kind]
+  const lettered = kind === 'size' && !plain
   return (
-    <Stack direction="row" alignItems="center" spacing={0.5} data-testid={testid} sx={{ flexShrink: 0 }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      justifyContent="center"
+      spacing={0.5}
+      data-testid={testid}
+      sx={{ flexShrink: 0, width: PREF_STEPPER_W }}
+    >
       <IconButton
         size="small"
         aria-label={`${words.lessName} ${name}`}
@@ -89,7 +112,7 @@ export function PrefStepper({
           onStep(-1)
         }}
       >
-        {kind === 'size' ? (
+        {lettered ? (
           <Typography variant="caption" sx={{ fontWeight: 700, lineHeight: 1 }}>
             {words.less}
           </Typography>
@@ -114,7 +137,7 @@ export function PrefStepper({
           onStep(1)
         }}
       >
-        {kind === 'size' ? (
+        {lettered ? (
           <Typography variant="caption" sx={{ fontWeight: 700, lineHeight: 1 }}>
             {words.more}
           </Typography>
