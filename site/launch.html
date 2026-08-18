@@ -91,13 +91,13 @@
   .launch .footnotes p { margin: 0 0 8px; }
   /* Pull quotes: what players said, set quietly in the gutters beside the section they speak to. */
   .launch .page { position: relative; }
-  .launch .pull { position: absolute; width: 168px; margin: 0; font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif; font-style: italic; font-size: 14.5px; line-height: 1.45; color: var(--fg-dim); border-top: 1px solid var(--gold); padding-top: 10px; }
-  .launch .pull.left { left: -206px; }
-  .launch .pull.right { right: -206px; }
+  .launch .pull { position: absolute; width: 196px; margin: 0; font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif; font-style: normal; font-size: 16.5px; line-height: 1.42; color: var(--fg); border-top: 1px solid var(--gold); padding-top: 12px; }
+  .launch .pull.left { left: -236px; }
+  .launch .pull.right { right: -236px; }
   .launch .pull.lower { margin-top: 150px; }
-  .launch .pull cite { display: block; margin-top: 8px; font-style: normal; font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em; color: var(--fg-faint); }
+  .launch .pull cite { display: block; margin-top: 9px; font-style: normal; font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em; color: var(--fg-dim); }
   .launch .pull-band { display: none; }
-  @media (max-width: 1239px) {
+  @media (max-width: 1499px) {
     .launch .pull { position: static; width: auto; margin: 0; }
     .launch .pull.lower { margin-top: 0; }
     .launch .pull-band { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 22px 28px; margin: 40px 0 8px; }
@@ -126,7 +126,7 @@
   <p class="eyebrow">EverQuest Legends Companion</p>
   <h1>Launch and engagement: the first two weeks</h1>
 <aside class="pull right"><p style="margin:0">“It’s literally the best made tool for EQ I’ve seen in my 25 years of playing the game.”</p><cite>in-app feedback · Aug 13</cite></aside>
-<aside class="pull left lower"><p style="margin:0">“This is a quality product that is being well run and managed.” <span style="font-style:normal">— the developer of a similar tool</span></p><cite>r/EQLegends · Aug 10</cite></aside>
+<aside class="pull left lower"><p style="margin:0">“This is a quality product that is being well run and managed.” <span style="color:var(--fg-dim)">— the developer of a similar tool</span></p><cite>r/EQLegends · Aug 10</cite></aside>
   <p class="lede">
     The Companion went public on the evening of August 4, 2026 with a GitHub release, a video and a
     Reddit post. Fourteen days later it has been installed <strong>8,172</strong> times, is used by
@@ -487,7 +487,7 @@
   const band = document.getElementById('pullBand');
   let folded = null;
   function foldPulls() {
-    const want = window.innerWidth < 1240;
+    const want = window.innerWidth < 1500;
     if (want === folded) return; folded = want;
     for (const p of pulls) { if (want) band.appendChild(p.el); else p.parent.insertBefore(p.el, p.home); }
   }
