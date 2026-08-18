@@ -89,6 +89,19 @@
   .launch td .rbar { display: inline-block; height: 8px; border-radius: 2px; background: var(--series-2); vertical-align: middle; margin-right: 8px; }
   .launch .footnotes { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--grid); color: var(--muted); font-size: 12.5px; max-width: 78ch; }
   .launch .footnotes p { margin: 0 0 8px; }
+  /* Pull quotes: what players said, set quietly in the gutters beside the section they speak to. */
+  .launch .page { position: relative; }
+  .launch .pull { position: absolute; width: 168px; margin: 0; font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif; font-style: italic; font-size: 14.5px; line-height: 1.45; color: var(--fg-dim); border-top: 1px solid var(--gold); padding-top: 10px; }
+  .launch .pull.left { left: -206px; }
+  .launch .pull.right { right: -206px; }
+  .launch .pull.lower { margin-top: 150px; }
+  .launch .pull cite { display: block; margin-top: 8px; font-style: normal; font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em; color: var(--fg-faint); }
+  .launch .pull-band { display: none; }
+  @media (max-width: 1239px) {
+    .launch .pull { position: static; width: auto; margin: 0; }
+    .launch .pull.lower { margin-top: 0; }
+    .launch .pull-band { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 22px 28px; margin: 40px 0 8px; }
+  }
   .launch a { color: var(--accent); }
     </style>
   </head>
@@ -112,6 +125,8 @@
 <div class="page">
   <p class="eyebrow">EverQuest Legends Companion</p>
   <h1>Launch and engagement: the first two weeks</h1>
+<aside class="pull right"><p style="margin:0">“It’s literally the best made tool for EQ I’ve seen in my 25 years of playing the game.”</p><cite>in-app feedback · Aug 13</cite></aside>
+<aside class="pull left lower"><p style="margin:0">“This is a quality product that is being well run and managed.” <span style="font-style:normal">— the developer of a similar tool</span></p><cite>r/EQLegends · Aug 10</cite></aside>
   <p class="lede">
     The Companion went public on the evening of August 4, 2026 with a GitHub release, a video and a
     Reddit post. Fourteen days later it has been installed <strong>8,172</strong> times, is used by
@@ -134,7 +149,8 @@
     <div class="tile"><div class="k">Releases</div><div class="v">39</div><div class="d">v0.3.3 → v1.5.0 in 14 days</div></div>
   </div>
 
-  <h2>Installs and daily actives</h2>
+  <h2 id="s-installs">Installs and daily actives</h2>
+<aside class="pull right"><p style="margin:0">“This game has been fun and you managed to make it even funner.”</p><cite>YouTube · Update #2</cite></aside>
   <p class="section-sub">
     New installs per day as bars, people active per day as the line, with the three public moments
     flagged and every release marked as a faint vertical. The launch video and Reddit post went up
@@ -168,7 +184,9 @@
     </div>
   </div>
 
-  <h2>Who came back</h2>
+  <h2 id="s-retention">Who came back</h2>
+<aside class="pull left"><p style="margin:0">“Couldn’t go back to playing without this.”</p><cite>YouTube · Update #3</cite></aside>
+<aside class="pull right lower"><p style="margin:0">“Thank you for getting me away from ACT!”</p><cite>in-app feedback · Aug 16</cite></aside>
   <p class="section-sub">
     Retention by the day people installed. The founding cohorts — the players who came from the
     launch post itself — came back at very high rates: 93–97% the next day and 82–86% a week
@@ -178,8 +196,11 @@
     absent on the days between.
   </p>
   <div class="table-scroll" id="retTable"></div>
+  <div class="pull-band" id="pullBand" aria-label="What players said"></div>
 
-  <h2>What people asked for</h2>
+  <h2 id="s-feedback">What people asked for</h2>
+<aside class="pull left"><p style="margin:0">“This is by far the best program out there for parsing, tracking sky quests. The only feature I wish it had was an inventory clean up.”</p><cite>r/EQLegends · Aug 15</cite></aside>
+<aside class="pull right lower"><p style="margin:0">“OMG, I just found the cleanup menu! I love you!”</p><cite>in-app feedback · Aug 18</cite></aside>
   <p class="section-sub">
     490 reports through the app's own feedback dialog in fourteen days: 346 feature requests and 144
     bug reports, as the reporter classified them. Feature requests outnumber bug reports on every day but two (Aug 4 and Aug 6, when they tied), and the biggest feedback days follow the biggest install days.
@@ -197,7 +218,8 @@
     <div class="chart-holder" id="fbChart"></div>
   </div>
 
-  <h2>The build behind it</h2>
+  <h2 id="s-build">The build behind it</h2>
+<aside class="pull left"><p style="margin:0">“The buff/debuff timer learning mechanism is CRAZY forethought.”</p><cite>YouTube · Update #2</cite></aside>
   <p class="section-sub">
     The repository has been public since launch. 1,322 commits and 341 merged branches landed on
     main in the fourteen days — one merged branch an hour, around the clock — and 39 releases were
@@ -214,7 +236,8 @@
     <div class="chart-holder" id="commitChart"></div>
   </div>
 
-  <h2>Releases</h2>
+  <h2 id="s-releases">Releases</h2>
+<aside class="pull right"><p style="margin:0">“I cannot believe the rate you are putting out these updates.”</p><cite>in-app feedback · Aug 12</cite></aside>
   <p class="section-sub">
     All 39 releases, in order. Installer downloads are shown for shape only: the auto-updater
     re-fetches the installer on every update it applies, so the column mostly counts the fleet
@@ -222,7 +245,8 @@
   </p>
   <div class="table-scroll" id="releaseTable"></div>
 
-  <h2>The launch log</h2>
+  <h2 id="s-log">The launch log</h2>
+<aside class="pull left"><p style="margin:0">“I just found the cursor highlighter and, as an older man with vision issues, this really helps me.”</p><cite>in-app feedback · Aug 13</cite></aside>
   <p class="section-sub">Public moments in violet, feature arrivals in gold, milestones in gray. Times UTC.</p>
   <ul class="log">
     <li><div class="when">Aug 2–4 · before launch</div><div class="what">v0.1.0 – v0.3.2 tagged privately</div><div class="note">Fourteen tags in two days of hardening — signing, auto-update plumbing — before anything was published.</div></li>
@@ -230,7 +254,7 @@
     <li class="ship"><div class="when">Aug 4, 07:53</div><div class="what">Alerts learn to speak <span class="chip ship">v0.3.0</span></div><div class="note">Spoken alerts in system or downloadable natural voices, the cursor ring, and in-app feedback with a scrubbed log attached — the channel most of the launch's fixes arrived through.</div></li>
     <li><div class="when">Aug 4, 23:45</div><div class="what">v0.3.3 — first public GitHub release</div></li>
     <li class="public"><div class="when">Aug 4, 23:46</div><div class="what">Launch video published <span class="chip">YouTube</span></div><div class="note"><a href="https://www.youtube.com/watch?v=LVFTHQjHxT4">"EverQuest Legends Companion launch"</a> — 7,078 views as of Aug 18.</div></li>
-    <li class="public"><div class="when">Aug 5, 00:36</div><div class="what">"Sharing a companion app" <span class="chip">r/EQLegends</span></div><div class="note"><a href="https://www.reddit.com/r/EQLegends/comments/1vfs5df/sharing_a_companion_app/">The launch post</a> — 18 points, 58 comments as of Aug 12. First day after: 101 installs.</div></li>
+    <li class="public"><div class="when">Aug 5, 00:36</div><div class="what">"Sharing a companion app" <span class="chip">r/EQLegends</span></div><div class="note"><a href="https://www.reddit.com/r/EQLegends/comments/1vfs5df/sharing_a_companion_app/">The launch post</a> — 20 points, 62 comments as of Aug 18. First day after: 101 installs.</div></li>
     <li class="ship"><div class="when">Aug 5, 10:43</div><div class="what">The exaltation planner arrives <span class="chip ship">v0.4.0</span></div><div class="note">Plan sets over a class-filtered effect browser and see which zones drop the missing pieces. Celebration cards over the game and healing meters landed in the same cut.</div></li>
     <li class="ship"><div class="when">Aug 5–6</div><div class="what">Groups, and the Wine players <span class="chip ship">v0.6.0–0.6.3</span></div><div class="note">Your group appears in the meters, the Maps sidebar becomes one search box, overlay text scales — and the installer runs under Wine and CrossOver, which brought the Linux and Mac players in.</div></li>
     <li class="ship"><div class="when">Aug 7</div><div class="what">Raid lockouts and farm math <span class="chip ship">v0.9.0 · v0.10.0</span></div><div class="note">A "This week" view tracks every lockout you hold with countdowns to the Tuesday reset, and every item shows your own per-zone drop rates. Custom alert sounds and the What's-new panel came along.</div></li>
@@ -238,14 +262,14 @@
     <li><div class="when">Aug 9, ~15:00</div><div class="what">1,000 installs</div><div class="note">Five days in. 449 new installs on Aug 9 alone — word of mouth was already outrunning the original post.</div></li>
     <li class="ship"><div class="when">Aug 9, 21:45 · 23:53</div><div class="what">The accessibility and Sky wave <span class="chip ship">v0.15.0 · v0.16.0</span></div><div class="note">App-wide text scaling, a colorable cursor ring, time-sliced loot and leveling stats, Plane of Sky refarming with a Ready tab, class-unlock tracking, and per-boss difficulty ladders.</div></li>
     <li class="public"><div class="when">Aug 9, 23:11</div><div class="what">Update #2 video published <span class="chip">YouTube</span></div><div class="note"><a href="https://www.youtube.com/watch?v=UJljqXfksnE">Update #2</a> — 6,964 views as of Aug 18.</div></li>
-    <li class="public"><div class="when">Aug 9, 23:57</div><div class="what">"Thank you to community" <span class="chip">r/EQLegends</span></div><div class="note"><a href="https://www.reddit.com/r/EQLegends/comments/1vk59oa/everquest_legends_companion_thank_you_to_community/">The thank-you post</a> carrying the release notes — 137 points, 82 comments as of Aug 12; the community post outscored the launch post nearly 8×.</div></li>
+    <li class="public"><div class="when">Aug 9, 23:57</div><div class="what">"Thank you to community" <span class="chip">r/EQLegends</span></div><div class="note"><a href="https://www.reddit.com/r/EQLegends/comments/1vk59oa/everquest_legends_companion_thank_you_to_community/">The thank-you post</a> carrying the release notes — 144 points, 92 comments as of Aug 18; the community post outscored the launch post seven to one.</div></li>
     <li><div class="when">Aug 10</div><div class="what">Biggest install day of the launch</div><div class="note">1,220 new installs. Daily actives jumped from 1,029 to 2,014, and the feedback stream had its biggest day too: 64 reports.</div></li>
     <li class="ship"><div class="when">Aug 11</div><div class="what">Icons offline, XP on screen, the Timers tab <span class="chip ship">v0.19.0 · v0.21.0</span></div><div class="note">Every item icon and boss portrait ships inside the app; a floating XP overlay reads experience per hour and time to level; respawn clocks are built from your own kills, with a Respawn overlay that follows the zone you're in.</div></li>
     <li><div class="when">Aug 11</div><div class="what">3,000 installs</div></li>
     <li class="ship"><div class="when">Aug 12–13</div><div class="what">Early warnings, charm mastery, the Wish list <span class="chip ship">v0.23.0 – v0.27.0</span></div><div class="note">Alerts can warn before a tracked debuff drops, every charm in the game binds and speaks when it breaks, and Exaltations, Gear and your character move into one place with a wish list that groups what you're after by the zone that feeds it.</div></li>
     <li class="ship"><div class="when">Aug 14, 23:01</div><div class="what">Mitigation, {target}, and Sky by hand <span class="chip ship">v0.28.0</span></div><div class="note">A Mitigation tab on the meter card, alert phrases that name the mob a spell landed on, Plane of Sky counts you can state by hand, and heal-over-time alerts.</div></li>
     <li class="public"><div class="when">Aug 15, 01:00</div><div class="what">Update #3 video published <span class="chip">YouTube</span></div><div class="note"><a href="https://www.youtube.com/watch?v=oV_oEN9Nhcw">"EverQuest Legends Companion (Update #3)"</a> — 2,692 views as of Aug 18.</div></li>
-    <li class="public"><div class="when">Aug 15, early hours</div><div class="what">"EQ Legends Companion Update #3" <span class="chip">r/EQLegends</span></div><div class="note"><a href="https://www.reddit.com/r/EQLegends/comments/1vophv6/eq_legends_companion_update_3/">The third post</a>, carrying the update's release notes.</div></li>
+    <li class="public"><div class="when">Aug 15, 01:26</div><div class="what">"EQ Legends Companion Update #3" <span class="chip">r/EQLegends</span></div><div class="note"><a href="https://www.reddit.com/r/EQLegends/comments/1vophv6/eq_legends_companion_update_3/">The third post</a>, carrying the update's release notes — 41 points, 43 comments as of Aug 18.</div></li>
     <li><div class="when">Aug 15</div><div class="what">5,000 installs · 928 new that day</div><div class="note">The second-biggest install day of the launch, the day after the third video and post.</div></li>
     <li class="ship"><div class="when">Aug 15, 23:52</div><div class="what">Performance, and 1.0 <span class="chip ship">v1.0.0</span></div><div class="note">The companion yields the CPU to EverQuest by default, reads the log through one open handle in small slices, and every bug report carries a ten-minute performance timeline so "it hitched" can be diagnosed.</div></li>
     <li class="ship"><div class="when">Aug 16</div><div class="what">The Alert banner and the tray <span class="chip ship">v1.1.0 · v1.2.0</span></div><div class="note">Alerts as large text on screen for the moments a voice line is lost under Discord, and closing the window can keep the companion running in the system tray.</div></li>
@@ -304,7 +328,7 @@
   const EVENTS = [
     { t: 0 + 23.77 / 24, label: 'Launch video + Reddit post' },
     { t: 5 + 23.55 / 24, label: 'Update #2 + thank-you post' },
-    { t: 11 + 1.0 / 24, label: 'Update #3 video + post' },
+    { t: 11 + 1.2 / 24, label: 'Update #3 video + post' },
   ];
   const RELEASES = [
     { tag: 'v0.3.3',  at: '2026-08-04T23:45Z', dl: 5 },
@@ -457,6 +481,17 @@
   function drawAll() { drawMain(); drawCum(); drawSess(); drawFb(); drawCommits(); }
   drawAll(); drawRetTable(); drawReleaseTable(); drawDayTable();
   let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(drawAll, 120); });
+  // The pull quotes live in the gutters when there is room and fold into one band when there is not -
+  // the same ten nodes, moved, so nothing is ever shown twice. Each remembers where it came from.
+  const pulls = [...document.querySelectorAll('.pull')].map((el) => ({ el, home: el.nextSibling, parent: el.parentNode }));
+  const band = document.getElementById('pullBand');
+  let folded = null;
+  function foldPulls() {
+    const want = window.innerWidth < 1240;
+    if (want === folded) return; folded = want;
+    for (const p of pulls) { if (want) band.appendChild(p.el); else p.parent.insertBefore(p.el, p.home); }
+  }
+  foldPulls(); window.addEventListener('resize', foldPulls);
 </script>
     </main>
 
