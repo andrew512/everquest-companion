@@ -54,9 +54,18 @@
 // island of the mob's outstanding drops, because that is where you meet the mob first walking
 // outward. No mob->island table is written down anywhere in this module, so a correction to the
 // scrape's `where` moves the card by itself. (MEASURED 2026-08-19 over the committed data with
-// every quest open: 14 of the 20 cards carry a stated island — 3..8 — and Protector of Sky reads
-// Island 7 from posky while `bosses.json` calls it Island 2; the disagreement is DATA's to settle,
-// and whichever way it lands this fold follows it.)
+// every quest open: 14 of the 20 cards carry a stated island — 3..8.)
+//
+// THE ONE DISAGREEMENT JOS-423 LEFT OPEN IS NOW SETTLED, AND IN DATA (JOS-415). It read: "Protector
+// of Sky reads Island 7 from posky while `bosses.json` calls it Island 2; the disagreement is
+// DATA's to settle, and whichever way it lands this fold follows it." It landed on island 2 — the
+// mob's own eqlwiki page opens "Location: 2nd Island" — and the settlement is
+// `skyMobIslands.ts`, a one-row overlay applied to the per-mob islands BEFORE this sort, so the
+// card moves to island 2's heading rather than only relabelling itself. Nothing about the
+// derivation changed: the island is still the lowest island of the mob's outstanding drops
+// EXCEPT where an item demonstrably drops in two places, which is exactly what Gem of Invigoration
+// does and what made the join say 7 about a mob that lives on 2. That file's header is the
+// argument and its audit proves no other card moved.
 //
 // A MOB WHOSE ISLAND THE DATA DOES NOT STATE SORTS LAST, under a heading that says so — never
 // under a guessed number. That is the tab's own law for the no-known-source list applied one level
@@ -83,6 +92,9 @@ import {
   mergeDroppers,
   type DropperMob
 } from './poskyDroppers'
+// The mob-island overlay (JOS-415). It applies to the MOB card only — a `NeededItem`'s islands
+// stay the items' own, because that list really is about where the item drops.
+import { mobIslands } from './skyMobIslands'
 
 /** One quest item as the fold reads it — the `ItemProgress` fields it consumes, structural. */
 export interface TargetsQuestItem {
@@ -301,7 +313,10 @@ export function skyTargets(
   }
   const mobs: TargetMob[] = [...mobsByPage.values()]
     .map((e) => {
-      const islands = sortIslands(e.islands)
+      // Through the mob-island overlay (JOS-415) BEFORE the sort, which is what makes the walk
+      // order right as well as the caption: `island` is this list's head, so a card corrected to
+      // island 2 has to move to island 2's heading, not merely relabel itself under island 7.
+      const islands = sortIslands(new Set(mobIslands(e.mob.page, [...e.islands])))
       return {
         mob: e.mob,
         covers: e.items.length,

@@ -55,6 +55,9 @@
 import type { MobEntry } from '@shared/types'
 import { itemCountKey } from '../../lib/itemName'
 import { MOB_CATALOG } from '../mobs/mobSearch'
+// The one place a mob's island is NOT its items' island (JOS-415) — read its header before
+// touching the island fold below; it is the whole argument for why the join alone is not enough.
+import { mobIslands } from './skyMobIslands'
 
 /** The catalog's spelling of the zone this whole tab is about. */
 export const SKY_ZONE = 'Plane of Sky'
@@ -349,7 +352,9 @@ export interface KillTarget {
  * whichever name happens to sort first. A caller wanting the whole roster has it in that order.
  *
  * The islands ride PER MOB, from the items that mob is the target for — so "Kill: X · Island 3"
- * says where X's outstanding drops are, never where some other target's are.
+ * says where X's outstanding drops are, never where some other target's are. WITH ONE OVERLAY
+ * (JOS-415): where an item drops in two places, its `where` is not this mob's location, and
+ * `mobIslands` states the mob's own island instead. One row today; skyMobIslands.ts argues it.
  */
 export function questKillTargets(items: readonly KillTargetItem[]): KillTarget[] {
   const byPage = new Map<string, { mob: DropperMob; covers: number; islands: Set<string> }>()
@@ -369,7 +374,11 @@ export function questKillTargets(items: readonly KillTargetItem[]): KillTarget[]
   }
   return [...byPage.values()]
     .sort((a, b) => (a.covers === b.covers ? dropperNameOrder(a.mob, b.mob) : b.covers - a.covers))
-    .map((e) => ({ mob: e.mob, covers: e.covers, islands: [...e.islands].sort((a, b) => islandNumber(a) - islandNumber(b)) }))
+    .map((e) => ({
+      mob: e.mob,
+      covers: e.covers,
+      islands: mobIslands(e.mob.page, [...e.islands]).sort((a, b) => islandNumber(a) - islandNumber(b))
+    }))
 }
 
 /**
