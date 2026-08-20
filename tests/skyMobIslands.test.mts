@@ -42,22 +42,23 @@ const questRows = (q: PoskyQuest): KillTargetItem[] =>
     droppers: skyDroppersFor(it.name, it.who)
   }))
 
+/** One item row folded into the accumulator — deduped by page, the questKillTargets rule. */
+function foldItem(out: Map<string, Set<string>>, it: KillTargetItem): void {
+  const island = islandOf(it.where)
+  const seen = new Set<string>()
+  for (const m of it.droppers) {
+    if (seen.has(m.page)) continue
+    seen.add(m.page)
+    const set = out.get(m.page) ?? new Set<string>()
+    if (island) set.add(island)
+    out.set(m.page, set)
+  }
+}
+
 /** The islands the ITEM-DERIVED join alone produces for each mob page, across every quest. */
 function derivedIslandsByPage(): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>()
-  for (const q of QUESTS) {
-    for (const it of questRows(q)) {
-      const island = islandOf(it.where)
-      const seen = new Set<string>()
-      for (const m of it.droppers) {
-        if (seen.has(m.page)) continue
-        seen.add(m.page)
-        const set = out.get(m.page) ?? new Set<string>()
-        if (island) set.add(island)
-        out.set(m.page, set)
-      }
-    }
-  }
+  for (const q of QUESTS) for (const it of questRows(q)) foldItem(out, it)
   return out
 }
 

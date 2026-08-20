@@ -94,11 +94,9 @@ interface RenameableEntry {
  * Returns the SAME object when nothing matched, so the common case costs one map miss per entry
  * in the table rather than a copy of 11k records.
  */
-export function renamedItems<T extends RenameableEntry>(
-  items: Readonly<Record<string, T>>
-): Record<string, T> {
+export function renamedItems<T extends RenameableEntry>(items: Record<string, T>): Record<string, T> {
   const wanted = ITEM_RENAMES.filter((r) => foldKey(r.from) in items)
-  if (wanted.length === 0) return items as Record<string, T>
+  if (wanted.length === 0) return items
   const out: Record<string, T> = { ...items }
   for (const r of wanted) {
     const oldKey = foldKey(r.from)
