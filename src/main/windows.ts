@@ -26,7 +26,7 @@ import { IPC } from '../shared/ipc'
 // scope argument (window-scoped, focused-only, no forward, no global hook) lives in its header.
 import { installBackButton } from './appBack'
 import { E2E } from './e2e'
-import { logError } from './errorLog'
+import { logError, logInfo } from './errorLog'
 import { OVERLAY_MIN_SIZE, OVERLAY_TITLE, isStripKind, overlayDefaultSize } from './overlayLayout'
 // WHERE AN OVERLAY IS, HOW TALL IT IS, AND WHICH OF THAT IS WRITTEN DOWN (JOS-187 + JOS-386). Its
 // own module for the reason overlaySnapDrag.ts and OVERLAY_TITLE are: this file is at the
@@ -79,6 +79,9 @@ import { OVERLAY_KINDS, type OverlayKind } from '../shared/types'
 // ScreenRect lives in shared/presencePrefs.ts, not shared/types.ts — see the note at the
 // bottom of types.ts (that file is at its factoring ceiling).
 import type { ScreenRect } from '../shared/presencePrefs'
+// The overlay-visibility EDGE line (JOS-424). Pure, and it lives beside the focus transition it is
+// read next to — presenceProtocol.ts imports nothing but types, so this cannot close a cycle.
+import { describeOverlayVisibility } from './presenceProtocol'
 
 let mainWindow: BrowserWindow | null = null
 // The floating overlays (Task #52; kinds in Task #54, more in Task #59): separate transparent,
@@ -886,6 +889,14 @@ export function overlayStateMap(): Record<OverlayKind, boolean> {
 // never a second opinion about it.
 
 /**
+ * The visibility this app last ASSERTED, so `setOverlaysHidden` narrates edges rather than every
+ * idempotent re-statement (JOS-424). Null until the first call: a session that never auto-hides
+ * says nothing at all. It is deliberately not a source of truth about any window — each window's
+ * `isVisible()` remains that, and this is only ever compared against the argument.
+ */
+let overlaysHiddenNow: boolean | null = null
+
+/**
  * Show or hide every open overlay window.
  *
  * `showInactive`, not `show`: the same reason the first open uses it. An overlay must never
@@ -913,6 +924,15 @@ export function overlayStateMap(): Record<OverlayKind, boolean> {
  * locked mode from the persisted config rather than remembering anything of its own.
  */
 export function setOverlaysHidden(hidden: boolean): void {
+  // THE EDGE IS NARRATED, THE RE-STATEMENTS ARE NOT (JOS-424). This function is called on every
+  // presence change and is idempotent by design, so only a genuine change of the visibility this
+  // app is asserting is worth a line — that is what makes dev.log readable as "the overlays went
+  // down here and came back here" rather than as a transcript of the watcher. Console only
+  // (`logInfo`), like every other narration in this app; it names no overlay's contents.
+  if (overlaysHiddenNow !== hidden) {
+    overlaysHiddenNow = hidden
+    logInfo('[everquest-companion]', describeOverlayVisibility(hidden, Date.now()))
+  }
   for (const kind of OVERLAY_KINDS) {
     const w = overlayWindows[kind]
     if (!w || w.isDestroyed()) continue

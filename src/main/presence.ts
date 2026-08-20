@@ -46,6 +46,7 @@ import { logError, logInfo } from './errorLog'
 import { notePresenceRestart } from './telemetry'
 import { effectiveEqRoot } from './log/config'
 import {
+  type FocusTransitionDriver,
   type PresenceRecord,
   type PresenceWorkerInit,
   type WatcherExitTrail,
@@ -55,6 +56,7 @@ import {
   WATCHER_HEARTBEAT_MS,
   WATCHER_STALE_MS,
   WATCHER_STOP_MESSAGE,
+  describeFocusTransition,
   describeRestartCause,
   eqBoundsInDip,
   eqRootPrefix,
@@ -96,6 +98,16 @@ let watcher: Worker | null = null
 let focus = newFocusDebounce(false)
 let focusTimer: NodeJS.Timeout | null = null
 let lastObservedFocus = false
+/**
+ * The foreground record behind the CURRENT raw observation (JOS-424).
+ *
+ * Kept because a committed flip is worth a log line and a log line is worth nothing without the
+ * record that caused it — and the commit does not always happen on a watcher line at all: the
+ * debounce's own timer is what commits a value that held still, and by then the `F` record that
+ * started it is three function calls in the past. Null until the first foreground record, which is
+ * exactly what the transition line then says.
+ */
+let lastForeground: FocusTransitionDriver | null = null
 
 /**
  * May the watcher look at the cursor at all? (JOS-193 — see `setCursorWatch`.)
@@ -199,6 +211,12 @@ function sameRect(a: ScreenRect | null, b: ScreenRect | null): boolean {
 /**
  * Run the debounce for the current raw observation and schedule the wake-up that will commit it
  * if the signal holds. Called on every foreground line and from the timer it sets.
+ *
+ * A COMMITTED FLIP IS NARRATED (JOS-424), with the raw record that drove it. `logInfo` is
+ * `console.log` and nothing else — dev stdout, never `errors.log`, never the error store, so
+ * nothing here can leave the machine (the transition line carries a third-party window title;
+ * presenceProtocol.ts's section header is the whole argument). It is one line per COMMIT, not per
+ * observation, so a quiet session says nothing and an alt-tab says exactly two things.
  */
 function applyFocus(observed: boolean): void {
   lastObservedFocus = observed
@@ -206,10 +224,16 @@ function applyFocus(observed: boolean): void {
     clearTimeout(focusTimer)
     focusTimer = null
   }
-  const step = focusDebounceStep(focus, observed, Date.now())
+  const now = Date.now()
+  const step = focusDebounceStep(focus, observed, now)
   focus = step.state
-  if (step.changed) update({ eqFocused: focus.committed })
-  else if (step.waitMs !== null) {
+  if (step.changed) {
+    logInfo(
+      '[everquest-companion]',
+      describeFocusTransition({ committed: focus.committed, at: now, driver: lastForeground })
+    )
+    update({ eqFocused: focus.committed })
+  } else if (step.waitMs !== null) {
     focusTimer = setTimeout(() => {
       focusTimer = null
       applyFocus(lastObservedFocus)
@@ -288,6 +312,10 @@ function applyRecord(rec: PresenceRecord): void {
     effectiveEqRoot()
   )
   update(side === 'eq' ? { observed: true, eqBounds: toDip(rec.rect) } : { observed: true })
+  // WHAT DROVE THIS OBSERVATION, kept for the transition line a commit may write now or in a
+  // second's time (JOS-424). The rectangle is deliberately not among the fields: a commit is about
+  // WHICH window took the foreground, and the bounds are already `state.eqBounds`.
+  lastForeground = { pid: rec.pid, exePath: rec.exePath, title: rec.title, side }
   applyFocus(focusCountsAsEq(side))
 }
 
@@ -398,6 +426,9 @@ function resetPresence(): void {
   }
   focus = newFocusDebounce(false)
   lastObservedFocus = false
+  // A dead watcher's last foreground record must never be read back as its successor's driver —
+  // the same rule `forgetWatcherFacts` applies to the health anchors (JOS-310, JOS-424).
+  lastForeground = null
   if (state === INITIAL_PRESENCE) return
   state = INITIAL_PRESENCE
   emit()
@@ -656,6 +687,7 @@ function stopWatcher(): void {
   state = INITIAL_PRESENCE
   focus = newFocusDebounce(false)
   lastObservedFocus = false
+  lastForeground = null
 }
 
 /**
