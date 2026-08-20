@@ -285,174 +285,55 @@ export function foregroundSide(
  * Does this side count as "you are in EverQuest" for `PresenceState.eqFocused`?
  *
  * The game itself, and the app's ACCESSORY windows — an unlocked overlay the user is dragging, the
- * cursor ring. Never the Companion window, and never anybody else's.
+ * cursor ring. Never anybody else's window.
+ *
+ * THE COMPANION WINDOW HAS TWO ANSWERS SINCE JOS-427, and `ownRaise` is which one applies. A user
+ * who alt-tabs or clicks INTO the app has said they are looking at something other than the game —
+ * `false`, the JOS-199 reading, unchanged. But a raise the app performed FOR an overlay click (the
+ * con card, a toast — `windowControls.ts focusView`) is the overlays' own feature working, and the
+ * owner's ruling is verbatim: "the overlays are effectively everquest still being the focus
+ * spiritually." Parking them as punishment for using them was the oscillation the narration caught
+ * (raise → park → click back → unpark → next card click → raise …). `presence.ts` owns the flag's
+ * lifetime: set by the raise, cleared by the first foreground record that is not the app window.
  */
-export function focusCountsAsEq(side: ForegroundSide): boolean {
+export function focusCountsAsEq(side: ForegroundSide, ownRaise = false): boolean {
+  if (side === 'own-app') return ownRaise
   return side === 'eq' || side === 'own-accessory'
 }
 
-// ---------------------------------------------------------------- the focus debounce
+// ------------------------------------------------- no focus debounce, by ruling (JOS-427)
+//
+// THERE USED TO BE A DEBOUNCE HERE, and it grew three times (300 ms symmetric; JOS-424 asymmetric
+// 200/1200 ms; JOS-425 born-true) while the flicker it was blamed for kept happening. The
+// narration those tickets added finally produced a clean test: four alt-tab round trips, every
+// committed flip a single truthful edge - and the owner still SAW the flicker. The visible strobe
+// was never in this signal; it was the hide()/show() presentation flash (windows.ts parkOverlays
+// is the fix, and the JOS-120 ring lesson was the precedent all along). OWNER RULING 2026-08-19:
+// remove the debounce machinery outright - eqFocused IS the latest observed foreground, both
+// directions, no timers.
+//
+// WHAT REPLACES TIME IS EVIDENCE, two rules, neither of them a clock:
+//   * A NO-WINDOW SAMPLE IS NOT A DEPARTURE. During window transitions Windows briefly reports no
+//     foreground window at all (pid 0 - presenceWorker.ts NO_WINDOW). Nothing gained focus, so
+//     nothing was left: presence.ts applyRecord keeps the previous answer rather than folding a
+//     moment of nobody into "you are not in EverQuest".
+//   * AN OVERLAY-INITIATED RAISE IS STILL EVERQUEST (owner ruling 2026-08-19: "the overlays are
+//     effectively everquest still being the focus spiritually"). Clicking a con card raises the
+//     Companion window on purpose; that raise must not park the overlays the click came from.
+//     focusCountsAsEq takes the flag; presence.ts owns its lifetime (set by the focusView raise,
+//     cleared by the next non-own-app foreground record).
+//
+// The alt-tab task-switcher case the original debounce was built for is accepted as-is: the
+// switcher is a real foreground window, the overlays park instantly under it and return instantly
+// after - parking is an opacity flip now, so there is no strobe left for a transition to cause.
 
-/**
- * Alt-tab is not one transition, it is a burst of them: Windows briefly makes the task-switcher
- * (and sometimes the desktop shell) foreground on the way between two apps. Acting on the raw
- * signal would strobe every overlay off and back on. So the raw value must hold STILL for
- * `debounceMs` before it is committed.
- *
- * A state machine rather than a timer wrapper, so the decision is testable without clocks: the
- * caller supplies `now`, and re-runs the step when its own timer fires.
- */
-export interface FocusDebounce {
-  /** The value everyone downstream sees. */
-  committed: boolean
-  /** A different value we are waiting out, or null when the raw signal agrees with `committed`. */
-  candidate: boolean | null
-  /** When `candidate` was first observed. */
-  since: number
-}
-
-/**
- * THE TWO WINDOWS ARE NOT THE SAME LENGTH, AND THE ASYMMETRY IS THE FIX (JOS-424).
- *
- * It was ONE constant (300 ms, both directions) for a year, and that symmetry is what put the
- * reported flicker on screen: with auto-hide on, refocusing EverQuest blinked the overlays
- * *on, off, on again* and only then settled.
- *
- * The flicker was never a bug in this fold — the fold was faithfully round-tripping a REAL
- * foreground flap. In the first second after a refocus the foreground genuinely leaves EverQuest
- * for a moment: our own re-show pass puts five or six `showInactive` windows over a
- * borderless-fullscreen game, and Windows can hand the foreground to NO window at all (pid 0,
- * which `foregroundSide` correctly calls `'other'`). A symmetric 300 ms window is shorter than
- * that flap, so the false committed, the overlays hid, the true came back 300 ms later and they
- * showed again. Three prior fixes landed next to this path (355da1e6 the ring's z-order,
- * c650f811/JOS-199 the hide pass grabbing foreground, 53eed1ab/JOS-368 the five SetWindowPos
- * calls) and none of them could touch it, because the flicker was downstream of a state change
- * that this debounce had decided was real.
- *
- * So the direction the candidate is heading picks the window, and the two are chosen against
- * different failure costs:
- *
- *   * SHOW (200 ms). Being late here is felt directly — the user alt-tabbed INTO the game and is
- *     waiting for their meters — so this is the number that must stay small, and it got SMALLER
- *     than the old symmetric one. Its floor is the watcher's own foreground cadence:
- *     `FOREGROUND_EVERY_TICKS * WATCHER_TICK_FLOOR_MS` = ~160 ms, so anything under that commits
- *     on a SINGLE sample and is not a debounce at all. 200 ms is the first round number past that
- *     floor — it guarantees a second, independent look agreeing before the overlays come back —
- *     and it sits inside the ~250 ms that reads as "instant" for a response to one's own keystroke.
- *
- *   * HIDE (1200 ms). Being late here costs a second of always-on-top meters over the window the
- *     user switched to; being EARLY costs the reported flicker on every single refocus. Those are
- *     not comparable, so this side is bought generously. The observation it has to cover is "a
- *     flap inside the first second after a refocus", and a threshold placed exactly on the edge of
- *     the observation has no margin at all — 1200 ms is that second plus a full foreground scan
- *     plus slack, i.e. ~7 consecutive scans must all agree before the overlays go away. It is not
- *     bought all the way to 2 s because past about there the hide stops reading as automatic and
- *     starts reading as broken.
- *
- * THE ALT-TAB CASE THE DEBOUNCE WAS ORIGINALLY BUILT FOR IS COVERED BETTER, NOT WORSE: the
- * task-switcher strobe is a burst of transient FALSES, and the hide side is now four times more
- * debounced than it was. And a genuine alt-tab away is a SUSTAINED false, so it still commits —
- * `tests/presence.test.mts` pins both halves.
- */
-export interface FocusDebounceWindows {
-  /** ms a raw `true` must hold still before `committed` becomes true (the overlays come back). */
-  readonly showMs: number
-  /** ms a raw `false` must hold still before `committed` becomes false (the overlays hide). */
-  readonly hideMs: number
-}
-
-/** See the block above. Small: the user is waiting on it. */
-export const FOCUS_SHOW_DEBOUNCE_MS = 200
-
-/** See the block above. Generous: it absorbs the refocus-window foreground flap. */
-export const FOCUS_HIDE_DEBOUNCE_MS = 1_200
-
-export const FOCUS_DEBOUNCE: FocusDebounceWindows = {
-  showMs: FOCUS_SHOW_DEBOUNCE_MS,
-  hideMs: FOCUS_HIDE_DEBOUNCE_MS
-}
-
-/**
- * A FRESH DEBOUNCE IS BORN AGREEING WITH THE FAIL-OPEN RULE (JOS-425), which is why the default
- * is `true` and why every call site in presence.ts passes `true` explicitly anyway.
- *
- * The asymmetry above fixed the TRANSITION and the owner still saw a blink, because the residual
- * was never a transition at all — it was this constructor. Born `committed:false`, the very first
- * observation of a watcher GENERATION is a change, so `focusDebounceStep` opens a candidate…
- * and the one shape that never gets debounced is the state you are born in: `overlaysShouldHide`
- * reads the uncommitted `false` the moment `observed` goes true and hides instantly, then the
- * 200 ms show side puts the overlays back. Measured in the owner's dev.log: shown 13.852, hidden
- * 13.965, shown 14.178, with the owner sitting in EverQuest for all of it. It fired at cold start
- * (after the replay gate restored the overlays) and again on EVERY watcher restart — the
- * went-silent/restart family — which is why "fixed once before" kept not being true.
- *
- * Born `true`, the rule has no seam left: a hide requires `hideMs` of OBSERVED non-EQ evidence,
- * always. A machine genuinely sitting outside EverQuest at watcher birth hides 1.2 s later — the
- * cost, paid once per generation, in the direction the whole file already agreed to err. A machine
- * sitting IN the game never dips.
- *
- * THE ONE CONSTRUCTION SITE THAT IS DELIBERATELY NOT A CALL TO THIS: `presence.ts setCursorWatch`
- * replaces the thread without resetting anything, so its successor CARRIES the previous
- * generation's committed value. That is the same rule, not an exception to it — there is a
- * measured value to carry, and carrying it is what stops a Preferences slider from blinking
- * already-hidden overlays back on. Birth defaults are for generations with nothing to inherit.
- */
-export function newFocusDebounce(committed = true): FocusDebounce {
-  return { committed, candidate: null, since: 0 }
-}
-
-export interface FocusDebounceStep {
-  state: FocusDebounce
-  /** True exactly when `state.committed` differs from the input state's. */
-  changed: boolean
-  /** ms until this candidate would commit, or null when nothing is pending. */
-  waitMs: number | null
-}
-
-/**
- * Fold one observation into the debounce. Idempotent for a steady signal (a repeated
- * observation that already matches `committed` clears any pending candidate and reports no
- * change), which is what makes it safe to call on every single watcher line.
- *
- * THE WINDOW IS CHOSEN BY THE CANDIDATE'S DIRECTION (JOS-424), which is the whole of the
- * asymmetry: a pending `true` is waiting out `showMs`, a pending `false` is waiting out `hideMs`.
- * Nothing else about the machine changed — a candidate that resolves back to `committed` is still
- * forgotten with no residue, which is what makes a flap inside the hide window cost nothing at all.
- */
-export function focusDebounceStep(
-  state: FocusDebounce,
-  observed: boolean,
-  now: number,
-  windows: FocusDebounceWindows = FOCUS_DEBOUNCE
-): FocusDebounceStep {
-  if (observed === state.committed) {
-    // The flap resolved back to where we already were: forget the candidate entirely.
-    return { state: { ...state, candidate: null, since: 0 }, changed: false, waitMs: null }
-  }
-  const debounceMs = observed ? windows.showMs : windows.hideMs
-  const since = state.candidate === observed ? state.since : now
-  if (now - since >= debounceMs) {
-    return { state: { committed: observed, candidate: null, since: 0 }, changed: true, waitMs: null }
-  }
-  return {
-    state: { ...state, candidate: observed, since },
-    changed: false,
-    waitMs: debounceMs - (now - since)
-  }
-}
 
 // ------------------------------------------------- what a committed flip says out loud (JOS-424)
 //
-// THE LOGGING EARNS THE NEXT FIX, which is why it ships in the same ticket as the debounce above
-// and why it is deliberately not accompanied by a z-order change.
-//
-// If the owner still sees a blink after the asymmetric window lands, there are exactly two shapes
-// it can have and they are indistinguishable from the outside: a residual FOCUS flap (this fold
-// committed a false and then a true) or a Z-ORDER pulse (nothing here moved at all — `assertTopmost`
-// trusts Electron's remembered `isAlwaysOnTop` rather than a live `WS_EX_TOPMOST` read, so a window
-// genuinely stripped of the style is never re-asserted and simply falls behind the game for a
-// frame). One line per COMMITTED flip, carrying the raw foreground record that drove it, separates
-// them at a glance: a blink with no committed flip in the window is not a focus problem.
+// THE LOGGING EARNED ITS KEEP: it is what proved (JOS-427) that the visible flicker had no
+// committed flip behind it, which retired the debounce and pointed at the presentation layer.
+// It stays for the next mystery. A blink with a flip line names the window that drove it; a blink
+// with NO edge line at all is a z-order or paint question, not a focus one.
 //
 // IT IS A LOG LINE, NOT TELEMETRY, AND THAT IS ENFORCED BY THE SINK. `presence.ts` emits this
 // through `logInfo` — `console.log` and nothing else. It never reaches `errors.log`, never reaches
@@ -518,13 +399,20 @@ export function describeFocusTransition(t: {
 }
 
 /**
- * The other half of the evidence: an EDGE of the overlay visibility this all drives (`windows.ts
- * setOverlaysHidden`). Every caller funnels through it — auto-hide, the replay gate, the
- * settings-off restore — so a hide that came from somewhere other than presence is visible as such,
- * and a blink with NO edge line at all is the z-order hypothesis rather than this one.
+ * The other half of the evidence: an EDGE of real window visibility (`windows.ts
+ * setOverlaysHidden`) — since JOS-427 that is the replay gate and session teardown only, because
+ * presence PARKS instead of hiding. A "hidden" line in dev.log therefore always means the gate.
  */
 export function describeOverlayVisibility(hidden: boolean, at: number): string {
   return `presence: overlays ${hidden ? 'hidden' : 'shown'} at ${new Date(at).toISOString()}`
+}
+
+/**
+ * An EDGE of the presence PARK (`windows.ts parkOverlays`, JOS-427) — its own word, so dev.log
+ * tells a park (opacity, presence-driven) from a gate hide (real `hide()`) at a glance.
+ */
+export function describeOverlayPark(parked: boolean, at: number): string {
+  return `presence: overlays ${parked ? 'parked' : 'unparked'} at ${new Date(at).toISOString()}`
 }
 
 // ------------------------------------------------------------------- the gating matrix
@@ -544,8 +432,9 @@ export function describeOverlayVisibility(hidden: boolean, at: number): string {
  * records one at a time, so for one message-pump turn one lane is measured and the others are
  * still their birth values. That is where the reported startup blink came from and it is why both
  * `eqRunning` and `eqFocused` are now BORN TRUE (shared/presencePrefs.ts `INITIAL_PRESENCE`).
- * Every line here therefore hides only on something the watcher SAID — the focus lane additionally
- * behind `FOCUS_HIDE_DEBOUNCE_MS` of it — which is the property this function is supposed to have.
+ * Every line here therefore hides only on something the watcher SAID — which is the property this
+ * function is supposed to have. (There is no debounce anymore — JOS-427's ruling at the section
+ * above; hiding acts on the latest observed foreground directly.)
  */
 export function overlaysShouldHide(p: PresenceState, prefs: OverlayAutoHidePrefs): boolean {
   // Before the watcher's first line nothing here is a fact — it has three system libraries to open

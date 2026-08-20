@@ -61,9 +61,7 @@ import {
   eqBoundsInDip,
   eqRootPrefix,
   focusCountsAsEq,
-  focusDebounceStep,
   foregroundSide,
-  newFocusDebounce,
   parsePresenceLine,
   watcherCadence,
   watcherExitStep,
@@ -96,25 +94,29 @@ type Listener = (state: PresenceState) => void
 const listeners = new Set<Listener>()
 let watcher: Worker | null = null
 /**
- * BORN COMMITTED-TRUE, in agreement with `INITIAL_PRESENCE.eqFocused` (JOS-425). The two are one
- * fact told twice — the debounce's committed value is what `update({eqFocused})` writes — so they
- * are constructed together at every one of the three sites below, and `newFocusDebounce`'s header
- * carries the argument. The `true` is passed explicitly even though it is now the default: a birth
- * state is the thing this bug was, and it should be readable at the site.
+ * AN OVERLAY-INITIATED RAISE OF THE COMPANION WINDOW IS STILL EVERQUEST (JOS-427, owner ruling
+ * 2026-08-19). Set by `noteOwnWindowRaise` (the `focusView` deep link — a con card or toast click
+ * asking the app to answer), read by the fold below as `focusCountsAsEq`'s second argument, and
+ * cleared by the first foreground record that is NOT the app window — the moment the user lands
+ * anywhere else (the game included), the ordinary JOS-199 reading resumes. Deliberately not a
+ * timer: the flag describes a continuous stretch of "the app is in front because an overlay put it
+ * there", and only a new foreground fact can end that stretch.
  */
-let focus = newFocusDebounce(true)
-let focusTimer: NodeJS.Timeout | null = null
-/** The last RAW observation, i.e. what the pending timer will re-fold. Seeded to match `focus`
- *  for the same reason: nothing has been observed, so the assumption is the committed one. */
-let lastObservedFocus = true
+let ownWindowRaise = false
+
+/** The `focusView` raise is about to move the foreground to the app window — see `ownWindowRaise`. */
+export function noteOwnWindowRaise(): void {
+  ownWindowRaise = true
+}
+
 /**
- * The foreground record behind the CURRENT raw observation (JOS-424).
+ * The foreground record behind the current observation (JOS-424).
  *
- * Kept because a committed flip is worth a log line and a log line is worth nothing without the
- * record that caused it — and the commit does not always happen on a watcher line at all: the
- * debounce's own timer is what commits a value that held still, and by then the `F` record that
- * started it is three function calls in the past. Null until the first foreground record, which is
- * exactly what the transition line then says.
+ * Kept because a flip is worth a log line and a log line is worth nothing without the record that
+ * caused it. Null until the first foreground record, which is exactly what the transition line
+ * then says. (With the debounce gone — JOS-427 — a flip always lands on the record that drove it,
+ * but the driver is still stored rather than threaded through, because `applyFocus` is also the
+ * seam the reset paths use.)
  */
 let lastForeground: FocusTransitionDriver | null = null
 
@@ -218,38 +220,26 @@ function sameRect(a: ScreenRect | null, b: ScreenRect | null): boolean {
 }
 
 /**
- * Run the debounce for the current raw observation and schedule the wake-up that will commit it
- * if the signal holds. Called on every foreground line and from the timer it sets.
+ * The observed foreground IS the focus state — no debounce, no timers (JOS-427, owner ruling
+ * 2026-08-19). Three debounce generations each fixed something real while the flicker they were
+ * blamed for lived in the presentation layer (`windows.ts parkOverlays`); the narration proved the
+ * signal itself clean, so the smoothing was removed rather than retuned. The evidence rules that
+ * replace it (the no-window sample, the overlay-initiated raise) live in `applyRecord` and the
+ * protocol's section header.
  *
- * A COMMITTED FLIP IS NARRATED (JOS-424), with the raw record that drove it. `logInfo` is
- * `console.log` and nothing else — dev stdout, never `errors.log`, never the error store, so
- * nothing here can leave the machine (the transition line carries a third-party window title;
- * presenceProtocol.ts's section header is the whole argument). It is one line per COMMIT, not per
- * observation, so a quiet session says nothing and an alt-tab says exactly two things.
+ * A FLIP IS NARRATED (JOS-424), with the raw record that drove it. `logInfo` is `console.log` and
+ * nothing else — dev stdout, never `errors.log`, never the error store, so nothing here can leave
+ * the machine (the transition line carries a third-party window title; presenceProtocol.ts's
+ * section header is the whole argument). One line per flip, so a quiet session says nothing and an
+ * alt-tab says exactly two things.
  */
 function applyFocus(observed: boolean): void {
-  lastObservedFocus = observed
-  if (focusTimer) {
-    clearTimeout(focusTimer)
-    focusTimer = null
-  }
-  const now = Date.now()
-  const step = focusDebounceStep(focus, observed, now)
-  focus = step.state
-  if (step.changed) {
-    logInfo(
-      '[everquest-companion]',
-      describeFocusTransition({ committed: focus.committed, at: now, driver: lastForeground })
-    )
-    update({ eqFocused: focus.committed })
-  } else if (step.waitMs !== null) {
-    focusTimer = setTimeout(() => {
-      focusTimer = null
-      applyFocus(lastObservedFocus)
-    }, step.waitMs)
-    // A watcher timer must never be the reason the app stays alive at quit.
-    focusTimer.unref?.()
-  }
+  if (observed === state.eqFocused) return
+  logInfo(
+    '[everquest-companion]',
+    describeFocusTransition({ committed: observed, at: Date.now(), driver: lastForeground })
+  )
+  update({ eqFocused: observed })
 }
 
 /**
@@ -315,17 +305,31 @@ function applyRecord(rec: PresenceRecord): void {
     update({ observed: true, cursorVisible: rec.visible })
     return
   }
+  // A NO-WINDOW SAMPLE IS NOT A DEPARTURE (JOS-427). During window transitions Windows briefly
+  // reports no foreground window at all (presenceWorker.ts NO_WINDOW, pid 0). Nothing GAINED the
+  // foreground, so nothing was left: the previous answer stands, and with the debounce gone this
+  // evidence rule is the only thing keeping a transition's empty moment from parking the overlays.
+  // `observed` still rises — the watcher looked; the world just had no one in front.
+  if (rec.pid === 0) {
+    update({ observed: true })
+    return
+  }
   const side = foregroundSide(
     rec,
     { pid: process.pid, appWindowFocused: mainWindowFocused() },
     effectiveEqRoot()
   )
+  // THE RAISE GRACE ENDS AT THE FIRST FOREIGN FOREGROUND (JOS-427): any real window that is not
+  // the app window — the game, another app, one of our accessories — resumes the ordinary JOS-199
+  // reading. Cleared BEFORE the fold below reads it, so the grace covers exactly the contiguous
+  // stretch of own-app records that began with the raise.
+  if (side !== 'own-app') ownWindowRaise = false
   update(side === 'eq' ? { observed: true, eqBounds: toDip(rec.rect) } : { observed: true })
-  // WHAT DROVE THIS OBSERVATION, kept for the transition line a commit may write now or in a
-  // second's time (JOS-424). The rectangle is deliberately not among the fields: a commit is about
-  // WHICH window took the foreground, and the bounds are already `state.eqBounds`.
+  // WHAT DROVE THIS OBSERVATION, kept for the transition line a flip writes (JOS-424). The
+  // rectangle is deliberately not among the fields: a flip is about WHICH window took the
+  // foreground, and the bounds are already `state.eqBounds`.
   lastForeground = { pid: rec.pid, exePath: rec.exePath, title: rec.title, side }
-  applyFocus(focusCountsAsEq(side))
+  applyFocus(focusCountsAsEq(side, ownWindowRaise))
 }
 
 /**
@@ -432,21 +436,17 @@ function pumpMessage(chunk: unknown): void {
  * birth value of a fact this watcher never got to measure.
  */
 function resetPresence(): void {
-  if (focusTimer) {
-    clearTimeout(focusTimer)
-    focusTimer = null
-  }
-  // A NEW GENERATION IS BORN ASSUMING EQ-SIDE (JOS-425). This is the restart path — went-silent,
-  // wedged, exited, start-failed — and it is the one the owner hit most: reset to a born-FALSE
-  // debounce, the successor's first record hid the overlays with no debounce at all and the show
-  // side put them back 200 ms later, on a machine that had never left the game. Born true, that
-  // first record is agreement and moves nothing; a machine genuinely elsewhere still hides, at
-  // the hide window. `newFocusDebounce`'s header is the full argument.
-  focus = newFocusDebounce(true)
-  lastObservedFocus = true
+  // A NEW GENERATION IS BORN ASSUMING EQ-SIDE (JOS-425): `INITIAL_PRESENCE.eqFocused` is true, so
+  // a successor's first eqgame record is agreement and moves nothing, and a machine genuinely
+  // elsewhere hides on that first record saying so (JOS-427 — the observed foreground IS the
+  // state; there is no debounce to re-seed anymore).
+  //
   // A dead watcher's last foreground record must never be read back as its successor's driver —
-  // the same rule `forgetWatcherFacts` applies to the health anchors (JOS-310, JOS-424).
+  // the same rule `forgetWatcherFacts` applies to the health anchors (JOS-310, JOS-424). The raise
+  // grace dies with the generation for the same reason: it describes a stretch of records this
+  // watcher saw.
   lastForeground = null
+  ownWindowRaise = false
   if (state === INITIAL_PRESENCE) return
   state = INITIAL_PRESENCE
   emit()
@@ -683,10 +683,6 @@ function startWatcher(): void {
 }
 
 function stopWatcher(): void {
-  if (focusTimer) {
-    clearTimeout(focusTimer)
-    focusTimer = null
-  }
   clearStaleWatchdog()
   if (restartTimer) {
     clearTimeout(restartTimer)
@@ -704,11 +700,10 @@ function stopWatcher(): void {
   logInfo('[everquest-companion] presence watcher stopped')
   state = INITIAL_PRESENCE
   // Same birth rule as `resetPresence` (JOS-425): whatever starts next inherits nothing, so it
-  // inherits the assumption instead — and this is the path a settings change takes, where a blink
-  // would land on a user who is looking straight at Preferences.
-  focus = newFocusDebounce(true)
-  lastObservedFocus = true
+  // inherits the assumption instead (`INITIAL_PRESENCE.eqFocused` true) — and this is the path a
+  // settings change takes, where a blink would land on a user looking straight at Preferences.
   lastForeground = null
+  ownWindowRaise = false
 }
 
 /**
