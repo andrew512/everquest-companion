@@ -673,16 +673,23 @@ export interface RegistryListResult {
 /** Progress push over `packs:progress` while a pack installs. */
 export interface PackInstallProgress {
   name: string
-  phase: 'downloading' | 'extracting' | 'converting' | 'done' | 'error'
+  /** `waiting` is a retry's backoff (JOS-420) — a stopped bar and a bar waiting out a rate limit
+   *  look identical, so the wait says so and names its own length in `message`. */
+  phase: 'downloading' | 'extracting' | 'converting' | 'waiting' | 'done' | 'error'
   /** 0..100 during downloading, when a content-length is known. */
   percent?: number
   message?: string
+  /** This is a "later", not a "broken" — the row reads it as ordinary text rather than an error
+   *  (JOS-420: a rate limit is the host being busy, and the pack is fine). */
+  retryable?: boolean
 }
 
 /** Reply of packs:install / packs:uninstall. */
 export interface PackMutationResult {
   ok: boolean
   error?: string
+  /** The install can simply be clicked again — set when a rate limit ended the run (JOS-420). */
+  retryable?: boolean
 }
 
 // ----- Registry pack PREVIEW (Task #31) -----
