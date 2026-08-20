@@ -8,9 +8,22 @@
 //
 // THE ORDER OF THE PANE IS THE ORDER OF USEFULNESS: mob cards first - each one an actionable pull
 // - then the collective random-drop entry (the Wind Runes, which any Sky mob can drop), then the
-// no-known-source note, which is missing DATA stated out loud rather than hidden (law 1). The mob
-// order inside the first section is counted, not guessed: most still-needed items covered first,
-// ties by name (skyTargets.ts argues it).
+// no-known-source note, which is missing DATA stated out loud rather than hidden (law 1).
+//
+// THE MOB CARDS ARE GROUPED BY ISLAND, IN WALK ORDER (JOS-423, owner directive). The model sorts
+// them island-ascending with the old counted order kept as the tiebreak inside an island
+// (skyTargets.ts argues both); this file draws that structure as HEADINGS rather than as a badge
+// on every card, for three reasons. (1) The pane ALREADY speaks in titled sections - the two
+// remainders below are exactly this shape - so an "Island 5" heading is the tab's existing visual
+// language, not a new one; the island a player is standing on is a place they are in for a whole
+// stretch of the list, which is what a heading means and what a per-card chip does not. (2) A chip
+// repeated down fourteen consecutive cards is fourteen readings of one fact, and the caption it
+// replaces sat inline with the mob name where it competed with the thing the row is FOR. (3) The
+// unstated-island group needs a sentence, not a number, and only a heading can carry one - it is
+// the same honest-remainder rendering the no-known-source note uses, one level up.
+// The per-card caption SURVIVES for the one thing a heading cannot say: a mob whose outstanding
+// drops span more than the heading's island keeps its full "Islands 3, 5" line, so grouping never
+// silently narrows what the card claimed.
 //
 // EVERY NAME ON THIS PANE IS A DOOR, because the tab exists to be left. The MOB names go through
 // `DropperName` - the same component the Quests tab's dropper cells use, exported from
@@ -34,10 +47,10 @@
 import type { JSX } from 'react'
 import { Box, Checkbox, Chip, FormControlLabel, Link, Stack, Typography } from '@mui/material'
 import type { CountSource } from '@shared/types'
-import { dropperFacts, islandLabel } from './poskyDroppers'
+import { dropperFacts, islandLabel, islandNumber } from './poskyDroppers'
 import { DropperName } from './DropperCell'
 import { InventorySource } from './QuestFilterBar'
-import type { NeededItem, SkyTargetsModel, TargetMob } from './skyTargets'
+import { groupTargetsByIsland, type NeededItem, type SkyTargetsModel, type TargetMob } from './skyTargets'
 import type { MobTarget } from '../mobs/mobTarget'
 
 /** Selector-safe row handle: `sky-target-row-the-spiroc-lord`. */
@@ -89,7 +102,10 @@ function NeededItemLine({
   )
 }
 
-/** One mob card: the clickable name, where its outstanding drops are, and what it still yields. */
+/** One mob card: the clickable name, where its outstanding drops are, and what it still yields.
+ *  The island caption is drawn ONLY where it says more than the heading above the card already
+ *  does - i.e. when this mob's drops span a second island - so the common case reads once and the
+ *  uncommon one is never quietly narrowed to its first island. */
 function TargetRow({
   target,
   onOpenMob,
@@ -99,7 +115,7 @@ function TargetRow({
   onOpenMob: (t: MobTarget) => void
   onOpenQuest: (name: string) => void
 }): JSX.Element {
-  const islands = islandLabel(target.islands)
+  const islands = target.islands.length > 1 ? islandLabel(target.islands) : ''
   return (
     <Box
       data-testid={`sky-target-row-${rowSlug(target.mob.page)}`}
@@ -126,6 +142,47 @@ function TargetRow({
       <Stack spacing={0.25}>
         {target.items.map((it) => (
           <NeededItemLine key={it.name} item={it} onOpenQuest={onOpenQuest} />
+        ))}
+      </Stack>
+    </Box>
+  )
+}
+
+/** The heading over one island's cards. A number when posky states one; otherwise a SENTENCE - the
+ *  no-known-source note's law one level up: an island the data never stated is said out loud and
+ *  sorted last, never dressed up as a guessed number (law 1). */
+const UNSTATED_ISLAND_TITLE = 'Island not stated - the drop data does not say where these are'
+
+/** One island's cards under their heading. `data-island` carries the sortable number (or `none`)
+ *  so a test can read the pane's walk order without parsing the heading's prose. */
+function IslandSection({
+  island,
+  mobs,
+  onOpenMob,
+  onOpenQuest
+}: {
+  island: string | null
+  mobs: readonly TargetMob[]
+  onOpenMob: (t: MobTarget) => void
+  onOpenQuest: (name: string) => void
+}): JSX.Element {
+  return (
+    <Box
+      data-testid="sky-target-island"
+      data-island={island === null ? 'none' : String(islandNumber(island))}
+    >
+      <Typography
+        variant="overline"
+        color="text.secondary"
+        component="div"
+        data-testid="sky-target-island-title"
+        sx={{ lineHeight: 1.6 }}
+      >
+        {island ?? UNSTATED_ISLAND_TITLE}
+      </Typography>
+      <Stack spacing={1.5}>
+        {mobs.map((t) => (
+          <TargetRow key={t.mob.page} target={t} onOpenMob={onOpenMob} onOpenQuest={onOpenQuest} />
         ))}
       </Stack>
     </Box>
@@ -250,11 +307,17 @@ export function TargetsView({
           <Typography variant="body2" color="text.secondary" data-testid="posky-targets-count">
             {n === 0
               ? 'No kill targets right now - what is left is below.'
-              : `${String(n)} mob${n === 1 ? '' : 's'} still worth killing - the ones that close the most of what is left sort first.`}
+              : `${String(n)} mob${n === 1 ? '' : 's'} still worth killing - island by island, and inside an island the ones that close the most of what is left come first.`}
             {behindTheBox}
           </Typography>
-          {targets.mobs.map((t) => (
-            <TargetRow key={t.mob.page} target={t} onOpenMob={onOpenMob} onOpenQuest={onOpenQuest} />
+          {groupTargetsByIsland(targets.mobs).map((g) => (
+            <IslandSection
+              key={g.island ?? 'none'}
+              island={g.island}
+              mobs={g.mobs}
+              onOpenMob={onOpenMob}
+              onOpenQuest={onOpenQuest}
+            />
           ))}
           <RemainderSection
             title="Random drops - any Plane of Sky mob can drop these"
