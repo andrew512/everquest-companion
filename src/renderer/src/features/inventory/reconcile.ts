@@ -768,6 +768,45 @@ function dumpTurnInWindow(
   return { at, window: at === null ? null : windowed(at) }
 }
 
+/** Everything anchored to the dump's instant — the three windows the file's own witness owns. */
+interface DumpAnchored {
+  dumpWindow: Consumption | null
+  rebaseline: RowInputs['rebaseline']
+  lootSinceDump: Record<string, number>
+}
+
+/**
+ * THE DUMP-ANCHORED HALF OF THE INPUTS, gathered in one place (JOS-409 factored it out — `reconcile`
+ * was over the measured complexity ceiling with three windows and their degradations inline).
+ *
+ * All three hang off ONE instant and ONE memoized pass, and all three degrade the same way when
+ * that instant is missing: no window is not a guessed window.
+ *
+ * `windowedDetected` is the DETECTED memoizer for both the dump's turn-in discount and the
+ * rebaseline baseline's, because the rebaseline baseline IS the dump at the dump's instant — a
+ * click-time instant is as wrong against one as against the other.
+ */
+function dumpAnchored(input: ReconcileInput, quests: PoskyQuest[], windowed: (at: number) => Consumption): DumpAnchored {
+  const detected = input.detectedTurnInInstants
+  // The same object as `windowed` whenever the caller states no provenance, so the ordinary case
+  // still pays for one pass per instant rather than two.
+  const windowedDetected = detected === undefined ? windowed : windowedConsumption(quests, detected)
+  const { at: dumpAt, window: dumpWindow } = dumpTurnInWindow(input, windowedDetected)
+  const since = input.lootSinceRebaseline ?? {}
+  // The baseline is anchored only where the user asked for it AND something can date the dump.
+  // `null` is the fallback to `both` the base/net rules spell out, never a baseline of zero.
+  const at = input.countSource === 'rebaseline' ? dumpAt : null
+  return {
+    dumpWindow,
+    rebaseline: at === null ? null : { since, consumption: windowedDetected(at) },
+    // JOS-409 — the dump witness earns in its own window under `both`, and only there: `inventory`
+    // means "as dumped" and says so on its label, `rebaseline` carries the same loot inside its own
+    // baseline, and `log` never opens the file. An undatable dump is no window at all, exactly as
+    // for the two discounts.
+    lootSinceDump: input.countSource === 'both' && dumpAt !== null ? since : {}
+  }
+}
+
 /**
  * Reconcile held items from the loot log and the inventory export, then subtract
  * everything consumed by the quest turn-ins — so a drop that was handed in for one quest no
@@ -791,25 +830,12 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
   const overrides = input.overrides ?? {}
   for (const [k, o] of Object.entries(overrides)) nameByKey[k] ??= o.name
 
-  const instants = input.turnInInstants ?? {}
-  const windowed = windowedConsumption(quests, instants)
-  // The DUMP's own memoizer, over the log-detected instants only (JOS-409). It is the same object
-  // as `windowed` whenever the caller states no provenance, so the ordinary case still pays for one
-  // pass per instant rather than two.
-  const detected = input.detectedTurnInInstants
-  const windowedDetected = detected === undefined ? windowed : windowedConsumption(quests, detected)
+  // The ALL-INSTANTS memoizer. It answers the per-STATEMENT windows: a hand statement's `setAt` is
+  // a click time, and a hand-recorded turn-in's is too, so comparing those two is comparing like
+  // with like. The dump's windows are the ones that need a provenance (`dumpAnchored`).
+  const windowed = windowedConsumption(quests, input.turnInInstants ?? {})
   const all = questConsumption(quests, (k) => input.turnIns[k] ?? 0)
-  const { at: dumpAt, window: dumpWindow } = dumpTurnInWindow(input, windowedDetected)
-  // Anchored only where the user asked for it AND something can date the dump. `null` there is the
-  // fallback to `both` the base/net rules spell out, never a baseline of zero. Same instant as
-  // `dumpAt` under `rebaseline`, and `windowedDetected` is memoized, so this is one pass and not
-  // two — and it is the DETECTED window for the same reason the dump's is: the rebaseline baseline
-  // is the dump, at the dump's instant, so a click-time instant is as wrong against it.
-  const at = countSource === 'rebaseline' ? dumpAt : null
-  const rebaseline =
-    at === null
-      ? null
-      : { since: input.lootSinceRebaseline ?? {}, consumption: windowedDetected(at) }
+  const dump = dumpAnchored(input, quests, windowed)
 
   return buildRows({
     log,
@@ -817,18 +843,13 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
     nameByKey,
     countSource,
     all,
-    rebaseline,
+    rebaseline: dump.rebaseline,
     overrides,
     overrideSince: input.lootSinceOverride ?? {},
     destroyedSinceDump: input.destroyedSinceDump ?? {},
     destroyedSinceOverride: input.destroyedSinceOverride ?? {},
-    // JOS-409 — the dump witness earns in its own window under `both`, and only there: `inventory`
-    // means "as dumped" and says so on its label, `rebaseline` carries the same loot inside its own
-    // baseline, and `log` never opens the file. An undatable dump is no window at all, exactly as
-    // for the two discounts.
-    lootSinceDump:
-      countSource === 'both' && dumpAt !== null ? (input.lootSinceRebaseline ?? {}) : {},
-    dumpWindow,
+    lootSinceDump: dump.lootSinceDump,
+    dumpWindow: dump.dumpWindow,
     windowed
   })
 }
