@@ -5,7 +5,9 @@ import { OverrideSummaryChip } from './ItemOverrides'
 import { useProgress, type QuestProgress } from './useProgress'
 import { IgnoredList } from './IgnoredList'
 import QuestFilterBar, { InventorySource } from './QuestFilterBar'
-import { countSourcePhrase } from '../inventory/countSource'
+import { countSourcePhrase, countsFromInventory } from '../inventory/countSource'
+// The game fact that can empty this tab and that no amount of re-exporting will fix (JOS-409).
+import { DUMP_BLIND_READY_NOTE } from './dumpBlindItems'
 import ClassUnlockList from './ClassUnlockList'
 import { useQuestList, type QuestListState, type TabKey } from './useQuestList'
 // The rows themselves live in their own file since JOS-389 — see its header for why.
@@ -140,6 +142,11 @@ interface ReadyListProps extends QuestListProps {
 function ReadyList(props: ReadyListProps): JSX.Element {
   const n = props.quests.length
   const { readyFirstTimeOnly, readyRefarmCount } = props.list
+  // THE RUNE CAVEAT (JOS-409), on both states of the tab for JOS-155's reason: the thing it
+  // explains is a quest that is ABSENT, so the empty pane is precisely where it is needed most.
+  // Gated on the source actually reading the export — under `log` the dump answers nothing and its
+  // blindness explains nothing (`countsFromInventory` is that gate, shared with the freshness line).
+  const runeNote = countsFromInventory(props.countSource) ? ` ${DUMP_BLIND_READY_NOTE}` : ''
   return (
     <Box
       data-testid="posky-ready"
@@ -155,12 +162,13 @@ function ReadyList(props: ReadyListProps): JSX.Element {
         />
       </Stack>
       {n === 0 ? (
-        <Typography color="text.secondary">
+        <Typography color="text.secondary" data-testid="posky-ready-empty">
           Nothing is ready to turn in - a quest lands here the moment you are holding every item it
           needs, and leaves when you hand them over.
           {readyFirstTimeOnly && readyRefarmCount > 0
             ? ` ${String(readyRefarmCount)} you have run before ${readyRefarmCount === 1 ? 'is' : 'are'} ready now - untick the box to see ${readyRefarmCount === 1 ? 'it' : 'them'}.`
             : ''}
+          {runeNote}
         </Typography>
       ) : (
         <>
@@ -175,6 +183,7 @@ function ReadyList(props: ReadyListProps): JSX.Element {
                 sentence points at the control that fixes it rather than at a dismiss button this
                 tab deliberately does not have (questCompletion.readyQuests). */}
             {' Holding something you no longer have? Expand the quest and correct the count beside the item.'}
+            {runeNote}
           </Typography>
           <QuestList {...props} />
         </>
