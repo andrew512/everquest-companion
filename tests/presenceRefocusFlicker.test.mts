@@ -310,3 +310,16 @@ test('presenceEffects.ts parks; windows.ts parkOverlays never hides', () => {
   assert.equal(park.includes('.hide('), false, 'a parked window never stops compositing (JOS-120)')
   assert.ok(park.includes('overlaysParkedNow === parked'), 'edge-narrated, idempotent otherwise')
 })
+
+test('THE GATE UN-HIDES WHAT THE GATE HID — real visibility has exactly one owner', () => {
+  // The regression the owner caught live ("overlay is not coming up - lol"): the end-of-replay
+  // re-show was secretly a side effect of presence's old hide pass. With presence parking,
+  // session.ts must restore its own gate, or the overlays stay hidden forever after every boot.
+  const gate = body('../src/main/session.ts', 'function setReplayGate')
+  assert.ok(gate.includes('setOverlaysHidden(true)'), 'the gate hides going in')
+  assert.ok(gate.includes('setOverlaysHidden(false)'), 'and un-hides coming out')
+  assert.ok(
+    gate.indexOf('setOverlaysHidden(false)') < gate.indexOf('refreshPresenceEffects()'),
+    'shown first (at park opacity), then the presence pass parks or not'
+  )
+})
