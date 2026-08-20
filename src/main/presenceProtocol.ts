@@ -311,7 +311,66 @@ export interface FocusDebounce {
   since: number
 }
 
-export const FOCUS_DEBOUNCE_MS = 300
+/**
+ * THE TWO WINDOWS ARE NOT THE SAME LENGTH, AND THE ASYMMETRY IS THE FIX (JOS-424).
+ *
+ * It was ONE constant (300 ms, both directions) for a year, and that symmetry is what put the
+ * reported flicker on screen: with auto-hide on, refocusing EverQuest blinked the overlays
+ * *on, off, on again* and only then settled.
+ *
+ * The flicker was never a bug in this fold — the fold was faithfully round-tripping a REAL
+ * foreground flap. In the first second after a refocus the foreground genuinely leaves EverQuest
+ * for a moment: our own re-show pass puts five or six `showInactive` windows over a
+ * borderless-fullscreen game, and Windows can hand the foreground to NO window at all (pid 0,
+ * which `foregroundSide` correctly calls `'other'`). A symmetric 300 ms window is shorter than
+ * that flap, so the false committed, the overlays hid, the true came back 300 ms later and they
+ * showed again. Three prior fixes landed next to this path (355da1e6 the ring's z-order,
+ * c650f811/JOS-199 the hide pass grabbing foreground, 53eed1ab/JOS-368 the five SetWindowPos
+ * calls) and none of them could touch it, because the flicker was downstream of a state change
+ * that this debounce had decided was real.
+ *
+ * So the direction the candidate is heading picks the window, and the two are chosen against
+ * different failure costs:
+ *
+ *   * SHOW (200 ms). Being late here is felt directly — the user alt-tabbed INTO the game and is
+ *     waiting for their meters — so this is the number that must stay small, and it got SMALLER
+ *     than the old symmetric one. Its floor is the watcher's own foreground cadence:
+ *     `FOREGROUND_EVERY_TICKS * WATCHER_TICK_FLOOR_MS` = ~160 ms, so anything under that commits
+ *     on a SINGLE sample and is not a debounce at all. 200 ms is the first round number past that
+ *     floor — it guarantees a second, independent look agreeing before the overlays come back —
+ *     and it sits inside the ~250 ms that reads as "instant" for a response to one's own keystroke.
+ *
+ *   * HIDE (1200 ms). Being late here costs a second of always-on-top meters over the window the
+ *     user switched to; being EARLY costs the reported flicker on every single refocus. Those are
+ *     not comparable, so this side is bought generously. The observation it has to cover is "a
+ *     flap inside the first second after a refocus", and a threshold placed exactly on the edge of
+ *     the observation has no margin at all — 1200 ms is that second plus a full foreground scan
+ *     plus slack, i.e. ~7 consecutive scans must all agree before the overlays go away. It is not
+ *     bought all the way to 2 s because past about there the hide stops reading as automatic and
+ *     starts reading as broken.
+ *
+ * THE ALT-TAB CASE THE DEBOUNCE WAS ORIGINALLY BUILT FOR IS COVERED BETTER, NOT WORSE: the
+ * task-switcher strobe is a burst of transient FALSES, and the hide side is now four times more
+ * debounced than it was. And a genuine alt-tab away is a SUSTAINED false, so it still commits —
+ * `tests/presence.test.mts` pins both halves.
+ */
+export interface FocusDebounceWindows {
+  /** ms a raw `true` must hold still before `committed` becomes true (the overlays come back). */
+  readonly showMs: number
+  /** ms a raw `false` must hold still before `committed` becomes false (the overlays hide). */
+  readonly hideMs: number
+}
+
+/** See the block above. Small: the user is waiting on it. */
+export const FOCUS_SHOW_DEBOUNCE_MS = 200
+
+/** See the block above. Generous: it absorbs the refocus-window foreground flap. */
+export const FOCUS_HIDE_DEBOUNCE_MS = 1_200
+
+export const FOCUS_DEBOUNCE: FocusDebounceWindows = {
+  showMs: FOCUS_SHOW_DEBOUNCE_MS,
+  hideMs: FOCUS_HIDE_DEBOUNCE_MS
+}
 
 export function newFocusDebounce(committed = false): FocusDebounce {
   return { committed, candidate: null, since: 0 }
@@ -329,17 +388,23 @@ export interface FocusDebounceStep {
  * Fold one observation into the debounce. Idempotent for a steady signal (a repeated
  * observation that already matches `committed` clears any pending candidate and reports no
  * change), which is what makes it safe to call on every single watcher line.
+ *
+ * THE WINDOW IS CHOSEN BY THE CANDIDATE'S DIRECTION (JOS-424), which is the whole of the
+ * asymmetry: a pending `true` is waiting out `showMs`, a pending `false` is waiting out `hideMs`.
+ * Nothing else about the machine changed — a candidate that resolves back to `committed` is still
+ * forgotten with no residue, which is what makes a flap inside the hide window cost nothing at all.
  */
 export function focusDebounceStep(
   state: FocusDebounce,
   observed: boolean,
   now: number,
-  debounceMs = FOCUS_DEBOUNCE_MS
+  windows: FocusDebounceWindows = FOCUS_DEBOUNCE
 ): FocusDebounceStep {
   if (observed === state.committed) {
     // The flap resolved back to where we already were: forget the candidate entirely.
     return { state: { ...state, candidate: null, since: 0 }, changed: false, waitMs: null }
   }
+  const debounceMs = observed ? windows.showMs : windows.hideMs
   const since = state.candidate === observed ? state.since : now
   if (now - since >= debounceMs) {
     return { state: { committed: observed, candidate: null, since: 0 }, changed: true, waitMs: null }
@@ -349,6 +414,92 @@ export function focusDebounceStep(
     changed: false,
     waitMs: debounceMs - (now - since)
   }
+}
+
+// ------------------------------------------------- what a committed flip says out loud (JOS-424)
+//
+// THE LOGGING EARNS THE NEXT FIX, which is why it ships in the same ticket as the debounce above
+// and why it is deliberately not accompanied by a z-order change.
+//
+// If the owner still sees a blink after the asymmetric window lands, there are exactly two shapes
+// it can have and they are indistinguishable from the outside: a residual FOCUS flap (this fold
+// committed a false and then a true) or a Z-ORDER pulse (nothing here moved at all — `assertTopmost`
+// trusts Electron's remembered `isAlwaysOnTop` rather than a live `WS_EX_TOPMOST` read, so a window
+// genuinely stripped of the style is never re-asserted and simply falls behind the game for a
+// frame). One line per COMMITTED flip, carrying the raw foreground record that drove it, separates
+// them at a glance: a blink with no committed flip in the window is not a focus problem.
+//
+// IT IS A LOG LINE, NOT TELEMETRY, AND THAT IS ENFORCED BY THE SINK. `presence.ts` emits this
+// through `logInfo` — `console.log` and nothing else. It never reaches `errors.log`, never reaches
+// the error store, and therefore never leaves the machine. That matters here specifically because
+// the record carries a WINDOW TITLE, which is arbitrary third-party text (a document name, a
+// browser tab) that nobody consented to have collected. Locally it is the single most useful field
+// for "what took the foreground"; remotely it would be a bright-line violation, so it is only ever
+// printed. It is flattened and capped on the way out for the same reason a title is never trusted
+// anywhere else in this file: a multi-line title must not be able to forge extra lines in dev.log.
+
+/** The foreground record that drove a committed flip, as much of it as a log line wants. */
+export interface FocusTransitionDriver {
+  readonly pid: number
+  readonly exePath: string
+  readonly title: string
+  readonly side: ForegroundSide
+}
+
+/** How much window title one line carries. Long enough to identify a window, short enough that
+ *  the interesting fields (the commit, the pid, the image name) are never scrolled off. */
+export const TRANSITION_TITLE_MAX = 60
+
+/**
+ * One line's worth of a window title: no control characters, no newlines, no quotes, bounded.
+ *
+ * A CODE-POINT SCAN RATHER THAN A REGEX, and not only to keep `no-control-regex` happy: the rule is
+ * pointing at something real. A character class spelling a control range is the one place a raw
+ * control BYTE ends up in a source file by accident (the repo already has a law about that), and it
+ * silently means something else when it does. A comparison cannot be mistyped invisibly.
+ */
+function logSafeTitle(title: string): string {
+  let out = ''
+  for (const ch of title) {
+    const code = ch.codePointAt(0) ?? 0
+    // A double quote goes too, so the `"…"` this line is wrapped in cannot be closed early.
+    out += code < 0x20 || code === 0x7f || ch === '"' ? ' ' : ch
+  }
+  const flat = out.replace(/\s+/g, ' ').trim()
+  if (flat.length <= TRANSITION_TITLE_MAX) return flat
+  return `${flat.slice(0, TRANSITION_TITLE_MAX)}…`
+}
+
+/**
+ * ONE committed `eqFocused` flip, as a sentence — the raw driving record and when it landed.
+ *
+ * Pure and closed over its argument: everything on the line comes from the transition and the
+ * foreground record, so there is no path by which a game event, a log line or any part of the world
+ * model can reach it. `tests/presence.test.mts` pins the exact shape.
+ */
+export function describeFocusTransition(t: {
+  readonly committed: boolean
+  readonly at: number
+  readonly driver: FocusTransitionDriver | null
+}): string {
+  const when = new Date(t.at).toISOString()
+  const head = `presence: eqFocused -> ${String(t.committed)} at ${when}`
+  if (t.driver === null) return `${head}; no foreground record yet`
+  const exe = exeBaseName(t.driver.exePath)
+  const image = exe === '' ? '(no image path)' : exe
+  const title = logSafeTitle(t.driver.title)
+  const said = title === '' ? '(untitled)' : `"${title}"`
+  return `${head}; foreground pid ${String(t.driver.pid)} ${image} [${t.driver.side}] ${said}`
+}
+
+/**
+ * The other half of the evidence: an EDGE of the overlay visibility this all drives (`windows.ts
+ * setOverlaysHidden`). Every caller funnels through it — auto-hide, the replay gate, the
+ * settings-off restore — so a hide that came from somewhere other than presence is visible as such,
+ * and a blink with NO edge line at all is the z-order hypothesis rather than this one.
+ */
+export function describeOverlayVisibility(hidden: boolean, at: number): string {
+  return `presence: overlays ${hidden ? 'hidden' : 'shown'} at ${new Date(at).toISOString()}`
 }
 
 // ------------------------------------------------------------------- the gating matrix

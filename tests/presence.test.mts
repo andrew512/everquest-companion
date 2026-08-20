@@ -13,12 +13,16 @@
 // are decided by two exported predicates, so they are pinned here rather than measured by hand
 // on every change. The THIRD rule — "with the ring off we never touch the cursor at all"
 // (JOS-193) — spans a predicate, a worker init and three assignments, so it lives together in
-// tests/cursorRingOff.test.mts rather than being scattered through this one.
+// tests/cursorRingOff.test.mts rather than being scattered through this one. The FOURTH — the
+// asymmetric focus debounce and the transition logging that earns the next fix (JOS-424) — is in
+// tests/presenceRefocusFlicker.test.mts for the same reason: it is one defect's whole story, and
+// this file is a page from its line ceiling.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  FOCUS_DEBOUNCE_MS,
+  FOCUS_HIDE_DEBOUNCE_MS,
+  FOCUS_SHOW_DEBOUNCE_MS,
   WATCHER_RESTART_BACKOFF_MS,
   WATCHER_STALE_MS,
   cursorRingActive,
@@ -234,15 +238,15 @@ test('a focus change must hold still for the debounce before it is committed', (
 
   const early = focusDebounceStep(s, true, t0)
   assert.equal(early.changed, false, 'the very first observation never commits')
-  assert.equal(early.waitMs, FOCUS_DEBOUNCE_MS)
+  assert.equal(early.waitMs, FOCUS_SHOW_DEBOUNCE_MS)
   s = early.state
 
-  const midway = focusDebounceStep(s, true, t0 + 200)
+  const midway = focusDebounceStep(s, true, t0 + 150)
   assert.equal(midway.changed, false)
-  assert.equal(midway.waitMs, 100, 'the wait counts from when the candidate FIRST appeared')
+  assert.equal(midway.waitMs, 50, 'the wait counts from when the candidate FIRST appeared')
   s = midway.state
 
-  const done = focusDebounceStep(s, true, t0 + FOCUS_DEBOUNCE_MS)
+  const done = focusDebounceStep(s, true, t0 + FOCUS_SHOW_DEBOUNCE_MS)
   assert.equal(done.changed, true)
   assert.equal(done.state.committed, true)
   assert.equal(done.waitMs, null)
@@ -269,7 +273,7 @@ test('ALT-TAB FLAP: a value that bounces back never commits, and leaves no resid
   // And the very next observation after the flap must not inherit the old clock.
   const after = focusDebounceStep(back.state, false, t0 + 5_000)
   assert.equal(after.changed, false)
-  assert.equal(after.waitMs, FOCUS_DEBOUNCE_MS)
+  assert.equal(after.waitMs, FOCUS_HIDE_DEBOUNCE_MS, 'a pending false waits out the HIDE window')
 })
 
 test('a repeated steady observation is idempotent — it is called on every watcher line', () => {
@@ -286,9 +290,9 @@ test('a repeated steady observation is idempotent — it is called on every watc
 test('a signal that stays flipped commits exactly once, not on every later observation', () => {
   let s = newFocusDebounce(false)
   s = focusDebounceStep(s, true, 0).state
-  const commit = focusDebounceStep(s, true, FOCUS_DEBOUNCE_MS)
+  const commit = focusDebounceStep(s, true, FOCUS_SHOW_DEBOUNCE_MS)
   assert.equal(commit.changed, true)
-  const after = focusDebounceStep(commit.state, true, FOCUS_DEBOUNCE_MS + 1)
+  const after = focusDebounceStep(commit.state, true, FOCUS_SHOW_DEBOUNCE_MS + 1)
   assert.equal(after.changed, false, 'committed is committed; it is not re-announced')
 })
 
