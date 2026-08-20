@@ -31,9 +31,14 @@ import {
   WATCHER_TICK_FLOOR_MS,
   describeFocusTransition,
   describeOverlayVisibility,
+  focusCountsAsEq,
   focusDebounceStep,
-  newFocusDebounce
+  newFocusDebounce,
+  overlaysShouldHide,
+  type ForegroundSide
 } from '../src/main/presenceProtocol'
+import { INITIAL_PRESENCE } from '../src/shared/presencePrefs'
+import type { OverlayAutoHidePrefs, PresenceState } from '../src/shared/presencePrefs'
 
 // ------------------------------------------------------- driving it the way presence.ts does
 //
@@ -284,4 +289,231 @@ test('THE COMMIT IS NARRATED, THE OBSERVATIONS ARE NOT — a quiet session says 
   const logAt = applyFocus.indexOf('logInfo(')
   const changedAt = applyFocus.indexOf('if (step.changed) {')
   assert.ok(changedAt !== -1 && changedAt < logAt, 'the line lives inside the commit branch')
+})
+
+// ============================================================ the state a generation is BORN in
+//
+// JOS-425, and it is the narration above that caught it. The owner re-tested on the asymmetric
+// debounce and STILL saw the blink — but the dev.log said the blink was not a transition at all:
+//
+//   overlays shown  13.852   (fail-open: the watcher is alive and has observed nothing)
+//   overlays hidden 13.965   (the first watcher sample lands — and hides with NO debounce)
+//   eqFocused -> true committed 14.177, overlays shown 14.178   (the 200 ms show side)
+//
+// On, off, on inside 400 ms, with the owner sitting in EverQuest the whole time, and the alt-tabs
+// later in the same log are clean single edges — JOS-424's fix works and this was the residual.
+//
+// THE MECHANISM IS THE ONE SHAPE A DEBOUNCE CANNOT DEBOUNCE: the value it is BORN holding. Nothing
+// waits out a window to reach it, so `overlaysShouldHide` reads it the instant `observed` goes
+// true. `observed` is one flag over facts learned at different moments — `applyRecord` raises it
+// on the first record of ANY kind — so every field's birth value has to be the fail-open answer by
+// itself, which is what `INITIAL_PRESENCE` and `newFocusDebounce()` now are. It fired at cold
+// start after the replay gate restored the overlays AND on every watcher restart, which is the
+// went-silent family the fleet logs constantly, which is why "we fixed this once" kept not taking.
+
+/** The three watcher records that move state, in the vocabulary `applyRecord` reduces them to. */
+type Rec =
+  | { readonly t: 'cursor'; readonly visible: boolean }
+  | { readonly t: 'run'; readonly running: boolean }
+  | { readonly t: 'fg'; readonly side: ForegroundSide }
+
+/** An EDGE of overlay visibility — `windows.ts setOverlaysHidden` is idempotent, so only these
+ *  reach the screen, and they are exactly what dev.log prints. */
+interface Edge {
+  readonly at: number
+  readonly hidden: boolean
+}
+
+/**
+ * `presence.ts`'s whole fold with an injected clock: `applyRecord` (which raises `observed` and
+ * updates the lane BEFORE handing the foreground side to the debounce), `applyFocus` and its
+ * wake-up timer, and `presenceEffects.onPresence` reading `overlaysShouldHide` after every change.
+ *
+ * THE BIRTH VALUES ARE READ FROM THE SOURCE, NEVER RESTATED HERE — `newFocusDebounce()` with no
+ * argument and the shared `INITIAL_PRESENCE` — because they are the entire subject. The companion
+ * assertion below pins presence.ts's own construction sites to the same answer, so this driver
+ * cannot quietly describe a file that has drifted.
+ *
+ * Overlays start SHOWN, which is where the replay gate's end-of-fold restore leaves them and what
+ * `subscribePresence`'s immediate callback then re-asserts from the unobserved state.
+ */
+function driveWatcher(
+  events: readonly (readonly [number, Rec])[],
+  prefs: OverlayAutoHidePrefs
+): { readonly edges: readonly Edge[]; readonly hidden: boolean } {
+  let state: PresenceState = INITIAL_PRESENCE
+  let focus = newFocusDebounce()
+  let observed = focus.committed
+  let dueAt: number | null = null
+  let hidden = overlaysShouldHide(state, prefs)
+  const edges: Edge[] = []
+  const settle = (at: number): void => {
+    const next = overlaysShouldHide(state, prefs)
+    if (next === hidden) return
+    hidden = next
+    edges.push({ at, hidden: next })
+  }
+  const foldFocus = (obs: boolean, at: number): void => {
+    observed = obs
+    dueAt = null
+    const step = focusDebounceStep(focus, obs, at)
+    focus = step.state
+    if (step.changed) state = { ...state, eqFocused: focus.committed }
+    else if (step.waitMs !== null) dueAt = at + step.waitMs
+    settle(at)
+  }
+  const foldRecord = (rec: Rec, at: number): void => {
+    if (rec.t === 'cursor') state = { ...state, observed: true, cursorVisible: rec.visible }
+    else if (rec.t === 'run') state = { ...state, observed: true, eqRunning: rec.running }
+    else state = { ...state, observed: true }
+    // The order presence.ts has: the record's own lane lands first and is visible to the effects
+    // pass on its own, and only then does the foreground side reach the debounce.
+    settle(at)
+    if (rec.t === 'fg') foldFocus(focusCountsAsEq(rec.side), at)
+  }
+  for (const [at, rec] of events) {
+    while (dueAt !== null && dueAt <= at) foldFocus(observed, dueAt)
+    foldRecord(rec, at)
+  }
+  for (let i = 0; dueAt !== null && i < 8; i++) foldFocus(observed, dueAt)
+  assert.equal(dueAt, null, 'the debounce settled')
+  return { edges, hidden }
+}
+
+const BOTH_ON: OverlayAutoHidePrefs = { hideWhenNotRunning: true, hideWhenUnfocused: true }
+
+/** The watcher's first tick, in its own order: the cursor line (only when the ring is on), the
+ *  foreground record, then the running scan — `presenceWorker.ts run()`. All three are separate
+ *  `postMessage`s, so main folds them one at a time and the effects pass runs between them. */
+function firstTick(side: ForegroundSide, running: boolean): readonly Rec[] {
+  return [{ t: 'cursor', visible: true }, { t: 'fg', side }, { t: 'run', running }]
+}
+
+test('THE LOGGED SEQUENCE: gate restore, watcher start, first sample IS EverQuest ⇒ NO hide edge', () => {
+  // The owner's dev.log at 04:40, as a test. He never left the game, so the overlays must never
+  // move — not for 113 ms, not at all. (Verified RED against the born-false constructor and the
+  // born-false `INITIAL_PRESENCE`: hidden at +113, shown again at +313, the exact on-off-on he
+  // saw.)
+  // t0 is the gate's restore; the watcher started at +78 and its first tick lands at +113, which
+  // is the only one of the three that this fold can even see.
+  const t0 = 6_000_000
+  const first = 113
+  const run = driveWatcher(
+    firstTick('eq', true).map((r, i) => [t0 + first + i, r] as const),
+    BOTH_ON
+  )
+  assert.deepEqual(run.edges, [], 'a machine sitting in EverQuest never dips at watcher birth')
+  assert.equal(run.hidden, false)
+
+  // And it is the CURSOR line that proves the point rather than the foreground one: it raises
+  // `observed` while no foreground record exists at all, so there is no ordering in which a
+  // born-false lane was safe. The same tick with the ring off (no cursor line) is equally quiet.
+  const noRing = driveWatcher(
+    [
+      [t0 + first, { t: 'fg', side: 'eq' }],
+      [t0 + first + 1, { t: 'run', running: true }]
+    ],
+    BOTH_ON
+  )
+  assert.deepEqual(noRing.edges, [])
+})
+
+test('A GENUINELY ELSEWHERE MACHINE STILL HIDES — once, at the hide window, never instantly', () => {
+  // The other half, and the one a born-true state could have broken. First sample is Discord: the
+  // overlays must go, but on OBSERVED evidence that held still for the full hide window, not on
+  // the birth value. One edge, at +1200 ms exactly.
+  const t0 = 6_100_000
+  const away = driveWatcher(
+    firstTick('other', true).map((r, i) => [t0 + i, r] as const),
+    BOTH_ON
+  )
+  // ONE edge, and its clock is the FOREGROUND record — the `F` at +1, not the `C` before it and
+  // not the `R` after. The cost of the rule, stated so it is a decision rather than a surprise:
+  // 1.2 s of overlays over whatever the user was already looking at, once per watcher generation.
+  assert.deepEqual(away.edges, [{ at: t0 + 1 + FOCUS_HIDE_DEBOUNCE_MS, hidden: true }])
+  assert.equal(away.hidden, true)
+})
+
+test('AND THE GAME BEING CLOSED IS A MEASUREMENT, SO IT STILL HIDES ON THE SAME TICK', () => {
+  // `hideWhenNotRunning` is not debounced and must not become so: "the game is not running" is a
+  // process scan, not a foreground flap. Born-true `eqRunning` changes only WHICH record hides —
+  // the `R` that measured it rather than the `F` that preceded it — and the two are microseconds
+  // apart on the watcher's first tick.
+  const t0 = 6_200_000
+  const closed = driveWatcher(
+    firstTick('other', false).map((r, i) => [t0 + i, r] as const),
+    BOTH_ON
+  )
+  assert.deepEqual(closed.edges, [{ at: t0 + 2, hidden: true }], 'the R record, and nothing before it')
+  // With only the focus switch on, the same tick is silent until the focus lane commits.
+  const unfocusedOnly = driveWatcher(
+    firstTick('other', false).map((r, i) => [t0 + i, r] as const),
+    { hideWhenNotRunning: false, hideWhenUnfocused: true }
+  )
+  assert.deepEqual(unfocusedOnly.edges, [{ at: t0 + 1 + FOCUS_HIDE_DEBOUNCE_MS, hidden: true }])
+})
+
+test('A WATCHER RESTART IS A BIRTH, AND THE REFOCUS THAT FOLLOWS IT IS STILL CLEAN', () => {
+  // The went-silent/restart family — the fleet's most common presence event, and the one that made
+  // this fire for users who never restart the app. `resetPresence()` puts the state back to
+  // INITIAL_PRESENCE and constructs a fresh debounce, so a restart is byte-identical to a cold
+  // start here; what follows must be one clean pair of edges, not three.
+  const t0 = 6_300_000
+  const session = driveWatcher(
+    [
+      ...firstTick('eq', true).map((r, i) => [t0 + i, r] as const),
+      // …the user alt-tabs to a browser and stays there…
+      [t0 + 30_000, { t: 'fg', side: 'other' }],
+      // …and comes back a minute later, through the task switcher's strobe.
+      [t0 + 90_000, { t: 'fg', side: 'other' }],
+      [t0 + 90_060, { t: 'fg', side: 'eq' }]
+    ],
+    BOTH_ON
+  )
+  assert.deepEqual(session.edges, [
+    { at: t0 + 30_000 + FOCUS_HIDE_DEBOUNCE_MS, hidden: true },
+    { at: t0 + 90_060 + FOCUS_SHOW_DEBOUNCE_MS, hidden: false }
+  ])
+})
+
+test('THE FAIL-OPEN RULE AND THE BIRTH STATE AGREE — the seam is the instant `observed` flips', () => {
+  // Stated directly, without a driver: `overlaysShouldHide` fails open on `!observed`, and the
+  // thing that used to break was the very next evaluation. So the born state must give the SAME
+  // answer with `observed` raised as it does with it clear, under every pref combination — that is
+  // what "no reachable ordering emits a hide edge without observed evidence" reduces to.
+  for (const hideWhenNotRunning of [false, true]) {
+    for (const hideWhenUnfocused of [false, true]) {
+      const prefs = { hideWhenNotRunning, hideWhenUnfocused }
+      assert.equal(overlaysShouldHide(INITIAL_PRESENCE, prefs), false, 'unobserved fails open')
+      assert.equal(
+        overlaysShouldHide({ ...INITIAL_PRESENCE, observed: true }, prefs),
+        false,
+        'and the birth values agree with it, so raising the flag alone hides nothing'
+      )
+    }
+  }
+  // Which is a statement about these two fields specifically, so say which.
+  assert.equal(INITIAL_PRESENCE.eqFocused, true, 'assume EQ-side until observed otherwise')
+  assert.equal(INITIAL_PRESENCE.eqRunning, true, 'assume the game is there until observed otherwise')
+  assert.equal(newFocusDebounce().committed, true, 'and the debounce is born agreeing with them')
+})
+
+test('EVERY CONSTRUCTION SITE IN presence.ts IS BORN THE SAME WAY, restart paths included', () => {
+  // The audit, as an assertion: a birth state is only a rule if it holds at every birth. There are
+  // three sites — module init, `resetPresence` (the exit/wedge/start-failed path) and
+  // `stopWatcher` — and a born-false one anywhere is this bug again on that path alone.
+  const src = readFileSync(new URL('../src/main/presence.ts', import.meta.url), 'utf8')
+  const sites = src.match(/newFocusDebounce\([^)]*\)/g) ?? []
+  assert.equal(sites.length, 3, 'module init, resetPresence, stopWatcher')
+  for (const site of sites) assert.equal(site, 'newFocusDebounce(true)', 'explicit, and true')
+  // Every one of them re-seeds the raw observation to match, so a timer that fires afterwards
+  // re-folds the assumption rather than its opposite.
+  assert.equal((src.match(/lastObservedFocus = true/g) ?? []).length, 3)
+  assert.ok(!src.includes('lastObservedFocus = false'), 'nothing seeds the raw value the other way')
+  // And `setCursorWatch` is the deliberate NON-site: it replaces the thread without resetting, so
+  // its successor CARRIES a value this app actually measured. Carrying beats assuming; the
+  // assumption is only for a generation with nothing to inherit.
+  const swap = body('../src/main/presence.ts', 'export function setCursorWatch(')
+  assert.ok(!swap.includes('newFocusDebounce'), 'a live replacement inherits rather than assumes')
+  assert.ok(!swap.includes('resetPresence('), 'and it does not reset the state either')
 })
