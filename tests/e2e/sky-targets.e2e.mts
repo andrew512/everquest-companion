@@ -10,7 +10,9 @@
  * the pane with no reload anywhere. JOS-87 is the standing reminder that chains break at seams
  * every unit test is happy with. JOS-417 added the two seams the integration grew: a quest name
  * that is a DOOR onto the Quests tab (`revealQuest`, a control on one tab moving another), and
- * the first-time toggle, whose whole subject is a quest that is ABSENT.
+ * the first-time toggle, whose whole subject is a quest that is ABSENT. JOS-423 added a third: the
+ * walk order the fold computes has to reach the SCREEN as structure the eye can follow - island
+ * headings that climb, every card under one of them, the unplaced group at the bottom.
  *
  * EVERY LINE SHAPE IS COPIED FROM THE OWNER'S REAL LOG, never invented (the awaiting-sample law)
  * — the same proven Beastlord Test of Azarack lines sky-turnin.e2e.mts and
@@ -39,6 +41,8 @@ const TAB_IGNORED = '[data-testid="posky-tab-ignored"]'
 const PANE = '[data-testid="posky-targets"]'
 const COUNT = '[data-testid="posky-targets-count"]'
 const ROW = '[data-testid^="sky-target-row-"]'
+/** JOS-423: one per island heading, carrying the sortable island number (or `none`). */
+const ISLAND = '[data-testid="sky-target-island"]'
 const SEARCH = '[data-testid="posky-search"] input'
 const COUNTS = '[data-testid="posky-counts"]'
 /** JOS-417's two additions: the quest door on an item line, and the first-time toggle. */
@@ -101,7 +105,11 @@ async function stepPane(page: Page): Promise<void> {
   const rows = await settle(() => countOf(page, ROW), (n) => n > 0, { timeoutMs: 30_000 })
   check('the fixture leaves mobs still worth killing', rows > 0, `rows=${String(rows)}`)
   const count = await page.evaluate((sel) => document.querySelector(sel)?.textContent ?? '', COUNT)
-  check('the pane states its ordering rule - state, never process', count.includes('sort first'), count.slice(0, 200))
+  check(
+    'the pane states its ordering rule - state, never process',
+    count.includes('island by island'),
+    count.slice(0, 200)
+  )
   const label = await labelCount(page)
   check(
     'THE TAB LABEL COUNTS THE MOB CARDS - the same array the pane draws',
@@ -113,6 +121,46 @@ async function stepPane(page: Page): Promise<void> {
     ROW
   )
   check('every row says how many needed items its mob covers', covered)
+}
+
+/**
+ * JOS-423, the owner's directive as the player sees it: THE PANE READS IN WALK ORDER. The fold's
+ * comparator is unit-pinned; what only a real app can show is that the ORDER SURVIVES THE RENDER —
+ * that the headings the user scrolls past really do climb, that every card sits under one of them
+ * (a card outside the grouping would be invisible to the eye but still counted by the tab label),
+ * and that the unplaced group is at the BOTTOM rather than merely present somewhere.
+ *
+ * Numbers are relative, never frozen (this file's law): the assertion is that the sequence is
+ * non-decreasing and that `none` is last, which holds at any island set the committed data grows.
+ */
+async function stepIslandOrder(page: Page): Promise<void> {
+  const islands = await page.evaluate(
+    (sel) => [...document.querySelectorAll(sel)].map((el) => el.getAttribute('data-island') ?? ''),
+    ISLAND
+  )
+  if (!check('the mob cards are grouped under island headings', islands.length > 0, `groups=${islands.join(',')}`)) {
+    return
+  }
+  const numbered = islands.filter((i) => i !== 'none').map(Number)
+  const climbs = numbered.every((n, i) => i === 0 || numbered[i - 1] <= n)
+  check('THE ISLANDS CLIMB - the list reads in walk order', climbs, `groups=${islands.join(',')}`)
+  const noneAt = islands.indexOf('none')
+  check(
+    'a mob the data places nowhere is LAST, never folded into a guessed island',
+    noneAt === -1 || noneAt === islands.length - 1,
+    `groups=${islands.join(',')}`
+  )
+  if (noneAt !== -1) {
+    const title = await page.evaluate(
+      (sel) => [...document.querySelectorAll(sel)].at(-1)?.textContent ?? '',
+      `${ISLAND} [data-testid="sky-target-island-title"]`
+    )
+    check('…and its heading says so in words rather than showing a number', title.includes('not stated'), title)
+  }
+  // Every card is under a heading: the grouping is a re-cut of the whole list, not a filter.
+  const rows = await countOf(page, ROW)
+  const grouped = await countOf(page, `${ISLAND} ${ROW}`)
+  check('every mob card sits inside an island group', grouped === rows, `grouped=${String(grouped)} rows=${String(rows)}`)
 }
 
 /**
@@ -250,6 +298,7 @@ async function main(): Promise<void> {
         throw new Error('never reached the Targets tab - nothing below can be asserted')
       }
       await stepPane(page)
+      await stepIslandOrder(page)
       await stepQuestDoor(page)
       await stepIgnoreRemoves(page)
       await stepLiveArc(page, log, new Date(now - 60_000))

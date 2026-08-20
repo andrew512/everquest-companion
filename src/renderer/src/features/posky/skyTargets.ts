@@ -41,10 +41,27 @@
 //   * anything else unresolved goes to the no-known-source list — shown as missing data, never
 //     dropped and never guessed at.
 //
-// THE ORDER IS COUNTED, NOT GUESSED: mobs by distinct needed items covered, descending, then
-// name — killing the top row closes the most of what is left. Items inside a card and both
-// special lists read alphabetically: deterministic, explainable, nothing invented. Islands ride
-// per mob from the items that mob is the target for, in island-number order.
+// THE ORDER IS THE WALK, THEN THE COUNT (JOS-423, owner directive 2026-08-19: the Targets tab
+// should be SORTED BY ISLAND). A player works the Plane island by island, so the list reads in
+// walk order: island ASCENDING first, and only inside one island does the counted order decide —
+// mobs by distinct needed items covered, descending, then name, which is the previous ordering
+// preserved intact as the tiebreak. Items inside a card and both special lists still read
+// alphabetically: deterministic, explainable, nothing invented.
+//
+// THE ISLAND IS DERIVED, NEVER HAND-KEYED. Islands already rode per mob, from the items that mob
+// is the target for (`islandOf` over posky's STATED `where` field — poskyDroppers' header measures
+// its three shapes), and that same derivation is now the sort key: `island` is the LOWEST stated
+// island of the mob's outstanding drops, because that is where you meet the mob first walking
+// outward. No mob->island table is written down anywhere in this module, so a correction to the
+// scrape's `where` moves the card by itself. (MEASURED 2026-08-19 over the committed data with
+// every quest open: 14 of the 20 cards carry a stated island — 3..8 — and Protector of Sky reads
+// Island 7 from posky while `bosses.json` calls it Island 2; the disagreement is DATA's to settle,
+// and whichever way it lands this fold follows it.)
+//
+// A MOB WHOSE ISLAND THE DATA DOES NOT STATE SORTS LAST, under a heading that says so — never
+// under a guessed number. That is the tab's own law for the no-known-source list applied one level
+// up, and it is not a rare corner: six of today's twenty cards (Noble Dojorn, the Overseer of Air
+// and the Hand of Veeshan among them) are sourced only by item rows whose `where` is empty.
 //
 // A CARD'S IDENTITY IS THE WIKI PAGE, NEVER THE NAME — and there is no era or difficulty variant
 // hiding behind that today. MEASURED over the committed catalog (JOS-417, 2026-08-19): the 7,872
@@ -99,10 +116,25 @@ export interface NeededItem {
 /** One mob still worth killing, with everything it can still yield. */
 export interface TargetMob {
   mob: DropperMob
-  /** distinct needed items this mob drops — the sort key, always `items.length` */
+  /** distinct needed items this mob drops — the tiebreak inside an island, always `items.length` */
   covers: number
+  /** every island this mob's outstanding drops are stated to be on, island-number order */
   islands: string[]
+  /**
+   * THE PRIMARY SORT KEY: the lowest island `islands` states, or null when it states none. The
+   * lowest rather than the whole list because the order is a WALK — a mob whose outstanding drops
+   * span islands 3 and 5 is met on 3 — and null rather than a stand-in number because "the data
+   * does not say" is an answer this tab prints out loud instead of guessing at (law 1).
+   */
+  island: string | null
   items: NeededItem[]
+}
+
+/** One island's worth of the list, in the order the pane draws it. */
+export interface TargetIslandGroup {
+  /** the island these cards share, or null for the ones the data places nowhere */
+  island: string | null
+  mobs: TargetMob[]
 }
 
 export interface SkyTargetsModel {
@@ -135,6 +167,42 @@ const byItemName = (a: NeededItem, b: NeededItem): number =>
 
 const sortIslands = (islands: Set<string>): string[] =>
   [...islands].sort((a, b) => islandNumber(a) - islandNumber(b))
+
+/** The ordering the tab had before JOS-423, kept EXACTLY as it was and demoted to the tiebreak:
+ *  inside one island, the mob that closes the most of what is left still leads, ties by name. */
+const countedOrder = (a: TargetMob, b: TargetMob): number =>
+  a.covers === b.covers ? dropperNameOrder(a.mob, b.mob) : b.covers - a.covers
+
+/** Where an unstated island sorts: after every real one, at any island number the data grows. */
+const UNSTATED_ISLAND_RANK = Number.POSITIVE_INFINITY
+
+const islandRank = (t: TargetMob): number =>
+  t.island === null ? UNSTATED_ISLAND_RANK : islandNumber(t.island)
+
+/** WALK ORDER: island ascending, unstated last, and the counted order inside each island. */
+const byIslandThenCounted = (a: TargetMob, b: TargetMob): number => {
+  const ai = islandRank(a)
+  const bi = islandRank(b)
+  return ai === bi ? countedOrder(a, b) : ai - bi
+}
+
+/**
+ * The sorted card list cut into its islands, for a pane that draws a heading per island.
+ *
+ * A pure run-length split over an ALREADY-SORTED array rather than a second grouping pass with a
+ * second opinion about order: the flat `mobs` array stays the one truth about sequence (it is also
+ * what the tab label counts), and this can only ever agree with it. Feed it anything else and it
+ * will happily emit two groups for one island — the input contract is `skyTargets().mobs`.
+ */
+export function groupTargetsByIsland(mobs: readonly TargetMob[]): TargetIslandGroup[] {
+  const groups: TargetIslandGroup[] = []
+  for (const t of mobs) {
+    const last = groups.at(-1)
+    if (last?.island === t.island) last.mobs.push(t)
+    else groups.push({ island: t.island, mobs: [t] })
+  }
+  return groups
+}
 
 /** Fold one quest item into its counting key's aggregate. */
 function recordItem(byKey: Map<string, ItemAgg>, q: TargetsQuest, it: TargetsQuestItem): void {
@@ -232,13 +300,17 @@ export function skyTargets(
     else unsourced.push(needed)
   }
   const mobs: TargetMob[] = [...mobsByPage.values()]
-    .map((e) => ({
-      mob: e.mob,
-      covers: e.items.length,
-      islands: sortIslands(e.islands),
-      items: [...e.items].sort(byItemName)
-    }))
-    .sort((a, b) => (a.covers === b.covers ? dropperNameOrder(a.mob, b.mob) : b.covers - a.covers))
+    .map((e) => {
+      const islands = sortIslands(e.islands)
+      return {
+        mob: e.mob,
+        covers: e.items.length,
+        islands,
+        island: islands[0] ?? null,
+        items: [...e.items].sort(byItemName)
+      }
+    })
+    .sort(byIslandThenCounted)
   randomDrop.sort(byItemName)
   unsourced.sort(byItemName)
   return { mobs, randomDrop, unsourced }

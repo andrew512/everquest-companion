@@ -23,16 +23,33 @@
 //      the literal sentinel, which carries an em dash `tests/copyNoEmDash.test.mts` would
 //      reject) is the collective entry; anything else unresolved is the no-known-source list.
 //      Never a guessed mob (law 1).
-//   4. THE ORDER IS COUNTED: mobs by distinct needed items covered, desc, then name — the
-//      questKillTargets order, cross-quest. Items inside a card, and both special lists,
-//      alphabetical: deterministic and explainable, nothing invented.
+//   4. THE ORDER IS THE WALK, THEN THE COUNT (JOS-423): island ASCENDING first — a player works
+//      the Plane island by island — and only inside one island does the old counted order decide
+//      (distinct needed items covered desc, then name: the questKillTargets order, cross-quest).
+//      A mob whose island the data never states sorts LAST, never under a guessed number, which is
+//      the no-known-source list's law one level up. Items inside a card, and both special lists,
+//      stay alphabetical: deterministic and explainable, nothing invented.
+//   5. THE ISLAND IS DERIVED, NEVER HAND-KEYED: it is `islandOf` over posky's stated `where`,
+//      folded per mob from the items that mob is still the target for. The pins below are written
+//      so a DATA correction (e.g. moving a boss between islands) moves the cards and keeps the
+//      suite green, while a code change that hard-codes an island cannot.
 //
 // Run: `npm test`.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { skyTargets, type TargetsQuest, type TargetsQuestItem } from '../src/renderer/src/features/posky/skyTargets'
-import { isSkyMob, skyDroppersFor, type DropperMob } from '../src/renderer/src/features/posky/poskyDroppers'
+import {
+  groupTargetsByIsland,
+  skyTargets,
+  type TargetsQuest,
+  type TargetsQuestItem
+} from '../src/renderer/src/features/posky/skyTargets'
+import {
+  isSkyMob,
+  islandNumber,
+  skyDroppersFor,
+  type DropperMob
+} from '../src/renderer/src/features/posky/poskyDroppers'
 import type { MobEntry, PoskyQuest } from '../src/shared/types'
 import poskyRaw from '../src/renderer/src/data/eqlegends/posky.json' with { type: 'json' }
 import mobsRaw from '../src/renderer/src/data/eqlegends/mobs.json' with { type: 'json' }
@@ -249,7 +266,8 @@ test('a real never-turned-in quest yields real kill targets from the committed c
 })
 
 // ---------------------------------------------------------------------------
-// 4. The order is counted
+// 4. The order is counted — INSIDE an island (every quest below states one island, so these pin
+//    the tiebreak the JOS-423 sort kept intact)
 // ---------------------------------------------------------------------------
 
 test('mobs sort by distinct items covered desc, then name; the order is stable', () => {
@@ -318,6 +336,171 @@ test('islands ride per mob from the items it is the target for', () => {
     ]
   })
   assert.deepEqual(skyTargets([q]).mobs[0].islands, ['Island 3', 'Island 5'])
+})
+
+// ---------------------------------------------------------------------------
+// 4b. …and the WALK decides before the count (JOS-423)
+// ---------------------------------------------------------------------------
+
+/** One quest whose items each name their own island and their own dropper — the shape every
+ *  ordering pin below is built from, so the only thing that varies is the data under test. */
+function walk(rows: [name: string, where: string, mobName: string][]): TargetsQuest {
+  return quest({
+    name: 'Test of Walk',
+    items: rows.map(([name, where, mobName]) =>
+      item({ name, where, droppers: [mob(mobName)] })
+    )
+  })
+}
+
+test('ISLAND ASCENDING IS THE PRIMARY ORDER - it outranks how much a mob covers', () => {
+  // Sirran covers TWO of what is left and would have led the old list outright; it is on island 5
+  // and the player walks past island 2 first, so the one-item mob on 2 leads. This is the whole
+  // directive in one assertion.
+  const q = quest({
+    name: 'Test of Walk Order',
+    items: [
+      item({ name: 'Sky Pearl', where: 'Island 5', droppers: [mob('Sirran')] }),
+      item({ name: 'Sky Sapphire', where: 'Island 5', droppers: [mob('Sirran')] }),
+      item({ name: 'Azarack Feather', where: 'Island 2', droppers: [mob('Azarack')] })
+    ]
+  })
+  const mobs = skyTargets([q]).mobs
+  assert.deepEqual(mobs.map((t) => t.mob.name), ['Azarack', 'Sirran'])
+  assert.deepEqual(mobs.map((t) => t.island), ['Island 2', 'Island 5'])
+  assert.deepEqual(mobs.map((t) => t.covers), [1, 2], 'the counted order lost, on purpose')
+})
+
+test('islands order by NUMBER, never as strings - 9 comes before 10', () => {
+  const q = walk([
+    ['Sky Pearl', 'Island 10', 'Tenner'],
+    ['Sky Sapphire', 'Island 9', 'Niner'],
+    ['Sky Ruby', 'Island 2', 'Twoser']
+  ])
+  assert.deepEqual(skyTargets([q]).mobs.map((t) => t.mob.name), ['Twoser', 'Niner', 'Tenner'])
+})
+
+test('inside ONE island the counted order is exactly what it was - covers desc, then name', () => {
+  const q = quest({
+    name: 'Test of Island Three',
+    items: [
+      item({ name: 'Sky Pearl', where: 'Island 3', droppers: [mob('Gorgalosk')] }),
+      item({ name: 'Sky Sapphire', where: 'Island 3', droppers: [mob('Gorgalosk')] }),
+      // Two one-item mobs: the tie breaks on name, not on fold order (Zephyr folds first).
+      item({ name: 'Sky Ruby', where: 'Island 3', droppers: [mob('Zephyr')] }),
+      item({ name: 'Sky Topaz', where: 'Island 3', droppers: [mob('Azarack')] })
+    ]
+  })
+  const mobs = skyTargets([q]).mobs
+  assert.deepEqual(mobs.map((t) => t.mob.name), ['Gorgalosk', 'Azarack', 'Zephyr'])
+  assert.deepEqual(mobs.map((t) => t.island), ['Island 3', 'Island 3', 'Island 3'])
+})
+
+test('A MOB THE DATA PLACES NOWHERE SORTS LAST, whatever it covers - never a guessed island', () => {
+  const q = quest({
+    name: 'Test of Nowhere',
+    items: [
+      // posky's third `where` shape: the empty string. Three items, so under the old order this
+      // mob led the pane; it has no stated island, so it goes to the bottom rather than to 0.
+      item({ name: 'Sky Pearl', where: '', droppers: [mob('Noble Dojorn')] }),
+      item({ name: 'Sky Sapphire', where: '', droppers: [mob('Noble Dojorn')] }),
+      item({ name: 'Sky Ruby', where: '', droppers: [mob('Noble Dojorn')] }),
+      item({ name: 'Azarack Feather', where: 'Island 8', droppers: [mob('Azarack')] })
+    ]
+  })
+  const mobs = skyTargets([q]).mobs
+  assert.deepEqual(mobs.map((t) => t.mob.name), ['Azarack', 'Noble Dojorn'])
+  assert.deepEqual(mobs.map((t) => t.island), ['Island 8', null])
+  assert.deepEqual(mobs.at(-1)?.islands, [], 'nothing invented to fill the gap')
+})
+
+test('"Plane of Sky" is not an island - a wind-rune `where` leaves the mob unplaced', () => {
+  // The one shape islandOf deliberately drops. A mob sourced only by rows that say "anywhere" is
+  // unplaced, exactly like an empty `where`, rather than being dressed up as some island.
+  const q = walk([
+    ['Sky Pearl', 'Plane of Sky', 'Anywhere Mob'],
+    ['Azarack Feather', 'Island 4', 'Azarack']
+  ])
+  const mobs = skyTargets([q]).mobs
+  assert.deepEqual(mobs.map((t) => t.mob.name), ['Azarack', 'Anywhere Mob'])
+  assert.equal(mobs.at(-1)?.island, null)
+})
+
+test('a mob spanning two islands sorts by the LOWEST - where the walk meets it first', () => {
+  const q = quest({
+    name: 'Test of Spread',
+    items: [
+      item({ name: 'Sky Pearl', where: 'Island 3', droppers: [mob('Wanderer')] }),
+      item({ name: 'Sky Sapphire', where: 'Island 7', droppers: [mob('Wanderer')] }),
+      // On island 5: after the wanderer's 3, before its 7 - so the lowest, not the highest, and
+      // not the average, is what the sort reads.
+      item({ name: 'Azarack Feather', where: 'Island 5', droppers: [mob('Azarack')] })
+    ]
+  })
+  const mobs = skyTargets([q]).mobs
+  assert.deepEqual(mobs.map((t) => t.mob.name), ['Wanderer', 'Azarack'])
+  assert.deepEqual(mobs[0].islands, ['Island 3', 'Island 7'], 'the card still states both')
+  assert.equal(mobs[0].island, 'Island 3')
+})
+
+test('THE ISLAND IS DERIVED FROM `where`, so a correction to the data moves the card', () => {
+  // The JOS-415 shape, as a fold: nothing in the module knows this mob's island, so restating the
+  // scrape's `where` is the whole change. A hard-coded mob->island table could not pass this.
+  const before = walk([['Sky Pearl', 'Island 7', 'Protector'], ['Azarack Feather', 'Island 4', 'Azarack']])
+  assert.deepEqual(skyTargets([before]).mobs.map((t) => t.mob.name), ['Azarack', 'Protector'])
+  const after = walk([['Sky Pearl', 'Island 2', 'Protector'], ['Azarack Feather', 'Island 4', 'Azarack']])
+  assert.deepEqual(skyTargets([after]).mobs.map((t) => t.mob.name), ['Protector', 'Azarack'])
+})
+
+// ---------------------------------------------------------------------------
+// 4c. The grouping the pane draws
+// ---------------------------------------------------------------------------
+
+test('grouping cuts the sorted list into one group per island, unstated last', () => {
+  const q = quest({
+    name: 'Test of Groups',
+    items: [
+      item({ name: 'Sky Pearl', where: 'Island 5', droppers: [mob('Spiroc')] }),
+      item({ name: 'Sky Sapphire', where: 'Island 3', droppers: [mob('Gorgalosk')] }),
+      item({ name: 'Sky Ruby', where: 'Island 3', droppers: [mob('Azarack')] }),
+      item({ name: 'Sky Topaz', where: '', droppers: [mob('Dojorn')] })
+    ]
+  })
+  const model = skyTargets([q])
+  const groups = groupTargetsByIsland(model.mobs)
+  assert.deepEqual(groups.map((g) => g.island), ['Island 3', 'Island 5', null])
+  assert.deepEqual(groups.map((g) => g.mobs.map((t) => t.mob.name)), [
+    ['Azarack', 'Gorgalosk'],
+    ['Spiroc'],
+    ['Dojorn']
+  ])
+  // The grouping is a re-cut of the SAME array, never a second opinion about order.
+  assert.deepEqual(groups.flatMap((g) => g.mobs), model.mobs)
+  assert.deepEqual(groupTargetsByIsland([]), [])
+})
+
+// ---------------------------------------------------------------------------
+// 4d. …and it holds over the COMMITTED data (relative, never a frozen island list)
+// ---------------------------------------------------------------------------
+
+test('over every committed quest, the cards read island-ascending with the unplaced last', () => {
+  const model = skyTargets(QUESTS.map((q) => realQuest(q)))
+  assert.ok(model.mobs.length > 0, 'the committed data yields kill targets')
+  const ranks = model.mobs.map((t) => (t.island === null ? Number.POSITIVE_INFINITY : islandNumber(t.island)))
+  for (let i = 1; i < ranks.length; i += 1) {
+    assert.ok(ranks[i - 1] <= ranks[i], `card ${String(i)} walks backwards: ${JSON.stringify(model.mobs.map((t) => t.island))}`)
+  }
+  // Both halves of the rule are actually exercised by today's data - a suite where every card had
+  // an island would pin the unstated rule vacuously. Stated as floors, so the data can grow.
+  const placed = model.mobs.filter((t) => t.island !== null)
+  const unplaced = model.mobs.filter((t) => t.island === null)
+  assert.ok(placed.length > 0, 'the committed data places some kill targets on islands')
+  assert.ok(unplaced.length > 0, 'and states no island for others - the honest-heading case is real')
+  // Every stated island is one posky actually wrote, and every card's own list agrees with its key.
+  for (const t of model.mobs) {
+    assert.equal(t.island, t.islands[0] ?? null)
+    for (const i of t.islands) assert.ok(islandNumber(i) > 0, `not an island label: ${i}`)
+  }
 })
 
 // ---------------------------------------------------------------------------
