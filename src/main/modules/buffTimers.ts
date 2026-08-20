@@ -455,6 +455,14 @@ export class BuffTimersModule
     if (id.lineKey !== '') {
       this.stats.everFaded.add(id.lineKey)
       this.stats.touchLastSeen(id.lineKey, ts)
+      // …AND THE RANK THIS CAST NAMED IS THE TAB'S TOO (JOS-411). The hold has always taken its
+      // ranked name from the anchored cast; the tab's stats record used to keep whatever rank was
+      // equipped the first time a cycle happened to close, so an upgraded Mesmerization still read
+      // `VI` there. `noteDisplayName` is the same write a mint does — see
+      // `buffsStats.ts preferredDisplayName` for which spelling wins — and it is done HERE because
+      // the cast line is the only line in a mez's family that carries the numeral at all, and a
+      // broken cycle mints nothing to carry it.
+      this.stats.noteDisplayName(id.lineKey, id.caster, id.display)
       held.spell = id.display
     }
 
