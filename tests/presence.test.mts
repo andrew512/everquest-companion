@@ -232,7 +232,13 @@ test("this app's own windows never look like EverQuest", () => {
 
 // ------------------------------------------------------------------- the focus debounce
 
+// The BIRTH state of a debounce is JOS-425's whole subject and lives in
+// tests/presenceRefocusFlicker.test.mts beside the rest of that defect's story. These four are
+// about the FOLD, so each states the committed value it needs and nothing here reads a default.
+
 test('a focus change must hold still for the debounce before it is committed', () => {
+  // Starting committed-FALSE on purpose: this is the show side, i.e. the machine that really was
+  // outside EverQuest and is coming back.
   let s = newFocusDebounce(false)
   const t0 = 1_000_000
 
@@ -288,6 +294,7 @@ test('a repeated steady observation is idempotent — it is called on every watc
 })
 
 test('a signal that stays flipped commits exactly once, not on every later observation', () => {
+  // Again the show side, and again an explicit false: a committed value is not re-announced.
   let s = newFocusDebounce(false)
   s = focusDebounceStep(s, true, 0).state
   const commit = focusDebounceStep(s, true, FOCUS_SHOW_DEBOUNCE_MS)
@@ -334,10 +341,10 @@ test('each auto-hide switch hides on its own — they are independent, not a mod
 })
 
 test('NOTHING IS HIDDEN BEFORE THE WATCHER HAS REPORTED — never act on a guess', () => {
-  // The watcher opens three system libraries before its first line. `eqRunning:false` in that
-  // gap means "we have not looked", and hiding on it would blink every overlay off at launch and
-  // back on a second later on a machine where the game was running the whole time. The same flag
-  // resets if the watcher dies, so a dead watcher fails OPEN rather than hiding everything.
+  // The watcher opens three system libraries before its first line. Nothing in `INITIAL_PRESENCE`
+  // is a fact in that gap, and hiding on it would blink every overlay off at launch and back on a
+  // second later on a machine where the game was running the whole time. The same flag resets if
+  // the watcher dies, so a dead watcher fails OPEN rather than hiding everything.
   const unobserved = INITIAL_PRESENCE
   for (const prefs of [
     DEFAULT_OVERLAY_AUTO_HIDE,
@@ -345,6 +352,10 @@ test('NOTHING IS HIDDEN BEFORE THE WATCHER HAS REPORTED — never act on a guess
   ]) {
     assert.equal(overlaysShouldHide(unobserved, prefs), false)
   }
+  // AND THE FLAG IS ONLY HALF THE PROMISE (JOS-425): it is raised by the first record of ANY kind,
+  // so the birth values have to survive that instant on their own. The seam, and the whole of
+  // JOS-425's fix, is pinned in tests/presenceRefocusFlicker.test.mts.
+  assert.equal(overlaysShouldHide({ ...INITIAL_PRESENCE, observed: true }, DEFAULT_OVERLAY_AUTO_HIDE), false)
 })
 
 test('the DEFAULT auto-hide posture: hidden with no game, visible the moment one exists', () => {
@@ -423,11 +434,16 @@ test('A DEAD OR WEDGED WATCHER PARKS THE RING AND GIVES THE OVERLAYS BACK', () =
   // The watcher dies here. Freezing `live` is the reported bug — `eqFocused`, `cursorVisible`
   // and `eqBounds` all outlive the pipe, so the ring keeps drawing over whatever the user
   // alt-tabs to. Resetting to INITIAL_PRESENCE is what makes that impossible.
+  // NO KNOWN BOUNDS is what does the work here, and since JOS-425 it is the ONLY thing that does:
+  // `eqFocused` is born TRUE (assume EQ-side until observed otherwise), so a reset that relied on
+  // a born-false focus would have quietly stopped parking the ring. It does not — there is nowhere
+  // to put a halo, and inventing a rectangle is exactly the bug this reset exists to prevent.
   assert.equal(
     cursorRingActive(INITIAL_PRESENCE, on),
     false,
-    'no committed focus and no known bounds ⇒ the ring parks and the cursor stream stops'
+    'no known bounds ⇒ the ring parks and the cursor stream stops'
   )
+  assert.equal(INITIAL_PRESENCE.eqBounds, null, 'and that is the field carrying the property')
   for (const prefs of [
     DEFAULT_OVERLAY_AUTO_HIDE,
     { hideWhenNotRunning: true, hideWhenUnfocused: true }

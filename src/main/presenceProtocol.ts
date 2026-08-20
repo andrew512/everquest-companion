@@ -372,7 +372,32 @@ export const FOCUS_DEBOUNCE: FocusDebounceWindows = {
   hideMs: FOCUS_HIDE_DEBOUNCE_MS
 }
 
-export function newFocusDebounce(committed = false): FocusDebounce {
+/**
+ * A FRESH DEBOUNCE IS BORN AGREEING WITH THE FAIL-OPEN RULE (JOS-425), which is why the default
+ * is `true` and why every call site in presence.ts passes `true` explicitly anyway.
+ *
+ * The asymmetry above fixed the TRANSITION and the owner still saw a blink, because the residual
+ * was never a transition at all — it was this constructor. Born `committed:false`, the very first
+ * observation of a watcher GENERATION is a change, so `focusDebounceStep` opens a candidate…
+ * and the one shape that never gets debounced is the state you are born in: `overlaysShouldHide`
+ * reads the uncommitted `false` the moment `observed` goes true and hides instantly, then the
+ * 200 ms show side puts the overlays back. Measured in the owner's dev.log: shown 13.852, hidden
+ * 13.965, shown 14.178, with the owner sitting in EverQuest for all of it. It fired at cold start
+ * (after the replay gate restored the overlays) and again on EVERY watcher restart — the
+ * went-silent/restart family — which is why "fixed once before" kept not being true.
+ *
+ * Born `true`, the rule has no seam left: a hide requires `hideMs` of OBSERVED non-EQ evidence,
+ * always. A machine genuinely sitting outside EverQuest at watcher birth hides 1.2 s later — the
+ * cost, paid once per generation, in the direction the whole file already agreed to err. A machine
+ * sitting IN the game never dips.
+ *
+ * THE ONE CONSTRUCTION SITE THAT IS DELIBERATELY NOT A CALL TO THIS: `presence.ts setCursorWatch`
+ * replaces the thread without resetting anything, so its successor CARRIES the previous
+ * generation's committed value. That is the same rule, not an exception to it — there is a
+ * measured value to carry, and carrying it is what stops a Preferences slider from blinking
+ * already-hidden overlays back on. Birth defaults are for generations with nothing to inherit.
+ */
+export function newFocusDebounce(committed = true): FocusDebounce {
   return { committed, candidate: null, since: 0 }
 }
 
@@ -511,13 +536,22 @@ export function describeOverlayVisibility(hidden: boolean, at: number): string {
  *
  * With BOTH off this is always false: a user who wants none of it gets the pre-feature behavior
  * exactly, and (via `presenceNeeded`) never even starts the watcher.
+ *
+ * NEVER HIDE ON A GUESS — AND `observed` IS ONLY HALF OF THAT PROMISE (JOS-425). The flag below
+ * covers the gap before the watcher's very first line and the gap after one dies, and it is a
+ * strict fail-OPEN. What it does NOT cover is the instant it flips: `presence.ts applyRecord`
+ * raises `observed` on the first record of ANY kind, and the watcher's first tick sends its
+ * records one at a time, so for one message-pump turn one lane is measured and the others are
+ * still their birth values. That is where the reported startup blink came from and it is why both
+ * `eqRunning` and `eqFocused` are now BORN TRUE (shared/presencePrefs.ts `INITIAL_PRESENCE`).
+ * Every line here therefore hides only on something the watcher SAID — the focus lane additionally
+ * behind `FOCUS_HIDE_DEBOUNCE_MS` of it — which is the property this function is supposed to have.
  */
 export function overlaysShouldHide(p: PresenceState, prefs: OverlayAutoHidePrefs): boolean {
-  // NEVER HIDE ON A GUESS. Before the watcher's first line `eqRunning:false` means "we have not
-  // looked yet", not "the game is closed" — and the watcher has three system libraries to open
-  // before it can say otherwise. Acting on it would blink every overlay off at launch and back on a second
-  // later on a machine where the game was running the whole time. Fail OPEN, always: the same
-  // rule covers a watcher that died, which is why presence.ts resets this flag on exit.
+  // Before the watcher's first line nothing here is a fact — it has three system libraries to open
+  // before it can say otherwise. Acting on that would blink every overlay off at launch and back
+  // on a second later on a machine where the game was running the whole time. Fail OPEN, always:
+  // the same rule covers a watcher that died, which is why presence.ts resets this flag on exit.
   if (!p.observed) return false
   if (prefs.hideWhenNotRunning && !p.eqRunning) return true
   if (prefs.hideWhenUnfocused && !p.eqFocused) return true

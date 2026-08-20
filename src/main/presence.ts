@@ -95,9 +95,18 @@ type Listener = (state: PresenceState) => void
 
 const listeners = new Set<Listener>()
 let watcher: Worker | null = null
-let focus = newFocusDebounce(false)
+/**
+ * BORN COMMITTED-TRUE, in agreement with `INITIAL_PRESENCE.eqFocused` (JOS-425). The two are one
+ * fact told twice — the debounce's committed value is what `update({eqFocused})` writes — so they
+ * are constructed together at every one of the three sites below, and `newFocusDebounce`'s header
+ * carries the argument. The `true` is passed explicitly even though it is now the default: a birth
+ * state is the thing this bug was, and it should be readable at the site.
+ */
+let focus = newFocusDebounce(true)
 let focusTimer: NodeJS.Timeout | null = null
-let lastObservedFocus = false
+/** The last RAW observation, i.e. what the pending timer will re-fold. Seeded to match `focus`
+ *  for the same reason: nothing has been observed, so the assumption is the committed one. */
+let lastObservedFocus = true
 /**
  * The foreground record behind the CURRENT raw observation (JOS-424).
  *
@@ -413,19 +422,28 @@ function pumpMessage(chunk: unknown): void {
  * Fall back to "nothing known" and tell everyone.
  *
  * THIS IS THE WHOLE SAFETY PROPERTY, so it is worth stating what `INITIAL_PRESENCE` buys: with
- * `eqFocused:false` and `eqBounds:null` the ring PARKS (`cursorRingActive` needs both), and with
+ * `eqBounds:null` the ring PARKS (`cursorRingActive` needs bounds as well as focus), and with
  * `observed:false` auto-hide fails OPEN and un-hides the overlays (`overlaysShouldHide`'s first
  * line). A presence source that has stopped being trustworthy must take the features it drives
  * with it — a frozen `eqFocused:true` is what left a halo chasing the pointer across the user's
- * browser, and a frozen `eqRunning:false` would hide every overlay forever.
+ * browser, and a frozen `eqRunning:false` would hide every overlay forever. Note which half of
+ * that sentence does the work now that both fields are born TRUE (JOS-425): it is `eqBounds:null`
+ * that parks the ring and `observed:false` that un-hides the overlays, and neither depends on the
+ * birth value of a fact this watcher never got to measure.
  */
 function resetPresence(): void {
   if (focusTimer) {
     clearTimeout(focusTimer)
     focusTimer = null
   }
-  focus = newFocusDebounce(false)
-  lastObservedFocus = false
+  // A NEW GENERATION IS BORN ASSUMING EQ-SIDE (JOS-425). This is the restart path — went-silent,
+  // wedged, exited, start-failed — and it is the one the owner hit most: reset to a born-FALSE
+  // debounce, the successor's first record hid the overlays with no debounce at all and the show
+  // side put them back 200 ms later, on a machine that had never left the game. Born true, that
+  // first record is agreement and moves nothing; a machine genuinely elsewhere still hides, at
+  // the hide window. `newFocusDebounce`'s header is the full argument.
+  focus = newFocusDebounce(true)
+  lastObservedFocus = true
   // A dead watcher's last foreground record must never be read back as its successor's driver —
   // the same rule `forgetWatcherFacts` applies to the health anchors (JOS-310, JOS-424).
   lastForeground = null
@@ -685,8 +703,11 @@ function stopWatcher(): void {
   retire(w)
   logInfo('[everquest-companion] presence watcher stopped')
   state = INITIAL_PRESENCE
-  focus = newFocusDebounce(false)
-  lastObservedFocus = false
+  // Same birth rule as `resetPresence` (JOS-425): whatever starts next inherits nothing, so it
+  // inherits the assumption instead — and this is the path a settings change takes, where a blink
+  // would land on a user who is looking straight at Preferences.
+  focus = newFocusDebounce(true)
+  lastObservedFocus = true
   lastForeground = null
 }
 
@@ -711,6 +732,12 @@ function stopWatcher(): void {
  * in the same turn, re-announcing everything on its first ticks (the successor's change-detection
  * starts empty). Resetting would blink every auto-hidden overlay back on for ~160 ms because
  * somebody moved a slider in Preferences.
+ *
+ * WHICH MAKES IT THE ONE WATCHER-REPLACEMENT THAT DOES NOT RECONSTRUCT THE FOCUS DEBOUNCE, and
+ * that is deliberate under JOS-425's rule rather than an exception to it: `focus` here holds a
+ * value this app MEASURED a moment ago, and a measurement always beats a birth assumption. The
+ * assumption exists for a generation with nothing to inherit; carrying is what stops this path
+ * from re-showing overlays the user's own click on the Companion window just hid.
  */
 export function setCursorWatch(enabled: boolean): void {
   if (enabled === watchCursor) return
