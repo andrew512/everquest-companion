@@ -171,12 +171,15 @@ function IslandSection({
       data-testid="sky-target-island"
       data-island={island === null ? 'none' : String(islandNumber(island))}
     >
+      {/* `subtitle2` is the weight both remainder sections below title themselves with - the
+          headings are the same kind of thing and must not read as a different rank. Secondary
+          colour because a heading is scaffolding for the cards, never a row in its own right. */}
       <Typography
-        variant="overline"
+        variant="subtitle2"
         color="text.secondary"
         component="div"
         data-testid="sky-target-island-title"
-        sx={{ lineHeight: 1.6 }}
+        sx={{ mb: 0.75 }}
       >
         {island ?? UNSTATED_ISLAND_TITLE}
       </Typography>
