@@ -96,6 +96,18 @@
 // whose MESSAGES may legitimately differ (`Shock of Frost` has two rows saying two different
 // things) but whose NAME cannot, and a half-renamed pair would put a phantom line in the catalog.
 //
+// THE WRONG POLARITY is the sixth drift class, and it is why `field` may be `spellType` (JOS-413).
+// All five above are about WORDS; this one is about the wiki's TYPE COLUMN. `Pacify` is
+// `spell_type = Beneficial` on eqlwiki and the owner has ruled that a lull is a DEBUFF, so a
+// correction here writes the column rather than a sentence. The evidence bar is read one field
+// over: rules 1 and 2 are the wiki's word against ours (`from`/`to`, idempotent exactly as a
+// sentence is), rule 3's "stated mechanical drift" becomes a stated CATEGORY drift — the wiki filed
+// the spell by who casts it rather than by what it does — and rule 4's `db` route carries it,
+// because the wiki's OWN effect list is the witness against the wiki's own type column. It patches
+// EVERY row of a name, like a name correction and for the same reason: duplicates cannot disagree
+// about whether a spell is a good thing or a bad thing. The ruling, the derived census that keeps it
+// honest and the measured blast radius live in `spellCorrectionsPolarity.ts`.
+//
 // IDEMPOTENCE, IN BOTH DIRECTIONS. Every correction states the text it REPLACES. If a re-scrape
 // leaves the wiki text unchanged the correction applies; if the wiki is fixed upstream the entry
 // is already correct and the correction reports `satisfied` and does nothing; if the wiki changes
@@ -127,6 +139,12 @@ import { SUBJECT_PLACEHOLDER_CORRECTIONS } from './spellCorrectionsSubjects'
 // code-mass ceiling is shared with none of it; that file's header carries the report, the four rungs
 // of the ladder and the reason the fourth rung is deliberately left uncorrected.
 import { HEALING_LADDER_CORRECTIONS } from './spellCorrectionsHealing'
+// THE POLARITY RULING (JOS-413), appended below. The SIXTH drift class and the only one that is not
+// about a sentence: the owner ruled that the lull and memory-wipe families are DEBUFFS, whatever the
+// wiki's type column says. It lives next door for the same reason the two above do — its argument is
+// long, it carries a derived census that this file's code-mass ceiling should not be shared with, and
+// a reader checking the ruling is checking the whole family at once.
+import { POLARITY_CORRECTIONS } from './spellCorrectionsPolarity'
 
 /**
  * The hand-derived overlay. Ordered by the drift it fixes, not by spell name, because the drifts
@@ -635,16 +653,18 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
 
 /**
  * THE COMMITTED OVERLAY: the hand-derived entries above, then the subject-placeholder sweep, then
- * the shaman heal-over-time ladder.
+ * the shaman heal-over-time ladder, then the polarity ruling.
  *
  * ORDER IS NOT SIGNIFICANT HERE and the suite proves it: `applySpellCorrections` matches each
  * entry against the CURRENT text of the spell it names, and `tests/spellCorrections.test.mts`
  * refuses two entries that claim the same spell and field — so no entry can ever be reading what
  * another one wrote. The sweep goes last because it is the newer, bulkier half and a diff of it
- * should not push the hand-derived families around.
+ * should not push the hand-derived families around. The polarity block is trivially independent of
+ * all three: it is the only one that writes a field other than a message or a name.
  */
 export const SPELL_CORRECTIONS: readonly SpellCorrection[] = [
   ...HAND_DERIVED_CORRECTIONS,
   ...SUBJECT_PLACEHOLDER_CORRECTIONS,
-  ...HEALING_LADDER_CORRECTIONS
+  ...HEALING_LADDER_CORRECTIONS,
+  ...POLARITY_CORRECTIONS
 ]

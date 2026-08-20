@@ -33,8 +33,16 @@ export { SPELL_CORRECTIONS }
 /** The three message fields a correction can patch. */
 export type SpellMessageField = 'msgCastOnYou' | 'msgCastOnOther' | 'msgWearsOff'
 
-/** Everything a correction can patch: the three messages, and — since JOS-161 — the NAME. */
-export type SpellCorrectionField = SpellMessageField | 'name'
+/**
+ * Everything a correction can patch: the three messages, since JOS-161 the NAME, and since JOS-413
+ * the POLARITY (`spellType`).
+ *
+ * THE POLARITY IS THE SIXTH DRIFT CLASS and it is the only one that is not about a SENTENCE. The
+ * first five all assume the wiki is describing the right spell and getting its words wrong; a
+ * polarity correction says the wiki filed the spell on the wrong SIDE. `spellCorrectionsPolarity.ts`
+ * carries the family, the owner ruling and the derived census that keeps it honest.
+ */
+export type SpellCorrectionField = SpellMessageField | 'name' | 'spellType'
 
 /** How a correction earned its place — see THE EVIDENCE BAR in `spellCorrectionsList.ts`. */
 export type CorrectionAttribution = 'cast' | 'db' | 'sole'
@@ -139,6 +147,13 @@ export function applySpellCorrections(
  * spell is CALLED. Half a rename is worse than none: `SpellDb.byKey` and `buildSpellCatalog` fold
  * by name, so a renamed row and its un-renamed twin become two lines and the wizard lists a spell
  * that does not exist (JOS-161).
+ *
+ * A POLARITY correction takes ALL of them too, and for the same reason read one field over
+ * (JOS-413): era/rank duplicates of one spell genuinely differ about the sentence they print, but
+ * they cannot differ about whether the spell is a good thing or a bad thing. Half a reclassification
+ * is the worse of the two failures here — `spellNature` is what `classOf` folds into `cls`, so one
+ * corrected row and one untouched twin means the same Pacify is a buff or a debuff depending on
+ * which row a lookup happened to reach, and the two surfaces would disagree about the same bar.
  */
 function rowsFor(
   byName: ReadonlyMap<string, number[]>,
@@ -147,7 +162,7 @@ function rowsFor(
 ): number[] {
   const all = byName.get(name)
   if (!all) return []
-  return field === 'name' ? all : [all[0]]
+  return field === 'name' || field === 'spellType' ? all : [all[0]]
 }
 
 /** One (correction, spell) pair against the working list. Reports rather than throws. */
