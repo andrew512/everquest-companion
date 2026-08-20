@@ -127,8 +127,6 @@ export function isRandomDropWho(who: readonly string[]): boolean {
   return who.some((w) => w.toLowerCase().startsWith('random drop'))
 }
 
-const byName = dropperNameOrder
-
 /**
  * Invert a mob list into item -> droppers.
  *
@@ -147,7 +145,7 @@ export function buildDropperIndex(mobs: readonly MobEntry[]): DropperIndex {
       else idx.set(key, [toDropper(m)])
     }
   }
-  for (const list of idx.values()) list.sort(byName)
+  for (const list of idx.values()) list.sort(dropperNameOrder)
   return idx
 }
 
@@ -370,7 +368,7 @@ export function questKillTargets(items: readonly KillTargetItem[]): KillTarget[]
     }
   }
   return [...byPage.values()]
-    .sort((a, b) => (a.covers === b.covers ? byName(a.mob, b.mob) : b.covers - a.covers))
+    .sort((a, b) => (a.covers === b.covers ? dropperNameOrder(a.mob, b.mob) : b.covers - a.covers))
     .map((e) => ({ mob: e.mob, covers: e.covers, islands: [...e.islands].sort((a, b) => islandNumber(a) - islandNumber(b)) }))
 }
 

@@ -2,17 +2,18 @@
 // skyTargets — the Targets tab's whole model: "who do I still kill", cross-quest.
 // ============================================================================
 //
-// Issue #30, planned in docs/plans/sky-targets.md from
-// docs/brainstorms/2026-08-16-sky-targets-tab-requirements.md. The quest tracker says what each
-// quest needs; players invert it in their heads to the question they walk the islands with. This
-// suite pins the inversion as a pure fold, half against the COMMITTED data (the poskyDroppers
-// precedent: goldens over posky.json + the real catalog) and half against synthetic quests where
-// the committed data cannot express the case (partial holdings, turn-in counts).
+// GitHub issue #30, landed as JOS-417 from community PR #34 (johnsideserf). The quest tracker
+// says what each quest needs; players invert it in their heads to the question they walk the
+// islands with. This suite pins the inversion as a pure fold, half against the COMMITTED data (the
+// poskyDroppers precedent: goldens over posky.json + the real catalog) and half against synthetic
+// quests where the committed data cannot express the case (partial holdings, turn-in counts).
 //
 // WHAT IS PINNED, and the argument for each:
-//   1. THE NEED SET is never-turned-in and nothing else (`everTurnedIn`, the Ready tab's
-//      first-time reading). A reward-inferred completion (PR #33) reads turnIns >= 1 and is
-//      excluded by the same predicate — no special case, which is the point of the floor.
+//   1. THE NEED SET is the quests that still want something, and `firstTimeOnly` (default ON)
+//      decides whether an already-run quest is one of them — `everTurnedIn`, the Ready tab's
+//      first-time predicate, ported with its default. A completion inferred from a held reward
+//      would read turnIns >= 1 and be excluded by the same predicate — no special case, which is
+//      the point of resting on the count rather than on a flag.
 //   2. SHORTFALL AGGREGATES PER COUNTING KEY, never per quest. `computeQuestProgress` clamps
 //      `have` per quest with no cross-quest allocation, so a per-quest `have < need` filter
 //      would read two quests each "satisfied" by the same single held copy. The rule:
@@ -31,11 +32,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { skyTargets, type TargetsQuest, type TargetsQuestItem } from '../src/renderer/src/features/posky/skyTargets'
-import { skyDroppersFor, type DropperMob } from '../src/renderer/src/features/posky/poskyDroppers'
+import { isSkyMob, skyDroppersFor, type DropperMob } from '../src/renderer/src/features/posky/poskyDroppers'
 import type { MobEntry, PoskyQuest } from '../src/shared/types'
 import poskyRaw from '../src/renderer/src/data/eqlegends/posky.json' with { type: 'json' }
+import mobsRaw from '../src/renderer/src/data/eqlegends/mobs.json' with { type: 'json' }
 
 const QUESTS: PoskyQuest[] = (poskyRaw as { quests: PoskyQuest[] }).quests
+const MOBS: MobEntry[] = (mobsRaw as { mobs: MobEntry[] }).mobs
 
 // ---------------------------------------------------------------------------
 // Builders
@@ -111,10 +114,39 @@ test('a quest turned in once contributes nothing (AE1)', () => {
 })
 
 test('a reward-inferred completion is excluded by the same predicate (AE2)', () => {
-  // PR #33 floors turnIns to 1 when the reward sits in the inventory export; the fold reads
-  // the floored count and needs no rewardInferred special case.
+  // A completion inferred from a held reward would floor turnIns to 1; the fold reads the floored
+  // count through `everTurnedIn` and needs no separate "inferred" input to know about.
   const q = quest({ name: 'Test of Inferred', turnIns: 1, items: [item({ name: 'Sky Pearl', droppers: [mob('Gorgalosk')] })] })
   assert.equal(skyTargets([q]).mobs.length, 0)
+})
+
+// ---------------------------------------------------------------------------
+// 1b. …and the toggle that widens it (JOS-417)
+// ---------------------------------------------------------------------------
+
+test('firstTimeOnly OFF readmits a turned-in quest that still wants items', () => {
+  const q = quest({ name: 'Test of Refarm', turnIns: 2, items: [item({ name: 'Sky Pearl', droppers: [mob('Gorgalosk')] })] })
+  assert.equal(skyTargets([q]).mobs.length, 0, 'default ON is the never-turned-in reading')
+  const wide = skyTargets([q], false)
+  assert.equal(wide.mobs.length, 1)
+  assert.equal(wide.mobs[0].items[0].shortfall, 1)
+  assert.deepEqual(wide.mobs[0].items[0].quests.map((x) => x.questName), ['Test of Refarm'])
+})
+
+test('the toggle reaches MEMBERSHIP only - a refarm holding its items is still absent', () => {
+  // The arithmetic under the wider need set is the identical fold: a quest whose holdings already
+  // cover it contributes nothing whether or not it has ever been run.
+  const held = quest({ name: 'Test of Stocked', turnIns: 1, items: [item({ name: 'Sky Pearl', need: 2, held: 2, droppers: [mob('Gorgalosk')] })] })
+  assert.equal(skyTargets([held], false).mobs.length, 0)
+})
+
+test('with the box off, a run quest and a fresh one share one aggregate shortfall', () => {
+  const ran = quest({ className: 'Cleric', name: 'Test Ran', turnIns: 1, items: [item({ name: 'Sphinx Claw', held: 1, droppers: [mob('Sphinx')] })] })
+  const fresh = quest({ className: 'Rogue', name: 'Test Fresh', items: [item({ name: 'Sphinx Claw', held: 1, droppers: [mob('Sphinx')] })] })
+  const entry = skyTargets([ran, fresh], false).mobs[0].items[0]
+  // Two quests want one each, one copy is held: one short, and both quests are named.
+  assert.equal(entry.shortfall, 1)
+  assert.deepEqual(entry.quests.map((x) => x.questName).sort(), ['Test Fresh', 'Test Ran'])
 })
 
 test('a quest holding everything contributes nothing; an empty input is an empty model', () => {
@@ -286,4 +318,52 @@ test('islands ride per mob from the items it is the target for', () => {
     ]
   })
   assert.deepEqual(skyTargets([q]).mobs[0].islands, ['Island 3', 'Island 5'])
+})
+
+// ---------------------------------------------------------------------------
+// 5. Mob identity: the page, and the union behind it (JOS-417)
+// ---------------------------------------------------------------------------
+
+test('two quests resolving DIFFERENT droppers for one item yield both cards, either fold order', () => {
+  // `skyDroppersFor` reads each row's own `who` as its layer 1, so two quests wanting the same
+  // counting key are not guaranteed to hand back the same list. First-wins would make the card
+  // set depend on which quest folded first; the union does not.
+  const a = quest({ className: 'Cleric', name: 'Test A', items: [item({ name: 'Sphinx Claw', droppers: [mob('Sphinx')] })] })
+  const b = quest({ className: 'Rogue', name: 'Test B', items: [item({ name: 'Sphinx Claw', droppers: [mob('Gorgalosk')] })] })
+  for (const order of [[a, b], [b, a]]) {
+    const model = skyTargets(order)
+    assert.deepEqual(
+      model.mobs.map((t) => t.mob.name).sort(),
+      ['Gorgalosk', 'Sphinx'],
+      'both stated droppers survive the fold'
+    )
+    // ONE aggregate, two cards pointing at it: two quests wanting one each is a shortfall of 2,
+    // and both cards report that same number rather than a per-mob slice of it.
+    assert.deepEqual(model.mobs.map((t) => t.items[0].shortfall), [2, 2])
+    assert.deepEqual(
+      model.mobs.map((t) => t.items[0].quests.map((x) => x.questName).sort()),
+      [['Test A', 'Test B'], ['Test A', 'Test B']]
+    )
+  }
+})
+
+test('THE ERA/VARIANT MEASUREMENT: page identity is name identity in the Sky catalog today', () => {
+  // The card dedupes on `page`, which is the reading that stays correct if the catalog ever grows
+  // a second page for one name (an era or difficulty variant would draw its own card, with its own
+  // level and its own drop list, rather than silently merging two mobs). This pins the two facts
+  // that make that a non-issue TODAY, so a data change cannot quietly turn it into one.
+  const sky = MOBS.filter((m) => isSkyMob(m))
+  assert.ok(sky.length > 0, 'the committed catalog knows Plane of Sky mobs')
+  const byName = new Map<string, Set<string>>()
+  for (const m of sky) {
+    const set = byName.get(m.name.toLowerCase()) ?? new Set<string>()
+    set.add(m.page)
+    byName.set(m.name.toLowerCase(), set)
+  }
+  const shared = [...byName.entries()].filter(([, pages]) => pages.size > 1)
+  assert.deepEqual(shared.map(([n]) => n), [], 'no Sky mob name spans two catalog pages')
+  // And there is no era annotation on a mob row at all to key a variant off (the `eraTag` the item
+  // DB carries has no counterpart in MobEntry) — so nothing is being dropped by not reading one.
+  const withEra = sky.filter((m) => 'eraTag' in m)
+  assert.deepEqual(withEra.map((m) => m.page), [], 'MobEntry carries no era tag to honour')
 })
