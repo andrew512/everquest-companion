@@ -348,16 +348,22 @@ function PoskyBody(x: PoskyBodyProps): JSX.Element {
   if (list.tab === 'targets') {
     // The kill list (issue #30): derived from the same visible set as every other tab, drawn
     // by its own view file (TargetsView.tsx) because it renders mob cards, not quest rows.
-    // `onOpenMob` rides in on the rows bundle — same router the quest rows' mob chips use.
-    // The count source rides along on the Ready tab's JOS-294 argument - it decides every
-    // shortfall this tab shows.
+    // `onOpenMob` rides in on the rows bundle — same router the quest rows' mob chips use, and
+    // `list.revealQuest` is the other door: a quest name on a card is the same deep link a
+    // celebration toast follows (JOS-417), so the tab a player leaves is the one they arrived
+    // for. The count source and the first-time toggle ride along on the Ready tab's JOS-294
+    // argument - between them they decide every shortfall this tab shows.
     return (
       <TargetsView
         targets={list.targets}
         onOpenMob={rows.onOpenMob}
+        onOpenQuest={list.revealQuest}
         countSource={countSource}
         onCountSource={onCountSource}
         inventoryLoadedAt={inventoryLoadedAt}
+        firstTimeOnly={list.targetsFirstTimeOnly}
+        onFirstTimeOnly={list.setTargetsFirstTimeOnly}
+        refarmCount={list.targetsRefarmCount}
       />
     )
   }

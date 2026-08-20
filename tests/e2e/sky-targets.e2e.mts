@@ -8,7 +8,9 @@
  * rests on: that the list moves LIVE — an ignore flag flipped on the Quests tab, a loot line
  * travelling chokidar to Tailer to the loot ledger, a trade closing a quest — each re-derives
  * the pane with no reload anywhere. JOS-87 is the standing reminder that chains break at seams
- * every unit test is happy with.
+ * every unit test is happy with. JOS-417 added the two seams the integration grew: a quest name
+ * that is a DOOR onto the Quests tab (`revealQuest`, a control on one tab moving another), and
+ * the first-time toggle, whose whole subject is a quest that is ABSENT.
  *
  * EVERY LINE SHAPE IS COPIED FROM THE OWNER'S REAL LOG, never invented (the awaiting-sample law)
  * — the same proven Beastlord Test of Azarack lines sky-turnin.e2e.mts and
@@ -39,6 +41,9 @@ const COUNT = '[data-testid="posky-targets-count"]'
 const ROW = '[data-testid^="sky-target-row-"]'
 const SEARCH = '[data-testid="posky-search"] input'
 const COUNTS = '[data-testid="posky-counts"]'
+/** JOS-417's two additions: the quest door on an item line, and the first-time toggle. */
+const QUEST_LINK = '[data-testid="sky-target-quest"]'
+const FIRST_TIME = '[data-testid="posky-targets-first-time"]'
 /** The flag buttons carry no testid; their aria-labels are the stable words the user hears. */
 const IGNORE = '[aria-label="Ignore this quest permanently"]'
 const UNIGNORE = '[aria-label="Stop ignoring this quest"]'
@@ -61,6 +66,14 @@ const MARKER = ITEMS[0]
 /** The pane's whole text — presence is asserted on words, the way a player reads the tab. */
 function paneText(page: Page): Promise<string> {
   return page.evaluate((sel) => document.querySelector(sel)?.textContent ?? '', PANE)
+}
+
+/** Is the first-time box ticked? Reads the checkbox itself, never its wrapper's class. */
+function firstTimeTicked(page: Page): Promise<boolean | null> {
+  return page.evaluate((sel) => {
+    const input = document.querySelector(sel)?.querySelector('input')
+    return input instanceof HTMLInputElement ? input.checked : null
+  }, FIRST_TIME)
 }
 
 /** The tab label's own count, or null while the tab is countless. */
@@ -170,6 +183,58 @@ async function stepLiveArc(page: Page, log: FixtureLog, at: Date): Promise<void>
   check('…AND THE TURN-IN KEEPS IT OFF: a run quest never rejoins the first-time need set', !settled.includes(MARKER))
 }
 
+/**
+ * JOS-417: A QUEST NAME ON A CARD IS A DOOR. The item lines name the quests that want the item;
+ * clicking one is `revealQuest` — the same deep link a celebration toast follows — so the app
+ * lands on the Quests tab with every filter cleared and the search box holding that name. The
+ * search box is the falsifiable half: the tab could switch for any reason, but only the deep link
+ * fills the box, and a filter left set would be the defect `revealQuest` exists to prevent.
+ */
+async function stepQuestDoor(page: Page): Promise<void> {
+  const name = await page.evaluate(
+    (sel) => document.querySelector(sel)?.textContent ?? '',
+    QUEST_LINK
+  )
+  if (!check('an item line names a quest to open', name.trim() !== '', `name=${name}`)) return
+  await page.click(QUEST_LINK, { timeout: 15_000 })
+  await page.waitForSelector(COUNTS, { timeout: 15_000 })
+  const typed = await settle(
+    () => page.evaluate((sel) => (document.querySelector(sel) as HTMLInputElement | null)?.value ?? '', SEARCH),
+    (v) => v !== '',
+    { timeoutMs: 15_000 }
+  )
+  check(
+    'CLICKING A QUEST NAME OPENS IT ON THE QUESTS TAB, filters cleared',
+    typed.trim() === name.trim(),
+    `search=${typed} link=${name}`
+  )
+  await page.fill(SEARCH, '', { timeout: 15_000 })
+  await page.click(TAB_TARGETS, { timeout: 15_000 })
+  await page.waitForSelector(PANE, { timeout: 15_000 })
+}
+
+/**
+ * JOS-417, the last live transition and the reason the toggle exists. The arc above left the
+ * Beastlord quest TURNED IN with its items spent — so it wants them again, and the only thing
+ * keeping it off the list is the first-time box. Unticking brings the marker straight back; the
+ * box is the honest inverse of the assertion the arc just made, which is what makes both
+ * falsifiable rather than one of them being a way to always pass.
+ */
+async function stepRefarmToggle(page: Page): Promise<void> {
+  const ticked = await firstTimeTicked(page)
+  if (!check('the first-time box is drawn and starts ticked', ticked === true, `ticked=${String(ticked)}`)) return
+  const before = await paneText(page)
+  if (!check('the run quest is off the list while the box is ticked', !before.includes(MARKER))) return
+
+  await page.click(FIRST_TIME, { timeout: 15_000 })
+  const wide = await settle(() => paneText(page), (t) => t.includes(MARKER), { timeoutMs: 20_000 })
+  check('UNTICKING THE BOX READMITS THE REFARM - its items were spent, so it wants them again', wide.includes(MARKER))
+
+  await page.click(FIRST_TIME, { timeout: 15_000 })
+  const narrow = await settle(() => paneText(page), (t) => !t.includes(MARKER), { timeoutMs: 20_000 })
+  check('…and re-ticking it puts the first-time reading back', !narrow.includes(MARKER))
+}
+
 async function main(): Promise<void> {
   buildIfStale()
 
@@ -185,8 +250,10 @@ async function main(): Promise<void> {
         throw new Error('never reached the Targets tab - nothing below can be asserted')
       }
       await stepPane(page)
+      await stepQuestDoor(page)
       await stepIgnoreRemoves(page)
       await stepLiveArc(page, log, new Date(now - 60_000))
+      await stepRefarmToggle(page)
       if (failures.length) await dumpArtifacts(page, 'sky-targets-FAIL')
     } finally {
       await launched.close()
