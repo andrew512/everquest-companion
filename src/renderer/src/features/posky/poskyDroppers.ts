@@ -104,12 +104,27 @@ function toDropper(m: MobEntry): DropperMob {
 }
 
 /** Deterministic, source-order-independent: by name (case-folded), then page as the tiebreak.
- *  Nothing in the catalog ranks droppers, so inventing an importance order would be a guess. */
-function byName(a: DropperMob, b: DropperMob): number {
+ *  Nothing in the catalog ranks droppers, so inventing an importance order would be a guess.
+ *  EXPORTED since the Targets tab (issue #30): its cross-quest fold sorts the same mobs, and two
+ *  comparators for one order is exactly the drift that would make two tabs name different lead
+ *  mobs from identical data. */
+export function dropperNameOrder(a: DropperMob, b: DropperMob): number {
   const an = a.name.toLowerCase()
   const bn = b.name.toLowerCase()
   if (an !== bn) return an < bn ? -1 : 1
   return a.page < b.page ? -1 : a.page > b.page ? 1 : 0
+}
+
+/**
+ * Is this `who` the scrape's "random drop — any Plane of Sky mob" statement? A case-insensitive
+ * PREFIX match on purpose, in the module that owns the `who` vocabulary (the header's nine
+ * measured values): the literal sentinel carries an em dash, which `tests/copyNoEmDash.test.mts`
+ * bans from renderer string literals — and consumers matching prose they do not own is how a
+ * scraper rewording silently reclassifies every Wind Rune. One predicate, beside the vocabulary
+ * it interprets, is the closest this can get to the string's author without touching scripts/.
+ */
+export function isRandomDropWho(who: readonly string[]): boolean {
+  return who.some((w) => w.toLowerCase().startsWith('random drop'))
 }
 
 /**
@@ -130,7 +145,7 @@ export function buildDropperIndex(mobs: readonly MobEntry[]): DropperIndex {
       else idx.set(key, [toDropper(m)])
     }
   }
-  for (const list of idx.values()) list.sort(byName)
+  for (const list of idx.values()) list.sort(dropperNameOrder)
   return idx
 }
 
@@ -353,7 +368,7 @@ export function questKillTargets(items: readonly KillTargetItem[]): KillTarget[]
     }
   }
   return [...byPage.values()]
-    .sort((a, b) => (a.covers === b.covers ? byName(a.mob, b.mob) : b.covers - a.covers))
+    .sort((a, b) => (a.covers === b.covers ? dropperNameOrder(a.mob, b.mob) : b.covers - a.covers))
     .map((e) => ({ mob: e.mob, covers: e.covers, islands: [...e.islands].sort((a, b) => islandNumber(a) - islandNumber(b)) }))
 }
 
