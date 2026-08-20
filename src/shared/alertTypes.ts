@@ -300,14 +300,16 @@ export type SpeechInstallResult =
  */
 export interface SpeechInstallProgress {
   engine: SpeechEngine
-  phase: 'checking' | 'downloading' | 'verifying' | 'done' | 'failed'
+  /** `waiting` is a rate-limited backoff (JOS-420) — minutes long, and a bar that is waiting looks
+   *  exactly like a bar that is stuck unless it says which it is. */
+  phase: 'checking' | 'downloading' | 'verifying' | 'waiting' | 'done' | 'failed'
   /** File currently being worked on, when one is ('kokoro-v1.0.int8.onnx'). */
   asset?: string
   /** Bytes secured across the whole install so far. */
   received: number
   /** Total bytes the install will move (0 while unknown). */
   total: number
-  /** Human-readable detail for a 'failed' phase. Never shown for the others. */
+  /** Human-readable detail for a 'failed' or 'waiting' phase. Never shown for the others. */
   message?: string
 }
 

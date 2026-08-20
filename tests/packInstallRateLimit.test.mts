@@ -23,9 +23,13 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { assetPath, provisionKokoro } from '../src/main/speech/provision'
+import type { SpeechInstallProgress } from '../src/shared/alertTypes'
 import {
   INSTALL_RETRY_BASE_MS,
   MAX_INSTALL_ATTEMPTS,
@@ -350,6 +354,85 @@ test('A RATE LIMIT IS NOT AN INSTALL FAILURE — the downgrade', () => {
   logPackInstallFailure({ pack: 'p', attempt: 1, attempts: 3, final: true, err: statusError(404) }, r)
   assert.equal(r.filed.length, 1)
   resetPackInstallWarnings()
+})
+
+// -------------------------------------------------------------------------- the second downloader
+//
+// The voice model is the other thing this app fetches from a GitHub release, 92 MB at a time, and
+// it had the same defect in smaller print: three attempts at 2s and 4s, whatever the answer was.
+// It borrows the policy above rather than growing a second copy of it — and NOTHING ELSE about it
+// moves (`tests/speechEngine.test.mts` still proves the 404 case is three attempts at [2000, 4000],
+// and the resume/digest/atomicity behaviour is untouched).
+
+const BODY = Buffer.from('the model, in spirit'.repeat(40))
+const ASSET = {
+  name: 'model.onnx',
+  url: 'https://github.com/x/y/releases/download/model-files-v1.0/model.onnx',
+  sha256: createHash('sha256').update(BODY).digest('hex'),
+  bytes: BODY.length
+}
+
+/** A fetch that answers 429 for the first `count` requests, then serves the real body. */
+function rateLimitedFetch(opts: { count: number; retryAfter?: string; onCall: () => void }) {
+  let served = 0
+  return ((): Promise<Response> => {
+    opts.onCall()
+    if (served++ < opts.count) {
+      const headers = opts.retryAfter === undefined ? undefined : { 'Retry-After': opts.retryAfter }
+      return Promise.resolve(new Response(null, { status: 429, headers }))
+    }
+    return Promise.resolve(new Response(new Uint8Array(BODY), { status: 200 }))
+  }) as unknown as typeof fetch
+}
+
+test('THE VOICE MODEL DOWNLOAD HONOURS THE SAME CLOCK — four refusals and it still lands', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'eqc-speech-429-'))
+  const waits: number[] = []
+  const phases: SpeechInstallProgress[] = []
+  let calls = 0
+  const result = await provisionKokoro({
+    userData: root,
+    assets: [ASSET],
+    fetchImpl: rateLimitedFetch({ count: 4, retryAfter: '90', onCall: () => calls++ }),
+    onProgress: (p) => phases.push(p),
+    sleep: (ms) => {
+      waits.push(ms)
+      return Promise.resolve()
+    }
+  })
+  // The old budget of three would have given up on the third refusal, six seconds in.
+  assert.deepEqual(result, { ok: true })
+  assert.equal(calls, 5)
+  assert.deepEqual(waits, [90_000, 90_000, 90_000, 90_000], 'Retry-After, verbatim, every time')
+  assert.deepEqual(readFileSync(assetPath(root, ASSET)), BODY)
+  // AND THE WAIT IS ANNOUNCED: 92 MB behind a bar somebody is watching, and a bar that is waiting
+  // looks exactly like a bar that is stuck.
+  const waiting = phases.filter((p) => p.phase === 'waiting')
+  assert.equal(waiting.length, 4)
+  assert.match(String(waiting[0].message), /retrying in 90s/)
+})
+
+test('…and with no header it backs off over minutes, then says the true thing', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'eqc-speech-429-'))
+  const waits: number[] = []
+  let calls = 0
+  const result = await provisionKokoro({
+    userData: root,
+    assets: [ASSET],
+    fetchImpl: rateLimitedFetch({ count: 99, onCall: () => calls++ }), // never lets up
+    sleep: (ms) => {
+      waits.push(ms)
+      return Promise.resolve()
+    }
+  })
+  assert.equal(result.ok, false)
+  assert.equal(calls, MAX_RATE_LIMITED_ATTEMPTS, 'the rate-limited budget, not the general three')
+  assert.equal(waits.length, MAX_RATE_LIMITED_ATTEMPTS - 1)
+  assert.ok(waits.every((ms) => ms >= 15_000), 'every wait is a real wait, not 2 seconds')
+  assert.ok(waits.reduce((a, b) => a + b, 0) > 5 * 60_000, 'a minutes-scale horizon')
+  // NOT `HTTP 429 for model.onnx`: the download is fine and the bytes fetched are kept.
+  assert.match(result.message ?? '', /rate limiting/i)
+  assert.match(result.message ?? '', /try again/i)
 })
 
 test('THE WIRING: the header is parsed where it exists, and the wait is said out loud', () => {
