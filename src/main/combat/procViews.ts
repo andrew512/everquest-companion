@@ -43,6 +43,7 @@ import { sumMap } from './aggregate'
 import { stateKeyOf } from './stateTimeline'
 import { buildAttributionReport, concentrationOf, linkStrength, procRate } from './procWindows'
 import { isCastlessLaneName, laneCanonKey, laneCount, sidesCount } from './procDetect'
+import { FINISHING_BLOW } from './taxonomy'
 import { idKey, spellCanonKey } from '../log/parseCommon'
 import { POISONS, isSlowCapable } from '../../shared/poisons'
 import { PROC_BUFF_CATALOG } from '../../shared/procBuffs'
@@ -156,14 +157,16 @@ function spellSource(name: string, w: SourceWindows): ProcSourceWindow | undefin
  *   - N/A     — a SLAY lane. Slay Undead is an innate class proc: there is no span to observe,
  *               was never one to miss, and flagging it 'ambiguous' would invite a reader to
  *               look for a window that does not exist. It divides by the segment plainly.
- *               A CLICK lane joins it there (JOS-438), and for the mirror-image reason: the
+ *               An AA lane (Finishing Blow, JOS-437) is the same kind of thing said the same
+ *               way — an innate ability, permanently owned, with no span at all.
+ *               A CLICK lane joins them there (JOS-438), and for the mirror-image reason: the
  *               source is an item the player is holding, which the dump has just told us they
  *               have. There is no span that could have been off, so `sourceAmbiguous` — whose
  *               whole sentence is "this rate is a LOWER bound because the source may have been
  *               absent" — would be false. It divides by the segment, plainly and exactly.
  */
 function sourceInput(origin: ProcOrigin, label: string, w: SourceWindows): { source?: ProcSourceWindow; sourceUnknown?: boolean } {
-  if (origin === 'slay' || origin === 'click') return {}
+  if (origin === 'slay' || origin === 'aa' || origin === 'click') return {}
   const source = origin === 'poison' ? poisonSource(label, w) : spellSource(label, w)
   return source ? { source } : { sourceUnknown: true }
 }
@@ -246,8 +249,10 @@ function laneRate(count: number, b: RateBase, origin: ProcOrigin, label: string)
   })
 }
 
-/** The lane list, in one pass per origin. Order: poison, then spell, then slay — the order the
- *  questions get asked, with each block sorted by count desc. */
+/** The lane list, in one pass per origin. Order: poison, then spell, then slay, then aa — the
+ *  order the questions get asked, with each block sorted by count desc. The two swing-borne AAs
+ *  sit together at the end because they are the two rows whose `directDamage` is not the damage
+ *  the proc added (both carry `marginalDamage`; see ProcLaneView). */
 function buildLanes(spec: ProcsViewSpec, states: readonly StateSpan[]): ProcLaneView[] {
   const b = rateBase(spec, states)
   const you = spec.agg.out.get('you')
@@ -256,7 +261,12 @@ function buildLanes(spec: ProcsViewSpec, states: readonly StateSpan[]): ProcLane
   for (const l of poison) {
     for (const k of candidateKeys(l.name)) covered.add(k)
   }
-  return [...poison, ...spellLanes(spec, b, covered, linkCtx(spec, states)), ...slayLanes(you, b)]
+  return [
+    ...poison,
+    ...spellLanes(spec, b, covered, linkCtx(spec, states)),
+    ...slayLanes(you, b),
+    ...finishingBlowLanes(you, b)
+  ]
 }
 
 /** The two denominators every link in this segment shares, plus the states to test. */
@@ -413,12 +423,21 @@ export function effectLandings(agg: Agg): Map<string, { name: string; count: num
  *     them only when a RESIST created the row and then labelled them `0 landed · N resisted`.
  *     A damage-less lane with landings now gets its tag and its row (see `effectLandings`), and
  *     that row reads `0 dmg · N landed`. (2026-08-04, overturned.)
+ *   - an `aa` lane is turned away outright (JOS-437). Finishing Blow rides a swing and keeps it
+ *     in the 'melee' category, so there is NO row that is the proc: its damage sits inside
+ *     `Slash`, `Bash`, `Strike` and the rest, mixed with the ordinary swings that dominate them.
+ *     Both ways to tag it anyway are worse than not tagging it — annotating the weapon rows
+ *     would print `proc · N ppm` on rows that are ~99% ordinary attacks (the JOS-438 complaint,
+ *     arriving from the other side), and minting a `Finishing Blow` row would show damage the
+ *     meter is already showing under the weapon. So the lane states itself in the Procs panel,
+ *     where it is the whole subject, and says nothing in the drill. (Stands.)
  */
 function procSkillTags(spec: ProcsViewSpec, lanes: readonly ProcLaneView[]): ProcSkillTag[] {
   const you = spec.agg.out.get('you')
   const landed = effectLandings(spec.agg)
   const out: ProcSkillTag[] = []
   for (const l of lanes) {
+    if (l.origin === 'aa') continue
     const skills = taggedSkills(you, l)
     // A damage-less strike is its OWN row now: the ledger's label is what the drill names it,
     // so the tag joins on that name exactly the way a damage row's tag joins on its own.
@@ -438,6 +457,9 @@ function procSkillTags(spec: ProcsViewSpec, lanes: readonly ProcLaneView[]): Pro
  * merges them into a single row labelled with the lane's own name (`groupSlay` in
  * dashboardData.ts). That merged row is what carries the rate; tagging the weapon rows instead
  * would put a proc rate on lanes that are mostly ordinary swings.
+ *
+ * An `aa` lane never reaches here — `procSkillTags` turns it away first, for the reason
+ * written there.
  */
 function taggedSkills(you: SourceStat | undefined, l: ProcLaneView): string[] {
   if (l.origin === 'slay') return [l.name]
@@ -568,6 +590,59 @@ function slayLanes(you: SourceStat | undefined, b: RateBase): ProcLaneView[] {
   const meanMelee = melee && melee.hits > 0 ? melee.total / melee.hits : 0
   const l = lane({ name: 'Slay Undead', origin: 'slay', count: slay.hits, damage: slay.total, heal: 0, resisted: 0 }, b)
   l.marginalDamage = slay.total - slay.hits * meanMelee
+  return [l]
+}
+
+/**
+ * THE FINISHING-BLOW LANE (JOS-437) — the other swing-borne AA, and the one that was listed
+ * NOWHERE. Report 01M0DNQQ41G1YA20N4ZM07HVWG, verbatim: "The proc from Finishing Blow AA is not
+ * being listed anywhere (neither in melee nor under procs). Since it's a proc similar to slay
+ * undead AA proc, it should either have it's combat damage listing component, or at least
+ * listed under procs."
+ *
+ * THE REPORT IS EXACTLY RIGHT AND THE ANALOGY IS EXACTLY RIGHT. `(Finishing Blow)` has been
+ * parsed since Task #51 — `parseModifiers` even recombines the two words by name — and
+ * `tallyModifiers` has been counting it, with its damage, on `SourceStat.mods` all along. What
+ * was missing is that NOTHING RENDERED THAT MAP. `SourceRoundsView.modifiers` carries it onto
+ * the wire and no component reads it; the drill groups by skill, so the damage is really there
+ * but spread invisibly across Slash/Bash/Strike; the timeline shows the modifier only in one
+ * event's hover. So the honest description of the defect is not "unparsed" and not "missing a
+ * registry row" — it is a counted fact with no surface. This gives it one.
+ *
+ * WHY IT IS NOT A CATEGORY, where Slay Undead is one. A category MOVES the damage out of
+ * 'melee', and Slay Undead's move was a user directive with a mechanism behind it (a holy proc
+ * against undead is arguably not a weapon hit). Finishing Blow's damage IS a weapon swing's —
+ * bigger, from the same swing — and pulling ~1,600 of the owner's melee lines into a category
+ * of their own would change every melee mean, the swing denominators and the drill's shape to
+ * fix a listing problem. Law 8's tripwire says the cheap fix is the right one here: this lane
+ * MOVES NO DAMAGE. It reads the tally that was already being kept.
+ *
+ * THE BASELINE, and it differs from slayLanes' by one subtraction (see ProcLaneView.
+ * marginalDamage). Slay swings LEFT the melee category, so `melee` there is already the
+ * ordinary body. Finishing Blow swings did NOT, so `melee` here still contains them — and it
+ * is the mean of the swings the proc did NOT ride that the excess is meaningful against.
+ * Measured on the owner's whole log: 66.3 ordinary against 167.8 with the modifier, so the
+ * marginal is roughly one and a half extra swings per firing and is emphatically not zero.
+ *
+ * EMITTED ONLY WHEN IT FIRED, exactly as the slay lane is: a permanent 0-count row on every
+ * fight that never dropped anything below the threshold is noise.
+ */
+function finishingBlowLanes(you: SourceStat | undefined, b: RateBase): ProcLaneView[] {
+  const t = you?.mods.get(FINISHING_BLOW)
+  // `count` includes avoided swings; the miss family only ever carries single-word modifiers
+  // (whole-log sweep, taxonomy.ts header), so this subtraction is a guard and not a correction.
+  const hits = t ? t.count - t.avoided : 0
+  if (!t || hits <= 0) return []
+  const melee = you?.byCategory.get('melee')
+  // The ORDINARY body: this category minus the swings this proc rode. Both terms are clamped
+  // because a compound carrying BOTH `Slay Undead` and `Finishing Blow` would book its damage
+  // under 'slay' while the tally still counted it here. Zero such lines exist in any log swept
+  // so far (0 of 1,729), and a negative baseline is not worth risking on that.
+  const plainHits = Math.max(0, (melee?.hits ?? 0) - hits)
+  const plainTotal = Math.max(0, (melee?.total ?? 0) - t.total)
+  const meanMelee = plainHits > 0 ? plainTotal / plainHits : 0
+  const l = lane({ name: FINISHING_BLOW, origin: 'aa', count: hits, damage: t.total, heal: 0, resisted: 0 }, b)
+  l.marginalDamage = t.total - hits * meanMelee
   return [l]
 }
 

@@ -175,8 +175,8 @@ export function procListRows(p: ProcsView): ProcListRow[] {
  * How many procs this selection saw — the ledger's own headline.
  *
  * The unified lane count when the engine sent one (poison Strikes, cast-less spell effects and
- * Slay Undead together), else the shipped poison-only count. So the header can never quote a
- * number the list under it does not add up to.
+ * the two swing-borne AAs — Slay Undead and Finishing Blow — together), else the shipped
+ * poison-only count. So the header can never quote a number the list under it does not add up to.
  */
 export function procCount(p: ProcsView): number {
   return p.overall?.count ?? p.strikeCount
@@ -241,6 +241,7 @@ const ORIGIN_NOTE: Record<ProcOrigin, string> = {
   poison: 'A rogue poison Strike: it printed its landing emote and no cast line, which is the only way a Strike ever appears.',
   spell: 'Detected as a proc by INFERENCE: this spell effect landed with no “You begin casting” line of yours behind it. The log never names what fired it, so this is a co-occurrence, not a source.',
   slay: 'The Slay Undead melee proc, counted from the damage taxonomy - it rides an ordinary weapon swing and prints no spell line of its own.',
+  aa: 'An innate AA proc, counted from the “(Finishing Blow)” annotation the game prints on the swing it rode. Its damage stays in the melee lane, where it belongs - a weapon swing is a weapon swing - so the figure here is the damage of the swings that procced, not the damage the proc added. That estimate is the marginal below.',
   click:
     'NOT a proc - an item CLICK. It landed with no “You begin casting” line, exactly as a proc does, and your own inventory dump names an instant click effect of this spell that no weapon in the item database procs. The rate below is how often you pressed it, not how often it fired on its own.'
 }
@@ -248,7 +249,7 @@ const ORIGIN_NOTE: Record<ProcOrigin, string> = {
 /** The WORD a lane's rate is measured in. A proc rate and a click rate are different claims, and
  *  the unit is where the difference has to show up (JOS-438). */
 const ORIGIN_UNIT: Record<ProcOrigin, string> = {
-  poison: 'proc', spell: 'proc', slay: 'proc', click: 'click'
+  poison: 'proc', spell: 'proc', slay: 'proc', aa: 'proc', click: 'click'
 }
 
 /** A drill row's proc annotation: `proc · 3.1 ppm`, plus the hover that states its basis. */
