@@ -679,6 +679,21 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   must read the CORRECTED entries** — `spellClasses.ts` and
   `levelUnlocks.ts` do; a raw-`spells.json` importer that looks up BY NAME is
   a silent miss waiting to happen. Full story: docs/agents-archive.md.
+  Since JOS-440 the drift can also run the OTHER way: the wiki retitled a
+  page the game never renamed (`Invisibility vs. Undead`), and the correction
+  restores the game's spelling — the log and `spells_us.txt` outrank the wiki
+  on names, always.
+
+- **THE REMOVALS LAYER MAKES TWO CLAIMS NOW** (JOS-440,
+  `src/main/data/spellRemovals.ts` `supersededBy`): the original absence
+  claim ("no player can learn this; the row leaves the DB", instrument: a
+  person, dated) and the duplicate-page claim ("the wiki documents one spell
+  twice; THIS page is the copy EQ Legends is not running; the row named in
+  `supersededBy` survives", instrument: the client's own `spells_us.txt`,
+  dated). A superseded entry withdraws nothing from the player — a duplicate
+  leaves, the survivor must outlive the whole load (asserted by name), and
+  removals run BEFORE corrections so a survivor may be a row a rename lands
+  on. Only a `supersededBy` entry may claim a rename target.
 
 ### Electron trust boundary (do not weaken)
 
