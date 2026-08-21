@@ -52,10 +52,12 @@ import {
   getActiveLogPath,
   getEqInstallDir,
   getProgress,
-  setAchievements,
   setActiveLogPath,
   setInventory
 } from './store'
+// The achievements dump's write pair (JOS-429) — a split-out store accessor, same reason the tail
+// mark below is one: store.ts is at the factoring ceiling.
+import { setAchievements } from './storeAchievements'
 // The clean-shutdown tail mark (JOS-57 scope addition) — a split-out store accessor, for the
 // reason its own header gives: store.ts is at the factoring ceiling.
 import { getLogTailMark, setLogTailMark } from './logTailMark'

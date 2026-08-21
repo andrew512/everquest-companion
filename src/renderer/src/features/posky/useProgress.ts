@@ -28,16 +28,13 @@ import { ambiguousQuestNames, computeSharedItems, type SharedItemsMap } from './
 import { skyDroppersFor, type DropperMob } from './poskyDroppers'
 import { countTurnIns, newlyCompletedTurnIns } from './turnInCelebration'
 import { questDropRecency } from './questSort'
-import { rewardInferredQuests } from './rewardInference'
-import { achievementVouchedQuests } from './achievementInference'
-import { withDerivedCompletion } from './questCompletion'
+import { useDerivedCompletions } from './derivedCompletions'
 // The turn-in ledger (JOS-131) — the ONE place a turn-in count is decided, shared with main's
 // store so the renderer and the persisted file cannot disagree about what a count means.
 // Relative value import, per the repo's node-tested-module rule.
 import {
   resolveTurnIns,
   turnInsToPersist,
-  type DerivedCompletionSource,
   type DerivedEvidence,
   type QuestTurnIns,
   type TurnInInstants
@@ -650,38 +647,16 @@ export function useProgress(opts?: UseProgressOptions): UseProgress {
   })
 
   const overridesByKey = useMemo(() => itemOverridesByKey(itemOverrides), [itemOverrides])
-  // Which quests the loaded export vouches for (issue #27) — read from the RAW dump counts, not
-  // the reconciled `net`, because the inference is about what the export SAW, whatever count
-  // source the user picked for the farming numbers. Derived on every read, never persisted.
-  const rewardVouched = useMemo(
-    () => rewardInferredQuests(posky.quests, progress?.inventory),
-    [progress?.inventory]
-  )
-  // …and which the achievements dump vouches for (JOS-429) — the SERVER'S OWN answer, which is why
-  // it outranks the one above wherever both speak. Same shape, same derived-on-every-read rule,
-  // same never-persisted-as-a-turn-in promise; only the evidence is stronger.
-  const achievementVouched = useMemo(
-    () => achievementVouchedQuests(posky.quests, progress?.achievementUnlocks),
-    [progress?.achievementUnlocks]
-  )
-  // THE LADDER'S INPUT, in one memo so the map below sees a stable array. The ORDER HERE DOES NOT
-  // DECIDE ANYTHING — `derivedCompletion` ranks by name (shared/questTurnIns.ts) precisely so the
-  // answer cannot depend on the order a hook happened to build its list in.
-  const derivedSources = useMemo<DerivedCompletionSource[]>(
-    () => [
-      { evidence: 'achievement', vouched: achievementVouched },
-      { evidence: 'reward', vouched: rewardVouched }
-    ],
-    [achievementVouched, rewardVouched]
-  )
+  // The DERIVED completion floor — the reward in your inventory export (issue #27) and the
+  // achievements dump's own answer (JOS-429), ranked. One hook, because with two sources it is one
+  // subject; derivedCompletions.ts carries the reasoning and the never-persisted promise.
+  const derived = useDerivedCompletions(posky.quests, progress)
   const quests = useMemo<QuestProgress[]>(() => {
     if (!progress) return []
     const counts = { all: turnIns.all, log: logCounts }
     const facts = { lastLootedAt, overrides: overridesByKey }
-    return posky.quests.map((q) =>
-      withDerivedCompletion(computeQuestProgress(q, net, counts, facts), derivedSources)
-    )
-  }, [progress, net, lastLootedAt, turnIns, logCounts, overridesByKey, derivedSources])
+    return posky.quests.map((q) => derived(computeQuestProgress(q, net, counts, facts)))
+  }, [progress, net, lastLootedAt, turnIns, logCounts, overridesByKey, derived])
 
   const classes = useMemo(() => [...new Set(posky.quests.map((q) => q.className))].sort(), [])
 

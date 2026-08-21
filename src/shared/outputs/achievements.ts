@@ -176,17 +176,35 @@ export function parseAchievementsDump(text: string): AchievementsDump {
       rows.push({ category, achievement, status })
       continue
     }
-    // A component: exactly one empty indent column, the name, and optionally the counter.
-    if (fields.length > 4 || fields[1] !== '' || fields[2] === '' || achievement === null) continue
-    rows.push({
-      category,
-      achievement,
-      component: fields[2],
-      status,
-      ...(fields.length === 4 && fields[3] !== '' ? { progress: fields[3] } : {})
-    })
+    // A component with no achievement above it has no parent to belong to.
+    if (achievement === null) continue
+    const row = componentRow(category, achievement, status, fields)
+    if (row !== null) rows.push(row)
   }
   return { rows }
+}
+
+/**
+ * One requirement line, or null when its shape is not one the real file has ever printed: exactly
+ * one empty indent column, a non-empty name, and at most one counter after it. Split out of the
+ * loop above so each half stays inside the measured complexity ceiling — and it reads better as
+ * "what a component row is", which is the only rule in it.
+ */
+function componentRow(
+  category: string,
+  achievement: string,
+  status: AchievementStatus,
+  fields: string[]
+): AchievementRow | null {
+  if (fields.length > 4 || fields[1] !== '' || fields[2] === '') return null
+  const progress = fields.length === 4 && fields[3] !== '' ? fields[3] : undefined
+  return {
+    category,
+    achievement,
+    component: fields[2],
+    status,
+    ...(progress === undefined ? {} : { progress })
+  }
 }
 
 const STATUS: Record<string, AchievementStatus | undefined> = {
