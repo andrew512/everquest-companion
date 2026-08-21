@@ -17,6 +17,7 @@ import type {
 } from '../shared/types'
 import { clampBgAlpha, clampTextScale } from '../shared/types'
 import type { InventorySource } from '../shared/outputs/baseline'
+import type { AchievementsSource, ClassUnlockClaim } from '../shared/outputs/achievements'
 // The turn-in ledger's write rule (JOS-131). Shared with the renderer so "what a stored turn-in
 // list may contain" has ONE definition on both sides of the IPC.
 import { applyTurnIns } from '../shared/questTurnIns'
@@ -190,6 +191,21 @@ export function setInventory(
   source: InventorySource
 ): ProgressState {
   return setProgress(charId, { ...getProgress(charId), inventory: counts, inventorySource: source })
+}
+
+/**
+ * Record the achievements dump's earned class-unlock rewards (JOS-429) — the `setInventory` shape
+ * for the second graduated `/outputfile` kind, and deliberately the same shape: a flat artifact
+ * plus the record of which file it came from, written together so neither can describe the other's
+ * dump. It writes NOTHING into `questTurnIns` or `completedQuests` (progressState.ts argues why).
+ */
+export function setAchievements(
+  charId: string,
+  unlocks: ClassUnlockClaim[],
+  source: AchievementsSource
+): ProgressState {
+  const p = getProgress(charId)
+  return setProgress(charId, { ...p, achievementUnlocks: unlocks, achievementsSource: source })
 }
 
 /**
