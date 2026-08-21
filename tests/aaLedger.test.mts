@@ -157,7 +157,12 @@ test('full-log replay: the honesty badges have real evidence behind them', {
   assert.ok(sum.invested >= 354, `invested (${String(sum.invested)}) >= 354`)
   assert.ok(sum.autoRanks >= 36, `granted rungs (${String(sum.autoRanks)}) >= 36`)
   assert.ok(sum.rebought >= 3, `abilities with re-buys (${String(sum.rebought)}) >= 3`)
-  assert.ok(sum.partial >= 3, `abilities with unlogged rungs (${String(sum.partial)}) >= 3`)
+  // `partial` is the one summary figure that legitimately SHRINKS as the live log grows — an
+  // unlogged rung stops being unlogged the day its purchase line finally appears (it rotted from
+  // 3 to 2 mid-session, 2026-08-21, while the owner played). So its floor is the badge's own
+  // existence claim, not a magnitude: at least one ability still demonstrates the label on real
+  // data (the Symphonic pin below is the named witness).
+  assert.ok(sum.partial >= 1, `abilities with unlogged rungs (${String(sum.partial)}) >= 1`)
 
   // `Symphonic Aura: Disabled` first appeared at rank 9 with rungs 1–8 nowhere in 1.35M lines —
   // the exact case the "unlogged" label exists for (law 6: the log cannot say how they came).
