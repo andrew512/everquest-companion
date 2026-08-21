@@ -351,7 +351,7 @@ function codeOnly(rel: string): string {
   return code(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 }
 
-test('the split is the LOOT ledger’s affordance, and the exp surfaces do not grow a second one', () => {
+test('the split is the LOOT ledger’s affordance, and the EXP surfaces do not grow a second one', () => {
   // The ledger asks for it by name. Everything else reads the resulting slice without knowing the
   // button exists — which is the whole reason this rides `custom` instead of a tenth slice id.
   assert.match(code('../src/renderer/src/features/loot/LootView.tsx'), /sessions=\{\{ segments/)
@@ -360,14 +360,31 @@ test('the split is the LOOT ledger’s affordance, and the exp surfaces do not g
     /sessions=/,
     'the Leveling scope row must not sprout its own reset button'
   )
-  // ONE clock read in the feature, and it is the click. The pure modules stay replayable: a replay
-  // of yesterday's log has to give yesterday's answer, whatever the wall clock says today.
+  // THE SECOND AFFORDANCE THE OWNER DID ASK FOR (JOS-322, 2026-08-21): the ZONE METER OVERLAY's
+  // title bar, small, beside the lock and close. It is deliberately not a second CONTROL — it is
+  // the same app-wide mark pressed from the surface the original report was written in front of.
+  // The exp surfaces are still the ones excluded, and that is what the clause above pins.
+  assert.match(
+    code('../src/renderer/src/overlay/OverlayMeter.tsx'),
+    /label: 'New session'/,
+    'the zone meter must keep the title-bar affordance the owner ruled for'
+  )
+})
+
+test('the ONE clock read moved to MAIN, where both halves of the split can share it', () => {
+  // The pure modules stay replayable: a replay of yesterday's log has to give yesterday's answer,
+  // whatever the wall clock says today.
   assert.doesNotMatch(codeOnly('../src/shared/sessionSegments.ts'), /Date\.now|new Date/)
   assert.doesNotMatch(codeOnly('../src/shared/timeslice.ts'), /Date\.now|new Date/)
-  assert.match(
-    codeOnly('../src/renderer/src/features/timeslice/useTimeslice.ts'),
-    /addSessionMark\(marks, Date\.now\(\)\)/
-  )
+  // …AND THE RENDERER NO LONGER READS IT EITHER (JOS-322). It used to be `addSessionMark(marks,
+  // Date.now())` right here, which was correct while the only consumer was this window's ledger.
+  // Once one click had to split the COMBAT ENGINE too — and the engine is in main — a renderer's
+  // clock would have given the two halves two boundaries a round trip apart. So main stamps it
+  // once; tests/sessionMarks.test.mts pins that the same identifier reaches both halves.
+  const hook = codeOnly('../src/renderer/src/features/timeslice/useTimeslice.ts')
+  assert.doesNotMatch(hook, /Date\.now|new Date/, 'the renderer started stamping its own instant again')
+  assert.match(hook, /useSessionMarks\(window\.eq\)/, 'the marks must come from main')
+  assert.match(codeOnly('../src/main/sessionMarks.ts'), /const at = Date\.now\(\)/)
 })
 
 test('the two datetime fields display the RAW pick, which is the future-end-time fix', () => {
