@@ -218,6 +218,12 @@ test('the per-class counts reproduce the design measurement, per spell entry', (
   // reads `This spell cannot be cast directly. It is triggered by drinking a …` and parses to no
   // class at all. `Invisibility versus Undead` -> `Invisibility vs. Undead` is a RENAME of a page
   // this table already counted, so its five classes each keep the row they had.
+  //
+  // AND JOS-440 DOES NOT MOVE THEM EITHER, stated because that ticket removes a row and a reader
+  // will expect a removal to show up in a per-class total. It cannot show up HERE: these tallies
+  // are taken over the PRISTINE scrape (`spellsJson` directly, no removals and no corrections),
+  // which still carries both invisibility pages exactly as the wiki wrote them. The effective
+  // index below is where that ticket lands.
   const expected: Record<string, [number, number]> = {
     BRD: [91, 90], BST: [77, 27], CLR: [206, 82], DRU: [268, 152],
     ENC: [239, 184], MAG: [202, 161], NEC: [193, 86], PAL: [91, 17],
@@ -251,7 +257,24 @@ test('the SHIPPED index is keyed by canon key, so rank variants collapse', () =>
   //     tallies above did not move) — a duplicate wiki page simply stopped looking like a
   //     duplicate. Reported to the integrator: a name correction that re-joins the twins is an
   //     owner call under the JOS-161 rename rules, not something a scrape run decides.
-  assert.equal(spellClassIndex().size, 1413)
+  //
+  // 1413 -> 1412 (JOS-440), THE OWNER'S CALL, MADE — and the second key above is the one that goes.
+  // The twins are re-joined, but NOT in the direction the report above assumed: the wiki's retitle
+  // was an editorial edit and the GAME never adopted it. The install's own `spells_us.txt` carries
+  // the spell as id 235 `Invisibility Versus Undead`, and the owner's log prints that spelling 83
+  // times against 0 for `vs.` — so the surviving key is `invisibility versus undead`, the one a
+  // cast line produces, and `invisibility vs. undead` is the key that disappears. A rename alone
+  // could not do it: the two pages also disagree about mana (30 vs 40) and cast time (5.00 vs 4.00
+  // s), and every fold takes the FIRST row in scrape order, which is the classic page. So the
+  // classic page is dropped by a `supersededBy` removal (spellRemovalsList.ts, which carries the
+  // client-table reading) and the survivor is renamed by a JOS-161 name correction.
+  //
+  // NO PER-CLASS COUNT MOVES WITH IT, and that is the check worth having here: both pages placed
+  // the SAME five classes at the SAME five levels (NEC 1, SHD 4, CLR 11, ENC 14, PAL 17), so the
+  // union that made one key out of two spellings gains and loses nobody. The RAW tallies above are
+  // untouched for the usual reason — they measure the pristine scrape, which still carries both
+  // pages.
+  assert.equal(spellClassIndex().size, 1412)
   assert.equal(CANON.get('ENC')?.excl, 176)
   assert.equal(RAW.get('ENC')?.excl, 184)
   assert.deepEqual(classesForSpell('Clarity II'), classesForSpell('Clarity'))

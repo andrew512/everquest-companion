@@ -277,6 +277,16 @@ test('JOS-251 R4d: the per-class membership counts, pinned', () => {
   //     canonical name; the patch renamed one of them to `Invisibility vs. Undead` and the fold
   //     stopped joining them. The EFFECT line on both is still the string `Invisibility versus
   //     Undead` (R4b asserts on it below, unchanged) — it is the NAME that split.
+  //
+  // AND JOS-440 PUT THE TWINS BACK TOGETHER WITHOUT MOVING THIS NUMBER, which is worth writing
+  // down because the ticket predicted 20 -> 19 and the prediction was wrong for a reason this file
+  // exists to state. JOS-440 drops the classic duplicate page (a `supersededBy` removal) and
+  // renames the survivor to the spelling the game prints, so the EFFECTIVE catalog holds one
+  // invisibility key where it held two. This roster is not the effective catalog: `RAW` is the
+  // committed scrape with NO overlay of any kind — that is R7's separation, asserted directly
+  // below — so it still sees both pages and still counts 20. A future re-scrape that drops the
+  // duplicate page UPSTREAM is what moves this number to 19, and it will be a diff of spells.json
+  // rather than of the overlay.
   const all = (k: Parameters<typeof effectRoster>[1]): number =>
     effectRoster(RAW, k, { castableOnly: false, targetOnly: false }).size
   assert.deepEqual(
