@@ -995,6 +995,15 @@ export interface ZoneSessionSummary {
   dps: number
   /** true for the currently-active (live) zone session. */
   live: boolean
+  /**
+   * WHAT ENDED IT (JOS-322): `'zone'` — you walked out of the room — or `'mark'` — you pressed the
+   * app-wide "New session". ABSENT on the live entry, which has not ended at all.
+   *
+   * It decides ONE thing on this side of the wire: the WORD the picker calls the row by (`overall`
+   * for a stay the world ended, `session` for one you did). The reversibility it also encodes is an
+   * engine-side property and deliberately has no control here — see `CombatEngine.unsplit`.
+   */
+  closedBy?: 'zone' | 'mark'
 }
 
 /**
