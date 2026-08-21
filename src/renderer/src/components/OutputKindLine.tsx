@@ -86,6 +86,13 @@ export interface OutputKindLineProps {
   loadedAt?: number | null
   /** Draw it understated (JOS-268) — chrome only, passed straight through to `OutputFileLine`. */
   quiet?: boolean
+  /**
+   * Re-read the dump on demand (JOS-431), passed straight through. The ACT belongs to the caller
+   * for the reason `loadedAt` does: this component knows the FILE's status and nothing about who
+   * consumes it, and "read it again" is a request to that consumer. Omitted ⇒ no affordance, which
+   * is every surface that had none before.
+   */
+  onRefresh?: () => void
   testId?: string
 }
 
@@ -98,6 +105,7 @@ export default function OutputKindLine({
   why,
   loadedAt,
   quiet,
+  onRefresh,
   testId
 }: OutputKindLineProps): JSX.Element | null {
   const { status, ready } = useOutputStatus(kind)
@@ -110,6 +118,7 @@ export default function OutputKindLine({
       steps={status.steps}
       {...(loadedAt === undefined ? {} : { loadedAt })}
       quiet={quiet}
+      {...(onRefresh === undefined ? {} : { onRefresh })}
       testId={testId}
     />
   )
