@@ -27,6 +27,7 @@ import { AllyCharms } from './allyCharms'
 import { SpecialAttacks } from './specialAttacks'
 import { RecentCasts } from './procDetect'
 import { PetNudgeState } from './petNudge'
+import { OtherCombatants } from './otherCombatants'
 import { EMPTY_ROSTER, EMPTY_ROSTER_VIEW, type RosterSnap, type RosterView } from '../../shared/roster'
 import type { ClassifiedLine, CoatSlot } from '../../shared/combat'
 import type { ComboInterval } from '../../shared/classCombo'
@@ -73,6 +74,16 @@ export class EngineState {
    * after it (tests/combatCharmOwnership.test.mts W44/W45 pin both halves).
    */
   ally = new AllyCharms()
+  /**
+   * EVERY OTHER COMBATANT THE LOG NAMES (JOS-430, otherCombatants.ts) — the refusal ladder that
+   * replaced the roster as the thing deciding whether a player-vs-mob line is recorded at all.
+   *
+   * It is the WEAKEST model in this file and it is asked LAST, on purpose: `petNames`, `everPet`,
+   * `charm`, `ally`, `everStruck` and the roster all get to speak first, and any one of them
+   * refusing is final. What it adds is the case none of them cover — a name that just fights mobs
+   * beside you and never says anything about itself.
+   */
+  others = new OtherCombatants()
   /**
    * Canonical name keys of entities known to be PLAYERS — never hostiles, never a pet's
    * target, never enemy healers. TWO sources, both narrow on purpose:
@@ -286,6 +297,7 @@ export class EngineState {
     this.world.reset()
     this.charm.reset()
     this.ally.reset()
+    this.others.reset()
     this.knownPlayers.clear()
     this.playerKey = undefined
     this.playerKeyInjected = false
@@ -510,6 +522,12 @@ export class EngineState {
     if (this.everPet.has(nameKey) || this.charm.everCharmed(nameKey)) return
     if (this.everStruck.has(nameKey)) return
     this.knownPlayers.add(nameKey)
+    // …and a heal landing on YOU outranks a swing at you, so it also un-marks the record-everything
+    // ladder's hostile flag (JOS-430). Law 4's own counterexample is the reason: a raid boss
+    // mind-controls your healer, she hits you 27 seconds before she heals you, and the heal is the
+    // line with a person behind it. The three refusals above make this safe — nothing you have
+    // struck, charmed or owned as a pet can reach here.
+    this.others.clearHostile(nameKey)
   }
 
   /**
@@ -533,6 +551,41 @@ export class EngineState {
     this.petNames.add(nameKey)
     this.everPet.add(nameKey)
     this.knownPlayers.delete(nameKey)
+    this.retractOther(nameKey, 'bound as your pet')
+  }
+
+  /**
+   * A STRONGER MODEL HAS CLAIMED A NAME — take back the row the record-everything ladder booked for
+   * it (JOS-430). The pet and charm models are authoritative for pet attribution, so a pet that
+   * swung a few times before its binding line arrived must end up with ONE row (its own), never
+   * two.
+   *
+   * IT CANNOT LOSE A NUMBER THAT EXISTED BEFORE IT DID. An `'other'` row is additive by
+   * construction — it enters no `you`/`pet` total, no target ledger, no `engaged` set and no
+   * presence clock — so deleting it moves exactly the damage this feature added and nothing else.
+   * The damage is not discarded either: the very same lines are re-booked under the pet's own row
+   * from the bind onward, which is where they belonged.
+   *
+   * A ROSTER MEMBER IS NEVER RETRACTED. Their row is the roster's, not this ladder's; the guard
+   * matters because `noteStruck` and a charm broadcast can both name a real group-mate (a raid boss
+   * mind-controlling one, an AE catching one) and neither may delete a group-mate's bar.
+   *
+   * THE STATED LIMIT: it reaches the LIVE aggregates — the open fight, the finalized fights still
+   * in history (whose memoized summary is dropped so it re-derives), and the live zone session. A
+   * zone session already FROZEN keeps the row: its aggregate is immutable by design (Task #54) and
+   * a pet bound after you left the zone is not worth a thaw. Measured on the owner's whole log,
+   * every retraction fires within the same fight as the swings it takes back.
+   */
+  retractOther(nameKey: string, why: string): void {
+    if (nameKey === '' || this.roster().admitted.has(nameKey)) return
+    if (!this.others.notePet(nameKey)) return
+    if (!this.others.isRecorded(nameKey)) return
+    this.others.forget(nameKey)
+    const id = `member:${nameKey}`
+    this.zoneAgg.dropOut(id)
+    if (this.current?.agg.dropOut(id) === true) this.current.summary = undefined
+    for (const enc of this.history) if (enc.agg.dropOut(id)) enc.summary = undefined
+    this.log(this.lastActivityTs, 'charm', 'dropped', `✕ ${nameKey}: ${why} - its recorded row is now the pet's`)
   }
 
   /**

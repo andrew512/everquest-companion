@@ -305,7 +305,7 @@ export function buildDpsSeries(tl: TimelineView, live = false): DpsSeries {
     else if (e.kind === 'pet') {
       rawPet[i] += e.amount
       hasPet = true
-    } else if (e.kind === 'member' || e.kind === 'allyPet') {
+    } else if (e.kind === 'member' || e.kind === 'allyPet' || e.kind === 'other') {
       // EXPLICIT, not an `else`. Before the group model the final branch was "everything that is
       // not you or your pet is incoming", which is exactly the assumption a fourth source kind
       // breaks: a group-mate's 300-damage nuke would have been drawn as damage taken. JOS-250's
@@ -313,6 +313,9 @@ export function buildDpsSeries(tl: TimelineView, live = false): DpsSeries {
       // an ally's charm pet is somebody else's outgoing damage, which is what this band already
       // means. It shares the band rather than growing a sixth one because the curve answers "how
       // much is coming from where", and the row list beneath it is where the WHOSE is spelled out.
+      // JOS-430's SIXTH kind ('other') is the trap a third time, and the most dangerous of the
+      // three: it is the kind that fires on an ungrouped session, so a missing branch here would
+      // have drawn a stranger's whole raid as damage TAKEN on the most common configuration there is.
       rawGroup[i] += e.amount
       hasGroup = true
     } else {

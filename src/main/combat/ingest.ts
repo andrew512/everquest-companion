@@ -107,6 +107,11 @@ function ingestCc(st: EngineState, ev: CcEvent): void {
  */
 function ingestCharm(st: EngineState, ev: CharmEvent): void {
   const key = idKey(ev.mob)
+  // WHOEVER'S CHARM IT IS, THE THING IS A MOB (JOS-430). Stated before the ownership branch because
+  // it is true of both arms: a name a charm broadcast has ever spoken is not a combatant the
+  // record-everything ladder may keep its own row for. `st.notePet` below would say it for YOUR
+  // charm; a stranger's would otherwise leave the row standing beside the ally-pet one.
+  st.retractOther(key, 'a charm broadcast named it')
   if (st.charm.charmBroadcast(key, ev.mob, ev.ts) === 'foreign') {
     ingestForeignCharm(st, ev, key)
     return
@@ -230,7 +235,20 @@ function ingestWorld(st: EngineState, ev: LogEvent): boolean {
       ingestPetClaim(st, ev)
       return true
     case 'allyPetLeader':
+      // The speaker just named somebody its leader, which settles what it is whether or not the
+      // ally model goes on to bind it (JOS-430).
+      st.retractOther(idKey(ev.pet), `named ${ev.owner} its leader`)
       ingestAllyPetLeader(st, ev)
+      return true
+    case 'petSay':
+      // THE ENGINE CONSUMES `petSay` AGAIN, for one job and a different one (JOS-430). JOS-49 cut
+      // the question these six sentences used to answer — "is this one YOURS?" — and the note below
+      // still holds: a `says` line is broadcast and proves nothing about whose pet the speaker is.
+      // What it DOES prove is that the speaker is SOMEBODY's pet, which is exactly the fact the
+      // record-everything ladder cannot get any other way: EQ spells a summoned pet's name with the
+      // same grammar it gives people, so without this the strangers' pets in a raid keep rows of
+      // their own. Measured on the owner's whole log: it settles 8 names no other rung reaches.
+      st.retractOther(idKey(ev.name), `said a pet sentence (${ev.say})`)
       return true
     case 'uncharm': {
       // `Your <charm spell> spell has worn off of <mob>` — only the CASTER sees this, so it is
