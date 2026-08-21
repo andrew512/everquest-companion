@@ -63,6 +63,10 @@ import { setAchievements } from './storeAchievements'
 // reason its own header gives: store.ts is at the factoring ceiling.
 import { getLogTailMark, setLogTailMark } from './logTailMark'
 import { markFunnelStep, noteLinesParsed } from './telemetry'
+// "Another character's log is active — switch?" (JOS-432). Three touch points in this file and
+// nothing else: stamp every tailed line, follow the character we just attached, let go on the way
+// out. The decision (and the reason it cannot nag) is src/main/log/quietSwitch.ts.
+import { noteTailLine, stopWatchingForQuietSwitch, watchForQuietSwitch } from './switchNudge'
 import { refreshPresenceEffects, suspendCursorStream } from './presenceEffects'
 import { setHistoricalReplayRunning } from './replayGate'
 import { sendToMain, setOverlaysHidden } from './windows'
@@ -180,6 +184,8 @@ export async function applyEqDirChange(): Promise<EqConfig> {
     await tailer?.stop()
     tailer = null
     stopHeartbeat()
+    // Nothing is attached, so there is no "our log went quiet" to ask about (JOS-432).
+    stopWatchingForQuietSwitch()
     inventoryWatch?.close()
     inventoryWatch = null
     achievementsWatch?.close()
@@ -351,6 +357,9 @@ function noteParsed(count: number): void {
 function startTailer(logPath: string, startOffset: number): void {
   tailer = new Tailer(logPath, { startOffset })
   tailer.on('line', (raw) => {
+    // EVERY raw line, before anything can decide not to understand it (JOS-432): the quiet-switch
+    // question is whether our file is being written to at all, not whether we parsed what arrived.
+    noteTailLine()
     const line = parseLine(raw)
     if (line) sendToMain(IPC.onLine, line)
     const ev = parseEvent(raw, seq)
@@ -582,6 +591,9 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
 
   startTailer(ref.logPath, scan.endOffset)
   startHeartbeat()
+  // …and start the quiet clock HERE rather than at the top of this function: a multi-second
+  // historical replay is not the log going silent (JOS-432).
+  watchForQuietSwitch(ref)
 
   // READ THE DUMP, THEN FOLLOW IT (JOS-253) — the same two-step the log itself gets, in the same
   // order. `scanHistory` above replays what the log already holds and only then hands the offset
@@ -790,6 +802,7 @@ export function stopSession(): void {
   inventoryWatch?.close()
   achievementsWatch?.close()
   stopWatchingForFirstLog()
+  stopWatchingForQuietSwitch()
   stopHeartbeat()
   logTailIo()
 }
