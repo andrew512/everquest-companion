@@ -22,7 +22,7 @@ view id, route, store keys and `planner-*` testids are unchanged —
 docs/plans/exaltation-planner.md), celebration toasts
 (docs/plans/celebration-toasts.md), and a TIMERS tab + overlay (JOS-194 —
 law 13 below). Committed knowledge DBs: mobs (7.9k), items (11.2k incl.
-dropsfrom + eraTag), spells (1.9k), classes, zones (era-annotated), wiki
+dropsfrom + eraTag), spells (2.0k), classes, zones (era-annotated), wiki
 respawn floors (507 rows, 394 readable). First stable release v0.2.0
 (2026-08-03); per-release history lives in `shared/releaseNotes.ts` and the
 archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
