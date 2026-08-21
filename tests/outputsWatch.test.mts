@@ -39,7 +39,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'fs'
+import { mkdtempSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type { FSWatcher } from 'chokidar'
@@ -131,7 +131,12 @@ function ready(watcher: FSWatcher): Promise<void> {
 async function withRoot(
   run: (root: string, arm: (w: FSWatcher) => FSWatcher) => Promise<void>
 ): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), 'eqc-outputs-watch-'))
+  // `realpathSync.native` because of WHERE CI puts its temp dir: `C:\Users\RUNNER~1\…` is an 8.3
+  // short name, the events come back under the LONG name, and libuv's prefix assertion
+  // (`src\win\fs-event.c:72`, run 32447274260) aborts the whole test process on the mismatch.
+  // Resolving to the long form before anything watches it is the canonical workaround; a dev
+  // machine's temp path is already long-form, which is why this only ever died on CI.
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'eqc-outputs-watch-')))
   const watchers: FSWatcher[] = []
   try {
     await run(root, (w) => {
