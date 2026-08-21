@@ -42,6 +42,14 @@
 // like every other; the ACCEPTANCE for the sixth report lives beside the validator, in
 // `tests/spellSubjectAudit.test.mts`, so that ticket reads as one file.
 //
+// JOS-435 IS THE SEVENTH REPORT AND THE FIRST THE CENSUS HAD ALREADY NAMED. A ranger's Swarm of
+// Pain never tracked in the Debuffs overlay (01M0GR6H8SJH69XS9W2RH61W90) — a CROPPED subject, so
+// JOS-174's population rather than JOS-412's, and the spell was sitting in `NO_SUBJECT_CENSUS` with
+// the reason it had no correction stated in advance: no log had printed the sentence attached to a
+// cast. A report is that log arriving, and the owner's own then witnessed it 199 times. Its rows are
+// held to invariants 1 and 2 below like every other; the ACCEPTANCE lives in
+// `tests/swarmOfPainLanding.test.mts`, because this file is AT the 400-code-line ceiling.
+//
 // FIVE THINGS ARE PINNED HERE:
 //
 //   1. THE SHAPE. Every entry restores a SUBJECT and changes nothing else. Strip the leading
@@ -640,3 +648,4 @@ test('JOS-103`s type-less line has a typed event now: Spirit of the Puma', () =>
   assert.equal(ev?.kind, 'buffApply')
   assert.equal(ev.kind === 'buffApply' ? ev.spell : '', 'Spirit of the Puma')
 })
+
