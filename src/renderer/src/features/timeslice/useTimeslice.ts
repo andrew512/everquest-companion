@@ -37,16 +37,22 @@
 // like every other surface does. `shared/scopeSelection.ts` carries the whole argument and the
 // measurement behind it; the OPENING is `exactTier` (owner ruling), not the model's `allTiers`.
 //
-// THE SESSION SPLIT RIDES THE SAME STORE (JOS-436). "Start a new session now" is a MARK — one
-// instant — and the segments are the half-open intervals between the marks (`shared/
-// sessionSegments.ts` carries the Details! research and the denominator argument). The marks live
-// here, beside the pick, for exactly the reasons above: app-wide, because a reader who splits their
-// evening on the Loot tab and then asks the Leveling tab how that stretch paid is asking ONE
-// question; and session-lifetime, because a mark describes what you are looking at right now.
+// THE SESSION SPLIT IS APP-WIDE FOR THE SAME REASON, AND SINCE JOS-322 IT LIVES IN MAIN. "Start a
+// new session now" is a MARK — one instant — and the segments are the half-open intervals between
+// the marks (`shared/sessionSegments.ts` carries the Details! research and the denominator
+// argument). The marks used to be a module variable in THIS file, beside the pick, and the reasons
+// they belonged app-wide are unchanged: a reader who splits their evening on the Loot tab and then
+// asks the Leveling tab how that stretch paid is asking ONE question, and a mark describes what you
+// are looking at right now, so it is session-lifetime.
 //
-// THE ONE CLOCK READ IN THE FEATURE IS `newSession` BELOW. `shared/timeslice.ts` and
-// `shared/sessionSegments.ts` are both clock-free on purpose — a replay of yesterday's log has to
-// give yesterday's answer — so the wall clock enters where the user's "now" actually is: the click.
+// WHAT CHANGED IS HOW FAR "APP-WIDE" REACHES, and it is the JOS-332 move made a second time for a
+// second reason. A module variable is per RENDERER PROCESS, so the zone meter overlay would have
+// kept its own list; and the owner ruled that ONE CLICK SPLITS EVERYTHING — the loot ledger AND the
+// combat engine's own records — which is a split only MAIN can make, because the engine is there.
+// So main stamps the instant ONCE, hands that very number to `combat.sessionMark(ts)`, and fans the
+// list out; `useSessionMarks` is this window's cache of it and `newSession` below is a write
+// through. That is also why the clock read is no longer in this file: the user's "now" is still the
+// click, but the click's instant is now stamped where both halves of the split can share it.
 //
 // The store below is a five-line external store rather than a context: every consumer is a leaf,
 // the value is two scalars, and `useSyncExternalStore` over a VERSION counter is the whole thing (a
@@ -63,7 +69,6 @@ import {
   type Timeslice
 } from '@shared/timeslice'
 import {
-  addSessionMark,
   currentSegment,
   segmentAt,
   sessionSegments,
@@ -74,15 +79,12 @@ import { useModule } from '../../lib/useModule'
 import { EMPTY_PROGRESSION, applyProgressionDelta } from '../leveling/progressionDelta'
 import { dataBounds, type DataBounds } from '../leveling/zoneBands'
 import { resetScopeSelection, useScopeSelection } from './useScopeSelection'
+import { resetSessionMarks, useSessionMarks } from './useSessionMarks'
 
 /** NULL means nobody has pressed the control yet — each surface then opens on its own
  *  `initialId`. See the header for why that is not a second control. */
 let pickedId: SliceId | null = null
 let pickedCustom: SliceRange | null = null
-/** The instants "start a new session now" has been pressed at, ascending (JOS-436). The segments
- *  are derived from this and nothing else, so an old segment cannot drift from the split it came
- *  from — and adding a mark re-closes the segment that was running, in one place. */
-let marks: number[] = []
 /** WHICH segment the custom range currently IS, or null when the pair was typed by hand. It is the
  *  ordinal rather than a copy of the range, so a later mark re-derives the pick instead of leaving
  *  a stale open end overlapping the new session. */
@@ -114,11 +116,13 @@ function emit(): void {
 export function resetTimeslice(): void {
   pickedId = null
   pickedCustom = null
-  // AND THE SPLIT (JOS-436): a mark is an instant in ONE character's record, so carrying it into a
-  // rebuilt one would draw a picker of segments whose boundaries mean nothing there.
-  marks = []
   pickedSegment = null
   resetScopeSelection()
+  // AND THE SPLIT (JOS-436): a mark is an instant in ONE character's record, so carrying it into a
+  // rebuilt one would draw a picker of segments whose boundaries mean nothing there. It delegates
+  // now, like the membership above it — the list moved to main (JOS-322) and this clears the
+  // WINDOW'S CACHE of it, never main's own, which a reset must not be able to reach.
+  resetSessionMarks()
   emit()
 }
 
@@ -202,6 +206,9 @@ export function useTimeslice(extraTs: readonly number[] = NO_EXTRA, initialId: S
   // THE MEMBERSHIP IS READ, NEVER KEPT (JOS-332). One value per app, held in main, so the tab and
   // the floating window cannot be on different tiers while both say `this tier`.
   const { zoneScope } = useScopeSelection(window.eq)
+  // …AND THE MARKS THE SAME WAY SINCE JOS-322, for the same reason plus one: the click has to reach
+  // the combat engine, which is in main. One instant, stamped there, split everywhere.
+  const { marks, press } = useSessionMarks(window.eq)
 
   const bounds = useMemo(() => dataBounds(prog, extraTs), [prog, extraTs])
   const available = useMemo(() => availableSlices(prog, bounds), [prog, bounds])
@@ -242,16 +249,25 @@ export function useTimeslice(extraTs: readonly number[] = NO_EXTRA, initialId: S
   }, [])
 
   const newSession = useCallback(() => {
-    // THE ONE CLOCK READ (see the header): the user's "now" is the click, not the newest log line.
-    // Marking at the live edge instead would hand the stale minutes since that line — the zoning,
-    // the corpse run, the instance reset itself — to the session that had not started yet.
-    marks = addSessionMark(marks, Date.now())
-    selectSegment(currentSegment(marks))
-  }, [])
-  const pickSegment = useCallback((n: number) => {
-    const seg = segmentAt(marks, n)
-    if (seg) selectSegment(seg)
-  }, [])
+    // MAIN STAMPS THE INSTANT (see the header): the user's "now" is still the click, but it is
+    // stamped where the loot split and the engine split can share one number. Marking at the live
+    // edge of the log instead would hand the stale minutes since the last line — the zoning, the
+    // corpse run, the instance reset itself — to the session that had not started yet.
+    //
+    // The SELECTION waits for the answer rather than guessing: the segment this opens begins at an
+    // instant this window does not know until main says so, and selecting a guessed range would
+    // leave the picker reading a boundary the numbers were never measured over.
+    void press().then((next) => {
+      selectSegment(currentSegment(next))
+    }, () => undefined)
+  }, [press])
+  const pickSegment = useCallback(
+    (n: number) => {
+      const seg = segmentAt(marks, n)
+      if (seg) selectSegment(seg)
+    },
+    [marks]
+  )
 
   return {
     prog, bounds, available, slice, id, setId, custom, setCustom,

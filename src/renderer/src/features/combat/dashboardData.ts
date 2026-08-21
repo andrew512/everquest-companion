@@ -685,12 +685,29 @@ export function fightScopeOptions(segments: SegmentSummary[]): ScopeOptions {
   return { head, rest }
 }
 
+/**
+ * THE WORD A ZONE-SESSION ROW IS CALLED BY (JOS-322) — the renderer's mirror of the engine's
+ * `lifecycle.zoneSessionWord`, over the serialized summary.
+ *
+ * A stay the WORLD ended is that zone's `overall`; a stay the USER ended with the app-wide
+ * "New session" mark is that zone's `session`, which is the word the loot ledger and the leveling
+ * surfaces already print for the very same click. The live row has no `closedBy` at all and is
+ * always `overall` — it has not ended, so nothing has decided anything about it yet.
+ *
+ * A MIRROR AND NOT A SECOND OPINION: the engine names the SegmentView it hands back with its own
+ * copy of this rule, so the picker row and the header title of the thing it selects agree by
+ * construction. Both read the same field of the same record.
+ */
+function zoneSessionWord(z: ZoneSessionSummary): string {
+  return z.closedBy === 'mark' ? 'session' : 'overall'
+}
+
 /** Overall scope: the live zone session, then the finalized zone-session history. NO fights. */
 export function overallScopeOptions(zoneSessions: ZoneSessionSummary[]): ScopeOptions {
   const toRow = (z: ZoneSessionSummary): ScopeOption => ({
     value: z.id,
-    label: `${z.zone} - overall`,
-    name: `${z.zone} - overall`,
+    label: `${z.zone} - ${zoneSessionWord(z)}`,
+    name: `${z.zone} - ${zoneSessionWord(z)}`,
     dps: z.dps,
     startTs: z.startTs,
     durationSec: z.live ? 0 : Math.max(1, (z.endTs - z.startTs) / 1000),

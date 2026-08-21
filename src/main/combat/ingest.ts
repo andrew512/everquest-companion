@@ -17,7 +17,13 @@
 
 import { idKey } from '../log/parser'
 import { damageCategory } from './taxonomy'
-import { evalClosure, ensureEncounter, finalizeCurrent, finalizeZoneSession } from './lifecycle'
+import {
+  evalClosure,
+  ensureEncounter,
+  finalizeCurrent,
+  finalizeZoneSession,
+  resetZoneAccumulators
+} from './lifecycle'
 import { route, routeHeal, routeHealUnstated, routeMiss, routeMitigation, routeResist, verdict } from './routing'
 import { SEC_ANALYTICS, SEC_DISPATCH } from './foldProbe'
 import {
@@ -52,7 +58,7 @@ import { bindPetBuffLanding, ingestPetClaim } from './petClaims'
 // …and the coaching nudge that exists BECAUSE those three routes are all there are (JOS-258).
 import { isPetSummonSpell } from './petNudge'
 import { CC_HOLD_MS } from './encounter'
-import { Agg, type DamageEvent } from './aggregate'
+import { type Agg, type DamageEvent } from './aggregate'
 import type { WindowFold } from './procWindows'
 import type { EngineState } from './state'
 import type { Attribution } from './routing'
@@ -210,11 +216,9 @@ function ingestWorld(st: EngineState, ev: LogEvent): boolean {
       // damage is dropped (nothing to show), matching the empty-encounter drop rule.
       finalizeZoneSession(st)
       st.zone = ev.zone
-      st.zoneAgg = new Agg()
-      st.zoneFinalizedMs = 0
-      st.zoneActiveMs = 0
-      st.zoneStartTs = 0
-      st.zoneLastTs = 0
+      // The accumulator half of the boundary is shared with the SESSION MARK now (JOS-322) — see
+      // `resetZoneAccumulators`. Everything BELOW this line is the part a mark deliberately omits.
+      resetZoneAccumulators(st)
       // Charm cannot survive a zone transition, and hostile mobs don't follow —
       // both are retired. SUMMONED class pets DO persist across zones (real-log
       // verified), so world.zone() returns the survivors (summoned pets only) and we
