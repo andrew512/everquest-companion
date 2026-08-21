@@ -253,17 +253,26 @@ test('JOS-189: the chant family is FOUR candidates for the one sentence it print
   )
 })
 
-test('JOS-349: the shrink sentence is THREE candidates, and Tiny Companion is the pet one', () => {
+test('JOS-349: the shrink sentence is FOUR candidates, and Tiny Companion is the pet one', () => {
   // The second JOIN, and the one whose cost is not a bar. `Ant Legs` and `Shrink` carry `Someone`,
   // `Tiny Companion` carried `Target`, so the only `targetType: Pet` member of the family could not
   // be a candidate for its own landing — and JOS-188's pet bind tests exactly that membership.
+  //
+  // THREE -> FOUR (JOS-439), and the fourth arrived from the WIKI, not from this registry. The
+  // 2026-08-18 game patch gave the alchemy shelf its Spellpages, and one of them is
+  // `Donlo's Dementia` — the Army Ant Potion's GROUP shrink, `Decrease Player Size by 34%`, whose
+  // `msg_cast_on_other` the scrape read as `Someone shrinks.` with the subject already correct. So
+  // it needs no row here: it walks into the family the way a correctly-scraped spell is supposed
+  // to, and the family growing is the shared-sentence law (world-model law 3) doing its job rather
+  // than a defect. It is a clicky (`classes` says the spell cannot be cast directly), so nobody
+  // scribes it, and it sorts after `Ant Legs`, which is what leaves the first pick alone below.
   const db = loadSpellDb()
   const hit = matchCastOnOtherSuffix('Dranix shrinks.', db)
   assert.ok(hit, 'the live sentence must resolve at all')
   assert.equal(hit.target, 'Dranix')
   assert.deepEqual(
     hit.entry.cands.map((c) => c.name).sort(),
-    ['Ant Legs', 'Shrink', 'Tiny Companion'],
+    ['Ant Legs', "Donlo's Dementia", 'Shrink', 'Tiny Companion'],
     'the whole family that writes this sentence'
   )
   assert.equal(
@@ -275,8 +284,8 @@ test('JOS-349: the shrink sentence is THREE candidates, and Tiny Companion is th
   const bare = buildSpellDb(applySpellCorrections(RAW, HAND_DERIVED).spells)
   assert.deepEqual(
     matchCastOnOtherSuffix('Dranix shrinks.', bare)?.entry.cands.map((c) => c.name).sort(),
-    ['Ant Legs', 'Shrink'],
-    'before the row the sentence had exactly the two owners whose subject the scrape got right'
+    ['Ant Legs', "Donlo's Dementia", 'Shrink'],
+    'before the row the sentence had exactly the owners whose subject the scrape got right'
   )
 })
 
@@ -288,13 +297,18 @@ test('JOS-349: the row moves NO line`s kind and NO line`s first pick — measure
   // `Ant Legs+Shrink` -> `Ant Legs+Shrink+Tiny Companion` — which is what a JOIN is supposed to
   // look like from the outside, and it is table ORDER that guarantees it (the joined spell is
   // appended to a bucket the two siblings already head).
+  //
+  // `Donlo's Dementia` joined the same bucket from the 2026-08-18 patch (JOS-439) and the tripwire
+  // holds through it for the same reason: it sorts after `Ant Legs`, so the kind is still
+  // `buffApply` and the first pick is still `Ant Legs`. Only the list got longer — which is the
+  // one thing this test is willing to let move.
   installSpellDb(loadSpellDb())
   const ev = parseEvent('[Mon Jul 20 17:32:01 2026] Demilat shrinks.', 0)
   assert.equal(ev?.kind, 'buffApply', 'the sentence already parsed, and still does')
   assert.equal(ev.kind === 'buffApply' ? ev.spell : '', 'Ant Legs', 'the first pick is unchanged')
   assert.deepEqual(
     ev.kind === 'buffApply' ? ev.candidates.map((c) => c.name) : [],
-    ['Ant Legs', 'Shrink', 'Tiny Companion'],
+    ['Ant Legs', "Donlo's Dementia", 'Shrink', 'Tiny Companion'],
     'world-model law 3: the candidate list carries the truth, and the model resolves it'
   )
 })
