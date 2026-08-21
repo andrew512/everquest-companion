@@ -22,6 +22,7 @@
 // here misstates a sentence; it can never manufacture or suppress a number.
 
 import { formatCpm, formatPpm } from '../../lib/formatRate'
+import { ORIGIN_COLOR } from './markerStyle'
 import type { ProcsView } from '@shared/combat'
 import type { ProcLaneView, ProcOrigin, ProcRateView, ProcSkillTag } from '@shared/procAnalytics'
 
@@ -254,6 +255,9 @@ const ORIGIN_UNIT: Record<ProcOrigin, string> = {
 export interface ProcAnnotation {
   text: string
   hint: string
+  /** The lane's hue, resolved here so the tag and the Procs panel's dot read one table
+   *  (`markerStyle.ORIGIN_COLOR`) and a `click` tag can never wear the proc magenta. */
+  color: string
 }
 
 /**
@@ -303,6 +307,7 @@ export function procAnnotationFor(
     : `${plural(t.rate.count, unit)} over ${sec}s of active combat in this selection. `
   return {
     text: ppm.absent ? unit : `${unit} · ${ppm.text}`,
-    hint: `${ORIGIN_NOTE[t.origin]}${lane} ${basis}${ppm.hint}`
+    hint: `${ORIGIN_NOTE[t.origin]}${lane} ${basis}${ppm.hint}`,
+    color: ORIGIN_COLOR[t.origin]
   }
 }

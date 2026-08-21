@@ -37,6 +37,7 @@ import { CombatEngine } from '../src/main/combat/engine'
 import { heldClickySpells } from '../src/main/itemClickies'
 import { procAnnotationFor, procSummary, procTagIndex } from '../src/renderer/src/features/combat/procRows'
 import { flattenSkills } from '../src/renderer/src/features/combat/dashboardData'
+import { ORIGIN_COLOR } from '../src/renderer/src/features/combat/markerStyle'
 import type { ProcLaneView } from '../src/shared/procAnalytics'
 import type { SegmentView } from '../src/shared/combat'
 import type { HeldCounts } from '../src/shared/types'
@@ -175,6 +176,17 @@ test('JOS-438: the drill tag says CLICK and counts in cpm, never ppm', { skip },
   assert.match(tag.text, /^click( · .*cpm)?$/)
   assert.match(tag.hint, /NOT a proc - an item CLICK/)
   assert.doesNotMatch(tag.hint, /Procs per minute/)
+  // …and it does not wear the proc COLOUR either — half a fix reads as a proc at a glance.
+  assert.equal(tag.color, ORIGIN_COLOR.click)
+  assert.notEqual(tag.color, ORIGIN_COLOR.spell)
+})
+
+test('JOS-438: a real proc lane in the same slice keeps every word and hue it had', { skip }, () => {
+  const seg = zone(LINES, REPORTER_BAGS)
+  const tag = procAnnotationFor(procTagIndex(seg.procs.procSkills), 'Reaving Strike · proc')
+  assert.ok(tag, 'the weapon proc beside the clickies is untouched')
+  assert.match(tag.text, /^proc( · .*ppm)?$/)
+  assert.equal(tag.color, ORIGIN_COLOR.spell)
 })
 
 test('JOS-438: clicks are counted apart from procs in the card header', { skip }, () => {
