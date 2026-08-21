@@ -34,7 +34,9 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { parseEvent } from '../src/main/log/parser'
 import { CombatEngine } from '../src/main/combat/engine'
-import { heldClickySpells } from '../src/main/itemClickies'
+// The DB-bound form. `itemLookup.ts` is the ONE static importer of items.json in the main bundle
+// (a second one reorders the bundle and breaks the JOS-431 watcher — see itemClickies.ts).
+import { heldClickySpells } from '../src/main/itemLookup'
 import { procAnnotationFor, procSummary, procTagIndex } from '../src/renderer/src/features/combat/procRows'
 import { flattenSkills } from '../src/renderer/src/features/combat/dashboardData'
 import { ORIGIN_COLOR } from '../src/renderer/src/features/combat/markerStyle'

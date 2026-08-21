@@ -39,7 +39,8 @@ import { logError } from './errorLog'
 import { normalizeItemName, parseItemWikitext } from './itemLookupParse'
 import { buildQuestItemIndex } from './questItemIndex'
 import { buildItemDbIndex, itemKey, knowledgeFromDb, type ItemDbFile } from './itemsDb'
-import type { ItemKnowledge, ItemQuestUse, PoskyData, QuestData } from '../shared/types'
+import { heldClickySpells as clickySpells } from './itemClickies'
+import type { HeldCounts, ItemKnowledge, ItemQuestUse, PoskyData, QuestData } from '../shared/types'
 
 export { normalizeItemName, parseItemWikitext }
 // The COMMITTED wiki item database — the PRIMARY source (see the design note above).
@@ -91,6 +92,16 @@ const cacheKey = itemKey
 // ---- the committed item database (PRIMARY source) ------------------------------
 
 const itemDb = buildItemDbIndex(itemsJson as unknown as ItemDbFile)
+
+/**
+ * THE HELD-CLICKY CATALOG (JOS-438), bound to the committed DB here because this module OWNS that
+ * import and must remain its only static importer in the main bundle — a second one reorders the
+ * bundle's module evaluation, which broke JOS-431's inventory watcher (itemClickies.ts carries the
+ * bisect). The derivation itself is pure and lives there; this is the binding and nothing else.
+ */
+export function heldClickySpells(counts: HeldCounts): ReadonlySet<string> {
+  return clickySpells((itemsJson as unknown as ItemDbFile).items, counts)
+}
 
 /**
  * The committed DB's answer for a key, already in `ItemKnowledge` shape (the record IS those

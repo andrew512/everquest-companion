@@ -54,15 +54,30 @@
 // A TIMED clicky (`Casting Time: 4.0`) is deliberately NOT in this table: it prints a real
 // `You begin casting` line, so it already scores `cast` and has never been part of the defect.
 
+// ── WHY THIS MODULE NEVER IMPORTS items.json ──
+//
+// It takes the DB as an argument, and `itemLookup.ts` — which owns that import already — is the
+// one caller that supplies it. That is itemsDb.ts's own stated rule ("Nothing here loads the JSON
+// … so a script or a test pays for the 8 MB only when it actually wants it"), and it is also a
+// MEASURED constraint rather than a stylistic one: adding a SECOND static importer of items.json
+// anywhere in the main bundle reorders that bundle's module evaluation, and doing so broke the
+// JOS-431 delete-and-recreate inventory watcher — deterministically, with no error to show for it.
+// Bisected over six e2e runs: the fault followed the IMPORT EDGE, not the call (the spec passed
+// with the call in place and this module absent from the graph, and failed with the edge present
+// and the function never invoked). `tests/e2e/sky-inventory-autoload.e2e.mts` is the tripwire.
+
 import { itemKey } from './itemsDb'
 import { spellCanonKey } from './log/parseCommon'
-import itemsJson from './data/items.json'
-import type { ItemDbFile } from './itemsDb'
+import type { ItemDbEntry } from './itemsDb'
 import type { ItemEffect } from '../shared/itemStats'
 import type { HeldCounts } from '../shared/types'
 
 /** `Casting Time: Instant` — the only click shape that prints no cast line. */
 const INSTANT = /\binstant\b/i
+
+/** `ItemDbFile['items']`, named here so the parameter reads as what it is: the committed DB, handed
+ *  in by the module that owns its import. */
+export type ItemDb = Record<string, ItemDbEntry>
 
 interface ClickyIndex {
   /** `itemKey` → the instant-click spells that item grants, canonical keys. */
@@ -71,12 +86,11 @@ interface ClickyIndex {
   combat: Set<string>
 }
 
-let cached: ClickyIndex | undefined
+/** The last DB walked, and its index. Memoized on the DB's IDENTITY rather than a boolean, so the
+ *  app (one frozen singleton, walked once at 3.8 ms) and a test (its own fixture) can both be
+ *  right. */
+let cached: { items: unknown; index: ClickyIndex } | undefined
 
-/**
- * Walk the committed DB once. Lazy rather than module-scope so a test or a script that never asks
- * the question never pays for the walk (the 8 MB JSON itself is already inlined by itemLookup).
- */
 /** File one item's effects into the two tables. Separated from the walk so neither the branch
  *  count nor the nesting depth of `index()` depends on how many effect kinds there are. */
 function fileEffects(entry: { page: string; stats?: { effects: ItemEffect[] } }, into: ClickyIndex): void {
@@ -95,11 +109,12 @@ function push(m: Map<string, string[]>, key: string, value: string): void {
   else m.set(key, [value])
 }
 
-function index(): ClickyIndex {
-  if (cached) return cached
+/** Walk one item DB into the two tables, once per DB. */
+function index(items: ItemDb): ClickyIndex {
+  if (cached?.items === items) return cached.index
   const built: ClickyIndex = { byItem: new Map(), combat: new Set() }
-  for (const entry of Object.values((itemsJson as ItemDbFile).items)) fileEffects(entry, built)
-  cached = built
+  for (const entry of Object.values(items)) fileEffects(entry, built)
+  cached = { items, index: built }
   return built
 }
 
@@ -130,9 +145,11 @@ function heldItemKey(raw: string): string {
  * reclassification, and every cast-less firing stays in the proc lane it is in today.
  *
  * Held-count keys are folded through `heldItemKey` — law 2, at the counting boundary.
+ *
+ * `items` is the committed DB, passed in rather than imported — see the note above the imports.
  */
-export function heldClickySpells(counts: HeldCounts): ReadonlySet<string> {
-  const { byItem, combat } = index()
+export function heldClickySpells(items: ItemDb, counts: HeldCounts): ReadonlySet<string> {
+  const { byItem, combat } = index(items)
   const out = new Set<string>()
   for (const [raw, n] of Object.entries(counts)) {
     if (n <= 0) continue

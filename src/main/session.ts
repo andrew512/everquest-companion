@@ -30,7 +30,6 @@ import { formatTailIoSummary, takeTailIoSummary } from './log/tailIoStats'
 import { createSlicer } from './log/replaySlicer'
 import { saveUserOverlay } from './data/overlayPersistence'
 import { loadInventory } from './inventory/parseInventory'
-import { heldClickySpells } from './itemClickies'
 import { loadAchievements, watchOutputKind, type OutputKindWatch } from './outputs'
 import {
   bus,
@@ -38,6 +37,7 @@ import {
   characterModule,
   combat,
   epoch,
+  installHeldClickies,
   killsModule,
   levelingModule,
   lootModule,
@@ -302,13 +302,24 @@ function resetWorldFor(ref: CharacterRef): void {
   // called a click on the pass that folds it. `loadInventoryNow` re-installs from a fresh dump
   // afterwards. Empty on a character who has never typed `/outputfile inventory`, which is
   // exactly the pre-JOS-438 behaviour.
-  installHeldClickies()
+  installClickies()
 }
 
-/** The held-clicky set, from whatever dump the store currently holds for the active character.
- *  Two callers — the pre-scan install above and every dump load — so the derivation has one home. */
-function installHeldClickies(): void {
-  combat.setHeldClickies(heldClickySpells(getProgress(activeCharId()).inventory))
+/**
+ * The held-clicky set, from whatever dump the store currently holds for the active character.
+ * Two callers — the pre-scan install above and every dump load — so the read has one home.
+ *
+ * IT GOES THROUGH pipeline.ts, and that indirection is LOAD-BEARING rather than tidiness. The
+ * derivation reads the committed item DB, and `itemLookup.ts` owns that 8 MB import (itemsDb.ts's
+ * own rule: "a script or a test pays for the 8 MB only when it actually wants it"). Importing it
+ * from HERE put items.json into session.ts's module graph and reordered the bundle's evaluation
+ * ahead of `outputs/` — which broke JOS-431's delete-and-recreate watcher, deterministically and
+ * with no error to show for it (`tests/e2e/sky-inventory-autoload.e2e.mts` caught it). pipeline.ts
+ * already imports itemLookup, and session.ts already imports pipeline.ts, so routing the call
+ * through it adds no module edge at all.
+ */
+function installClickies(): void {
+  installHeldClickies(getProgress(activeCharId()).inventory)
 }
 
 /**
@@ -686,7 +697,7 @@ function loadInventoryNow(ref: CharacterRef, why: 'startup' | 'watch'): void {
   // reload re-derives the set. The live tail folds against the new one from its next line; the
   // fold that has already happened keeps whatever the persisted dump said, which is the same
   // rule every other dump-derived surface follows.
-  installHeldClickies()
+  installClickies()
   logInfo(
     `[everquest-companion] Inventory ${why === 'startup' ? 'loaded at startup' : 'auto-reloaded'}: ${res.path}`
   )

@@ -36,12 +36,12 @@ import { ModuleRegistry } from './modules/registry'
 import { createModules } from './modules/wiring'
 import { resistLedgerSeam } from './resist/store'
 import type { ModuleDelta } from './modules/types'
-import { lookupItem } from './itemLookup'
+import { heldClickySpells, lookupItem } from './itemLookup'
 import { MOB_CATALOG_SIZE, lookupMob, ownLoot } from './mobLookup'
 import { getAlerts, getBuffTrustPrefs } from './store'
 import { getRespawnPrefs } from './storeRespawn'
 import { getOverlayWindow, sendToMain } from './windows'
-import type { AlertsDelta, CharacterRef, OverlayKind } from '../shared/types'
+import type { AlertsDelta, CharacterRef, HeldCounts, OverlayKind } from '../shared/types'
 
 /**
  * Log-derived state for the active character, rebuilt on launch + appended live.
@@ -329,3 +329,22 @@ bus.subscribe((ev, live) => combat.ingestEvent(ev, live))
  * does the marking.
  */
 export const DATA_READY_MS = performance.now()
+
+/**
+ * THE HELD-CLICKY SEAM (JOS-438): install the spells this character owns an instant item click
+ * for, derived from their `/outputfile inventory` counts.
+ *
+ * A FUNCTION rather than a module-scope call like the two seams above, because unlike the roster
+ * and the combo this one has no live source to pull from — a dump is a snapshot the player writes
+ * by hand, so session.ts re-installs it whenever one is read.
+ *
+ * IT LIVES HERE, and that is the whole point of the indirection. The derivation reads the
+ * committed item DB, whose 8 MB import this module already pays for (`lookupItem`, above);
+ * session.ts calls this instead of importing the catalog itself, which would put items.json into
+ * ITS module graph and reorder the bundle ahead of `outputs/` — measured to break the JOS-431
+ * delete-and-recreate inventory watcher, silently. `installHeldClickies` TAKES the counts rather
+ * than reading the store so that session.ts stays the only module that knows the active character.
+ */
+export function installHeldClickies(counts: HeldCounts): void {
+  combat.setHeldClickies(heldClickySpells(counts))
+}
