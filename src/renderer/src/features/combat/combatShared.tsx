@@ -30,8 +30,10 @@ import { MultiAttackStats, RiposteStats, StatItem } from './meterBits'
 // pet's blue — a friendly, clearly not you, and clearly not the enemy's red.
 // `allyPet` (JOS-250) is somebody ELSE's charm pet: a dimmer, cooler wash of the pet blue, so it
 // reads as the same KIND of thing as your pet while never being mistaken for it at a glance.
+// `other` (JOS-430) is a combatant the log named that your roster has not: the same green as a
+// group-mate, muted, so the list reads as one family of friendlies with the confirmed ones brighter.
 export const KIND_COLOR: Record<string, string> = {
-  you: '#d9b25f', pet: '#6fb3d2', allyPet: '#5b7f95', member: '#7fbf8f', enemy: '#cf6679'
+  you: '#d9b25f', pet: '#6fb3d2', allyPet: '#5b7f95', member: '#7fbf8f', other: '#5f8f74', enemy: '#cf6679'
 }
 
 /**
