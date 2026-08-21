@@ -30,7 +30,7 @@ import { formatTailIoSummary, takeTailIoSummary } from './log/tailIoStats'
 import { createSlicer } from './log/replaySlicer'
 import { saveUserOverlay } from './data/overlayPersistence'
 import { loadInventory } from './inventory/parseInventory'
-import { watchOutputKind, type OutputKindWatch } from './outputs'
+import { loadAchievements, watchOutputKind, type OutputKindWatch } from './outputs'
 import {
   bus,
   buffsModule,
@@ -55,6 +55,9 @@ import {
   setActiveLogPath,
   setInventory
 } from './store'
+// The achievements dump's write pair (JOS-429) — a split-out store accessor, same reason the tail
+// mark below is one: store.ts is at the factoring ceiling.
+import { setAchievements } from './storeAchievements'
 // The clean-shutdown tail mark (JOS-57 scope addition) — a split-out store accessor, for the
 // reason its own header gives: store.ts is at the factoring ceiling.
 import { getLogTailMark, setLogTailMark } from './logTailMark'
@@ -70,6 +73,11 @@ import type { ReplayDutyStats } from '../shared/perf'
 let tailer: Tailer | null = null
 let character: CharacterRef | null = null
 let inventoryWatch: OutputKindWatch | null = null
+// The achievements dump gets the SAME treatment as the inventory one (JOS-429): read at session
+// start, followed for rewrites. A separate slot rather than a list because the two are closed
+// independently and each is armed for its own character — and because the day a third kind
+// graduates, a list would hide which one failed to close.
+let achievementsWatch: OutputKindWatch | null = null
 // Wall-clock heartbeat (Task #30): drives module onTick so real-time deadlines (the
 // buffs 15s cast-landing timeout) fire even when the log is idle. Started once the
 // live tail is running (never during replay), cleared on quit / character switch.
@@ -173,6 +181,8 @@ export async function applyEqDirChange(): Promise<EqConfig> {
     stopHeartbeat()
     inventoryWatch?.close()
     inventoryWatch = null
+    achievementsWatch?.close()
+    achievementsWatch = null
     character = null
     // No character ⇒ no self-`/who` row is identifiable. Clear the name rather than let a
     // stale one attribute the next log's rows to the character we just stopped tailing.
@@ -562,6 +572,13 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   loadInventoryNow(ref, 'startup')
   startInventoryWatch(ref)
 
+  // The second graduated kind gets the identical two steps (JOS-429). It matters MORE here than it
+  // does for inventory, not less: the whole point of reading achievements is the player who did Sky
+  // content this app never saw, and that player types the command once, between sessions, expecting
+  // it to have been noticed.
+  loadAchievementsNow(ref, 'startup')
+  startAchievementsWatch(ref)
+
   // Push whatever the modules folded during replay (mainly the character module's
   // ref + zone) so first-paint snapshots are already current, then tell EVERY window that
   // folds a module the character's state was fully rebuilt, so views remount/re-hydrate.
@@ -659,6 +676,48 @@ function loadInventoryNow(ref: CharacterRef, why: 'startup' | 'watch'): void {
   sendToMain(IPC.onProgress, getProgress(activeCharId()))
 }
 
+/**
+ * THE ACHIEVEMENTS DUMP'S TWO STEPS (JOS-429), written as the two functions above are written and
+ * for the same reasons — read + follow, one function for both halves, a missing file is silence.
+ *
+ * WHAT IT PUSHES, AND WHAT IT DOES NOT. The store write lands on `ProgressState`, so `onProgress`
+ * is the whole delivery: the Sky tab already re-renders on that push and derives the completions
+ * from it on every read. There is NO second `inventory:autoReloaded`-shaped channel, deliberately —
+ * that event means "the held counts moved", and an achievements dump moves no count. The freshness
+ * line re-asks the registry on `onProgress` too (OutputKindLine), which is the one line that made a
+ * new channel unnecessary.
+ */
+function loadAchievementsNow(ref: CharacterRef, why: 'startup' | 'watch'): void {
+  if (character?.logPath !== ref.logPath) return
+  const res = loadAchievements(character.name, character.server)
+  if (!res) return
+  setAchievements(activeCharId(), res.unlocks, res.source)
+  logInfo(
+    `[everquest-companion] Achievements ${
+      why === 'startup' ? 'loaded at startup' : 'auto-reloaded'
+    }: ${res.path} (${String(res.unlocks.length)} class-unlock rewards earned)`
+  )
+  sendToMain(IPC.onProgress, getProgress(activeCharId()))
+}
+
+/** Follow the achievements dump — `startInventoryWatch`'s twin, same registry, same staleness guard. */
+function startAchievementsWatch(ref: CharacterRef): void {
+  achievementsWatch?.close()
+  achievementsWatch = watchOutputKind(
+    'achievements',
+    { name: ref.name, server: ref.server },
+    {
+      onChange: () => {
+        loadAchievementsNow(ref, 'watch')
+      },
+      onError: (err) => {
+        logConsoleError('[everquest-companion] achievements watch error', err)
+      },
+      active: () => character?.logPath === ref.logPath
+    }
+  )
+}
+
 /** Startup entry point: resolve a character and tail it, or idle quietly if there is none.
  *  Resolves to what the replay cost, or null on a machine with no log to tail at all. */
 export async function startTailing(): Promise<TailResult | null> {
@@ -703,6 +762,7 @@ export function stopSession(): void {
   markTailPosition()
   void tailer?.stop()
   inventoryWatch?.close()
+  achievementsWatch?.close()
   stopWatchingForFirstLog()
   stopHeartbeat()
   logTailIo()

@@ -31,8 +31,8 @@
 //     owes no subtraction — the "a dump owes none" rule, reconcile.ts), the celebration baseline
 //     never sees it (no false toast on first load), and nothing is persisted (the export is
 //     re-read every time, so the reading can never go stale in a store);
-//   * LABELLED (`rewardInferred`), and only present when it is the count's ONLY source — any
-//     ledger evidence wins and leaves the row exactly as the ledger said it;
+//   * LABELLED, and only present when it is the count's ONLY source — any ledger evidence wins
+//     and leaves the row exactly as the ledger said it;
 //   * ONE-DIRECTIONAL. Reward present ⇒ turned in; reward ABSENT proves nothing, because the
 //     export only covers what was open when it was written (a banked reward is invisible — the
 //     owner's own store has two turned-in quests whose rewards the export never saw). Nothing
@@ -42,11 +42,17 @@
 // The match is on the COUNTING key (`itemCountKey`: lowercased, ` +N` folded), because the
 // export's keys are raw names lowercased (heldCountsFromDump) and a reward the player has
 // exalted to `+2` is still the quest's reward.
+//
+// SINCE JOS-429 THIS IS THE SECOND-RANKED DERIVED SOURCE, not the only one. The achievements dump
+// (achievementInference.ts) is the SERVER'S OWN ANSWER about the same question and outranks this
+// inference wherever both speak; the ladder and the argument for that order live in
+// shared/questTurnIns.ts, and `withDerivedCompletion` (questCompletion.ts) is what applies it.
+// Nothing about the set this module produces changed — only that it is now handed to a resolver
+// instead of being applied directly.
 
 import type { PoskyQuest } from '@shared/types'
 import { itemCountKey } from '../../lib/itemName'
 import { questKey } from './keys'
-import type { QuestProgress } from './useProgress'
 
 /**
  * Does the reward's own stat blob say it cannot be traded? Both spellings the scrape carries:
@@ -86,30 +92,4 @@ export function rewardInferredQuests(
     if (held.has(itemCountKey(q.reward))) vouched.add(questKey(q))
   }
   return vouched
-}
-
-/**
- * The floor: a vouched-for quest with NO other evidence reads turnIns 1 / completed, labelled.
- *
- * Applied per row after `computeQuestProgress`, the way `firstTimeReady` narrows `readyQuests` —
- * a composition, not a rewrite — so every downstream reading of `turnIns` (`everTurnedIn`, the
- * hide-turned-in box, the class-unlock derivation, the Ready tab's first-time default) agrees
- * without consulting a second field. `logTurnIns` stays 0: the log's share is a fact about the
- * log, and this is not log evidence.
- *
- * THE COUNT IS max(ledger, 1), STATED AS WHAT IT IS: the best LOWER BOUND either witness can
- * prove (reconcile.ts makes the same move for held counts, for the same reason). The inference
- * and a ledger event cannot be told apart or added — the ledger's one recorded turn-in may BE
- * the run that produced the held reward, or a different run — so a vouched quest whose ledger
- * says 1 reads 1, not 2. The visible consequence, accepted: hand-recording "+1" on an inferred
- * quest converts the derived floor into a stated event without moving the number (the badge's
- * hover changes instead), and taking that statement back falls back to the floor rather than to
- * zero — the reward is still in the bag, and the next read would honestly re-assert it.
- */
-export function withRewardInference(
-  q: QuestProgress,
-  vouched: ReadonlySet<string>
-): QuestProgress {
-  if (q.turnIns > 0 || !vouched.has(q.key)) return q
-  return { ...q, turnIns: 1, completed: true, rewardInferred: true }
 }
