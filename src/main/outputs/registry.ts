@@ -139,7 +139,7 @@ export function watchOutputKind(
   // dump to come back.
   let fileWatcher: FSWatcher | null = null
 
-  const armFile = (): void => {
+  const armFile = (announce = false): void => {
     void fileWatcher?.close()
     fileWatcher = null
     const path = findOutputFile(id, character.name, character.server)
@@ -148,15 +148,30 @@ export function watchOutputKind(
       onChange: () => {
         if (active()) opts.onChange()
       },
-      // The file was deleted. Re-arm — either the replacement is already on disk (and the next
-      // rewrite belongs to a watcher pointed at it) or it is not, in which case the directory
-      // watcher below is the one that will see it arrive. No `onChange` from here: an unlink is
-      // not a dump to read, and the settled `add` that follows is.
+      // The file was deleted. Re-arm — either the replacement is already on disk (and it must be
+      // ANNOUNCED from here, see below) or it is not, in which case the directory watcher below is
+      // the one that will see it arrive.
       onGone: () => {
-        if (active()) armFile()
+        if (active()) armFile(true)
       },
       onError: opts.onError
     })
+    // THE GONE-AND-ALREADY-BACK CASE (JOS-431 audit fix). When the re-arm after an `unlink` finds
+    // the replacement on disk, NO future event will announce it: the fresh watcher was armed on an
+    // existing file (`ignoreInitial` ⇒ no `add`), and a fast replace reaches the directory watcher
+    // as a `change` it deliberately does not subscribe to (tests/outputsWatch.test.mts measured
+    // both). The original shape waited for "the settled add that follows" — which is exactly the
+    // event that never comes, and the sky-inventory-autoload e2e caught it the moment a second
+    // directory watcher (JOS-429's achievements kind) shifted chokidar off the lucky
+    // collapse-to-`change` path. So the announcer is this re-arm itself, delayed past
+    // `awaitWriteFinish`'s 400 ms stability window so the read sees a whole file; a duplicate
+    // reload if the directory watcher DOES also report it is the cost the header above already
+    // accepts ("one re-read of a file we would have re-read anyway").
+    if (announce) {
+      setTimeout(() => {
+        if (active()) opts.onChange()
+      }, 600)
+    }
   }
 
   const dirWatcher = watchForOutputFile(effectiveEqRoot(), def, {
