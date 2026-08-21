@@ -323,7 +323,7 @@ export class CombatEngine {
   unsplit(): boolean {
     const st = this.st
     const last = st.zoneHistory[st.zoneHistory.length - 1]
-    if (!last || last.closedBy !== 'mark') return false
+    if (last?.closedBy !== 'mark') return false
     if (last.zone !== (st.zone ?? 'Session')) return false
     st.zoneHistory.pop()
     // The id is handed back to the counter when it was the newest one minted, so an undone split
