@@ -32,6 +32,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { rangeStats, IDLE_GAP_MS } from '../src/shared/progressionStats'
 import { inSlice, resolveSlice, TAIL_MS } from '../src/shared/timeslice'
 import type { LootEvent } from '../src/shared/types'
@@ -332,4 +334,50 @@ test('the LEDGER partitions with the denominators: every drop is in exactly one 
   assert.ok(!inSlice(slices[0], idleMark), '…and not in the one it closed')
   const counted = slices.reduce((n, s) => n + drops.filter((d) => inSlice(s, d.ts, d.zone)).length, 0)
   assert.equal(counted, drops.length, 'and the whole ledger is accounted for, once each')
+})
+
+// ── where the affordance is, and is not ───────────────────────────────────────────────
+
+/** A source file, read as text — the same structural-pin trick `tests/zoneScope.test.mts` uses for
+ *  claims that are about WHICH surface mounts what, and that no arithmetic can reach. */
+function code(rel: string): string {
+  return readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
+}
+
+/** The same file with its comments stripped — for the pins that are about what the code DOES.
+ *  These files argue about `Date.now()` in prose at length, and a claim that a module never reads
+ *  the clock must not be satisfiable by deleting the paragraph that explains why. */
+function codeOnly(rel: string): string {
+  return code(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+}
+
+test('the split is the LOOT ledger’s affordance, and the exp surfaces do not grow a second one', () => {
+  // The ledger asks for it by name. Everything else reads the resulting slice without knowing the
+  // button exists — which is the whole reason this rides `custom` instead of a tenth slice id.
+  assert.match(code('../src/renderer/src/features/loot/LootView.tsx'), /sessions=\{\{ segments/)
+  assert.doesNotMatch(
+    code('../src/renderer/src/features/timeslice/ScopeBar.tsx'),
+    /sessions=/,
+    'the Leveling scope row must not sprout its own reset button'
+  )
+  // ONE clock read in the feature, and it is the click. The pure modules stay replayable: a replay
+  // of yesterday's log has to give yesterday's answer, whatever the wall clock says today.
+  assert.doesNotMatch(codeOnly('../src/shared/sessionSegments.ts'), /Date\.now|new Date/)
+  assert.doesNotMatch(codeOnly('../src/shared/timeslice.ts'), /Date\.now|new Date/)
+  assert.match(
+    codeOnly('../src/renderer/src/features/timeslice/useTimeslice.ts'),
+    /addSessionMark\(marks, Date\.now\(\)\)/
+  )
+})
+
+test('the two datetime fields display the RAW pick, which is the future-end-time fix', () => {
+  const bar = code('../src/renderer/src/features/timeslice/SliceBar.tsx')
+  // `inputRange(custom, …)` is the whole fix: the control shows what was typed, the SLICE stays
+  // clamped. Re-pinning `slice.range` straight onto the fields is the regression it prevents.
+  assert.match(bar, /<CustomRange range=\{inputRange\(custom, slice\.range\)\}/)
+  assert.match(bar, /Number\.isFinite\(custom\.t1\)/, 'and an OPEN end has no wall time to show')
+  // Both surfaces that draw the fields hand the raw pick down — one of them displaying a different
+  // range than the other is two controls wearing one design.
+  assert.match(code('../src/renderer/src/features/timeslice/ScopeBar.tsx'), /custom=\{custom\}/)
+  assert.match(code('../src/renderer/src/features/loot/LootView.tsx'), /custom=\{ts\.custom\}/)
 })

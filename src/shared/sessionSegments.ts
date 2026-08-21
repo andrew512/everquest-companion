@@ -42,11 +42,11 @@
 // THE DENOMINATOR IS THE INTERESTING HALF, and it partitions too — because of a rule
 // `progressionStats.idleSpans` was already written to: the samples BRACKETING a range are pulled
 // into its walk unconditionally, so a silence that STRADDLES a mark is measured at its true length
-// and then clipped to each side. Without that, splitting a 20-minute AFK at minute 10 would leave
-// two 10-minute gaps, each under `IDLE_GAP_MS`, and `activeMs` would be INVENTED on both sides of
+// and then clipped to each side. Without that, splitting an 8-minute AFK at minute 4 would leave
+// two 4-minute gaps, each under `IDLE_GAP_MS`, and `activeMs` would be INVENTED on both sides of
 // the split — the segments would sum to more active time than the record they came from. They do
 // not, and `tests/sessionSegments.test.mts` pins Σ over the segments == the unsplit range for
-// duration, active, idle and offline alike.
+// duration, active, idle and offline alike, over exactly that arrangement.
 //
 // PURE, and clock-free for `shared/timeslice.ts`'s own reason: the mark is an argument. The one
 // `Date.now()` in this feature lives in the click handler (`useTimeslice.newSession`), where the
