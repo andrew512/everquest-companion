@@ -51,7 +51,7 @@
     "lint:fix": "eslint . --fix --cache --cache-location node_modules/.cache/eslint/",
     "lint:measure": "tsx scripts/lint-report.mts --measure",
     "lint:ratchet": "tsx scripts/lint-report.mts --ratchet",
-    "test": "node --import tsx scripts/testGate.mts unit -- node --import tsx --test --test-concurrency=10 tests/*.test.mts",
+    "test": "node --import tsx scripts/testGate.mts unit -- node --import tsx --test --test-concurrency=auto tests/*.test.mts",
     "test:e2e": "node --import tsx scripts/testGate.mts e2e -- node --import tsx tests/e2e/run-all.mts",
     "smoke:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sandbox/run-smoke-feedback.ps1",
     "bench:replay": "node --import tsx tests/bench/replay.bench.mts",

@@ -36,7 +36,7 @@
  */
 import { spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { availableParallelism, homedir } from 'node:os'
 import { join } from 'node:path'
 
 const POOLS: Record<string, { slots: number; staleMs: number }> = {
@@ -52,6 +52,16 @@ if (!pool || dashDash !== '--' || cmd.length === 0) {
   console.error('usage: testGate.mts <unit|e2e> -- <command...>')
   process.exit(2)
 }
+
+// `--test-concurrency=auto` is this gate's token, resolved to min(10, the machine's own
+// parallelism). A FIXED 10 was the first cut and it broke CI the same day (run 32446378546):
+// on a small runner ten contending test processes blow the F13 timing budget, where node's
+// default — one per core — was already right. The 10 is the LOCAL cap (the 24-core box is where
+// unbounded concurrency starved the desktop); a machine with fewer cores keeps its native count.
+const CONCURRENCY_TOKEN = '--test-concurrency=auto'
+const resolved = cmd.map((a) =>
+  a === CONCURRENCY_TOKEN ? `--test-concurrency=${String(Math.min(10, availableParallelism()))}` : a
+)
 
 const dir = join(homedir(), '.eqc-test-gate', poolName)
 mkdirSync(dir, { recursive: true })
@@ -127,7 +137,7 @@ process.on('SIGTERM', () => {
   process.exit(143)
 })
 
-const child = spawn(cmd[0], cmd.slice(1), { stdio: 'inherit' })
+const child = spawn(resolved[0], resolved.slice(1), { stdio: 'inherit' })
 child.on('exit', (code, signal) => {
   release()
   process.exit(code ?? (signal ? 1 : 0))
