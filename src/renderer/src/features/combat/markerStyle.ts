@@ -53,6 +53,12 @@ export const ORIGIN_COLOR: Record<ProcOrigin, string> = {
   poison: PROC_COLOR,
   spell: '#a98fe0',
   slay: '#f6f0da',
+  // THE SWING-BORNE AA hue (JOS-437) — the stance GOLD, which is the one colour in the marker
+  // vocabulary no proc origin had taken. Deliberately the warm neighbour of slay's cream rather
+  // than a fifth unrelated hue: `slay` and `aa` are the two lanes that ride an ordinary weapon
+  // swing, and reading as siblings is correct. They stay distinguishable — cream is a near-white
+  // and this is an amber — which is what keeps it a relation rather than a collision.
+  aa: '#d9b25f',
   click: CLICK_COLOR
 }
 
