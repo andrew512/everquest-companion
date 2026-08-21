@@ -904,6 +904,11 @@ export const IPC = {
   // ---- misc pushes ----
   onLine: 'log:line',
   onCharacter: 'log:character',
+  // main -> renderer: the attached log has been silent for minutes while a SIBLING character log
+  // is growing — offer a one-click switch (JOS-432). Payload: LogSwitchNudge. At most one per
+  // candidate log per app session, by construction (src/main/log/quietSwitch.ts); there is no
+  // re-fire, no stacking and no re-show, so the renderer needs no rate limiting of its own.
+  onLogSwitchNudge: 'log:switchNudge',
 
   // ---- error harness (renderer -> main, fire-and-forget) ----
   // window.onerror / onunhandledrejection / React ErrorBoundary report here so
