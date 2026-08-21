@@ -19,6 +19,17 @@
 
 import type { TimelineMarker } from '@shared/combat'
 
+/**
+ * The HELD-CLICKY hue (JOS-438) — the DoT blue from `CAT_COLOR`, spelled here rather than
+ * imported because combatShared.tsx is at its measured line ceiling and this file is the
+ * vocabulary's home anyway.
+ *
+ * Deliberately NOT the proc magenta: the reported defect was a clicky wearing the proc
+ * vocabulary, and a lane that reads `click` in the proc COLOUR would leave half of it in place.
+ * Blue is the one hue in the vocabulary that no proc origin already uses.
+ */
+export const CLICK_COLOR = '#6fb3d2'
+
 export const MARKER_COLOR: Record<TimelineMarker['kind'], string> = {
   stance: '#d9b25f',
   invocation: '#a98fe0',

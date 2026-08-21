@@ -72,8 +72,17 @@ export interface StateSpan {
  *   'spell'  — a spell-effect line with no own cast behind it (see PROC_CAST_WINDOW_MS).
  *   'slay'   — the `(Slay Undead)` melee paren modifier: a proc that rides a swing, so its
  *              damage is NOT the damage it added (see ProcLaneView.marginalDamage).
+ *   'click'  — NOT A PROC AT ALL, and that is the whole point of the value (JOS-438,
+ *              report 01M0BS3FJW1YWP6ZNMM41HCMS2: "they are given ppm ratings in the dps
+ *              breakdown, but they are not procs"). An instant item click prints the same
+ *              nothing a proc does — one effect line, no cast line — so it reaches the same
+ *              detector; what separates them is the player's OWN inventory naming the clicky
+ *              (main/itemClickies.ts). A `click` lane counts the same firings and divides them
+ *              the same way, and every surface that prints a rate for one says CLICKS, never
+ *              procs. The reporter asked for exactly that: the rate they remember to press the
+ *              button at is worth knowing; calling it a proc rate is not.
  */
-export type ProcOrigin = 'poison' | 'spell' | 'slay'
+export type ProcOrigin = 'poison' | 'spell' | 'slay' | 'click'
 
 /**
  * THREE denominators, all carried, none hidden. They answer different questions, and

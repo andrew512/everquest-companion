@@ -42,7 +42,7 @@
 import { sumMap } from './aggregate'
 import { stateKeyOf } from './stateTimeline'
 import { buildAttributionReport, concentrationOf, linkStrength, procRate } from './procWindows'
-import { isProcLaneName, laneCanonKey, laneCount, sidesCount } from './procDetect'
+import { isCastlessLaneName, laneCanonKey, laneCount, sidesCount } from './procDetect'
 import { idKey, spellCanonKey } from '../log/parseCommon'
 import { POISONS, isSlowCapable } from '../../shared/poisons'
 import { PROC_BUFF_CATALOG } from '../../shared/procBuffs'
@@ -156,9 +156,14 @@ function spellSource(name: string, w: SourceWindows): ProcSourceWindow | undefin
  *   - N/A     — a SLAY lane. Slay Undead is an innate class proc: there is no span to observe,
  *               was never one to miss, and flagging it 'ambiguous' would invite a reader to
  *               look for a window that does not exist. It divides by the segment plainly.
+ *               A CLICK lane joins it there (JOS-438), and for the mirror-image reason: the
+ *               source is an item the player is holding, which the dump has just told us they
+ *               have. There is no span that could have been off, so `sourceAmbiguous` — whose
+ *               whole sentence is "this rate is a LOWER bound because the source may have been
+ *               absent" — would be false. It divides by the segment, plainly and exactly.
  */
 function sourceInput(origin: ProcOrigin, label: string, w: SourceWindows): { source?: ProcSourceWindow; sourceUnknown?: boolean } {
-  if (origin === 'slay') return {}
+  if (origin === 'slay' || origin === 'click') return {}
   const source = origin === 'poison' ? poisonSource(label, w) : spellSource(label, w)
   return source ? { source } : { sourceUnknown: true }
 }
@@ -443,8 +448,11 @@ function taggedSkills(you: SourceStat | undefined, l: ProcLaneView): string[] {
   // spell only ever procced there is one row and it carries the marker, so this narrows nothing;
   // when it also has a matching row with no marker at all (a poison Strike, an emote lane) the
   // filter would empty the list, so it applies only once a marked row exists.
-  const split = rows.filter((s) => isProcLaneName(s.name))
-  return (l.origin === 'spell' && split.length > 0 ? split : rows).map((s) => s.name)
+  // JOS-438 widens this to BOTH cast-less markers: a click lane's meter row is `X · click`, and
+  // the reason to prefer it over the hand-cast row is identical.
+  const split = rows.filter((s) => isCastlessLaneName(s.name))
+  const castless = l.origin === 'spell' || l.origin === 'click'
+  return (castless && split.length > 0 ? split : rows).map((s) => s.name)
 }
 
 /** Healing recorded under a given skill name by the cast-less detector (`Lifetap Strike`,
@@ -530,7 +538,11 @@ function spellLanes(
     out.push(
       lane(
         {
-          name: l.name, origin: 'spell', count: laneCount(l), damage: l.damage, heal: l.heal,
+          // A HELD CLICKY IS ITS OWN ORIGIN (JOS-438). Same counts, same denominators, same links
+          // — the lane's whole record is unchanged; what moves is the word every surface prints
+          // over it, because "proc" was a claim about a mechanism this firing does not have.
+          name: l.name, origin: l.click ? 'click' : 'spell', count: laneCount(l),
+          damage: l.damage, heal: l.heal,
           resisted: resistedBy(you, [key]), linked: linksFor(l, ctx)
         },
         b
@@ -568,10 +580,15 @@ function slayLanes(you: SourceStat | undefined, b: RateBase): ProcLaneView[] {
  * summing lanes measured over disjoint windows would produce a rate with no denominator at all.
  * So this one keeps the segment and carries no source fields — an absence that means "not
  * applicable", where a lane's absence means "unknown".
+ *
+ * AND A CLICK LANE IS NOT IN IT (JOS-438). This number is printed as `N procs · X ppm`, and a
+ * button the player pressed is not a proc — folding it in is the exact sentence the report
+ * objected to, one level up. Click lanes are counted separately (`clickCount`) and the card's
+ * header states both, so the rows under it still add up to what it advertises.
  */
 function overallRate(lanes: readonly ProcLaneView[], b: RateBase): ProcRateView {
   return procRate({
-    count: lanes.reduce((n, l) => n + l.count, 0),
+    count: lanes.reduce((n, l) => n + (l.origin === 'click' ? 0 : l.count), 0),
     activeSec: b.activeSec,
     durationSec: b.durationSec,
     swings: b.swings

@@ -36,6 +36,7 @@ import {
 import { sweepCoatClass } from './coatClass'
 import {
   QUICK_BUFF_AA,
+  castlessKind,
   isCastlessHeal,
   laneNameFor,
   procEligibleDamage,
@@ -342,7 +343,9 @@ function damageOrigin(st: EngineState, ev: DamageEvent): SpellOrigin | null {
   if (!procEligibleDamage(ev.dtype, ev.skill)) return null
   if (idKey(ev.attacker) !== 'you') return null
   if (verdict(st, ev).kind !== 'out-you') return null
-  return st.recentCasts.origin(ev.skill, ev.ts)
+  // The cast ledger answers cast-or-not; the held-clicky set is what turns a `proc` verdict into
+  // a `click` one (JOS-438). Empty set ⇒ identity, so this line changes nothing without a dump.
+  return castlessKind(st.recentCasts.origin(ev.skill, ev.ts), ev.skill, st.heldClickies)
 }
 
 /**
@@ -366,7 +369,10 @@ function damageAnalytics(ev: DamageEvent, at: Attribution, origin: SpellOrigin |
   // the same `mine: false` branch the pet does and moves no proc counter.
   if (at.kind !== 'out-you') return { mine: false, swing: 0, proc: false }
   const swing = ev.category === 'melee' || ev.category === 'slay' ? 1 : 0
-  return { mine: true, swing, proc: origin === 'proc' }
+  // A CLICK IS A CAST-LESS FIRING TOO (JOS-438), so it still folds a lane — `procDamage` and the
+  // Tier-B windows keep counting the damage an item effect delivered, which is what they are for.
+  // What changes is the LANE it lands in, and `foldDamageAnalytics` carries the marker there.
+  return { mine: true, swing, proc: origin === 'proc' || origin === 'click' }
 }
 
 /**
@@ -416,7 +422,12 @@ function foldDamageAnalytics(st: EngineState, f: DamageFold): void {
     agg.windows.fold(fold, active)
     agg.procs.addActiveMs(activeDeltaMs, active)
     if (a.swing) agg.procs.addSwing(active)
-    if (a.proc) agg.procs.addSpellProc({ spell: ev.skill, side: 'damage', amount: ev.amount, active })
+    if (a.proc) {
+      agg.procs.addSpellProc({
+        spell: ev.skill, side: 'damage', amount: ev.amount, active,
+        ...(f.origin === 'click' ? { click: true as const } : {})
+      })
+    }
   })
   if (p) p.leave()
 }
@@ -430,10 +441,13 @@ function foldHealAnalytics(st: EngineState, ev: HealEvent): void {
   const spell = ev.spell
   if (!spell || idKey(ev.healer ?? '') !== 'you') return
   if (!isCastlessHeal(st.recentCasts, { spell, ts: ev.ts, overTime: ev.overTime === true, quickBuffTs: st.quickBuffTs })) return
+  // The gate above has already reached `proc`; the held set is what promotes it (JOS-438). A
+  // clicky heal (Stein of Moggok's Light Healing) is the same shape as the damage side.
+  const click = castlessKind('proc', spell, st.heldClickies) === 'click'
   const p = st.probe
   if (p) p.enter(SEC_ANALYTICS)
   foldBoth(st, ev.ts, (agg, active) => {
-    agg.procs.addSpellProc({ spell, side: 'heal', amount: ev.amount, active })
+    agg.procs.addSpellProc({ spell, side: 'heal', amount: ev.amount, active, ...(click ? { click: true as const } : {}) })
   })
   if (p) p.leave()
 }

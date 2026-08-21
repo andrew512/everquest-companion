@@ -30,6 +30,7 @@ import { formatTailIoSummary, takeTailIoSummary } from './log/tailIoStats'
 import { createSlicer } from './log/replaySlicer'
 import { saveUserOverlay } from './data/overlayPersistence'
 import { loadInventory } from './inventory/parseInventory'
+import { heldClickySpells } from './itemClickies'
 import { loadAchievements, watchOutputKind, type OutputKindWatch } from './outputs'
 import {
   bus,
@@ -296,6 +297,18 @@ function resetWorldFor(ref: CharacterRef): void {
   // so incoming self-heals ("You healed <Name> for N") attribute from the first
   // line rather than waiting for the engine to learn the name mid-scan.
   combat.setPlayerName(ref.name)
+  // …and which instant clickies they own (JOS-438), from the PERSISTED dump, for the same reason:
+  // the scan replay is where the historical log gets classified, and a clicky firing has to be
+  // called a click on the pass that folds it. `loadInventoryNow` re-installs from a fresh dump
+  // afterwards. Empty on a character who has never typed `/outputfile inventory`, which is
+  // exactly the pre-JOS-438 behaviour.
+  installHeldClickies()
+}
+
+/** The held-clicky set, from whatever dump the store currently holds for the active character.
+ *  Two callers — the pre-scan install above and every dump load — so the derivation has one home. */
+function installHeldClickies(): void {
+  combat.setHeldClickies(heldClickySpells(getProgress(activeCharId()).inventory))
 }
 
 /**
@@ -669,6 +682,11 @@ function loadInventoryNow(ref: CharacterRef, why: 'startup' | 'watch'): void {
   const res = loadInventory(character.name, character.server, inventoryWrittenAt)
   if (!res) return
   setInventory(activeCharId(), res.counts, res.source)
+  // A dump is the ONLY evidence that a cast-less firing was a click you made (JOS-438), so a
+  // reload re-derives the set. The live tail folds against the new one from its next line; the
+  // fold that has already happened keeps whatever the persisted dump said, which is the same
+  // rule every other dump-derived surface follows.
+  installHeldClickies()
   logInfo(
     `[everquest-companion] Inventory ${why === 'startup' ? 'loaded at startup' : 'auto-reloaded'}: ${res.path}`
   )
