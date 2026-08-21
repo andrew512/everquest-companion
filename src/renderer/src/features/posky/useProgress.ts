@@ -28,13 +28,17 @@ import { ambiguousQuestNames, computeSharedItems, type SharedItemsMap } from './
 import { skyDroppersFor, type DropperMob } from './poskyDroppers'
 import { countTurnIns, newlyCompletedTurnIns } from './turnInCelebration'
 import { questDropRecency } from './questSort'
-import { rewardInferredQuests, withRewardInference } from './rewardInference'
+import { rewardInferredQuests } from './rewardInference'
+import { achievementVouchedQuests } from './achievementInference'
+import { withDerivedCompletion } from './questCompletion'
 // The turn-in ledger (JOS-131) — the ONE place a turn-in count is decided, shared with main's
 // store so the renderer and the persisted file cannot disagree about what a count means.
 // Relative value import, per the repo's node-tested-module rule.
 import {
   resolveTurnIns,
   turnInsToPersist,
+  type DerivedCompletionSource,
+  type DerivedEvidence,
   type QuestTurnIns,
   type TurnInInstants
 } from '../../../../shared/questTurnIns'
@@ -161,13 +165,18 @@ export interface QuestProgress {
    *  only need the badge (the Ignored list) and for sorts that predate the count. */
   completed: boolean
   /**
-   * The count above was INFERRED from the reward item in the loaded inventory export (issue #27),
-   * not read from the log or stated by hand. Present only when that inference is the count's ONLY
-   * source — any ledger evidence wins and leaves this absent — so the UI can say where the
-   * reading came from and the undo control can say why there is nothing to take back
-   * (the classUnlocks.ts observed-vs-derived precedent). Derived on every read, never persisted.
+   * WHICH DERIVED SOURCE the count above came from, when it came from one (issue #27, extended by
+   * JOS-429). Present only when derived evidence is the count's ONLY source — any ledger evidence
+   * wins and leaves this absent — so the UI can say where the reading came from and the undo
+   * control can say why there is nothing to take back (the classUnlocks.ts observed-vs-derived
+   * precedent). Derived on every read, never persisted.
+   *
+   * It is a NAME rather than a boolean because there are two sources now and they are not equally
+   * strong: `'achievement'` is the server's own answer out of `/outputfile achievements`,
+   * `'reward'` is the inference from the reward sitting in your inventory export. The ranking, and
+   * why a reader has to be told which one spoke, live in shared/questTurnIns.ts.
    */
-  rewardInferred?: true
+  completionEvidence?: DerivedEvidence
   /**
    * epoch ms of the NEWEST drop among this quest's required items — the "most recent drop"
    * sort key. Absent when nothing it needs has ever dropped; recency is then unknown, not old.
@@ -277,6 +286,8 @@ export interface UseProgress {
   /** Every statement in force, oldest first — what the tab's status line counts. */
   itemOverrides: ItemCountOverride[]
   inventoryInfo: ProgressState['inventorySource']
+  /** what we know about the last achievements dump we read (JOS-429) — the freshness line's input */
+  achievementsInfo: ProgressState['achievementsSource']
   /** questKey → contested items (other quests sharing each required item). */
   sharedItems: SharedItemsMap
   /** quest names that occur under >1 class (chips class-prefix only these). */
@@ -646,14 +657,31 @@ export function useProgress(opts?: UseProgressOptions): UseProgress {
     () => rewardInferredQuests(posky.quests, progress?.inventory),
     [progress?.inventory]
   )
+  // …and which the achievements dump vouches for (JOS-429) — the SERVER'S OWN answer, which is why
+  // it outranks the one above wherever both speak. Same shape, same derived-on-every-read rule,
+  // same never-persisted-as-a-turn-in promise; only the evidence is stronger.
+  const achievementVouched = useMemo(
+    () => achievementVouchedQuests(posky.quests, progress?.achievementUnlocks),
+    [progress?.achievementUnlocks]
+  )
+  // THE LADDER'S INPUT, in one memo so the map below sees a stable array. The ORDER HERE DOES NOT
+  // DECIDE ANYTHING — `derivedCompletion` ranks by name (shared/questTurnIns.ts) precisely so the
+  // answer cannot depend on the order a hook happened to build its list in.
+  const derivedSources = useMemo<DerivedCompletionSource[]>(
+    () => [
+      { evidence: 'achievement', vouched: achievementVouched },
+      { evidence: 'reward', vouched: rewardVouched }
+    ],
+    [achievementVouched, rewardVouched]
+  )
   const quests = useMemo<QuestProgress[]>(() => {
     if (!progress) return []
     const counts = { all: turnIns.all, log: logCounts }
     const facts = { lastLootedAt, overrides: overridesByKey }
     return posky.quests.map((q) =>
-      withRewardInference(computeQuestProgress(q, net, counts, facts), rewardVouched)
+      withDerivedCompletion(computeQuestProgress(q, net, counts, facts), derivedSources)
     )
-  }, [progress, net, lastLootedAt, turnIns, logCounts, overridesByKey, rewardVouched])
+  }, [progress, net, lastLootedAt, turnIns, logCounts, overridesByKey, derivedSources])
 
   const classes = useMemo(() => [...new Set(posky.quests.map((q) => q.className))].sort(), [])
 
@@ -672,6 +700,7 @@ export function useProgress(opts?: UseProgressOptions): UseProgress {
     setItemOverride,
     itemOverrides,
     inventoryInfo: progress?.inventorySource,
+    achievementsInfo: progress?.achievementsSource,
     sharedItems: sharedItemsMap,
     ambiguousQuestNames: ambiguousNames
   }

@@ -18,11 +18,16 @@
 //      matching on the same counting key the held counts use (lowercased, `+N` folded), so an
 //      exalted reward still testifies for its quest. A quest with no reward in the data never
 //      infers; an absent export infers nothing.
-//   2. THE FLOOR (`withRewardInference`): a vouched-for quest with NO other evidence reads
-//      turnIns 1 / completed, and says WHERE the reading came from (`rewardInferred`), because a
-//      reader who cannot tell "the log said so" from "we worked it out" cannot tell which rows
-//      to trust (the classUnlocks.ts precedent). Real evidence wins: any ledger count leaves the
-//      quest untouched and unlabelled.
+//   2. THE FLOOR (`withDerivedCompletion`, questCompletion.ts): a vouched-for quest with NO other
+//      evidence reads turnIns 1 / completed, and says WHERE the reading came from
+//      (`completionEvidence: 'reward'`), because a reader who cannot tell "the log said so" from
+//      "we worked it out" cannot tell which rows to trust (the classUnlocks.ts precedent). Real
+//      evidence wins: any ledger count leaves the quest untouched and unlabelled.
+//      SINCE JOS-429 THE FLOOR IS SHARED. A second derived source landed (the achievements dump,
+//      which is the SERVER'S OWN ANSWER and outranks this inference), so the application moved to
+//      one resolver over a ranked ladder — shared/questTurnIns.ts owns the order,
+//      tests/achievementInference.test.mts pins it. Nothing this suite claims changed; the label
+//      became a name instead of a boolean.
 //   3. WHAT IT NEVER TOUCHES: the inference is DERIVED state — applied after
 //      `computeQuestProgress`, never written to the ledger — so consumption, the celebration
 //      baseline and persistence never see it. An inferred turn-in predates the log, so its items
@@ -41,11 +46,12 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { rewardInferredQuests } from '../src/renderer/src/features/posky/rewardInference'
 import {
-  rewardInferredQuests,
-  withRewardInference
-} from '../src/renderer/src/features/posky/rewardInference'
-import { everTurnedIn, firstTimeReady } from '../src/renderer/src/features/posky/questCompletion'
+  everTurnedIn,
+  firstTimeReady,
+  withDerivedCompletion
+} from '../src/renderer/src/features/posky/questCompletion'
 import type { QuestProgress } from '../src/renderer/src/features/posky/useProgress'
 
 // =============================================================================
@@ -157,38 +163,46 @@ function questRow(p: { className: string; name: string; turnIns?: number }): Que
 
 const VOUCHED = new Set(['Cleric::Cleric Test of Resolution'])
 
+/**
+ * The floor, applied as the app applies it since JOS-429: through the shared ladder, with the
+ * reward inference handed in as ONE named source. `withRewardInference` is gone — with two derived
+ * sources, "which one speaks" stopped being this module's business (shared/questTurnIns.ts). Every
+ * claim below is unchanged; what moved is that the label is now a NAME (`'reward'`) rather than a
+ * boolean, and the ranking against the achievements dump is pinned in
+ * tests/achievementInference.test.mts.
+ */
+const withReward = (q: QuestProgress): QuestProgress =>
+  withDerivedCompletion(q, [{ evidence: 'reward', vouched: VOUCHED }])
+
 test('no other evidence + reward held → turnIns floors at 1, completed, and says why', () => {
-  const q = withRewardInference(questRow({ className: 'Cleric', name: 'Cleric Test of Resolution' }), VOUCHED)
+  const q = withReward(questRow({ className: 'Cleric', name: 'Cleric Test of Resolution' }))
   assert.equal(q.turnIns, 1)
   assert.equal(q.completed, true)
-  assert.equal(q.rewardInferred, true)
+  assert.equal(q.completionEvidence, 'reward')
   // The log's share is untouched: nothing here is log evidence.
   assert.equal(q.logTurnIns, 0)
 })
 
 test('a quest the export does not vouch for is returned untouched and unlabelled', () => {
   const before = questRow({ className: 'Rogue', name: 'Rogue Test of Thievery' })
-  const after = withRewardInference(before, VOUCHED)
+  const after = withReward(before)
   assert.equal(after.turnIns, 0)
   assert.equal(after.completed, false)
-  assert.equal(after.rewardInferred, undefined)
+  assert.equal(after.completionEvidence, undefined)
 })
 
 test('real evidence wins: a ledger count is never floored, relabelled or double-counted', () => {
-  const q = withRewardInference(
-    questRow({ className: 'Cleric', name: 'Cleric Test of Resolution', turnIns: 2 }),
-    VOUCHED
-  )
+  const q = withReward(questRow({ className: 'Cleric', name: 'Cleric Test of Resolution', turnIns: 2 }))
   assert.equal(q.turnIns, 2)
-  assert.equal(q.rewardInferred, undefined)
+  assert.equal(q.completionEvidence, undefined)
 })
 
 test('the transform is pure: the input row is not mutated', () => {
   const before = questRow({ className: 'Cleric', name: 'Cleric Test of Resolution' })
-  withRewardInference(before, VOUCHED)
+  withReward(before)
   assert.equal(before.turnIns, 0)
   assert.equal(before.completed, false)
-  assert.equal((before as { rewardInferred?: true }).rewardInferred, undefined)
+  assert.equal((before as { completionEvidence?: string }).completionEvidence, undefined)
 })
 
 // =============================================================================
@@ -196,15 +210,12 @@ test('the transform is pure: the input row is not mutated', () => {
 // =============================================================================
 
 test('everTurnedIn reads an inferred quest as run — hide-turned-in and class unlocks follow', () => {
-  const q = withRewardInference(questRow({ className: 'Cleric', name: 'Cleric Test of Resolution' }), VOUCHED)
+  const q = withReward(questRow({ className: 'Cleric', name: 'Cleric Test of Resolution' }))
   assert.equal(everTurnedIn(q), true)
 })
 
 test('the Ready tab’s first-time default drops an inferred quest: it has been run', () => {
-  const inferred = withRewardInference(
-    questRow({ className: 'Cleric', name: 'Cleric Test of Resolution' }),
-    VOUCHED
-  )
+  const inferred = withReward(questRow({ className: 'Cleric', name: 'Cleric Test of Resolution' }))
   const fresh = questRow({ className: 'Rogue', name: 'Rogue Test of Thievery' })
   assert.deepEqual(
     firstTimeReady([inferred, fresh]).map((q) => q.key),

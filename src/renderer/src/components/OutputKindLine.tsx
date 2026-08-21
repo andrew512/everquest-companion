@@ -16,6 +16,14 @@
 // settles, and the registry re-reads on every ask, so re-asking on that push is what makes the
 // age fall back to "just now" the moment the player types the command. Nothing is cached here —
 // the whole failure mode this closes is an answer from before the command was typed.
+//
+// AND `onProgress` IS THE SECOND SUCH PUSH SINCE JOS-429, which is what kept the second graduated
+// kind from needing a channel of its own. `inventory:autoReloaded` means something specific — the
+// held counts moved — and an achievements dump moves no count, so re-using it would have been a
+// lie told to every other listener. What both loads DO have in common is that they write
+// `ProgressState` and push it. Listening to both is strictly a widening: a kind whose file was
+// rewritten is now re-asked about on either push, and the registry is one readdir plus one stat
+// with nothing cached, so a redundant ask costs an answer that was already correct.
 
 import { type JSX, useCallback, useEffect, useState } from 'react'
 import type { OutputFileStatus, OutputKindId } from '@shared/outputs/kinds'
@@ -50,10 +58,12 @@ export function useOutputStatus(kind: OutputKindId): OutputStatusState {
     let alive = true
     const live = (): boolean => alive
     read(live)
-    const off = window.eq.onInventoryReload(() => read(live))
+    const offInv = window.eq.onInventoryReload(() => read(live))
+    const offProgress = window.eq.onProgress(() => read(live))
     return () => {
       alive = false
-      off()
+      offInv()
+      offProgress()
     }
   }, [read])
 
