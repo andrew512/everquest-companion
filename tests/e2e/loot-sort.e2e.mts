@@ -56,6 +56,9 @@ import { launchOnFixture } from './logFixture.mjs'
 // `stepNewSession` is JOS-436's, and it rides this spec for the same reason: it is a LEDGER
 // surface, and it needs the ledger in the state a user first sees it in.
 import { stepLootSlice, stepNewSession } from './sliceSteps.mjs'
+// JOS-322's step, next door again: the SAME button, now proving it moves the combat engine's own
+// Overall picker as well as the ledger's. It rides this spec because this is where the button is.
+import { stepOneClickSplitsBoth } from './sessionSplitSteps.mjs'
 
 const GRID = '[data-testid="overview-grid"]'
 const LOOT_LIST = '[data-testid="loot-list"]'
@@ -213,6 +216,9 @@ async function main(): Promise<void> {
     // AFTER the slice step, which reads the ledger on `All` and needs it untouched, and BEFORE the
     // drill, which unmounts the whole bar. It leaves the ledger back on `All` for that step.
     await stepNewSession(page, log)
+    // AFTER it, because it presses the same button a second time and reads the DELTA — and still
+    // before the drill, which unmounts the whole bar.
+    await stepOneClickSplitsBoth(page, log)
     await stepRowStillDrills(page)
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
