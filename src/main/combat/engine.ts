@@ -224,6 +224,19 @@ export class CombatEngine {
   }
 
   /**
+   * Install the HELD-CLICKY set (JOS-438) — the canonical spell keys this character owns an
+   * instant item click for, from their `/outputfile inventory` dump.
+   *
+   * session.ts calls this TWICE by design: once from the persisted dump before the scan replay, so
+   * the fold classifies the historical log with the best evidence it has, and again whenever a
+   * fresh dump is loaded or auto-reloaded. Never called at all ⇒ the set stays empty and every
+   * cast-less firing keeps the proc lane it had before this gate existed.
+   */
+  setHeldClickies(spells: ReadonlySet<string>): void {
+    this.st.heldClickies = spells
+  }
+
+  /**
    * THE BENCH'S SUB-ATTRIBUTION SEAM (JOS-59 — see combat/foldProbe.ts for the whole rationale).
    * A PARAMETER, exactly like `ModuleRegistry.attach(bus, timer)`: `tests/bench/foldArm.mts` is
    * the only caller in the tree, there is no environment variable, and with no probe attached

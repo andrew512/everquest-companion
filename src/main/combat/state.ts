@@ -32,6 +32,10 @@ import { EMPTY_ROSTER, EMPTY_ROSTER_VIEW, type RosterSnap, type RosterView } fro
 import type { ClassifiedLine, CoatSlot } from '../../shared/combat'
 import type { ComboInterval } from '../../shared/classCombo'
 
+/** The held-clicky default: no dump loaded, so no ownership evidence and no reclassification.
+ *  Shared rather than re-allocated, because `reset()` runs on every character switch. */
+const NO_CLICKIES: ReadonlySet<string> = new Set<string>()
+
 export class EngineState {
   /** Canonical name keys of your LIVE PETS — charmed AND summoned alike. Kept in
    *  lockstep with the WorldModel's pet instances so the pure classify() (which only
@@ -242,6 +246,21 @@ export class EngineState {
    */
   recentCasts = new RecentCasts()
   /**
+   * WHICH SPELLS THIS CHARACTER OWNS AN INSTANT CLICKY FOR (JOS-438) — canonical spell keys,
+   * installed by session.ts from the `/outputfile inventory` dump through
+   * `CombatEngine.setHeldClickies`.
+   *
+   * A SEAM WITH AN EMPTY DEFAULT, exactly like `comboProvider` above and for the same reason:
+   * every test, every replay on a machine that has never written a dump, and any future embedding
+   * behaves precisely as it did before this gate existed — `castlessKind` over an empty set is the
+   * identity function, so not one lane name moves.
+   *
+   * A PLAIN SET rather than a pull, because unlike the roster and the combo it does not advance
+   * with the log: a dump is a snapshot the player writes by hand, and it is re-installed when one
+   * is loaded. Reading it is a `Set.has` on the cast-less path only.
+   */
+  heldClickies: ReadonlySet<string> = NO_CLICKIES
+  /**
    * ts of the last `You activate Quick Buff.` (0 = never). That AA re-applies the player's
    * memorized buffs and prints only their LANDINGS — no cast line for any of them — so the
    * burst it opens is cast evidence of a different shape, and the heal side of the cast-less
@@ -325,6 +344,9 @@ export class EngineState {
     this.slowSamples = []
     this.stateTimeline.reset()
     this.recentCasts.clear()
+    // A reset precedes a fresh scan of a DIFFERENT character's log as often as the same one's, and
+    // one character's bags say nothing about another's. session.ts re-installs immediately after.
+    this.heldClickies = NO_CLICKIES
     this.quickBuffTs = 0
     this.specials.reset()
     this.petNudge.reset()

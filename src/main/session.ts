@@ -37,6 +37,7 @@ import {
   characterModule,
   combat,
   epoch,
+  installHeldClickies,
   killsModule,
   levelingModule,
   lootModule,
@@ -296,6 +297,26 @@ function resetWorldFor(ref: CharacterRef): void {
   // so incoming self-heals ("You healed <Name> for N") attribute from the first
   // line rather than waiting for the engine to learn the name mid-scan.
   combat.setPlayerName(ref.name)
+  // …and which instant clickies they own (JOS-438), from the PERSISTED dump, for the same reason:
+  // the scan replay is where the historical log gets classified, and a clicky firing has to be
+  // called a click on the pass that folds it. `loadInventoryNow` re-installs from a fresh dump
+  // afterwards. Empty on a character who has never typed `/outputfile inventory`, which is
+  // exactly the pre-JOS-438 behaviour.
+  installClickies()
+}
+
+/**
+ * The held-clicky set, from whatever dump the store currently holds for the active character.
+ * Two callers — the pre-scan install above and every dump load — so the read has one home.
+ *
+ * IT GOES THROUGH pipeline.ts, and that indirection is LOAD-BEARING rather than tidiness: this
+ * module already imports pipeline.ts, so the call adds no module edge to the bundle. Importing the
+ * catalog from HERE instead broke JOS-431's delete-and-recreate inventory watcher — measured,
+ * deterministic, and with the derivation never called (main/itemClickies.ts carries the bisect;
+ * `tests/e2e/sky-inventory-autoload.e2e.mts` is what caught it).
+ */
+function installClickies(): void {
+  installHeldClickies(getProgress(activeCharId()).inventory)
 }
 
 /**
@@ -669,6 +690,11 @@ function loadInventoryNow(ref: CharacterRef, why: 'startup' | 'watch'): void {
   const res = loadInventory(character.name, character.server, inventoryWrittenAt)
   if (!res) return
   setInventory(activeCharId(), res.counts, res.source)
+  // A dump is the ONLY evidence that a cast-less firing was a click you made (JOS-438), so a
+  // reload re-derives the set. The live tail folds against the new one from its next line; the
+  // fold that has already happened keeps whatever the persisted dump said, which is the same
+  // rule every other dump-derived surface follows.
+  installClickies()
   logInfo(
     `[everquest-companion] Inventory ${why === 'startup' ? 'loaded at startup' : 'auto-reloaded'}: ${res.path}`
   )

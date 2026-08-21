@@ -8,7 +8,6 @@ import type { DamageCategory } from '@shared/combat'
 import { CATEGORY_LABEL } from '@shared/combat'
 import { formatNum as fmt, formatRate } from '../../lib/formatRate'
 import { laneDps } from './petRows'
-import { MARKER_COLOR } from './markerStyle'
 import type { ProcAnnotation } from './procRows'
 import { landEvidence } from './landEvidence'
 import { useAbilityExpand } from './abilityExpand'
@@ -56,12 +55,6 @@ export const CAT_COLOR: Record<DamageCategory, string> = {
 /** Red-tint for resist/miss rate badges (matches the timeline's hollow marks). */
 export const RESIST_COLOR = '#e05663'
 
-/**
- * The PROC hue. The marker vocabulary's coat magenta, reused rather than re-picked, so the
- * breakdown card's proc strip, a drill row's `proc · 3.1 ppm` tag and the chart's coat markers
- * all read as the same subject. One home for a color that means something (markerStyle.ts).
- */
-export const PROC_COLOR = MARKER_COLOR.coat
 
 export function Bar({
   color,
@@ -331,7 +324,7 @@ function ProcTag({ proc }: { proc: ProcAnnotation }): React.JSX.Element {
         variant="caption"
         noWrap
         data-testid="proc-tag"
-        sx={{ flexShrink: 0, color: PROC_COLOR, fontWeight: 600 }}
+        sx={{ flexShrink: 0, color: proc.color, fontWeight: 600 }}
       >
         {proc.text}
       </Typography>
