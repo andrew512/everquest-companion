@@ -338,12 +338,14 @@ export const DATA_READY_MS = performance.now()
  * and the combo this one has no live source to pull from — a dump is a snapshot the player writes
  * by hand, so session.ts re-installs it whenever one is read.
  *
- * IT LIVES HERE, and that is the whole point of the indirection. The derivation reads the
- * committed item DB, whose 8 MB import this module already pays for (`lookupItem`, above);
- * session.ts calls this instead of importing the catalog itself, which would put items.json into
- * ITS module graph and reorder the bundle ahead of `outputs/` — measured to break the JOS-431
- * delete-and-recreate inventory watcher, silently. `installHeldClickies` TAKES the counts rather
- * than reading the store so that session.ts stays the only module that knows the active character.
+ * IT LIVES HERE, and that is the whole point of the indirection: this module already imports
+ * itemLookup (`lookupItem`, above) and session.ts already imports this one, so the feature adds no
+ * module edge to the main bundle anywhere. Reaching the catalog through a NEW edge instead — from
+ * session.ts, then from here — was measured to break JOS-431's delete-and-recreate inventory
+ * watcher with the derivation never even called (main/itemClickies.ts carries the bisect).
+ *
+ * It TAKES the counts rather than reading the store, so session.ts stays the only module that
+ * knows which character is active.
  */
 export function installHeldClickies(counts: HeldCounts): void {
   combat.setHeldClickies(heldClickySpells(counts))

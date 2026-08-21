@@ -309,14 +309,11 @@ function resetWorldFor(ref: CharacterRef): void {
  * The held-clicky set, from whatever dump the store currently holds for the active character.
  * Two callers — the pre-scan install above and every dump load — so the read has one home.
  *
- * IT GOES THROUGH pipeline.ts, and that indirection is LOAD-BEARING rather than tidiness. The
- * derivation reads the committed item DB, and `itemLookup.ts` owns that 8 MB import (itemsDb.ts's
- * own rule: "a script or a test pays for the 8 MB only when it actually wants it"). Importing it
- * from HERE put items.json into session.ts's module graph and reordered the bundle's evaluation
- * ahead of `outputs/` — which broke JOS-431's delete-and-recreate watcher, deterministically and
- * with no error to show for it (`tests/e2e/sky-inventory-autoload.e2e.mts` caught it). pipeline.ts
- * already imports itemLookup, and session.ts already imports pipeline.ts, so routing the call
- * through it adds no module edge at all.
+ * IT GOES THROUGH pipeline.ts, and that indirection is LOAD-BEARING rather than tidiness: this
+ * module already imports pipeline.ts, so the call adds no module edge to the bundle. Importing the
+ * catalog from HERE instead broke JOS-431's delete-and-recreate inventory watcher — measured,
+ * deterministic, and with the derivation never called (main/itemClickies.ts carries the bisect;
+ * `tests/e2e/sky-inventory-autoload.e2e.mts` is what caught it).
  */
 function installClickies(): void {
   installHeldClickies(getProgress(activeCharId()).inventory)

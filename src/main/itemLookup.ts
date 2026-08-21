@@ -94,10 +94,12 @@ const cacheKey = itemKey
 const itemDb = buildItemDbIndex(itemsJson as unknown as ItemDbFile)
 
 /**
- * THE HELD-CLICKY CATALOG (JOS-438), bound to the committed DB here because this module OWNS that
- * import and must remain its only static importer in the main bundle — a second one reorders the
- * bundle's module evaluation, which broke JOS-431's inventory watcher (itemClickies.ts carries the
- * bisect). The derivation itself is pure and lives there; this is the binding and nothing else.
+ * THE HELD-CLICKY CATALOG (JOS-438), bound to the committed DB here because this module already
+ * imports it and pipeline.ts already imports THIS — so the feature adds no module edge to the main
+ * bundle. That is not tidiness: giving itemClickies.ts its own items.json import and reaching it
+ * from session.ts/pipeline.ts broke JOS-431's inventory watcher, measured, with the function never
+ * called. itemClickies.ts carries the bisect. The derivation is pure and lives there; this is the
+ * binding and nothing else.
  */
 export function heldClickySpells(counts: HeldCounts): ReadonlySet<string> {
   return clickySpells((itemsJson as unknown as ItemDbFile).items, counts)

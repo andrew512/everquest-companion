@@ -54,17 +54,34 @@
 // A TIMED clicky (`Casting Time: 4.0`) is deliberately NOT in this table: it prints a real
 // `You begin casting` line, so it already scores `cast` and has never been part of the defect.
 
-// ── WHY THIS MODULE NEVER IMPORTS items.json ──
+// ── WHY THIS MODULE TAKES THE DB RATHER THAN IMPORTING IT ──
 //
-// It takes the DB as an argument, and `itemLookup.ts` — which owns that import already — is the
-// one caller that supplies it. That is itemsDb.ts's own stated rule ("Nothing here loads the JSON
-// … so a script or a test pays for the 8 MB only when it actually wants it"), and it is also a
-// MEASURED constraint rather than a stylistic one: adding a SECOND static importer of items.json
-// anywhere in the main bundle reorders that bundle's module evaluation, and doing so broke the
-// JOS-431 delete-and-recreate inventory watcher — deterministically, with no error to show for it.
-// Bisected over six e2e runs: the fault followed the IMPORT EDGE, not the call (the spec passed
-// with the call in place and this module absent from the graph, and failed with the edge present
-// and the function never invoked). `tests/e2e/sky-inventory-autoload.e2e.mts` is the tripwire.
+// It follows itemsDb.ts's stated rule ("Nothing here loads the JSON — itemLookup.ts owns that
+// import, so a script or a test pays for the 8 MB only when it actually wants it"), and here that
+// rule turned out to have TEETH.
+//
+// MEASURED, six e2e runs of `tests/e2e/sky-inventory-autoload.e2e.mts` while this branch was being
+// rebased onto JOS-431. Giving this module a static `import … from './data/items.json'` and
+// importing THIS module from session.ts (and then from pipeline.ts) broke that spec's
+// delete-and-recreate watcher check — deterministically, with every other check still green and no
+// error printed anywhere:
+//
+//   edge present, both call sites live        FAIL
+//   edge present, one call site               FAIL
+//   edge present, function NEVER invoked      FAIL   ← the discriminator
+//   edge absent,  call site live (empty set)  PASS
+//   edge absent,  no call                     PASS
+//
+// So the fault followed the IMPORT EDGE and not the work — the index build below is 3.8 ms and was
+// never a candidate. Routing the same call through `itemLookup.ts`, an edge pipeline.ts ALREADY
+// had, is green at main's own wall clock.
+//
+// WHAT IS NOT KNOWN: precisely which rollup ordering the new edge disturbed, or why a file watcher
+// is sensitive to it at all. items.json has four other static importers (ipc/characterSheet.ts,
+// ipc/planner.ts, mobDropEra.ts, itemLookup.ts), so "a second importer" is NOT the rule — what was
+// tested is this edge, in this position, against that spec. That a chokidar watcher can be broken
+// by module order is a defect in its own right and is worth a ticket; adding no edge is this
+// ticket's way around it, not an explanation of it.
 
 import { itemKey } from './itemsDb'
 import { spellCanonKey } from './log/parseCommon'
