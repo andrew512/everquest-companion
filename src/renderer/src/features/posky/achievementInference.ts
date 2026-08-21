@@ -145,7 +145,7 @@ const itemFold = (name: string): string => name.toLowerCase().replace(/\s+/g, ' 
 
 /** The lookup key both sides are reduced to. */
 const joinKey = (className: string, item: string): string =>
-  `${classFold(className)} ${itemFold(item)}`
+  `${classFold(className)}\u0000${itemFold(item)}`
 
 /**
  * Every spelling of one quest's reward the achievements file might use: the reward itself, plus the
