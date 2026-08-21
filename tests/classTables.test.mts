@@ -205,10 +205,23 @@ test('ROG has exactly nine spells, all ROG-exclusive', () => {
 
 test('the per-class counts reproduce the design measurement, per spell entry', () => {
   // docs/plans/class-combo-inference.md § 2/C1, measured over the 1926 raw entries.
+  //
+  // NEC 192 -> 193 AND SHD 90 -> 91 (JOS-439), and they are ONE spell. The game patched on
+  // 2026-08-18 and added `Lifebite`, an instant lifetap the wiki page for which was created that
+  // day — `* Necromancer - Level 8 (Autogranted) * Shadow Knight - Level 10 (Autogranted)`. The
+  // scrape brought it in whole; nothing was overlaid. Both classes gain a row and NEITHER gains an
+  // exclusive one, because a spell two classes cast is exclusive to neither — which is exactly the
+  // check that makes this pair of numbers worth pinning rather than one of them.
+  //
+  // Nothing else in that 78-row scrape diff reaches this table: the rest of the patch is the
+  // alchemy shelf (`Elixir of *`, `<Resist> Awareness`, `Healing Potion *`), whose `classes` field
+  // reads `This spell cannot be cast directly. It is triggered by drinking a …` and parses to no
+  // class at all. `Invisibility versus Undead` -> `Invisibility vs. Undead` is a RENAME of a page
+  // this table already counted, so its five classes each keep the row they had.
   const expected: Record<string, [number, number]> = {
     BRD: [91, 90], BST: [77, 27], CLR: [206, 82], DRU: [268, 152],
-    ENC: [239, 184], MAG: [202, 161], NEC: [192, 86], PAL: [91, 17],
-    RNG: [92, 20], SHD: [90, 23], SHM: [209, 102], WIZ: [235, 193]
+    ENC: [239, 184], MAG: [202, 161], NEC: [193, 86], PAL: [91, 17],
+    RNG: [92, 20], SHD: [91, 23], SHM: [209, 102], WIZ: [235, 193]
   }
   for (const [abbr, [total, excl]] of Object.entries(expected)) {
     assert.deepEqual([RAW.get(abbr)?.total, RAW.get(abbr)?.excl], [total, excl], `${abbr} drifted`)
@@ -226,7 +239,19 @@ test('the SHIPPED index is keyed by canon key, so rank variants collapse', () =>
   // point of the split — the wiki dataset stays pristine and only the EFFECTIVE index shrinks.
   // No per-class exclusive count moves with it: Invigor was placed for six classes, so it was
   // exclusive to none of them.
-  assert.equal(spellClassIndex().size, 1411)
+  //
+  // 1411 -> 1413 (JOS-439), TWO keys from the 2026-08-18 game patch, and only ONE of them is a new
+  // spell:
+  //   `lifebite` — the new Necromancer 8 / Shadow Knight 10 lifetap.
+  //   `invisibility vs. undead` — NOT a new spell. The wiki carries this spell on two pages, and
+  //     until the patch they were `Invisibility versus Undead` and `Invisibility Versus Undead`,
+  //     which spellCanonKey folded to ONE key. The patch renamed the first to `Invisibility vs.
+  //     Undead`; the twin still says `Versus`, so the fold that used to join them no longer does
+  //     and the index holds both spellings. No spell was added and no class gained a row (the RAW
+  //     tallies above did not move) — a duplicate wiki page simply stopped looking like a
+  //     duplicate. Reported to the integrator: a name correction that re-joins the twins is an
+  //     owner call under the JOS-161 rename rules, not something a scrape run decides.
+  assert.equal(spellClassIndex().size, 1413)
   assert.equal(CANON.get('ENC')?.excl, 176)
   assert.equal(RAW.get('ENC')?.excl, 184)
   assert.deepEqual(classesForSpell('Clarity II'), classesForSpell('Clarity'))
