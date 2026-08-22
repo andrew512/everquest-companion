@@ -239,8 +239,10 @@ export function NewAtLevelPanel({
         <Typography variant="subtitle2">New at this level</Typography>
         <LevelStepper level={level} onChange={(n) => setPicked(n)} dimmed={searching} />
         {/* ONE QUIET WORD, ONCE (JOS-391, AGENTS.md's caveat diet). The row figures are base
-            values with no crits, focus or recast in them; that is a property of the whole panel,
-            said here in a word rather than footnoted on twelve rows. */}
+            values with no crits, focus or AA in them; that is a property of the whole panel,
+            said here in a word rather than footnoted on twelve rows. The per-second figures DO
+            carry the re-use timer now (JOS-444) - they are sustained numbers, not cast-window
+            ones - which is a change in the arithmetic and not in what this word covers. */}
         <Typography variant="caption" color="text.disabled" data-testid="new-at-level-directional">
           directional
         </Typography>

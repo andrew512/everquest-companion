@@ -123,6 +123,12 @@ function StatRows({ detail }: { detail: SpellDetail }): JSX.Element | null {
  * effect list. Nothing here re-reads an effect string — two formatters would be two opinions about
  * what `2.1` means, and two readers would be two answers.
  *
+ * A LONG RECAST APPEARS TWICE ON THIS CARD, IN TWO DIFFERENT ROLES (JOS-444). The stat block above
+ * states the timer as a fact about the spell, always. The `recast 6s` at the end of this line is
+ * the DENOMINATOR the dps beside it was divided by, and it is here because the row that carries no
+ * stat block needs it — dropping one of the two would leave the other surface unable to say which
+ * job the number is doing.
+ *
  * The level is stated in the label because a ramp's numbers mean nothing without one, and because
  * this is the card: the panel's one quiet `directional` covers the caveat, and this covers the
  * WHERE. It sits above the effect list, which is the sentence these numbers were read out of.
