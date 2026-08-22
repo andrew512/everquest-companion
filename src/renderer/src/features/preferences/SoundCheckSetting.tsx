@@ -64,7 +64,7 @@ function healthLines(): string[] {
     lines.push(
       `Last audio failure: ${h.lastFailure.kind} on '${h.lastFailure.key}'${
         h.lastFailure.errorName ? ` (${h.lastFailure.errorName})` : ''
-      }, ${ago(h.lastFailure.at, now)} — ${String(h.failures)} since the app started`
+      }, ${ago(h.lastFailure.at, now)} - ${String(h.failures)} since the app started`
     )
   }
   return lines
@@ -151,7 +151,7 @@ export function SoundCheckSetting(): JSX.Element {
   return (
     <Stack spacing={1.5}>
       <Typography variant="body2" color="text.secondary">
-        Plays one of your alert sounds and reports what happened — including whether Windows has
+        Plays one of your alert sounds and reports what happened - including whether Windows has
         this app muted in its volume mixer, which nothing else in the app can see.
       </Typography>
       <Box>

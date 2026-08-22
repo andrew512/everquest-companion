@@ -127,14 +127,14 @@ export function readoutLines(readout: AudioSessionReadout): string[] {
   if (!readout.available) return [`Windows audio state could not be read: ${readout.reason}`]
   const lines = [
     `Playback device: ${readout.deviceName || '(unnamed)'} (${readout.deviceState})`,
-    `Device volume: ${pct(readout.endpointVolume)}${readout.endpointMuted ? ' — MUTED' : ''}`
+    `Device volume: ${pct(readout.endpointVolume)}${readout.endpointMuted ? ' - MUTED' : ''}`
   ]
   lines.push(
     readout.session
       ? `This app in the volume mixer: ${pct(readout.session.volume)}${
-          readout.session.muted ? ' — MUTED' : ''
+          readout.session.muted ? ' - MUTED' : ''
         } (${readout.session.state})`
-      : 'This app in the volume mixer: not present — Windows has no audio session for it'
+      : 'This app in the volume mixer: not present - Windows has no audio session for it'
   )
   if (readout.sessionOnOtherDevice !== null) {
     lines.push(`This app is still playing to: ${readout.sessionOnOtherDevice}`)
@@ -163,7 +163,7 @@ function eatenHeadline(readout: AudioSessionReadout): string | null {
   if (!readout.available) return null
   const device = readout.deviceName || 'your playback device'
   if (readout.session?.muted === true) {
-    return 'It played, but this app is MUTED in the Windows volume mixer — unmute it there.'
+    return 'It played, but this app is MUTED in the Windows volume mixer - unmute it there.'
   }
   // BEFORE the endpoint checks on purpose: when the session lives somewhere else, the default
   // endpoint's mute and volume describe a device this app is not playing to, and convicting them
@@ -180,7 +180,7 @@ function eatenHeadline(readout: AudioSessionReadout): string | null {
   // anywhere, which means the sound never reached an audio device at all. A restart is the only
   // thing known to clear it, so the sentence says that rather than something reassuring.
   if (readout.session === null) {
-    return 'It played inside the app, but Windows never opened an audio stream for it — the sound is not reaching your device. Restarting the app usually fixes this.'
+    return 'It played inside the app, but Windows never opened an audio stream for it - the sound is not reaching your device. Restarting the app usually fixes this.'
   }
   return null
 }
@@ -213,7 +213,7 @@ export function soundCheckVerdict(
   if (attempt.advanced === false) {
     return {
       status: 'silent',
-      headline: `Playback of ${what} started but never advanced — the audio stack accepted it and produced nothing.`,
+      headline: `Playback of ${what} started but never advanced - the audio stack accepted it and produced nothing.`,
       detail
     }
   }

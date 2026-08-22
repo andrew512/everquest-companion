@@ -159,11 +159,11 @@ test('V11 every verdict shows its work — the detail lines are the readout, alw
 test('V12 the readout lines name a missing session and a mute in words, not codes', () => {
   assert.match(
     readoutLines(healthy({ session: null })).join('\n'),
-    /not present — Windows has no audio session for it/
+    /not present - Windows has no audio session for it/
   )
   assert.match(
     readoutLines(healthy({ session: { state: 'inactive', muted: true, volume: 0.5 } })).join('\n'),
-    /This app in the volume mixer: 50% — MUTED \(inactive\)/
+    /This app in the volume mixer: 50% - MUTED \(inactive\)/
   )
   assert.match(
     readoutLines(healthy({ sessionOnOtherDevice: 'VS248' })).join('\n'),
