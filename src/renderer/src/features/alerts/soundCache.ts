@@ -3,6 +3,27 @@
 // remote audio, but a Blob URL made from bytes we already have is allowed. Blob
 // URLs live for the app's lifetime (we intentionally never revoke — the set of
 // sounds is tiny and re-fetching on every play would add latency to alerts).
+//
+// THE CACHE HOLDS SUCCESSES. IT MUST NEVER HOLD A FAILURE (JOS-442).
+//
+// It used to hold both, because it cached the PROMISE — and the promise had a `.catch(() => null)`
+// on it, so one transient IPC failure resolved to null, went into the Map, and silenced that
+// sound FOREVER: every later play read the cached null, returned early, and said nothing. There
+// was no expiry, no retry and no log line, so the only cure was relaunching the app and the only
+// symptom was silence. The rationale in the header above — "re-fetching on every play would add
+// latency" — is an argument about SUCCESSES and was never an argument for remembering a failure,
+// which costs latency exactly once and buys a working alert.
+//
+// So: a resolution of `null` is evicted from the Map before it is handed back, and the next play
+// tries again. The in-flight promise is still shared (two alerts firing together make one fetch),
+// which is the whole latency win; only the OUTCOME is conditional.
+//
+// AND EVERY FAILURE SAYS SO. Both the fetch path and the `play()` path report through
+// `audioHealth.ts`, which throttles per sound and writes one line to errors.log. The empty catch
+// that used to sit on `play()` is the reason the owner's evening-long silence produced a
+// completely empty error log for the entire failure window.
+
+import { noteAudioPlayed, reportAudioFailure } from './audioHealth'
 
 const cache = new Map<string, Promise<string | null>>()
 
@@ -24,7 +45,11 @@ export function invalidateSoundCaches(): void {
   cache.clear()
 }
 
-/** Resolve a Blob URL for a pack sound (cached). Null if the sound can't be loaded. */
+/**
+ * Resolve a Blob URL for a pack sound. Null if the sound can't be loaded — and a null is NOT
+ * remembered: the entry is evicted so the next play re-fetches (see the header). Successes are
+ * cached for the app's lifetime, which is the whole point of the cache.
+ */
 export function getSoundUrl(packId: string, soundId: string): Promise<string | null> {
   const k = key(packId, soundId)
   const hit = cache.get(k)
@@ -32,13 +57,29 @@ export function getSoundUrl(packId: string, soundId: string): Promise<string | n
   const p = window.eq
     .getSoundData(packId, soundId)
     .then((data) => {
-      if (!data) return null
+      if (!data) {
+        // Main answered, and its answer was "no such sound". Reported like a thrown failure
+        // because from the alert's point of view it is the same event: silence where a sound
+        // was configured.
+        reportAudioFailure('fetch', k, 'NoSoundData')
+        return null
+      }
       const bytes = Uint8Array.from(atob(data.dataBase64), (c) => c.charCodeAt(0))
       const blob = new Blob([bytes], { type: data.mime })
       return URL.createObjectURL(blob)
     })
-    .catch(() => null)
+    .catch((err: unknown) => {
+      reportAudioFailure('fetch', k, err)
+      return null
+    })
   cache.set(k, p)
+  // THE EVICTION. Registered on the cached promise itself — and BEFORE any caller gets to await
+  // it, so by the time `playSound` sees the null the Map is already clean and the next firing
+  // re-fetches. Two alerts landing together still share the ONE in-flight fetch (that is the
+  // latency win the cache exists for); only the OUTCOME decides whether it is remembered.
+  void p.then((url) => {
+    if (url === null && cache.get(k) === p) cache.delete(k)
+  })
   return p
 }
 
@@ -55,15 +96,52 @@ export function getSoundUrl(packId: string, soundId: string): Promise<string | n
  * callback nor the timer. Deleted rather than kept for a caller that no longer exists.
  */
 export async function playSound(packId: string, soundId: string, volume: number): Promise<void> {
+  await playSoundReporting(packId, soundId, volume)
+}
+
+/**
+ * The same play, with its OUTCOME handed back — what the Preferences sound check needs in order
+ * to report honestly, and what `playSound` throws away because a firing alert has nobody to tell.
+ *
+ * `advanced` is the element's own admission, and it is THREE-VALUED on purpose. `play()` resolves
+ * when playback BEGINS, at which point `currentTime` is still legitimately 0 — so reading the
+ * clock straight after it would convict every healthy play of producing nothing. Null therefore
+ * means "not observed" and only a caller that waited (`observeMs`) is allowed to say false. The
+ * verdict convicts on false and never on null: no evidence is not evidence.
+ */
+export interface PlayOutcome {
+  readonly fetched: boolean
+  readonly started: boolean
+  readonly errorName?: string
+  readonly advanced: boolean | null
+}
+
+export async function playSoundReporting(
+  packId: string,
+  soundId: string,
+  volume: number,
+  observeMs = 0
+): Promise<PlayOutcome> {
+  const k = key(packId, soundId)
   const url = await getSoundUrl(packId, soundId)
-  if (!url) return
+  // getSoundUrl has already reported WHY, and evicted itself so the next firing retries.
+  if (!url) return { fetched: false, started: false, advanced: null }
   const audio = new Audio(url)
   audio.volume = Math.max(0, Math.min(1, volume))
   try {
     await audio.play()
-  } catch {
-    // Autoplay/user-gesture policies can reject the first play; nothing to do.
+  } catch (err: unknown) {
+    // THE EMPTY CATCH THAT USED TO BE HERE IS THE BUG (JOS-442). Autoplay policy is a real
+    // rejection this path can see — and so is every failure of the machine's audio stack, and
+    // for an entire evening of dead audio it produced exactly zero log lines. It says so now.
+    reportAudioFailure('play', k, err)
+    const name = err instanceof Error ? err.name : ''
+    return { fetched: true, started: false, ...(name ? { errorName: name } : {}), advanced: null }
   }
+  noteAudioPlayed(k)
+  if (observeMs <= 0) return { fetched: true, started: true, advanced: null }
+  await new Promise<void>((resolve) => setTimeout(resolve, observeMs))
+  return { fetched: true, started: true, advanced: audio.currentTime > 0 }
 }
 
 // ----- registry PREVIEW playback (Task #31) -----

@@ -90,6 +90,13 @@ export const IPC = {
   listUserSounds: 'sounds:listUser',
   importUserSounds: 'sounds:importUser',
   removeUserSound: 'sounds:removeUser',
+  // WHAT WINDOWS THINKS OF OUR AUDIO (JOS-442): the app's own WASAPI session — which device is
+  // the default, whether that device or THIS APP is muted in the volume mixer, and whether
+  // Windows has an audio stream for us at all. Read on demand (a button in Preferences), never
+  // on a timer: it is a diagnostic, and the answer is only interesting next to an attempt to
+  // play something. Answers AudioSessionReadout, which carries `available:false` rather than
+  // throwing when the native read cannot happen.
+  audioSession: 'audio:session',
   // main -> renderer: the set of available sound packs changed (e.g. a shipped
   // default pack was auto-provisioned in the background at startup — Task #39). The
   // renderer re-lists packs + invalidates its sound caches so it becomes usable live.
