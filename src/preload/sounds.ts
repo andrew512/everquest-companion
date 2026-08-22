@@ -25,6 +25,7 @@ import type {
   UserSoundRemoveResult
 } from '../shared/types'
 import type { SoundPackPrefs } from '../shared/soundPacks'
+import type { AudioSessionReadout } from '../shared/audioCheck'
 
 export const soundsBridge = {
   listSoundPacks: (): Promise<SoundPack[]> => ipcRenderer.invoke(IPC.listSoundPacks),
@@ -36,6 +37,13 @@ export const soundsBridge = {
   /** "Make this pack my default" — or null for "use whatever the app ships". */
   setDefaultSoundPack: (packId: string | null): Promise<SoundPackPrefs> =>
     ipcRenderer.invoke(IPC.setDefaultSoundPack, packId),
+  /**
+   * What Windows thinks of this app's audio (JOS-442): default device, its mute/volume, and
+   * whether this app has a session in the volume mixer at all. A pure READ — there is no setter
+   * on this bridge, and there is not meant to be: the app reports what it finds and lets the
+   * person decide, rather than reaching into their mixer.
+   */
+  readAudioSession: (): Promise<AudioSessionReadout> => ipcRenderer.invoke(IPC.audioSession),
   /** Subscribe to "available sound packs changed" pushes (startup auto-provisioning). */
   onSoundPacksChanged: (cb: () => void): (() => void) => {
     const listener = (): void => cb()

@@ -10,6 +10,7 @@ import {
   uninstallPack
 } from '../packRegistry'
 import { installPackWithRetry } from '../packInstallRun'
+import { readOwnAudioSession } from '../audioSessionNative'
 import { isSafePackId } from '../security'
 import { getSoundData, listPacks } from '../sounds'
 import {
@@ -38,6 +39,13 @@ export function registerSoundsIpc(): void {
   ipcMain.handle(IPC.getSoundData, (_e, packId: string, soundId: string) =>
     isSafePackId(packId) ? getSoundData(packId, soundId, getDefaultSoundPackId()) : null
   )
+
+  // WHAT WINDOWS THINKS OF OUR AUDIO (JOS-442). Read-only, on demand, and it NEVER THROWS —
+  // `readOwnAudioSession` turns every failure (non-Windows, koffi refusing to load, a COM call
+  // saying no) into `{ available:false, reason }`, so the renderer's card always has something
+  // honest to render and this handler needs no try/catch of its own. There is deliberately no
+  // matching setter: the app reports a mute, it does not undo one.
+  ipcMain.handle(IPC.audioSession, () => readOwnAudioSession())
 
   // ---- the default-pack preference (JOS-273) ----
   // The id is validated at the boundary with the SAME predicate a served pack id is (it names a

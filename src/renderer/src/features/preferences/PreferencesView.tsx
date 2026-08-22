@@ -115,6 +115,8 @@ import { TelemetrySetting } from './TelemetrySetting'
 // file sits at the 400-code-line factoring ceiling, and the section's own file is the honest
 // place for the label, icon and search keywords that name it. See ./PerfSetting.tsx.
 import { perfSection } from './PerfSetting'
+// The sound check (JOS-442) — descriptor beside its own card, same as PerfSetting's.
+import { soundSection } from './SoundCheckSetting'
 // Same arrangement, same reason: the two graphics-compatibility switches name their own section
 // beside the card that renders them. See ./GraphicsSetting.tsx.
 import { graphicsSection } from './GraphicsSetting'
@@ -330,6 +332,9 @@ function buildSections({ version, status, onSendFeedback, onWhatsNew }: SectionI
     buffTrustSection(),
     cursorRingSection(),
     voiceSection(),
+    // Beside Voice, because the two are the app's audio — and this one is the surface a person
+    // reaches for when neither of them makes a noise (JOS-442). See ./SoundCheckSetting.tsx.
+    soundSection(),
     {
       id: 'profiles',
       label: 'Profiles',

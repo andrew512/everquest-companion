@@ -48,6 +48,7 @@ import {
   type AlertBannerPayload
 } from '@shared/alertBanner'
 import { playSound } from './soundCache'
+import { noteDeviceChange } from './audioHealth'
 import { currentVoicePrefs, loadVoicePrefs, speak, speechPlan } from '../../lib/speech'
 import { audioIdentity, coalesceAudio, type AudioWindow } from './audioThrottle'
 import { previewDef } from './preview'
@@ -218,8 +219,53 @@ export function fireAppSignal(signal: AppSignal, context = ''): void {
   }
 }
 
+/**
+ * Watch the machine's audio hardware for changes, and RECORD them (JOS-442).
+ *
+ * WHY IT IS HERE: this component is always mounted, and a device change is a fact about the app,
+ * not about whichever tab happens to be open. `navigator.mediaDevices.devicechange` is the only
+ * signal the renderer gets when a headset is powered on, an HDMI monitor re-enumerates, or
+ * Windows moves the default endpoint — and the owner's machine did two of those in the half hour
+ * before every sound in the app went silent (Microsoft-Windows-Audio/Operational, 2026-08-21:
+ * the wireless headset returned to ACTIVE at 18:31:01 and both NVIDIA HDMI endpoints churned
+ * NOTPRESENT→ACTIVE at 18:34:34). Nothing in the app noticed either one. Now the timestamp is
+ * kept, and the Preferences sound check prints it next to when audio last worked, so the next
+ * occurrence is a correlation instead of a mystery.
+ *
+ * THE BLOB CACHES ARE DELIBERATELY *NOT* DROPPED, and this is the one place to say why. A cached
+ * entry is a Blob URL over bytes already in this renderer's memory: it names no device, no sink
+ * and no stream, and playback binds to an output only when `new Audio(url)` is constructed and
+ * played — which this app does FRESH for every single firing (soundCache.ts `playSoundReporting`,
+ * one element per play, never pooled, never `setSinkId`-ed). So there is no per-sound state that
+ * can go stale against a device, and dropping the cache would buy nothing but a re-fetch and a
+ * slower first alert after every device change. The binding that CAN go stale is Chromium's
+ * output stream, which lives in the audio service process and is not reachable from here at all —
+ * which is exactly why the diagnosis of it is a WASAPI readout (`readAudioSession`) rather than a
+ * cache flush. Stated as measured rather than assumed: the per-play element is verified in
+ * tests/soundCacheRetry.test.mts, and `sessionOnOtherDevice` in the readout is the instrument
+ * that will name a stale binding if one ever appears.
+ */
+function useAudioDeviceWatch(): void {
+  useEffect(() => {
+    const media = navigator.mediaDevices as MediaDevices | undefined
+    if (!media?.addEventListener) return
+    const onChange = (): void => {
+      noteDeviceChange()
+      // console.info, NOT reportError: a device change is a normal event on a desktop and does
+      // not belong in the error store's fingerprints (every one of them would be a new issue to
+      // triage). It is kept as audio HEALTH state, which is where the diagnostic reads it from,
+      // and the console line is the dev-stdout breadcrumb beside it.
+      // eslint-disable-next-line no-console -- the tree's convention for a note that is not an error
+      console.info('[everquest-companion] audio devices changed')
+    }
+    media.addEventListener('devicechange', onChange)
+    return () => media.removeEventListener('devicechange', onChange)
+  }, [])
+}
+
 /** The mounted component: hydrates the store + plays main-fired alert deltas. */
 export default function AlertPlayer(): null {
+  useAudioDeviceWatch()
   useEffect(() => {
     void refreshAlertStore()
     // Refresh on focus so prefs edited elsewhere (or seeded on first run) apply.
