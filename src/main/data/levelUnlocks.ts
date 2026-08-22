@@ -204,6 +204,8 @@ function unlockSpells(client: SpellResistTable | null): UnlockSpell[] {
     // prints are what a player searching for a spell types.
     spell.searchText = searchTextFor(s, undefined)
     if (s.illusion) spell.illusion = true
+    // The client row is TWO fallbacks in one argument (JOS-396's hitpoint slots, JOS-444's re-use
+    // timer), and `spellMetricsAt` decides which of them it needs — the page wins on both.
     const metrics = spellMetricsAt(s, Math.min(...at.map((p) => p.level)), clientHpFor(client, s.name))
     if (metrics) spell.metrics = metrics
     const replaces = replacesFor(s.name, at)
