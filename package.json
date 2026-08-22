@@ -47,6 +47,7 @@
     "fixtures:progression": "node --import tsx tests/extract-progression-fixtures.mjs",
     "fixtures:resist": "node --import tsx tests/extract-resist-fixtures.mjs",
     "fixtures:session": "node --import tsx tests/extract-session-fixtures.mjs",
+    "fixtures:spell-ranks": "node --import tsx tests/extract-spell-rank-fixtures.mjs",
     "lint": "eslint . --cache --cache-location node_modules/.cache/eslint/",
     "lint:fix": "eslint . --fix --cache --cache-location node_modules/.cache/eslint/",
     "lint:measure": "tsx scripts/lint-report.mts --measure",
