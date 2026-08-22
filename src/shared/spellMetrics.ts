@@ -625,7 +625,12 @@ function assemble(
  * 532 of the catalog's 1,925 stated recasts are exactly 1.5s — the floor every spell in EverQuest
  * pays — and printing `recast 1.5s` on a third of the rows would be a column of noise saying the
  * same thing. It still counts in the arithmetic, because the 1.5s is real time the caster spends;
- * what it does not earn is a word on a dense row. The next value up in the file is 2.25s.
+ * what it does not earn is a word on a dense row.
+ *
+ * The threshold is drawn just above that floor rather than fitted to a distribution: 539 rows state
+ * a positive recast under 2s (532 of them the 1.5s itself, plus 4 at 1.0s and 3 at 0.01s) and 954
+ * state 2s or more, the smallest of which is 2s exactly — so the cut lands in a real gap and the
+ * floor is inclusive.
  */
 const RECAST_PART_MIN_MS = 2000
 

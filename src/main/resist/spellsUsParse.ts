@@ -21,11 +21,13 @@
 //   78   resist adjust                  172  effect slots, `$`-separated
 //
 // FIELD 10 IS THE RECAST AND FIELD 9 IS NOT, which is the only trap in that line and is measured
-// rather than reasoned (owner's install, 2026-08-22). Field 9 reads 1500 on EVERY playable row —
-// it is the recovery time, the global cooldown the game charges for any cast — while field 10 is
-// the spell's own re-use timer and varies: Garrison's Mighty Mana Shock (id 2552) 1500, Odium
-// (4093) 6000, Complete Heal (1292) 0. Both of those agree with the number the wiki's own
-// `recast_time` states for the same spell, which is the cross-check that picks the column.
+// rather than reasoned (owner's install, 2026-08-22). Field 9 is the RECOVERY time — the cooldown
+// the game charges for any cast — and it reads 1500 on 18,008 of the 33,952 rows a class can cast,
+// 0 on most of the rest; it disagrees with field 10 on 14,535 of them, so the two are plainly not
+// one number written twice. WHICH of them is the re-use timer is settled by cross-checking against
+// the wiki's own `recast_time` for the same spell: Odium (id 4093) reads 9 = 1500, 10 = 6000 and
+// its page says 6 seconds; Garrison's Mighty Mana Shock (2552) reads 1500 in both and its page
+// says 1.5; Complete Heal (1292) reads 9 = 1500, 10 = 0. Only field 10 tracks the page.
 //
 // FIELDS 11 AND 12 WERE ADDED BY JOS-396 and are measured the same way: Odium (id 4093) reads
 // `11 = 7`, `12 = 5`, and formula 7 is "as many ticks as the caster's level, capped at field 12" —

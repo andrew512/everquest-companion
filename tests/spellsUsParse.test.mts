@@ -21,11 +21,12 @@
 // it records the two numbers and the effect-0 slots beside them, and every evaluation happens at
 // a READER'S level in shared/spellMetrics.ts.
 //
-// JOS-444 ADDS FIELD 10, THE RE-USE TIMER, AND ITS DECOY SITS RIGHT BESIDE IT. Field 9 reads 1500
-// on every playable row in the owner's install — it is the recovery time, the global cooldown any
-// cast charges — so a spell whose recast happens to be 1.5s cannot tell the two columns apart.
-// Odium can: field 9 is 1500 and field 10 is 6000, and the wiki's own `recast_time` for Odium is
-// six seconds. Complete Heal closes it from the other side (field 9 = 1500, field 10 = 0).
+// JOS-444 ADDS FIELD 10, THE RE-USE TIMER, AND ITS DECOY SITS RIGHT BESIDE IT. Field 9 is the
+// RECOVERY time and reads 1500 on 18,008 of the owner's 33,952 playable rows, so a spell whose
+// recast happens to be 1.5s — Garrison's Mighty Mana Shock, below — cannot tell the two columns
+// apart on its own. Odium can: field 9 is 1500 and field 10 is 6000, and the wiki's own
+// `recast_time` for Odium is six seconds. Complete Heal closes it from the other side (field 9 =
+// 1500, field 10 = 0), and all three rows are transcribed below.
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -40,8 +41,8 @@ function row(spec: {
   name: string
   castMs?: number
   /**
-   * Field 9 — the RECOVERY time, which reads 1500 on every playable row and is NOT the recast
-   * (JOS-444). It is settable here for exactly one reason: to prove the parser does not read it.
+   * Field 9 — the RECOVERY time, the column next door that is NOT the recast (JOS-444). It is
+   * settable here for exactly one reason: to prove the parser does not read it.
    */
   recovery?: number
   /** Field 10 — the spell's own re-use timer, ms. 0 means it has none. */
@@ -121,8 +122,8 @@ const LICH = row({ id: 1735, name: 'Lich', castMs: 6000, durationFormula: 50, du
 const DIVINE_CENSURE = row({ id: 14234, name: 'Divine Censure', castMs: 3000, resistType: 1, targetType: 5, classes: { [PAL]: 77 }, slots: '1|0|-2164|635|100|2164$2|0|-2878|603|100|2878$3|0|-2575|118|100|2575' })
 // JOS-444, verbatim from the owner's install 2026-08-22. THE TICKET'S PIN: a 3.0s cast with a 1.5s
 // re-use timer in field 10, which is the number the wiki's `recast_time` states for the same spell.
-// Field 9 reads 1500 as well — every playable row does — and that coincidence is exactly why the
-// column had to be picked by cross-checking a spell where the two DISAGREE (Odium below, 6000).
+// Field 9 reads 1500 as well, and that coincidence is exactly why the column had to be picked by
+// cross-checking a spell where the two DISAGREE (Odium below, 6000).
 const GARRISON = row({ id: 2552, name: "Garrison's Mighty Mana Shock", castMs: 3000, recovery: 1500, recastMs: 1500, resistType: 1, targetType: 5, classes: { [WIZ]: 18 }, slots: '1|0|-200|0|105|333' })
 // The other half of the discrimination: field 9 says 1500 and field 10 says 0. Complete Heal has
 // NO re-use timer, and a parser reading field 9 would give it one.
@@ -153,7 +154,7 @@ test('cast time and target type ride along', () => {
 
 test('JOS-444: the re-use timer is FIELD 10, and field 9 is the cooldown that looks like it', () => {
   // Odium is the row that picks the column: field 10 reads 6000 and the wiki's own `recast_time`
-  // for Odium is 6 seconds. Field 9 reads 1500 on the same row, as it does on every playable row.
+  // for Odium is 6 seconds. Field 9 reads 1500 on the same row, which is what makes it a decoy.
   assert.equal(TABLE.odium.recastMs, 6000)
   assert.equal(TABLE["garrison's mighty mana shock"].recastMs, 1500)
   // A row whose field 10 is 0 states that it has NO re-use timer, and the absence is how the
