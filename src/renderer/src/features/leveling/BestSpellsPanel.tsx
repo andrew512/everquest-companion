@@ -64,6 +64,11 @@ import { outOfEraLabel } from '../mobs/dropEra'
 import { NONE } from './rangeStatsRows'
 import { useCurrentComboClasses, useLevelUnlocks } from './useLevelUnlocks'
 import { comboClassSet } from '@shared/levelUnlocks'
+// The `yours: III` chip (JOS-446), the SAME component the unlock list draws — one wording, one
+// tooltip (the outOfEraLabel arrangement, one component further). Subscribed once for the panel.
+import { RankChip } from './UnlockList'
+import { useObservedSpellRanks } from '../../lib/useObservedSpellRanks'
+import type { ObservedSpellRanksSnap } from '@shared/spellRanks'
 
 /** How many rows are drawn before the disclosure. The owner's suggestion, and it fits the column. */
 const TOP_N = 10
@@ -153,7 +158,15 @@ function HeadCell({
  * Mighty Mana Shock` sitting second at level 35 with an `L18` on it is the owner's own question,
  * answered.
  */
-function SpellRow({ row, columns }: { row: BestSpellRow; columns: readonly BestSpellColumn[] }): JSX.Element {
+function SpellRow({
+  row,
+  columns,
+  ranks
+}: {
+  row: BestSpellRow
+  columns: readonly BestSpellColumn[]
+  ranks: ObservedSpellRanksSnap | null
+}): JSX.Element {
   return (
     <>
       <TableRow data-testid="best-spells-name-row" data-name={row.name}>
@@ -167,6 +180,7 @@ function SpellRow({ row, columns }: { row: BestSpellRow; columns: readonly BestS
             <Typography variant="caption" color="text.disabled" sx={{ fontSize: 9.5 }} noWrap>
               L{row.gainedAt}
             </Typography>
+            <RankChip name={row.name} ranks={ranks} />
           </Stack>
         </TableCell>
       </TableRow>
@@ -186,12 +200,14 @@ function RowDisclosure({
   label,
   testid,
   rows,
-  columns
+  columns,
+  ranks
 }: {
   label: string
   testid: string
   rows: readonly BestSpellRow[]
   columns: readonly BestSpellColumn[]
+  ranks: ObservedSpellRanksSnap | null
 }): JSX.Element | null {
   const [open, setOpen] = useState(false)
   if (rows.length === 0) return null
@@ -216,7 +232,7 @@ function RowDisclosure({
           </Box>
         </TableCell>
       </TableRow>
-      {open && rows.map((r) => <SpellRow key={r.name} row={r} columns={columns} />)}
+      {open && rows.map((r) => <SpellRow key={r.name} row={r} columns={columns} ranks={ranks} />)}
     </>
   )
 }
@@ -230,13 +246,15 @@ function SideTable({
   title,
   data,
   sort,
-  onSort
+  onSort,
+  ranks
 }: {
   side: BestSpellSide
   title: string
   data: BestSpellsSide
   sort: BestSpellSort
   onSort: (s: BestSpellSort) => void
+  ranks: ObservedSpellRanksSnap | null
 }): JSX.Element {
   const columns = SIDE_COLUMNS[side]
   const top = data.shown.slice(0, TOP_N)
@@ -261,19 +279,21 @@ function SideTable({
           </TableHead>
           <TableBody>
             {top.map((r) => (
-              <SpellRow key={r.name} row={r} columns={columns} />
+              <SpellRow key={r.name} row={r} columns={columns} ranks={ranks} />
             ))}
             <RowDisclosure
               label={`+${String(rest.length)} more`}
               testid="best-spells-more"
               rows={rest}
               columns={columns}
+              ranks={ranks}
             />
             <RowDisclosure
               label={outOfEraLabel(data.outOfEra.length)}
               testid="best-spells-era-toggle"
               rows={data.outOfEra}
               columns={columns}
+              ranks={ranks}
             />
           </TableBody>
         </Table>
@@ -310,6 +330,8 @@ export function useBestSpellsVisible(): boolean {
 export function BestSpellsPanel({ level }: BestSpellsPanelProps): JSX.Element | null {
   const data = useLevelUnlocks()
   const combo = useCurrentComboClasses()
+  // JOS-446's observed ranks, one subscription for both sections (the NewAtLevelPanel arrangement).
+  const ranks = useObservedSpellRanks()
   const [sorts, setSorts] = useState<Record<BestSpellSide, BestSpellSort>>({
     damage: defaultSort('damage'),
     heal: defaultSort('heal')
@@ -323,8 +345,8 @@ export function BestSpellsPanel({ level }: BestSpellsPanelProps): JSX.Element | 
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.5 }}>
         <Typography variant="subtitle2">Best at level {level}</Typography>
         {/* THE SAME ONE QUIET WORD the panel below says, for the same reason: these are base
-            figures with no crits, focus, AA or recast in them. Said once per surface, never on a
-            row (AGENTS.md, the caveat diet). */}
+            figures with no crits, focus, AA or resist in them (recast IS in them since JOS-444).
+            Said once per surface, never on a row (AGENTS.md, the caveat diet). */}
         <Typography variant="caption" color="text.disabled" data-testid="best-spells-directional">
           directional
         </Typography>
@@ -350,6 +372,7 @@ export function BestSpellsPanel({ level }: BestSpellsPanelProps): JSX.Element | 
             data={best[s.side]}
             sort={sorts[s.side]}
             onSort={(next) => setSorts((prev) => ({ ...prev, [s.side]: next }))}
+            ranks={ranks}
           />
         ))}
       </Stack>

@@ -144,8 +144,11 @@ function ClassChips({
  * THE HOVER IS ONE CLAUSE, naming what the chip is (the caveat diet). That a ranked spell's
  * figures understate is real and is written down in src/main/modules/observedSpellRanks.ts, which
  * is where it stays until JOS-447 makes the numbers right.
+ *
+ * EXPORTED for the best-spells readout next door (JOS-445 landed in the same merge window):
+ * one chip, one wording, one tooltip — the `outOfEraLabel` arrangement, one component further.
  */
-function RankChip({
+export function RankChip({
   name,
   ranks
 }: {
