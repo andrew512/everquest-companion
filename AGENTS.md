@@ -695,6 +695,20 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   removals run BEFORE corrections so a survivor may be a row a rename lands
   on. Only a `supersededBy` entry may claim a rename target.
 
+- **WINDOWS CAN SILENCE THIS APP AT VOLUME 0.000 WITH MUTE=FALSE** (JOS-442, measured
+  live): the mixer's per-app slider is persisted PER EXECUTABLE and PER DEVICE,
+  survives restarts, is restored when a device returns (the owner's headset
+  re-appearing re-applied a zero), and the app's row is only VISIBLE in the mixer
+  while a session is live (~seconds after a sound). So "all audio silent, nothing
+  muted, mixer looks empty" is this, and hunting a mute finds nothing.
+  `audioSessionNative.ts` reads the app's OWN WASAPI session (koffi COM vtable
+  dispatch — read-only BY PRINCIPLE: no SetMute/SetMasterVolume ever) and the
+  Preferences sound check REPORTS it. Two laws from the build: the session is
+  matched by EXECUTABLE, never pid (Chromium plays from its audio-service utility
+  process), and a failed sound fetch is never cached (`soundCache` evicts null
+  resolutions; every playback failure logs one per-key-throttled line via
+  `audioHealth.ts`).
+
 ### Electron trust boundary (do not weaken)
 
 - ONE `WEB_PREFERENCES()` in `src/main/windows.ts` (module-private, beside the only
