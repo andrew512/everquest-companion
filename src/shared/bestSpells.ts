@@ -193,6 +193,13 @@ function ownedBy(
   }
 }
 
+/** A duplicate wiki page for a spell already in the fold: it can only widen the row, never add one. */
+function mergeOwned(row: BestSpellRow, owned: { classes: ClassAbbr[]; gainedAt: number }): void {
+  const classes = new Set([...row.classes, ...owned.classes])
+  row.classes = [...classes].sort((a, b) => a.localeCompare(b))
+  row.gainedAt = Math.min(row.gainedAt, owned.gainedAt)
+}
+
 /**
  * Every owned spell that has ANY figure at this level, folded BY NAME.
  *
@@ -208,9 +215,7 @@ function ownedRows(data: LevelUnlockData, want: ReadonlySet<string>, level: numb
     const key = spell.name.toLowerCase()
     const seen = byName.get(key)
     if (seen) {
-      for (const cls of owned.classes) if (!seen.classes.includes(cls)) seen.classes.push(cls)
-      seen.classes.sort((a, b) => a.localeCompare(b))
-      seen.gainedAt = Math.min(seen.gainedAt, owned.gainedAt)
+      mergeOwned(seen, owned)
       continue
     }
     const metrics = spellMetricsForLevel(spell, level)

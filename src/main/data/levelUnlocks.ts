@@ -183,6 +183,32 @@ function replacesFor(name: string, at: readonly { cls: ClassAbbr }[]): UnlockSpe
 }
 
 /**
+ * WHAT THE SPELL IS WORTH, and the inputs to say it again somewhere else.
+ *
+ * The SNAPSHOT is read at the lowest level any class gains it — the level the unlock row is about
+ * (see `unlockSpells`). The INPUTS (JOS-445) are what lets the best-spells readout re-read the same
+ * spell at the level the player is actually standing at, and they are filtered to the hitpoint
+ * lines: `parseHpLine`'s verdict does not depend on the level it is handed, so `LEVEL_ANY` reads
+ * the same set at every level and only the VALUE it would compute is level-dependent.
+ *
+ * The client slots ride along ONLY where they are what answered — `spellMetricsAt` consults them
+ * nowhere else, so carrying them beside a wiki-sourced figure would be a field no reader can reach.
+ */
+function writeFigures(
+  spell: UnlockSpell,
+  s: SpellDbFile['spells'][number],
+  at: readonly { level: number }[],
+  client: SpellResistTable | null
+): void {
+  const clientHp = clientHpFor(client, s.name)
+  const metrics = spellMetricsAt(s, Math.min(...at.map((p) => p.level)), clientHp)
+  if (metrics) spell.metrics = metrics
+  const hpLines = (s.effects ?? []).filter((line) => parseHpLine(line, LEVEL_ANY) !== null)
+  if (hpLines.length > 0) spell.hpLines = hpLines
+  else if (clientHp) spell.clientHp = clientHp
+}
+
+/**
  * Every spell the DB places for at least one class at a stated level, with its card fields, its
  * figures and what it replaces.
  *
@@ -220,17 +246,7 @@ function unlockSpells(client: SpellResistTable | null): UnlockSpell[] {
     // prints are what a player searching for a spell types.
     spell.searchText = searchTextFor(s, undefined)
     if (s.illusion) spell.illusion = true
-    const clientHp = clientHpFor(client, s.name)
-    const metrics = spellMetricsAt(s, Math.min(...at.map((p) => p.level)), clientHp)
-    if (metrics) spell.metrics = metrics
-    // The re-evaluation inputs (JOS-445). `parseHpLine`'s verdict does not depend on the level it is
-    // handed, so LEVEL_ANY reads the same set at every level; the value it would compute is the only
-    // level-dependent thing here and that is exactly what the far end wants to compute itself.
-    const hpLines = (s.effects ?? []).filter((line) => parseHpLine(line, LEVEL_ANY) !== null)
-    if (hpLines.length > 0) spell.hpLines = hpLines
-    // The client slots ONLY where they are what answered — `spellMetricsAt` consults them nowhere
-    // else, so carrying them beside a wiki-sourced figure would be a field no reader can reach.
-    else if (clientHp) spell.clientHp = clientHp
+    writeFigures(spell, s, at, client)
     const replaces = replacesFor(s.name, at)
     if (replaces) spell.replaces = replaces
     out.push(spell)
