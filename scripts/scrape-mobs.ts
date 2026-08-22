@@ -171,10 +171,55 @@ function writeCache(name: string, data: unknown): void {
   writeFileSync(cachePath(name), JSON.stringify(data), 'utf8')
 }
 
-/** Page wikitext, cached per pageid so a re-run costs no requests. */
+/** MEASURED anonymous multi-value limit (scrape-items.ts header) — 60 ids silently returns nothing. */
+const BATCH = 50
+
+/**
+ * Batched wikitext prefetch — the bulk half of the owner's 2026-08-22 etiquette ruling ("use
+ * their api … to pull in bulk"): one `prop=revisions` request carries 50 pages' wikitext, so the
+ * ~7,900 candidate pages cost ~159 requests instead of 7,900 (the per-page `action=parse` path
+ * this replaces). Each page lands in the SAME per-page cache file the reader below consumes, so
+ * resume granularity is unchanged and a warm re-run still costs zero requests.
+ *
+ * ONE BEHAVIOR CHANGE, deliberate: `action=parse` followed redirects, this does not — a redirect
+ * candidate now carries its own `#REDIRECT` wikitext, which `isMobPage` files as not-mob. The
+ * TARGET page is enumerated in its own right (it is the page carrying the categories and the
+ * template), so nothing is lost; the alias just stops producing a duplicate record — exactly how
+ * scrape-items has always treated redirect pages.
+ */
+async function prefetchWikitexts(pages: Member[]): Promise<void> {
+  const missing = pages.filter((p) => refresh || !existsSync(cachePath(`page-${p.pageid}.wikitext`)))
+  if (missing.length === 0) return
+  const batches = Math.ceil(missing.length / BATCH)
+  console.log(`Prefetching ${missing.length} pages in ${batches} batches of ${BATCH}…`)
+  for (let i = 0; i < batches; i++) {
+    const slice = missing.slice(i * BATCH, (i + 1) * BATCH)
+    const j = await api<{
+      query?: { pages?: { pageid?: number; revisions?: { slots?: { main?: { content?: string } } }[] }[] }
+    }>({
+      action: 'query',
+      prop: 'revisions',
+      rvprop: 'content',
+      rvslots: 'main',
+      pageids: slice.map((p) => p.pageid).join('|')
+    })
+    mkdirSync(CACHE_DIR, { recursive: true })
+    for (const page of j.query?.pages ?? []) {
+      const wt = page.revisions?.[0]?.slots?.main?.content
+      if (page.pageid === undefined || wt === undefined) continue
+      writeFileSync(cachePath(`page-${page.pageid}.wikitext`), wt, 'utf8')
+    }
+    if ((i + 1) % 25 === 0 || i + 1 === batches) console.log(`  batch ${i + 1}/${batches}`)
+  }
+}
+
+/** Page wikitext from the prefetched per-page cache; the per-page fetch survives only as the
+ *  fallback for a page the batch response carried no revision for (deleted between enumeration
+ *  and fetch — it answers an error, and the page is counted as skipped). */
 async function fetchWikitext(pageid: number): Promise<string | null> {
   const file = cachePath(`page-${pageid}.wikitext`)
-  if (!refresh && existsSync(file)) return readFileSync(file, 'utf8')
+  // The prefetch already honored --refresh by rewriting these files, so the cache is current.
+  if (existsSync(file)) return readFileSync(file, 'utf8')
   const j = await api<{ parse?: { wikitext?: string }; error?: { code?: string } }>({
     action: 'parse',
     pageid: String(pageid),
@@ -292,7 +337,8 @@ async function main(): Promise<void> {
   const started = Date.now()
   console.log('Enumerating the mob universe…')
   const pages = await collectCandidatePages()
-  console.log(`\nFetching + parsing ${pages.length} candidate pages…`)
+  await prefetchWikitexts(pages)
+  console.log(`\nParsing ${pages.length} candidate pages…`)
 
   const mobs: MobEntry[] = []
   const skipped: { page: string; reason: string }[] = []
