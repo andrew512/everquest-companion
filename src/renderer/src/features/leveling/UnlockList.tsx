@@ -140,6 +140,10 @@ function ClassChips({
  * Null whenever the module has nothing to say: no witness for the line, a rank-1 observation, or
  * the map not yet hydrated. `observedRankLabel` owns the wording so the spell card's copy of this
  * chip cannot drift from this one.
+ *
+ * THE HOVER IS ONE CLAUSE, naming what the chip is (the caveat diet). That a ranked spell's
+ * figures understate is real and is written down in src/main/modules/observedSpellRanks.ts, which
+ * is where it stays until JOS-447 makes the numbers right.
  */
 function RankChip({
   name,
@@ -151,7 +155,7 @@ function RankChip({
   const label = observedRankLabel(ranks, name)
   if (label === null) return null
   return (
-    <Tooltip title="The highest rank of this spell your log has watched you merge or cast. The figures on this row are the base spell's and understate a ranked one.">
+    <Tooltip title="The highest rank of this spell your log has watched you merge or cast.">
       <Chip
         size="small"
         label={label}
