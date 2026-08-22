@@ -25,6 +25,8 @@
  * Run: `node --import tsx tests/e2e/sound-check.e2e.mts` (it is also in tests/e2e/run-all.mts).
  */
 import type { Page } from 'playwright-core'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   buildIfStale,
   check,
@@ -35,7 +37,7 @@ import {
   reportRun,
   settle
 } from './appHarness.mjs'
-import { mainWindow } from './appWindow.mjs'
+import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
 import { launchOnFixture, stageFixture } from './logFixture.mjs'
 import type { AudioSessionReadout } from '../../src/shared/audioCheck'
 
@@ -43,6 +45,54 @@ const RAIL = '[data-testid="prefs-rail-sound"]'
 const RUN = '[data-testid="sound-check-run"]'
 const VERDICT = '[data-testid="sound-check-verdict"]'
 const DETAIL = '[data-testid="sound-check-detail"]'
+
+/**
+ * A REAL PACK, STAGED BY HAND — because an e2e app deliberately has none.
+ *
+ * `EQ_E2E=1` skips pack provisioning entirely (src/main/index.ts: a fresh temp userData would
+ * otherwise re-download every pack on every launch), which is a fact another spec already builds
+ * on (default-sound-pack.e2e.mts). Left alone, this spec would only ever exercise the honest
+ * "nothing installed" branch and would never once carry bytes over `sounds:getData`, through the
+ * Blob URL, into an `Audio` element and out the other side — which is the path the whole ticket
+ * is about. `<userData>/soundpacks/<id>/` is a documented pack root (main/sounds.ts), so writing
+ * one there is exactly what a user dropping their own audio in does; nothing is stubbed.
+ *
+ * A one-second 440 Hz tone rather than silence: the check watches `currentTime` for a quarter
+ * second, and a file shorter than the observation window would make "it never advanced" mean
+ * "it already finished".
+ */
+function stagePack(userData: string): void {
+  const dir = join(userData, 'soundpacks', 'e2e-check')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, 'manifest.json'),
+    JSON.stringify({
+      id: 'e2e-check',
+      name: 'E2E check',
+      sounds: { beep: { file: 'beep.wav', label: 'Beep' } }
+    })
+  )
+  const rate = 8000
+  const frames = rate // one second
+  const data = Buffer.alloc(frames * 2)
+  for (let i = 0; i < frames; i++) {
+    data.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 440 * i) / rate) * 8000), i * 2)
+  }
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0)
+  header.writeUInt32LE(36 + data.length, 4)
+  header.write('WAVEfmt ', 8)
+  header.writeUInt32LE(16, 16) // PCM chunk size
+  header.writeUInt16LE(1, 20) // PCM
+  header.writeUInt16LE(1, 22) // mono
+  header.writeUInt32LE(rate, 24)
+  header.writeUInt32LE(rate * 2, 28) // byte rate
+  header.writeUInt16LE(2, 32) // block align
+  header.writeUInt16LE(16, 34) // bits
+  header.write('data', 36)
+  header.writeUInt32LE(data.length, 40)
+  writeFileSync(join(dir, 'beep.wav'), Buffer.concat([header, data]))
+}
 
 function textOf(page: Page, selector: string): Promise<string> {
   return page.evaluate(
@@ -141,11 +191,18 @@ async function stepReports(page: Page): Promise<void> {
   })
   check('pressing Test sound produces a verdict, never silence', said.trim().length > 0, said)
   note(`verdict on this machine: ${said.replace(/\s+/g, ' ')}`)
+  // A pack IS installed (see `stagePack`), so "nothing to test" would mean the picker failed to
+  // see it — and the whole play path would have gone unexercised behind a passing spec.
+  check(
+    '…and with a pack installed it actually tried: the verdict is about a PLAY, not about nothing',
+    !said.includes('No sound is set up'),
+    said.replace(/\s+/g, ' ').slice(0, 160)
+  )
   // Every sentence `soundCheckVerdict` can return matches one of these. A verdict that matched
   // none of them would mean the card had invented copy of its own, which is the thing the pure
   // module exists to prevent.
   const HONEST =
-    /(Played .+|could not read .+|was refused .+|MUTED in the Windows volume mixer|is muted\.|at zero volume|volume slider in the Windows mixer is at zero|never opened an audio stream|still attached to .+|never advanced|No sound is set up)/
+    /(Played .+|could not read .+|was refused .+|MUTED in the Windows volume mixer|is muted\.|at zero volume|slider in the Windows volume mixer is at zero|never opened an audio stream|still attached to .+|never advanced|No sound is set up)/
   check(
     '…and the sentence is one the shared verdict can actually produce',
     HONEST.test(said),
@@ -165,7 +222,11 @@ async function main(): Promise<void> {
   buildIfStale()
   const consoleErrors: string[] = []
   const log = stageFixture('e2e-voice.log')
-  const { app, close } = await launchOnFixture(log, {})
+  // The userData dir is named by this spec because something is written INTO it before the
+  // launch: a real sound pack, so the check has something to actually play (see `stagePack`).
+  const userData = makeUserData()
+  stagePack(userData)
+  const { app, close } = await launchOnFixture(log, { userData })
   try {
     const page = await mainWindow(app)
     page.on('console', (m) => {
@@ -179,6 +240,7 @@ async function main(): Promise<void> {
     if (failures.length) await dumpArtifacts(page, 'sound-check-FAIL')
   } finally {
     await close()
+    await removeUserData(userData)
     await log.dispose()
   }
 

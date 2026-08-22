@@ -171,8 +171,15 @@ function eatenHeadline(readout: AudioSessionReadout): string | null {
   if (readout.sessionOnOtherDevice !== null) {
     return `It played, but this app is still attached to ${readout.sessionOnOtherDevice} while Windows now plays through ${device}. Restarting the app re-attaches it.`
   }
+  // MEASURED, and it is why this branch is worded the way it is (JOS-442, 2026-08-21): the owner's
+  // dev app was silenced by exactly this - electron.exe's slider at 0.000 with MUTE False on the
+  // headset endpoint, persisted by Windows per executable and per device, so it survived every
+  // restart and silenced every instance while anyone hunting for a MUTE found nothing. The
+  // "while a sound is playing" clause is the other half of why it stayed hidden: this app only
+  // appears in the mixer while it holds a session, and its session vanishes seconds after the
+  // sound stops, so opening the mixer to look shows no row for the app at all.
   if (readout.session !== null && readout.session.volume === 0) {
-    return "It played, but this app's volume slider in the Windows mixer is at zero."
+    return "It played, but this app's slider in the Windows volume mixer is at zero. Open the mixer while a sound is playing and raise it - the app only appears there while it is making a noise."
   }
   if (readout.endpointMuted) return `It played, but ${device} is muted.`
   if (readout.endpointVolume === 0) return `It played, but ${device} is at zero volume.`

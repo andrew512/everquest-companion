@@ -128,7 +128,7 @@ test('V8 the device mute and the zero volumes each get their own sentence', () =
   assert.match(
     soundCheckVerdict(played(), healthy({ session: { state: 'active', muted: false, volume: 0 } }))
       .headline,
-    /volume slider in the Windows mixer is at zero/
+    /slider in the Windows volume mixer is at zero/
   )
 })
 
