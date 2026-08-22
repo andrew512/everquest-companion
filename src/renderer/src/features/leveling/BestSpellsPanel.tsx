@@ -90,6 +90,21 @@ function cellText(row: BestSpellRow, column: BestSpellColumn): string {
   return column === 'damagePerMana' || column === 'healPerMana' ? String(v) : String(Math.round(v))
 }
 
+/**
+ * The share of the table each column takes, and it is MEASURED rather than left to `fixed`'s equal
+ * split: `dmg/mana` is twice the header text of `dps` and an equal quarter clipped its last letters
+ * off the right edge of the panel. The four add to 100, so the table never overflows its column.
+ */
+const COLUMN_WIDTH: Record<BestSpellColumn, string> = {
+  dps: '22%',
+  hps: '22%',
+  damage: '23%',
+  heal: '23%',
+  mana: '22%',
+  damagePerMana: '33%',
+  healPerMana: '33%'
+}
+
 /** One sortable header. Clicking the active column flips it; clicking another takes it descending. */
 function HeadCell({
   column,
@@ -102,7 +117,11 @@ function HeadCell({
 }): JSX.Element {
   const active = sort.column === column
   return (
-    <TableCell align="right" sx={HEAD_SX} sortDirection={active ? (sort.desc ? 'desc' : 'asc') : false}>
+    <TableCell
+      align="right"
+      sx={{ ...HEAD_SX, width: COLUMN_WIDTH[column] }}
+      sortDirection={active ? (sort.desc ? 'desc' : 'asc') : false}
+    >
       <Tooltip title={COLUMN_TITLE[column]}>
         <TableSortLabel
           active={active}
@@ -120,34 +139,45 @@ function HeadCell({
 }
 
 /**
- * One spell row: the name (carrying the full spell card, like every other spell name in this tab),
- * the level it became yours, and the side's four figures.
+ * One spell, as TWO rows: its name across the whole width, then the side's four figures under it.
  *
- * The gain level is the row's own provenance and the reason this table is not a repeat of the panel
- * below it: `Garrison's Mighty Mana Shock` sitting second at 35 with an `L18` beside it is the
- * whole answer the owner asked for.
+ * MEASURED, and it is why the shape is not the obvious one. The first build put the name in a fifth
+ * column; at the panel's real width (330px in the e2e's window, 260px at the app minimum) five
+ * columns share out to ~62px each and every name in the table renders as `Disco…`, with the last
+ * header clipped off the right edge for good measure. A spell you cannot read is not a
+ * recommendation. Spending a LINE instead of a COLUMN gives the name the full width and the four
+ * figures ~76px each — enough for the numbers, their headers and a sort arrow — and vertical space
+ * is the axis this tab has to spare since JOS-289 made the page the scroller.
+ *
+ * The gain level rides beside the name because it is the whole point of the readout: `Garrison's
+ * Mighty Mana Shock` sitting second at level 35 with an `L18` on it is the owner's own question,
+ * answered.
  */
 function SpellRow({ row, columns }: { row: BestSpellRow; columns: readonly BestSpellColumn[] }): JSX.Element {
   return (
-    <TableRow hover data-testid="best-spells-row" data-name={row.name}>
-      <TableCell sx={{ ...CELL_SX, maxWidth: 0 }}>
-        <Stack direction="row" spacing={0.5} alignItems="baseline" sx={{ minWidth: 0 }}>
-          <SpellTooltip name={row.name}>
-            <Typography variant="caption" sx={{ fontSize: 11, fontWeight: 600 }} noWrap>
-              {row.name}
+    <>
+      <TableRow data-testid="best-spells-name-row" data-name={row.name}>
+        <TableCell colSpan={columns.length} sx={{ ...CELL_SX, pt: 0.5, pb: 0 }}>
+          <Stack direction="row" spacing={0.5} alignItems="baseline" sx={{ minWidth: 0 }}>
+            <SpellTooltip name={row.name}>
+              <Typography variant="caption" sx={{ fontSize: 11, fontWeight: 600 }} noWrap>
+                {row.name}
+              </Typography>
+            </SpellTooltip>
+            <Typography variant="caption" color="text.disabled" sx={{ fontSize: 9.5 }} noWrap>
+              L{row.gainedAt}
             </Typography>
-          </SpellTooltip>
-          <Typography variant="caption" color="text.disabled" sx={{ fontSize: 9.5 }} noWrap>
-            L{row.gainedAt}
-          </Typography>
-        </Stack>
-      </TableCell>
-      {columns.map((c) => (
-        <TableCell key={c} align="right" sx={CELL_SX} data-testid="best-spells-cell" data-column={c}>
-          {cellText(row, c)}
+          </Stack>
         </TableCell>
-      ))}
-    </TableRow>
+      </TableRow>
+      <TableRow hover data-testid="best-spells-row" data-name={row.name}>
+        {columns.map((c) => (
+          <TableCell key={c} align="right" sx={CELL_SX} data-testid="best-spells-cell" data-column={c}>
+            {cellText(row, c)}
+          </TableCell>
+        ))}
+      </TableRow>
+    </>
   )
 }
 
@@ -168,7 +198,7 @@ function RowDisclosure({
   return (
     <>
       <TableRow>
-        <TableCell colSpan={columns.length + 1} sx={{ ...CELL_SX, py: 0 }}>
+        <TableCell colSpan={columns.length} sx={{ ...CELL_SX, py: 0 }}>
           <Box
             role="button"
             tabIndex={0}
@@ -224,7 +254,6 @@ function SideTable({
         <Table size="small" sx={{ tableLayout: 'fixed' }}>
           <TableHead>
             <TableRow>
-              <TableCell sx={HEAD_SX}>spell</TableCell>
               {columns.map((c) => (
                 <HeadCell key={c} column={c} sort={sort} onSort={onSort} />
               ))}
