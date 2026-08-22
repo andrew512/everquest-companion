@@ -56,6 +56,7 @@ import { comboClassSet, unlocksAtLevel } from '@shared/levelUnlocks'
 import { tokenizeSpellQuery } from '@shared/spellSearch'
 import { EMPTY_UNLOCK_SEARCH, searchUnlockSpells } from '@shared/unlockSearch'
 import { Tooltip } from '../../lib/Tooltip'
+import { useObservedSpellRanks } from '../../lib/useObservedSpellRanks'
 import { ProvenanceChip } from '../profiles/ClassComboChips'
 import { useComboSnap } from '../profiles/ClassComboData'
 import { UnlockList } from './UnlockList'
@@ -180,6 +181,9 @@ export function NewAtLevelPanel({
   // The live spell bar (JOS-391) — read here rather than inside the row so one subscription
   // serves both lists, and so a list with no spell rows costs nothing.
   const sets = useSpellSets()
+  // Which rank of each line you have been observed to hold (JOS-446), subscribed here for the
+  // same reason `sets` is: one subscription for every list this panel draws.
+  const ranks = useObservedSpellRanks()
   // The same OPEN interval `useCurrentComboClasses` reduces to strings — kept whole here for the
   // one thing the strings drop: where the loadout came from.
   const current = useComboSnap().current
@@ -264,7 +268,7 @@ export function NewAtLevelPanel({
           YOUR trio and say so when there is no trio; a search is a question about the game, and a
           player who has not typed `/who` yet can still ask where Complete Heal sits. */}
       {searching ? (
-        <UnlockSearchResultsList results={results} resolved={resolved} sets={sets} />
+        <UnlockSearchResultsList results={results} resolved={resolved} sets={sets} ranks={ranks} />
       ) : known ? (
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           <UnlockList
@@ -273,6 +277,7 @@ export function NewAtLevelPanel({
             outOfEra={unlocks.outOfEraSpells}
             resolved={resolved}
             sets={sets}
+            ranks={ranks}
             empty={`no new spells at level ${String(level)} for this loadout`}
           />
           <UnlockList
@@ -280,6 +285,7 @@ export function NewAtLevelPanel({
             rows={unlocks.skills}
             resolved={resolved}
             sets={sets}
+            ranks={ranks}
             empty={`no new skills at level ${String(level)} for this loadout`}
           />
         </Stack>
