@@ -1234,11 +1234,18 @@ the full per-lane evidence lives in docs/agents-archive.md.
 ## Data sources
 
 - **Scraper etiquette (LAW)**: every scraping script must run at a
-  respectful rate limit (delay between requests), honor backoffs
-  (429/5xx → exponential retry, obey Retry-After), and be re-runnable +
-  idempotent (cache hits skip the network; partial runs resume, never
-  duplicate output). Applies to scripts/scrape-*, itemLookup, and any
-  future fetcher.
+  respectful rate limit — **1 request per second minimum** (owner ruling
+  2026-08-22, verbatim: *these are fan made servers, we don't need to be
+  smashing concurrent scrape* — and the old 110ms cadence also dragged
+  the owner's own machine while they were using it) — must **pull in bulk
+  through the site's API where one exists** (same ruling: MediaWiki
+  batched `prop=revisions` at the measured 50-page limit, `maxlag=5` so
+  the server can refuse under load; the maxlag deferral arrives as HTTP
+  200 with an error body + Retry-After, so it needs its own retry arm),
+  honor backoffs (429/5xx → exponential retry, obey Retry-After), and be
+  re-runnable + idempotent (cache hits skip the network; partial runs
+  resume, never duplicate output). Applies to scripts/scrape-*,
+  fetch-wiki-images, itemLookup, and any future fetcher.
 
 - eqlwiki.com MediaWiki API (helper: `scripts/sources/eqlegends.ts`).
   Scrapers (output committed): `scrape:posky` (quest-item cells: iterate

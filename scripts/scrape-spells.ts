@@ -61,7 +61,7 @@ const API = 'https://eqlwiki.com/api.php'
 const UA = 'everquest-companion/0.1 (+https://github.com/jmoyers/everquest-companion) spell catalog'
 
 /** Milliseconds between HTTP requests. Sequential, never concurrent. */
-const THROTTLE_MS = 750
+const THROTTLE_MS = 1000
 /** Pageids per query. MEASURED ceiling — 51 returns 200 OK with zero pages (AGENTS.md). */
 const BATCH = 50
 /** The scrape schema this script writes (SpellDbFile.schema). */
