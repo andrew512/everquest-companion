@@ -46,13 +46,23 @@ import { searchTextFor } from './spellDb'
 import { parseSpellClasses } from '../../shared/spellLevels'
 import { isClassAbbr, type ClassAbbr } from '../../shared/classCombo'
 import type { LevelUnlockData, UnlockSkill, UnlockSpell } from '../../shared/levelUnlocks'
-import { spellMetricsAt } from '../../shared/spellMetrics'
+import { parseHpLine, spellMetricsAt } from '../../shared/spellMetrics'
 // The CLIENT'S hitpoint slots (JOS-396), threaded in from the IPC handler rather than imported:
 // `spellTable.ts` is an Electron module and this one is node-tested. See clientSpellHp.ts.
 import { clientHpFor } from './clientSpellHp'
 import { replacedBy } from './spellLineLookup'
 import type { SpellResistTable } from '../../shared/resistTypes'
 import type { SpellDbFile } from '../../shared/types'
+
+/**
+ * The level `parseHpLine` is asked at when the question is "is this a hitpoint line at all".
+ *
+ * Any level answers the same: the head test reads words and the magnitude shapes (breakpoints,
+ * between/and, bare range, constant) all yield SOMETHING wherever they match, so only the value
+ * moves with the level. Named rather than written as a bare `1` so the next reader does not have to
+ * re-derive that this is not an evaluation.
+ */
+const LEVEL_ANY = 1
 
 interface RawUnlock {
   name: string
@@ -182,6 +192,12 @@ function replacesFor(name: string, at: readonly { cls: ClassAbbr }[]): UnlockSpe
  * it cannot be per-class — and it does not need to be, because a spell's own gain level is the
  * only level at which the panel ever introduces it. (The browsing case reads the SAME row: a
  * cleric stepping to 30 sees the spells that unlock at 30, evaluated at 30.)
+ *
+ * AND SINCE JOS-445 THE INPUTS RIDE ALONG (`hpLines` / `clientHp`), because a SECOND reader asks a
+ * question this level cannot answer: the best-spells readout ranks every spell the loadout already
+ * owns AT THE LEVEL BEING VIEWED, and a spell gained at 18 and read at 35 is a different number.
+ * The snapshot above stays exactly as it was — it is the level the unlock row is about — and the
+ * far end recomputes only when it wants another one.
  */
 function unlockSpells(client: SpellResistTable | null): UnlockSpell[] {
   const file = spellsJson as SpellDbFile
@@ -204,8 +220,17 @@ function unlockSpells(client: SpellResistTable | null): UnlockSpell[] {
     // prints are what a player searching for a spell types.
     spell.searchText = searchTextFor(s, undefined)
     if (s.illusion) spell.illusion = true
-    const metrics = spellMetricsAt(s, Math.min(...at.map((p) => p.level)), clientHpFor(client, s.name))
+    const clientHp = clientHpFor(client, s.name)
+    const metrics = spellMetricsAt(s, Math.min(...at.map((p) => p.level)), clientHp)
     if (metrics) spell.metrics = metrics
+    // The re-evaluation inputs (JOS-445). `parseHpLine`'s verdict does not depend on the level it is
+    // handed, so LEVEL_ANY reads the same set at every level; the value it would compute is the only
+    // level-dependent thing here and that is exactly what the far end wants to compute itself.
+    const hpLines = (s.effects ?? []).filter((line) => parseHpLine(line, LEVEL_ANY) !== null)
+    if (hpLines.length > 0) spell.hpLines = hpLines
+    // The client slots ONLY where they are what answered — `spellMetricsAt` consults them nowhere
+    // else, so carrying them beside a wiki-sourced figure would be a field no reader can reach.
+    else if (clientHp) spell.clientHp = clientHp
     const replaces = replacesFor(s.name, at)
     if (replaces) spell.replaces = replaces
     out.push(spell)
