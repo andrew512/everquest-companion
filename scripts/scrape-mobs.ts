@@ -187,6 +187,22 @@ const BATCH = 50
  * template), so nothing is lost; the alias just stops producing a duplicate record — exactly how
  * scrape-items has always treated redirect pages.
  */
+interface PrefetchedPage {
+  pageid?: number
+  revisions?: { slots?: { main?: { content?: string } } }[]
+}
+
+/** One batch response → per-page cache files. A page the response carries no revision for
+ *  (deleted between enumeration and fetch) writes nothing and falls to the per-page fallback. */
+function writePrefetched(pages: readonly PrefetchedPage[]): void {
+  mkdirSync(CACHE_DIR, { recursive: true })
+  for (const page of pages) {
+    const wt = page.revisions?.[0]?.slots?.main?.content
+    if (page.pageid === undefined || wt === undefined) continue
+    writeFileSync(cachePath(`page-${page.pageid}.wikitext`), wt, 'utf8')
+  }
+}
+
 async function prefetchWikitexts(pages: Member[]): Promise<void> {
   const missing = pages.filter((p) => refresh || !existsSync(cachePath(`page-${p.pageid}.wikitext`)))
   if (missing.length === 0) return
@@ -194,21 +210,14 @@ async function prefetchWikitexts(pages: Member[]): Promise<void> {
   console.log(`Prefetching ${missing.length} pages in ${batches} batches of ${BATCH}…`)
   for (let i = 0; i < batches; i++) {
     const slice = missing.slice(i * BATCH, (i + 1) * BATCH)
-    const j = await api<{
-      query?: { pages?: { pageid?: number; revisions?: { slots?: { main?: { content?: string } } }[] }[] }
-    }>({
+    const j = await api<{ query?: { pages?: PrefetchedPage[] } }>({
       action: 'query',
       prop: 'revisions',
       rvprop: 'content',
       rvslots: 'main',
       pageids: slice.map((p) => p.pageid).join('|')
     })
-    mkdirSync(CACHE_DIR, { recursive: true })
-    for (const page of j.query?.pages ?? []) {
-      const wt = page.revisions?.[0]?.slots?.main?.content
-      if (page.pageid === undefined || wt === undefined) continue
-      writeFileSync(cachePath(`page-${page.pageid}.wikitext`), wt, 'utf8')
-    }
+    writePrefetched(j.query?.pages ?? [])
     if ((i + 1) % 25 === 0 || i + 1 === batches) console.log(`  batch ${i + 1}/${batches}`)
   }
 }

@@ -115,6 +115,11 @@ function retryDelayMs(res: Response, backoff: number): number {
 
 let requestsSent = 0
 
+/** A maxlag deferral arrives as HTTP 200 with an error body (and a Retry-After header). */
+function isMaxlagDeferral(j: unknown): boolean {
+  return (j as { error?: { code?: string } }).error?.code === 'maxlag'
+}
+
 /**
  * One serialized request with exponential backoff on 429/5xx (honours Retry-After).
  *
@@ -154,8 +159,7 @@ async function api<T>(params: Record<string, string>, method: 'GET' | 'POST' = '
     if (res.ok) {
       await sleep(DELAY_MS)
       const j = (await res.json()) as T
-      // A maxlag deferral arrives as HTTP 200 with an error body and a Retry-After header.
-      if ((j as { error?: { code?: string } }).error?.code === 'maxlag' && attempt < MAX_RETRIES) {
+      if (isMaxlagDeferral(j) && attempt < MAX_RETRIES) {
         await sleep(retryDelayMs(res, wait))
         wait *= 2
         continue
