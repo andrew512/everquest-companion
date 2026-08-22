@@ -84,6 +84,23 @@ export function getSoundUrl(packId: string, soundId: string): Promise<string | n
 }
 
 /**
+ * What one play did. Handed back rather than swallowed so the hardening above is TESTABLE — the
+ * retry after a failed fetch and the line every failure writes are both properties of this
+ * function, and a `Promise<void>` would leave a unit test with nothing to assert on but a stub's
+ * side effects. Every caller in the app fires and forgets.
+ *
+ * IT IS NOT A DIAGNOSTIC (JOS-443). It briefly also reported whether the element's clock had
+ * ADVANCED, watched over an `observeMs` window, because the Preferences sound check needed a
+ * three-valued "did anything actually come out". That card is gone, and the observation went with
+ * it: nothing in the app waits on a sound it has already started.
+ */
+export interface PlayOutcome {
+  readonly fetched: boolean
+  readonly started: boolean
+  readonly errorName?: string
+}
+
+/**
  * Play a pack sound at `volume` (0..1). Overlapping plays are allowed — each call
  * uses its own <audio> element so a rapid burst doesn't cut off the previous
  * sound. Resolves when playback starts (or immediately on failure).
@@ -95,37 +112,15 @@ export function getSoundUrl(packId: string, soundId: string): Promise<string | n
  * 2026-08-14), so a firing plays a sound OR speaks, and the only caller left wants neither the
  * callback nor the timer. Deleted rather than kept for a caller that no longer exists.
  */
-export async function playSound(packId: string, soundId: string, volume: number): Promise<void> {
-  await playSoundReporting(packId, soundId, volume)
-}
-
-/**
- * The same play, with its OUTCOME handed back — what the Preferences sound check needs in order
- * to report honestly, and what `playSound` throws away because a firing alert has nobody to tell.
- *
- * `advanced` is the element's own admission, and it is THREE-VALUED on purpose. `play()` resolves
- * when playback BEGINS, at which point `currentTime` is still legitimately 0 — so reading the
- * clock straight after it would convict every healthy play of producing nothing. Null therefore
- * means "not observed" and only a caller that waited (`observeMs`) is allowed to say false. The
- * verdict convicts on false and never on null: no evidence is not evidence.
- */
-export interface PlayOutcome {
-  readonly fetched: boolean
-  readonly started: boolean
-  readonly errorName?: string
-  readonly advanced: boolean | null
-}
-
-export async function playSoundReporting(
+export async function playSound(
   packId: string,
   soundId: string,
-  volume: number,
-  observeMs = 0
+  volume: number
 ): Promise<PlayOutcome> {
   const k = key(packId, soundId)
   const url = await getSoundUrl(packId, soundId)
   // getSoundUrl has already reported WHY, and evicted itself so the next firing retries.
-  if (!url) return { fetched: false, started: false, advanced: null }
+  if (!url) return { fetched: false, started: false }
   const audio = new Audio(url)
   audio.volume = Math.max(0, Math.min(1, volume))
   try {
@@ -136,12 +131,10 @@ export async function playSoundReporting(
     // for an entire evening of dead audio it produced exactly zero log lines. It says so now.
     reportAudioFailure('play', k, err)
     const name = err instanceof Error ? err.name : ''
-    return { fetched: true, started: false, ...(name ? { errorName: name } : {}), advanced: null }
+    return { fetched: true, started: false, ...(name ? { errorName: name } : {}) }
   }
   noteAudioPlayed(k)
-  if (observeMs <= 0) return { fetched: true, started: true, advanced: null }
-  await new Promise<void>((resolve) => setTimeout(resolve, observeMs))
-  return { fetched: true, started: true, advanced: audio.currentTime > 0 }
+  return { fetched: true, started: true }
 }
 
 // ----- registry PREVIEW playback (Task #31) -----

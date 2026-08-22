@@ -701,13 +701,30 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   re-appearing re-applied a zero), and the app's row is only VISIBLE in the mixer
   while a session is live (~seconds after a sound). So "all audio silent, nothing
   muted, mixer looks empty" is this, and hunting a mute finds nothing.
-  `audioSessionNative.ts` reads the app's OWN WASAPI session (koffi COM vtable
-  dispatch — read-only BY PRINCIPLE: no SetMute/SetMasterVolume ever) and the
-  Preferences sound check REPORTS it. Two laws from the build: the session is
-  matched by EXECUTABLE, never pid (Chromium plays from its audio-service utility
-  process), and a failed sound fetch is never cached (`soundCache` evicts null
-  resolutions; every playback failure logs one per-key-throttled line via
-  `audioHealth.ts`).
+  **AND THE APP HAS NO TOOL FOR IT, BY RULING** (JOS-443, owner, verbatim: *we
+  don't need any special audio debugging tools at all*). JOS-442 shipped one —
+  `audioSessionNative.ts` reading the app's own WASAPI session over a
+  hand-walked COM vtable, an `audio:session` IPC channel, and a Preferences
+  Sound check card that printed the verdict. All of it is DELETED, together
+  with the shared verdict/readout module and the e2e spec that drove it. The
+  mechanism above stays written down because it is how the owner will
+  recognise the failure himself; the app's answer to it is the Windows volume
+  mixer, not a card. What SURVIVES from that ticket is the invisible half, and
+  it is the part worth keeping: a failed sound fetch is never cached
+  (`soundCache` evicts null resolutions so the next firing retries), every
+  fetch/play failure writes ONE per-key-per-minute line to errors.log
+  (`alerts/audioHealth.ts` + the pure rules in `shared/audioFailureLog.ts`),
+  and a device change leaves a `console.info` breadcrumb. No readout state is
+  kept — state nobody reads is state that rots.
+  **AND THE E2E SUITE MAKES NO SOUND** (same ticket, reported live: runs were
+  audibly playing alert tones on the owner's desktop). Every harness launch
+  passes Chromium's `--mute-audio` (`tests/e2e/appWindow.mts launchApp`, and
+  `scripts/site-screens.mts` for the same reason). It silences the OUTPUT, not
+  the code — elements are still constructed, `play()` still resolves or
+  rejects, speech still travels its seam — so behaviour assertions are
+  unchanged. It is a harness argument rather than an `EQ_E2E` branch on
+  purpose: the test mode must keep changing as little about the product as
+  possible.
 
 ### Electron trust boundary (do not weaken)
 

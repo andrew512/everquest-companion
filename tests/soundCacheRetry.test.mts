@@ -26,15 +26,14 @@ import assert from 'node:assert/strict'
 import {
   getSoundUrl,
   invalidateSoundCaches,
-  playSoundReporting
+  playSound
 } from '../src/renderer/src/features/alerts/soundCache'
 import {
-  audioHealthState,
   noteAudioPlayed,
   reportAudioFailure,
   resetAudioHealth
 } from '../src/renderer/src/features/alerts/audioHealth'
-import { AUDIO_FAILURE_THROTTLE_MS } from '../src/shared/audioCheck'
+import { AUDIO_FAILURE_THROTTLE_MS } from '../src/shared/audioFailureLog'
 
 // ------------------------------------------------------------------------------ the stubs
 
@@ -101,11 +100,11 @@ beforeEach(() => {
 
 test('C1 THE DEFECT: a sound whose first fetch fails plays on the NEXT fire', async () => {
   script = ['throw']
-  const first = await playSoundReporting('afewgoodmen', 'kaffee_hi', 1)
+  const first = await playSound('afewgoodmen', 'kaffee_hi', 1)
   assert.equal(first.fetched, false, 'the first attempt genuinely failed')
 
   // The old code cached that null forever; the whole ticket is that this second call works.
-  const second = await playSoundReporting('afewgoodmen', 'kaffee_hi', 1)
+  const second = await playSound('afewgoodmen', 'kaffee_hi', 1)
   assert.equal(second.fetched, true)
   assert.equal(second.started, true)
   assert.deepEqual(fetches, ['afewgoodmen/kaffee_hi', 'afewgoodmen/kaffee_hi'])
@@ -155,7 +154,7 @@ test('C5 one sound failing does not evict a different sound that worked', async 
 
 test('L1 THE DEFECT: a play() rejection reaches errors.log, carrying the error name', async () => {
   playScript = [Object.assign(new Error('no decoder'), { name: 'NotSupportedError' })]
-  const out = await playSoundReporting('afewgoodmen', 'kaffee_hi', 1)
+  const out = await playSound('afewgoodmen', 'kaffee_hi', 1)
   assert.equal(out.started, false)
   assert.equal(out.errorName, 'NotSupportedError')
   assert.equal(reports.length, 1)
@@ -173,9 +172,14 @@ test('L2 a failed FETCH reaches errors.log too — silence never has an unnamed 
 
 test('L3 NEVER SPAMMY: a burst on one sound is one line…', () => {
   const t0 = 5_000_000
-  for (let i = 0; i < 20; i++) reportAudioFailure('play', 'a/b', new Error('x'), t0 + i * 100)
+  const wrote = []
+  for (let i = 0; i < 20; i++) {
+    wrote.push(reportAudioFailure('play', 'a/b', new Error('x'), t0 + i * 100))
+  }
   assert.equal(reports.length, 1)
-  assert.equal(audioHealthState().failures, 20, 'and all twenty are still COUNTED')
+  // …and the module SAYS which one it wrote, rather than the caller having to guess. The other
+  // nineteen are not forgotten — L4 reads them back out of the next line.
+  assert.deepEqual(wrote.slice(0, 3), [true, false, false])
 })
 
 test('L4 …AND NEVER SILENT: the next window reports again, saying what it swallowed', () => {
@@ -196,22 +200,31 @@ test('L5 the throttle is per SOUND — a second failing sound is not hidden by t
 test('L6 a sound that RECOVERS and breaks again reports immediately, not a minute later', () => {
   const t0 = 5_000_000
   reportAudioFailure('play', 'a/b', new Error('x'), t0)
-  noteAudioPlayed('a/b', t0 + 1000)
+  noteAudioPlayed('a/b')
   assert.equal(reportAudioFailure('play', 'a/b', new Error('x'), t0 + 2000), true)
   assert.equal(reports.length, 2)
 })
 
-test('L7 a successful play records LAST-PLAYED-OK, which the app had no notion of before', async () => {
-  assert.equal(audioHealthState().lastOkAt, null)
-  await playSoundReporting('afewgoodmen', 'kaffee_hi', 1)
-  assert.notEqual(audioHealthState().lastOkAt, null)
-  assert.equal(audioHealthState().failures, 0)
+test('L7 a play that WORKS clears the throttle through the real path, not just by hand', async () => {
+  // The recovery clause end to end: the failure is reported, a real play succeeds (which is the
+  // only thing that calls `noteAudioPlayed`), and the next failure is heard again immediately
+  // instead of being swallowed by the window the first one opened.
+  playScript = [Object.assign(new Error('x'), { name: 'AbortError' })]
+  await playSound('afewgoodmen', 'kaffee_hi', 1)
+  assert.equal(reports.length, 1)
+  await playSound('afewgoodmen', 'kaffee_hi', 1)
+  playScript = [Object.assign(new Error('x'), { name: 'AbortError' })]
+  await playSound('afewgoodmen', 'kaffee_hi', 1)
+  assert.equal(reports.length, 2, 'the recovery reopened the log for that sound')
 })
 
 test('L8 reporting survives a renderer with no bridge at all — the overlay bundle case', () => {
   Object.assign(globalThis, { window: {} })
   assert.doesNotThrow(() => reportAudioFailure('play', 'a/b', new Error('x'), 1))
-  assert.equal(audioHealthState().failures, 1, 'still counted, just not forwarded')
+  // Nothing was forwarded (there is nowhere to forward to) and nothing threw. The throttle still
+  // took the failure, which is why the SECOND one inside the window is swallowed.
+  assert.equal(reportAudioFailure('play', 'a/b', new Error('x'), 2), false)
+  assert.equal(reports.length, 0)
 })
 
 // ------------------------------------------------------------------------- A: the element
@@ -220,25 +233,25 @@ test('A1 every play builds a FRESH Audio element — the basis for not flushing 
   // player.tsx claims a device change needs no cache flush BECAUSE nothing per-sound is bound to
   // a device: the Blob URL is bytes, and the element that binds to an output is made new every
   // single firing. That claim is measured here rather than asserted in a comment.
-  await playSoundReporting('afewgoodmen', 'kaffee_hi', 1)
-  await playSoundReporting('afewgoodmen', 'kaffee_hi', 1)
-  await playSoundReporting('afewgoodmen', 'kaffee_hi', 1)
+  await playSound('afewgoodmen', 'kaffee_hi', 1)
+  await playSound('afewgoodmen', 'kaffee_hi', 1)
+  await playSound('afewgoodmen', 'kaffee_hi', 1)
   assert.equal(audiosMade.length, 3)
   assert.equal(new Set(audiosMade).size, 1, 'three elements over one cached Blob URL')
   assert.equal(fetches.length, 1)
 })
 
 test('A2 the volume argument is clamped rather than trusted', async () => {
-  await playSoundReporting('afewgoodmen', 'kaffee_hi', 4)
-  await playSoundReporting('afewgoodmen', 'kaffee_hi', -1)
+  await playSound('afewgoodmen', 'kaffee_hi', 4)
+  await playSound('afewgoodmen', 'kaffee_hi', -1)
   // Nothing to assert on the stub's own field beyond that neither call threw; the clamp is the
   // reason a def with a bad stored volume cannot make the element throw a RangeError.
   assert.equal(audiosMade.length, 2)
 })
 
-test('A3 `advanced` stays null unless somebody actually watched the clock', async () => {
-  const quick = await playSoundReporting('afewgoodmen', 'kaffee_hi', 1)
-  assert.equal(quick.advanced, null, 'no observation window, no claim')
-  const watched = await playSoundReporting('afewgoodmen', 'kaffee_hi', 1, 5)
-  assert.equal(watched.advanced, true)
+test('A3 a play that could not fetch reports it, and never touches an element', async () => {
+  script = ['null']
+  const out = await playSound('afewgoodmen', 'kaffee_hi', 1)
+  assert.deepEqual(out, { fetched: false, started: false })
+  assert.equal(audiosMade.length, 0, 'nothing was constructed over a URL that does not exist')
 })

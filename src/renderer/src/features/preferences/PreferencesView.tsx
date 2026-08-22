@@ -115,8 +115,6 @@ import { TelemetrySetting } from './TelemetrySetting'
 // file sits at the 400-code-line factoring ceiling, and the section's own file is the honest
 // place for the label, icon and search keywords that name it. See ./PerfSetting.tsx.
 import { perfSection } from './PerfSetting'
-// The sound check (JOS-442) — descriptor beside its own card, same as PerfSetting's.
-import { soundSection } from './SoundCheckSetting'
 // Same arrangement, same reason: the two graphics-compatibility switches name their own section
 // beside the card that renders them. See ./GraphicsSetting.tsx.
 import { graphicsSection } from './GraphicsSetting'
@@ -332,9 +330,13 @@ function buildSections({ version, status, onSendFeedback, onWhatsNew }: SectionI
     buffTrustSection(),
     cursorRingSection(),
     voiceSection(),
-    // Beside Voice, because the two are the app's audio — and this one is the surface a person
-    // reaches for when neither of them makes a noise (JOS-442). See ./SoundCheckSetting.tsx.
-    soundSection(),
+    // NO SOUND SECTION HERE, and that is a ruling rather than an omission (JOS-443, owner:
+    // "remove the sound section from preferences - redundant" and then, on the whole idea, "we
+    // don't need any special audio debugging tools at all"). JOS-442's Sound check card sat beside
+    // Voice and reported what Windows' volume mixer thought of this app; it is deleted, along with
+    // the native WASAPI reader and the IPC channel it asked through. Nothing replaced it on any
+    // surface. Audio failures are still never silent — they write throttled lines to errors.log
+    // from features/alerts/audioHealth.ts — and the mixer is where a mute is undone.
     {
       id: 'profiles',
       label: 'Profiles',
