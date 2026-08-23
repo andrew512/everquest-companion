@@ -46,7 +46,13 @@ import { searchTextFor } from './spellDb'
 import { parseSpellClasses } from '../../shared/spellLevels'
 import { isClassAbbr, type ClassAbbr } from '../../shared/classCombo'
 import type { LevelUnlockData, UnlockSkill, UnlockSpell } from '../../shared/levelUnlocks'
-import { parseHpLine, spellMetricsAt } from '../../shared/spellMetrics'
+import {
+  anyClientCurve,
+  parseHpLine,
+  resolveSpellMana,
+  spellMetricsAt,
+  type ClientHpFacts
+} from '../../shared/spellMetrics'
 // The CLIENT'S hitpoint slots (JOS-396), threaded in from the IPC handler rather than imported:
 // `spellTable.ts` is an Electron module and this one is node-tested. See clientSpellHp.ts.
 import { clientHpFor } from './clientSpellHp'
@@ -225,15 +231,36 @@ function writeFigures(
   const input = { ...s, hits: aeHits(waves, 1, cap) }
   const metrics = spellMetricsAt(input, Math.min(...at.map((p) => p.level)), clientHp)
   if (metrics) spell.metrics = metrics
-  const hpLines = (s.effects ?? []).filter((line) => parseHpLine(line, LEVEL_ANY) !== null)
-  if (hpLines.length > 0) spell.hpLines = hpLines
-  else if (clientHp) spell.clientHp = clientHp
-  const recastMs = s.recastMs ?? clientHp?.recastMs
-  if (recastMs !== undefined) spell.recastMs = recastMs
+  writeInputs(spell, s, clientHp)
   // Only when they SAY something: a 1 and the default would be two fields on ~1,900 rows restating
   // what their absence already states (`UnlockSpell.waves` / `aeMaxTargets`).
   if (waves > 1) spell.waves = waves
   if (clientHp?.aeMaxTargets !== undefined) spell.aeMaxTargets = clientHp.aeMaxTargets
+}
+
+/**
+ * The re-evaluation inputs (JOS-445) and the two resolved fields, split out of `writeFigures` so
+ * that function stays under the complexity ceiling as the sources it reconciles multiply.
+ *
+ * A WIKI-LINED ROW CARRIES THE CLIENT ROW TOO WHEN THE CLIENT'S CURVE ANSWERS FOR ONE OF ITS LINES
+ * (JOS-451). Same seam `writeFigures`'s header describes for `recastMs`, resolved the other way: a
+ * magnitude cannot be pre-resolved because a re-reader asks for it at ANOTHER LEVEL, so the facts
+ * have to travel. Two rows in the committed catalog qualify, so this is not a payload question.
+ */
+function writeInputs(
+  spell: UnlockSpell,
+  s: SpellDbFile['spells'][number],
+  clientHp: ClientHpFacts | undefined
+): void {
+  const hpLines = (s.effects ?? []).filter((line) => parseHpLine(line, LEVEL_ANY) !== null)
+  if (hpLines.length > 0) spell.hpLines = hpLines
+  if (clientHp && (hpLines.length === 0 || anyClientCurve(hpLines, clientHp))) {
+    spell.clientHp = clientHp
+  }
+  const mana = resolveSpellMana(s.mana, clientHp?.mana)
+  if (mana !== undefined) spell.mana = mana
+  const recastMs = s.recastMs ?? clientHp?.recastMs
+  if (recastMs !== undefined) spell.recastMs = recastMs
 }
 
 /**
@@ -264,7 +291,9 @@ function unlockSpells(client: SpellResistTable | null): UnlockSpell[] {
     // the wire unchanged so the renderer has nothing to decide.
     if (s.outOfEra === true) spell.outOfEra = true
     if (typeof s.castTimeMs === 'number') spell.castTimeMs = s.castTimeMs
-    if (typeof s.mana === 'number') spell.mana = s.mana
+    // `mana` is written by `writeFigures`, which is the only place holding the client row it may
+    // have to fall back to (JOS-451) — one resolution, so the row's column and its `dmg/mana` can
+    // never disagree.
     if (s.targetType) spell.targetType = s.targetType
     if (s.spellType) spell.spellType = s.spellType
     if (typeof s.durationMs === 'number') spell.durationMs = s.durationMs

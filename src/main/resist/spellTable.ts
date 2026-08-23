@@ -44,8 +44,15 @@ import type { ResistTableWorkerReply } from '../resistTableWorker'
  *      (4,848 at rank VII) instead of the client's eight, because his machine held a version-3
  *      cache written before anything read that column. The parser change shipped without this
  *      bump, which is exactly the staleness this constant exists to make impossible.
+ *   5  JOS-451 - the mana column (`mana`, field 14) and TWO MORE HITPOINT EFFECT IDS in `hp` (100
+ *      heal-over-time, 334 the bard pulse). Both halves are unreachable from a version-4 cache for
+ *      the same reason 2, 3 and 4 were: the fields were never written into it. And the second half
+ *      is what the owner's own report turns on - a version-4 cache carries no effect-100 slot for
+ *      `Ethereal Cleansing`, so the client curve that fixes his 40-instead-of-400 heal-over-time
+ *      would simply not be there to read. Bumped in the SAME commit as the parser change, which is
+ *      the whole lesson of 4.
  */
-export const SPELL_RESIST_CACHE_VERSION = 4
+export const SPELL_RESIST_CACHE_VERSION = 5
 
 interface CacheFile {
   version: number
