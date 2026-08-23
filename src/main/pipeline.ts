@@ -52,6 +52,16 @@ import type { AlertsDelta, CharacterRef, HeldCounts, OverlayKind } from '../shar
  */
 export const bus = new LogBus()
 export const combat = new CombatEngine()
+// …AND THE ENGINE HANDS ONE THING BACK (JOS-454): the JOS-188 pet-buff bind, as a derived
+// `petClaim{via:'petBuff'}`. It is the third binding signal, it is a PAIR of lines and therefore
+// per-stream state the parser cannot emit, and until this line it never left the engine — so the
+// Leveling tab filed a bound pet's kills as strangers' for the fifty-five minutes before its first
+// `… Master.'` tell (combat/petClaims.ts carries the measurement). Same emitDerived queue as the
+// buffs module's `buffExpired`, and the engine ignores the kind on the way back in, so there is no
+// feedback loop.
+combat.setDerivedEmitter((ev, live) => {
+  bus.emitDerived(ev, live)
+})
 // Character-epoch detection (Task #49; anchor replaced in Task #50): the OFFICIAL LAUNCH
 // (2026-07-28 00:00 local) is the boundary of a same-name+server character being WIPED +
 // recreated at launch (they reuse the same log file — see epochDetector.ts's beta-wipe
