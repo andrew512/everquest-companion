@@ -43,6 +43,9 @@ import { parseEvent } from '../src/main/log/parser.ts'
 import { installSpellDb } from '../src/main/log/rulesets.ts'
 import { loadSpellDb, spellCorrectionsReport, matchCastOnOtherSuffix } from '../src/main/data/spellDb.ts'
 import { applySpellCorrections, SPELL_CORRECTIONS } from '../src/main/data/spellCorrections.ts'
+// The layer that runs BEFORE this one at load. Read by exactly one assertion here — see the
+// idempotence test's own note for why the shipped order is load-bearing for its accounting.
+import { applySpellRemovals } from '../src/main/data/spellRemovals.ts'
 import { classesForSpell } from '../src/main/data/spellClasses.ts'
 import { buildLevelUnlocks } from '../src/main/data/levelUnlocks.ts'
 import { BuffsModule } from '../src/main/modules/buffs.ts'
@@ -159,6 +162,53 @@ test('JOS-161: a NAME correction renames EVERY row of that name, and is idempote
   )
 })
 
+test('JOS-415: a CLASSES correction writes every row, and the already-right twin is satisfied', () => {
+  // The seventh drift class. The scrape files two rows under the name `Leach` because two wiki
+  // pages set `spellname = Leach`: pageid 46874 (titled `Leech`, `* Necromancer - Level 9`) and
+  // pageid 50162 (titled `Leach`, `* Necromancer - Level 12 Recourse Effect`). The wiki's own
+  // Necromancer spell list places the spell once, at level 9.
+  const before = RAW.filter((s) => s.name === 'Leach')
+  assert.equal(before.length, 2, 'the committed scrape still carries both rows')
+  assert.deepEqual(
+    before.map((s) => s.classes).sort(),
+    ['* Necromancer - Level 12 Recourse Effect', '* Necromancer - Level 9'],
+    'and they still disagree — otherwise a re-scrape has fixed it and the entry should go'
+  )
+
+  const { spells, report } = applySpellCorrections(RAW)
+  const after = spells.filter((s) => s.name === 'Leach')
+  assert.deepEqual(
+    after.map((s) => s.classes),
+    ['* Necromancer - Level 9', '* Necromancer - Level 9'],
+    'EVERY row: half of this leaves the phantom level-12 unlock card exactly where it was'
+  )
+  assert.deepEqual(report.stale, [])
+  assert.deepEqual(report.unknownSpells, [])
+
+  // Everything BUT the classes line is untouched — a level correction restates nothing else.
+  assert.deepEqual(
+    after.map((s) => [s.durationText, s.mana, s.castTimeMs, s.msgCastOnYou]),
+    before.map((s) => [s.durationText, s.mana, s.castTimeMs, s.msgCastOnYou])
+  )
+
+  // Idempotent, and the twin that was already right is `satisfied` rather than `stale` — the same
+  // answer a re-scrape adopting level 9 upstream would produce.
+  const again = applySpellCorrections(spells).report
+  assert.equal(again.applied, 0)
+  assert.deepEqual(again.stale, [])
+
+  // And a wiki that moves the line to some THIRD level must fail this suite, not be overwritten.
+  const third = RAW.map((s) =>
+    s.name === 'Leach' && s.classes === '* Necromancer - Level 12 Recourse Effect'
+      ? { ...s, classes: '* Necromancer - Level 14' }
+      : s
+  )
+  assert.ok(
+    applySpellCorrections(third).report.stale.some((e) => e.spell === 'Leach' && e.field === 'classes'),
+    'a moved classes line must report stale'
+  )
+})
+
 test('JOS-161: a MESSAGE correction still writes only the first row of a duplicated name', () => {
   // The other half of the rule, and the reason the two kinds differ. `Shock of Frost` is two rows
   // saying two DIFFERENT things (`Your feel your skin freeze.` and `Your skin goes numb.`), so the
@@ -177,7 +227,17 @@ test('JOS-161: a MESSAGE correction still writes only the first row of a duplica
 // ---------------------------------------------------------------------------------------------
 
 test('applying the overlay twice is applying it once', () => {
-  const first = applySpellCorrections(RAW)
+  // READ THROUGH THE REMOVALS SEAM, which is the list the shipped overlay actually sees
+  // (`spellDb.ts` runs removals first) — and since JOS-440 that is load-bearing for the last
+  // assertion rather than tidiness. `applyOne` counts a NAME correction's second pass by how many
+  // rows now bear the DESTINATION name, which is right whenever the rename is the only reason any
+  // row has it. The invisibility twins are the case where it is not: the raw scrape carries a
+  // second page ALREADY named `Invisibility Versus Undead`, so on RAW the second pass counts two
+  // rows for a correction that wrote one, and `satisfied` over-reads by exactly one. That duplicate
+  // page is what the removals layer drops, so the shipped list has no such collision and the
+  // identity below is the honest one. Every other assertion in this file still reads RAW.
+  const seen = applySpellRemovals(RAW).spells
+  const first = applySpellCorrections(seen)
   const second = applySpellCorrections(first.spells)
   assert.deepEqual(second.spells, first.spells, 'the second pass must be a no-op on the entries')
   assert.equal(second.report.applied, 0, 'nothing left to apply')

@@ -43,6 +43,10 @@ import {
   type ItemDropRow,
   type KillTargetItem
 } from '../src/renderer/src/features/posky/poskyDroppers'
+// The mob-island overlay's own audit lives in tests/skyMobIslands.test.mts; this suite only needs
+// to know which pages it speaks for, so the "every island came from an item" invariant below stays
+// exact rather than being loosened into uselessness.
+import { skyMobIslandFor } from '../src/renderer/src/features/posky/skyMobIslands'
 import mobsRaw from '../src/renderer/src/data/eqlegends/mobs.json' with { type: 'json' }
 import poskyRaw from '../src/renderer/src/data/eqlegends/posky.json' with { type: 'json' }
 import type { MobEntry, PoskyQuest } from '../src/shared/types'
@@ -197,16 +201,23 @@ test('mergeDroppers keeps layer 1 first and de-dupes by page', () => {
 
 test('an item with no known dropper resolves EMPTY', () => {
   // Wind runes: posky itself calls them "random drop — any Plane of Sky mob". No kill target
-  // exists, so none is invented. (All 15 runes behave the same way.)
+  // exists, so none is invented. (Most runes behave this way; Ozah is the exception below.)
   assert.deepEqual(skyDroppersFor('Wind Rune Meda'), [])
   assert.deepEqual(skyDroppersFor('Wind Rune Azia'), [])
-  // No page in the whole 7,866-row catalog lists these.
-  assert.deepEqual(skyDroppersFor('Azarack Blood'), [])
-  assert.deepEqual(skyDroppersFor('Azarack Skin'), [])
+  // No page in the catalog lists this one.
   assert.deepEqual(skyDroppersFor('Large Sky Lapis'), [])
   // A name nothing in EverQuest has ever heard of.
   assert.deepEqual(skyDroppersFor('Sword of Nonexistence'), [])
   assert.deepEqual(skyDroppersFor(''), [])
+})
+
+test('the 2026-08-22 rescrape gave the Azarack pair (and Ozah) a real dropper', () => {
+  // The Protector of Sky page (edited 2026-08-21) now lists Azarack Blood, Azarack Skin and
+  // Wind Rune Ozah in its loot — a triggered Island 2 raid spawn, verified on the live page.
+  // These three used to be the measured no-dropper remainder; they are kill targets now.
+  assert.deepEqual(names(skyDroppersFor('Azarack Blood')), ['Protector of Sky'])
+  assert.deepEqual(names(skyDroppersFor('Azarack Skin')), ['Protector of Sky'])
+  assert.deepEqual(names(skyDroppersFor('Wind Rune Ozah')), ['Protector of Sky'])
 })
 
 // =============================================================================
@@ -280,8 +291,9 @@ test('the tracker resolves a kill target for the great majority of its items', (
   const unresolved = items.filter((n) => skyDroppersFor(n).length === 0)
   assert.ok(items.length >= 128, `distinct items: ${items.length}`)
   assert.ok(resolved.length >= 109, `resolved: ${resolved.length} of ${items.length}`)
-  // Every unresolved item is a wind rune or one of the three the catalog simply never lists.
-  const expectedGaps = new Set(['Azarack Blood', 'Azarack Skin', 'Bixie Stinger', 'Large Sky Lapis'])
+  // Every unresolved item is a wind rune or one of the gaps the catalog simply never lists.
+  // (Azarack Blood/Skin left this set 2026-08-22 — Protector of Sky now lists them.)
+  const expectedGaps = new Set(['Bixie Stinger', 'Large Sky Lapis'])
   for (const n of unresolved) {
     assert.ok(
       n.toLowerCase().startsWith('wind rune') || expectedGaps.has(n),
@@ -433,11 +445,20 @@ test('the caption covers nearly every quest, and states an island for most', () 
     captioned.filter((l) => l.includes('Island')).length >= 82,
     `with island: ${captioned.filter((l) => l.includes('Island')).length}`
   )
-  // Every island a caption states came from a stated `where` on one of that quest's items.
+  // Every island a caption states came from a stated `where` on one of that quest's items — OR
+  // from the mob-island overlay, which is the ONE thing allowed to answer differently and states
+  // per row what it replaces (skyMobIslands.ts, JOS-415). Anything else would be an invention.
   for (const q of QUESTS) {
     const stated = new Set(q.items.map((it) => islandOf(it.where)).filter(Boolean))
-    for (const t of questKillTargets(questRows(q)))
-      for (const i of t.islands) assert.ok(stated.has(i), `${q.name}: ${i} is not stated by any item`)
+    for (const t of questKillTargets(questRows(q))) {
+      const overlay = skyMobIslandFor(t.mob.page)
+      for (const i of t.islands) {
+        assert.ok(
+          overlay ? i === overlay.island : stated.has(i),
+          `${q.name}: ${i} is not stated by any item`
+        )
+      }
+    }
   }
 })
 

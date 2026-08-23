@@ -270,6 +270,15 @@ export interface SpellResistInfo {
   axis: ResistAxis | null
   resistAdj: number
   castMs: number
+  /**
+   * THE RE-USE TIMER in ms, field 10, present only when the row states a positive one (JOS-444).
+   *
+   * It is here rather than in the wiki catalog's shadow because it answers for the 81 catalog rows
+   * whose page omits `recast_time`: `shared/spellMetrics.ts` reads it as the FALLBACK denominator
+   * of a sustained dps. Field 9 is a different number that looks like this one and is not it — see
+   * spellsUsParse.ts, where both are measured.
+   */
+  recastMs?: number
   targetType: number
   /** Slot-1-through-N effect 0 (hitpoints), when the spell has one. Drives fixed-vs-variable. */
   hpSlot?: { base: number; max: number; calc: number }
@@ -396,7 +405,13 @@ export interface ResistEstimate extends ResistFit {
   /** Observations that entered the likelihood, split by where they came from. */
   fromBaseline: number
   fromYou: number
-  /** Observations dropped because no level was known for both sides of `levelMod`. */
+  /**
+   * Observations dropped because no level was known for both sides of `levelMod`. Mostly ANOTHER
+   * PLAYER'S casts, whose level nothing in this app's inputs states — by design, and not
+   * recoverable (main/resist/fold.ts's header argues it). It is NOT where a mob the catalog knows
+   * under another spelling belongs: that was JOS-422, and the fold resolves the alias now
+   * (main/resist/world.ts `catalogLevelOf`).
+   */
   droppedNoLevel: number
   /** Observations held out because their spell's landings are not observable (resistModel.ts). */
   droppedUnobservable: number

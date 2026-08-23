@@ -125,6 +125,180 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.8.0',
+    date: '2026-08-21',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Start a new session works on the damage meter now, not just Loot: one click closes the running Overall, keeps it browsable in the picker, and starts a fresh one counting from that moment. The zone meter overlay carries a small flag button for it, so an instance reset never means leaving the game.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'If your watched log goes quiet while another character’s log starts growing, the app asks - once - whether to switch to it. It never asks twice about the same log and never switches by itself.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Lifebite - the new Necromancer and Shadow Knight lifetap from the August 18 game patch - is in the spell catalog, on the level-up cards, and slotted into the lifetap upgrade ladder, along with everything else that patch added.'
+      },
+      {
+        kind: 'new',
+        text: 'Bug reports can now attach your achievements export the way they attach your inventory - same preview, same checkbox, nothing sent without your say-so.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A class unlocked with a token, or by confirming your primary class, no longer marks that class’s Sky quests as turned in. The app now tells a quest you actually did from one the game unlocked for you - and each completed quest’s badge says which kind of proof it has: a hand-in the app watched, your achievements file, or the reward sitting in your bags.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Invisibility Versus Undead is one spell again - the wiki carried it on two pages under two spellings, and the copy the game does not run is gone. It is named what the game prints.'
+      }
+    ]
+  },
+  {
+    version: '1.7.0',
+    date: '2026-08-20',
+    entries: [
+      {
+        kind: 'new',
+        text: 'A Plane of Sky quest whose reward already sits in your bags, bank, or keyring now shows as Turned in - worked out from your inventory export, labelled so you can tell it from a hand-in the app watched, and anything your own record says outranks it. Built on a community pull request - thank you.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Run /outputfile achievements and the app reads it: Sky quests the game itself has already credited you for are marked complete. This is the answer for progress made on another PC, or from before you installed.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The Loot tab can start a new session from right now, one click. The old session keeps its totals and stays pickable; the new one counts from the moment you pressed the button - made for instance resets.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Finishing Blow has its own line in the Procs panel: how many landed and what the blows actually added. The damage was always counted - it hid inside your weapon skills with nothing saying so.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'Everyone on the damage meter now means every fight the log can see: players fighting near you appear without being grouped or invited. Your own rows and numbers are untouched, and Group scope still shows only your group.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'A combatant the log alone cannot prove is a person is labelled as just that - a stranger and a stranger’s summoned pet are spelled the same way in the log, and the meter refuses to guess.'
+      },
+      {
+        kind: 'changed',
+        text: 'An instant clicky you own - Firestrike, Gravity Flux - books as a click now, not a proc, so no more per-minute rate stamped on an ability you pressed yourself. Real weapon procs are untouched.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Overlays parked along the bottom edge of the screen stop creeping upward at every login.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Re-running /outputfile inventory is noticed even when the game replaces the file rather than rewriting it - and the Sky tab’s freshness line gained a quiet Refresh for when you would rather not wait.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Ranger’s Swarm of Pain shows on the Debuffs overlay, counting down.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Bard Test of Wind’s reward is named what the game names it: Amulet of the Fae.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Typing a future end time into the custom range picker no longer snaps back while you type.',
+        fromReport: true
+      }
+    ]
+  },
+  {
+    version: '1.6.0',
+    date: '2026-08-19',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Plane of Sky has a Targets tab: every mob you still need to kill, deduplicated across your open quests, with the items each one drops and doors to the quests that need them. Built on a community pull request - thank you.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The Targets list reads in walk order - grouped by island, lowest first, with mobs whose island the drop data does not state grouped honestly at the bottom. A "first time only" box (on by default) keeps quests you have already handed in off the list; untick it when you are refarming.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Plane of Sky counts: a wind rune looted into your currency tab now counts, even after you have handed that quest in before. The inventory export never lists currency-tab items, and a turn-in was being charged against both your export and your log at once - so refarmed runes read zero. Rune rows now also say when an item can never appear in the export, and point at the hand-count pencil.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Overwriting one mez with another - Dazzle over Mesmerization - now retires the old bar and tracks the new spell under its own name and duration. Before, the old bar squatted at zero and a nameless bar counted up underneath it.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The Buffs tab shows the rank you actually cast. Levelling Mesmerization to X no longer leaves the Debuffs list saying VI forever.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The shaman Curse now reaches the debuff tracker - its landing message lost a word in the wiki import, so the tracker never recognized it. The registry now audits every spell for that defect class at build time, and the sweep repaired 41 more rows. A community contributor found the mechanism - thank you.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Pacify, Reoccurring Amnesia and the rest of the lull and memory-blur families - 18 spells - are debuffs now, not buffs, and reach the debuff overlay.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Rain spells parse by their real mechanics: a fixed number of waves per cast, counted once as spell damage. Lava Storm and its sixteen cousins no longer split into a phantom proc row with an invented procs-per-minute.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The Character tab reads every worn item at its own +N upgrade level, through the same scaling the Gear tab already used. A Cloak of Flames +5 now shows +41% haste, AC 15 and HP 75 instead of the base values - and every other scaled stat moved with it.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Data corrections: North and South Kaladim maps were swapped; Protector of Sky is on island 2, not 7; the Scintillating Bracer of Protection is the Shimmering Bracer; and Leach is the level 9 necromancer spell it always was.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Mobs whose full title differs from their catalog name - Innoruuk, the Prince of Hate - now fold their resist history correctly, so the con card shows what your past fights learned instead of "nothing seen yet". A restart re-reads your whole log, so the history lights up on its own.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The auto-hide overlays no longer flicker when you alt-tab back into EverQuest. They also stop being real hide/show at all: they fade to invisible and back, so there is no stale frame to strobe - and no z-order churn over the game.'
+      },
+      {
+        kind: 'changed',
+        text: 'Clicking a mob card or a celebration toast raises the Companion without hiding your overlays - using an overlay is not leaving the game. Alt-tabbing into the Companion yourself still hides them, as before.'
+      },
+      {
+        kind: 'changed',
+        text: 'When security software on your PC blocks the update check, the app now says exactly that and retries on the next check - instead of blaming the download and backing off for hours. Sound pack downloads that hit a busy download host now wait politely and resume, rather than failing after three fast tries.'
+      },
+      {
+        kind: 'changed',
+        text: 'Under the hood: learned resist data survives a full disk and a torn file, and crash reports name which helper process died instead of arriving blank.'
+      }
+    ]
+  },
+  {
     version: '1.5.0',
     date: '2026-08-17',
     entries: [

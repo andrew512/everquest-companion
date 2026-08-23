@@ -16,6 +16,11 @@ import { registry, spellDb } from '../pipeline'
 // launch, and the next read after it lands is the one that carries the figures.
 import { spellTableNow } from '../resist/spellTable'
 import type { AlertsSnap } from '../../shared/alertTypes'
+import {
+  OBSERVED_SPELL_RANKS_MODULE_ID,
+  observedRankRow,
+  type ObservedSpellRanksSnap
+} from '../../shared/spellRanks'
 import type { BuffsSnap } from '../../shared/types'
 
 export function registerKnowledgeIpc(): void {
@@ -59,10 +64,23 @@ export function registerKnowledgeIpc(): void {
   //
   // The argument is a renderer string, so it is VALIDATED rather than trusted: anything that is
   // not a string is answered with the same not-found record an unknown spell gets.
+  // AND THE MOTE RANK COMES FROM THE OBSERVED-RANK MODULE (JOS-447), read off the registry the same
+  // way. It is a SECOND rank source beside `spellLastCast` on purpose and they answer different
+  // questions: the alerts map names the rank display strings a lineage can list, while JOS-446's
+  // fold answers "the highest rank this character holds" over merges as well as casts - which is
+  // the number the `yours: VIII` pill already states, and therefore the number the at-rank figures
+  // beside it have to be read at, or the card would contradict itself.
   ipcMain.handle(IPC.spellsDetail, (_e, name: unknown) => {
     const snap = registry.get('alerts')?.snapshot()?.state as AlertsSnap | undefined
     const observed = Object.keys(snap?.spellLastCast ?? {})
-    return buildSpellDetail(spellDb, typeof name === 'string' ? name : '', observed, spellTableNow())
+    const wanted = typeof name === 'string' ? name : ''
+    const rankSnap = registry.get(OBSERVED_SPELL_RANKS_MODULE_ID)?.snapshot()?.state as
+      | ObservedSpellRanksSnap
+      | undefined
+    return buildSpellDetail(spellDb, wanted, observed, {
+      client: spellTableNow(),
+      rank: observedRankRow(rankSnap, wanted)?.rank
+    })
   })
 
   // ---- item knowledge ("what's this lore/quest item for", Task #53) ----

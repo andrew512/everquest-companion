@@ -21,7 +21,16 @@ import type { SpellResistTable } from '../../shared/resistTypes'
 import type { SpellEntry } from '../../shared/types'
 import { clientHpFor } from './clientSpellHp'
 import { spellEffectClasses } from './spellEffectClass'
+import { normalizeSpellRank } from '../../shared/spellScale'
 import { spellNature, type SpellDb } from './spellDb'
+
+/** The outside witnesses the join consults when the caller has them. Both optional, both default off. */
+export interface SpellDetailSources {
+  /** the parsed `spells_us.txt` table, or null/absent - a FALLBACK inside `spellMetricsAt`. */
+  client?: SpellResistTable | null
+  /** the mote rank this character has been observed holding for the line (JOS-446). */
+  rank?: number
+}
 
 /** The record for a name no row of the DB carries. `found: false` is an answer, not an error. */
 function notFound(queried: string): SpellDetail {
@@ -115,12 +124,17 @@ function dbRowFor(db: SpellDb, name: string): SpellEntry | undefined {
  * `observedRanks` is the caller's slice of `AlertsSnap.spellLastCast` - display names, rank intact.
  * An empty list is normal (a fresh character, or the alerts module not yet warm) and simply leaves
  * the lineage to whatever the DB states.
+ *
+ * `sources` carries the two things that are NOT the DB and not the lineage: the client's spell
+ * table (the hitpoint fallback) and the mote rank this character holds. They are one object rather
+ * than two more parameters because the repo's factoring rule caps a function at four, and because
+ * both are the same kind of thing - an outside witness the join consults if it is there.
  */
 export function buildSpellDetail(
   db: SpellDb,
   queried: string,
   observedRanks: readonly string[] = [],
-  client: SpellResistTable | null = null
+  sources: SpellDetailSources = {}
 ): SpellDetail {
   const name = queried.trim()
   if (!name) return notFound(queried)
@@ -132,7 +146,7 @@ export function buildSpellDetail(
     name: entry.name,
     found: true,
     ...statedFields(entry),
-    ...worthFields(entry, classLevels, client),
+    ...worthFields(entry, classLevels, sources),
     nature: spellNature(entry.spellType),
     illusion: entry.illusion,
     classLevels,
@@ -161,11 +175,19 @@ export function buildSpellDetail(
 function worthFields(
   e: SpellEntry,
   classLevels: readonly { level: number }[],
-  client: SpellResistTable | null
+  sources: SpellDetailSources
 ): Partial<SpellDetail> {
   const level = classLevels.length > 0 ? Math.min(...classLevels.map((c) => c.level)) : 1
-  const metrics = spellMetricsAt(e, level, clientHpFor(client, e.name))
-  return metrics ? { metrics, metricsLevel: level } : {}
+  const client = clientHpFor(sources.client ?? null, e.name)
+  const metrics = spellMetricsAt(e, level, client)
+  if (!metrics) return {}
+  // AND THE SAME READING AT THE RANK THE PLAYER HOLDS (JOS-447). Second call rather than a second
+  // reader, so the two lines on the card cannot disagree about anything but the rank. Skipped
+  // entirely at base, where the two would be the same numbers printed twice.
+  const rank = normalizeSpellRank(sources.rank)
+  if (rank === 0) return { metrics, metricsLevel: level }
+  const atRank = spellMetricsAt({ ...e, rank }, level, client)
+  return atRank ? { metrics, metricsLevel: level, metricsAtRank: atRank, metricsRank: rank } : { metrics, metricsLevel: level }
 }
 
 /**
@@ -178,20 +200,34 @@ function worthFields(
  * every bard song's page says, and it is a fact.
  */
 function statedFields(e: SpellEntry): Partial<SpellDetail> {
-  const out: Partial<SpellDetail> = {}
+  const out: Partial<SpellDetail> = { ...messageFields(e) }
   if (e.durationText !== undefined) out.durationText = e.durationText
   if (e.castTimeMs !== undefined) out.castTimeMs = e.castTimeMs
+  if (e.recastMs !== undefined) out.recastMs = e.recastMs
   if (e.mana !== undefined) out.mana = e.mana
   if (e.targetType !== undefined) out.targetType = e.targetType
   if (e.spellType !== undefined) out.spellType = e.spellType
   if (e.instrumentEnhanced !== undefined) out.instrumentEnhanced = e.instrumentEnhanced
   if (e.effects !== undefined) out.effects = e.effects
-  if (e.msgCastOnYou !== undefined) out.msgCastOnYou = e.msgCastOnYou
-  if (e.msgCastOnOther !== undefined) out.msgCastOnOther = e.msgCastOnOther
-  if (e.msgWearsOff !== undefined) out.msgWearsOff = e.msgWearsOff
   // The era verdict is DERIVED rather than scraped (`spellEra.ts` joins it at load), but it obeys
   // the same rule as every line above it: copied across only when it is a positive claim, so the
   // card has nothing to interpret and cannot print "in era" over a page nobody has classified.
   if (e.outOfEra === true) out.outOfEra = true
+  return out
+}
+
+/**
+ * The three sentences the GAME prints, split out of the table above under the same rule.
+ *
+ * A separate function for a mechanical reason worth stating so nobody re-inlines it: the table is
+ * one branch per field and adding the JOS-444 recast row put it at the lint config's complexity
+ * ceiling. These three belong together anyway - they are the log-recognition block on the card,
+ * not the spell-window block.
+ */
+function messageFields(e: SpellEntry): Partial<SpellDetail> {
+  const out: Partial<SpellDetail> = {}
+  if (e.msgCastOnYou !== undefined) out.msgCastOnYou = e.msgCastOnYou
+  if (e.msgCastOnOther !== undefined) out.msgCastOnOther = e.msgCastOnOther
+  if (e.msgWearsOff !== undefined) out.msgWearsOff = e.msgWearsOff
   return out
 }

@@ -25,6 +25,9 @@ import { SessionDetector } from './log/sessionDetector'
 import { baselineOverlay, loadUserSources } from './data/overlayPersistence'
 import { BASELINE_SOURCE } from './data/messageOverlay'
 import { spellCorrectionsReport, spellPlaceholdersReport, spellRemovalsReport } from './data/spellDb'
+// The registry VALIDATOR (JOS-412). It is not one of the load passes and reports from here rather
+// than from the loader on purpose — see `spellSubjectAudit.ts`'s header for the one-way edge.
+import { auditSpellSubjects } from './data/spellSubjectAudit'
 // The era join's own census (JOS-393). It reports from `spellEra.ts` rather than from the loader
 // beside its three siblings because the pass has two callers over one catalog — see that file.
 import { spellEraReport } from './data/spellEra'
@@ -33,12 +36,12 @@ import { ModuleRegistry } from './modules/registry'
 import { createModules } from './modules/wiring'
 import { resistLedgerSeam } from './resist/store'
 import type { ModuleDelta } from './modules/types'
-import { lookupItem } from './itemLookup'
+import { heldClickySpells, lookupItem } from './itemLookup'
 import { MOB_CATALOG_SIZE, lookupMob, ownLoot } from './mobLookup'
 import { getAlerts, getBuffTrustPrefs } from './store'
 import { getRespawnPrefs } from './storeRespawn'
 import { getOverlayWindow, sendToMain } from './windows'
-import type { AlertsDelta, CharacterRef, OverlayKind } from '../shared/types'
+import type { AlertsDelta, CharacterRef, HeldCounts, OverlayKind } from '../shared/types'
 
 /**
  * Log-derived state for the active character, rebuilt on launch + appended live.
@@ -245,6 +248,18 @@ logInfo(
     )
   }
 }
+// THE SUBJECT VALIDATOR (JOS-412) — the only line here that reports on the registry AS SHIPPED
+// rather than on a pass we ran over it. It answers "which spells can never be resolved to their own
+// landing sentence", which is the question `Odium` and then `Curse` had to be reported for. Run
+// here, over `spellDb.spells` (the effective list), because the edge to spellDb.ts is one-way at
+// runtime — see that module's header. `unreachable` is the number worth watching: the other two
+// count ROWS, and a duplicate era row's wrong subject costs a user nothing.
+{
+  const a = auditSpellSubjects(spellDb.spells)
+  logInfo(
+    `[everquest-companion] Spell subjects: ${a.unreachable.length} spell${a.unreachable.length === 1 ? '' : 's'} unreachable by their landing sentence (${a.wrongSubject} rows with the wrong subject placeholder, ${a.noSubject} with none, ${a.firstPerson.length} first-person fields naming a third party).`
+  )
+}
 logInfo(`[everquest-companion] Spell DB: ${spellDb.spells.length} spells (${spellDb.castOnYou.size} unique cast-on-you msgs).`)
 logInfo(
   `[everquest-companion] Mob catalog: ${MOB_CATALOG_SIZE} mobs (scraped drop tables; the live wiki lookup is the fallback).`
@@ -314,3 +329,24 @@ bus.subscribe((ev, live) => combat.ingestEvent(ev, live))
  * does the marking.
  */
 export const DATA_READY_MS = performance.now()
+
+/**
+ * THE HELD-CLICKY SEAM (JOS-438): install the spells this character owns an instant item click
+ * for, derived from their `/outputfile inventory` counts.
+ *
+ * A FUNCTION rather than a module-scope call like the two seams above, because unlike the roster
+ * and the combo this one has no live source to pull from — a dump is a snapshot the player writes
+ * by hand, so session.ts re-installs it whenever one is read.
+ *
+ * IT LIVES HERE, and that is the whole point of the indirection: this module already imports
+ * itemLookup (`lookupItem`, above) and session.ts already imports this one, so the feature adds no
+ * module edge to the main bundle anywhere. Reaching the catalog through a NEW edge instead — from
+ * session.ts, then from here — was measured to break JOS-431's delete-and-recreate inventory
+ * watcher with the derivation never even called (main/itemClickies.ts carries the bisect).
+ *
+ * It TAKES the counts rather than reading the store, so session.ts stays the only module that
+ * knows which character is active.
+ */
+export function installHeldClickies(counts: HeldCounts): void {
+  combat.setHeldClickies(heldClickySpells(counts))
+}

@@ -138,7 +138,31 @@
 // row is earned when a real log shows its sentence firing cast-less inside combat, and when the
 // sentence is unique in the DB so the count can be attributed to one name. One log has, once.
 
+// ── A THIRD CAST-LESS SHAPE THAT IS NOT A PROC: THE RAIN (JOS-414, GitHub issue 39) ──
+//
+// The two shapes above are heals. This one is damage, and it is the join's own instant rule
+// meeting a spell that fires more than once per cast.
+//
+// A rain spell delivers a FIXED NUMBER OF WAVES from ONE cast (owner's ruling and the game's
+// mechanic — src/main/combat/rainSpells.ts carries the measurement). `origin` lets one cast
+// record explain ONE INSTANT, which is exactly right for the AoE it was written for — four
+// `Earthquake` lines in one second, one cast — and exactly wrong for a rain, whose second wave
+// lands three seconds later with the same cast behind it. The first wave scored `cast`, every
+// later wave scored `proc`, and the meter grew a second row wearing a proc rate: 126 of the 452
+// first-person rain lines in the owner's log, 27.6% of their damage.
+//
+// THE GATE IS THE SPELL, NOT THE TIMING, and that is the stronger rule for the reason the DoT
+// gate is: no item, buff or AA in this game fires a rain, so a cast-less rain wave is never a
+// proc — it is a wave whose cast line we did not see (a fold that started mid-cast, a scrubbed
+// span). Widening the claim to "any instant inside the window" would have fixed the reported
+// case and still filed those as procs.
+//
+// WHAT IT COSTS: if a rain ever did proc, this refuses to notice. Nothing in the log or the
+// item DB suggests one can, and the alternative — a phantom proc lane on every rain a caster
+// owns — is the defect that was reported.
+
 import { spellCanonKey } from '../log/parseCommon'
+import { isRainSpell } from './rainSpells'
 import type { DamageType } from '../../shared/combat'
 
 /**
@@ -151,8 +175,21 @@ export const PROC_CAST_WINDOW_MS = 12_000
  *  this is the belt-and-braces cap for a pathological burst of distinct spell names. */
 export const RECENT_CAST_CAP = 512
 
-/** Where a landed spell effect of YOURS came from — the whole of this feature's judgement. */
-export type SpellOrigin = 'cast' | 'proc'
+/**
+ * What the CAST LEDGER can answer on its own: did one of your own cast lines explain this firing.
+ * Two values, because `You begin casting` is the only evidence this class holds.
+ */
+export type CastVerdict = 'cast' | 'proc'
+
+/**
+ * Where a landed spell effect of YOURS came from — the whole of this feature's judgement.
+ *
+ * `'click'` is the JOS-438 third value and it is NOT a third thing the cast ledger can see: an
+ * instant clicky prints exactly what a proc prints (one effect line, no cast line), so it arrives
+ * here as `'proc'` and is promoted by `castlessKind` on evidence from OUTSIDE the log — the
+ * player's own inventory dump (main/itemClickies.ts carries the measurement and the limits).
+ */
+export type SpellOrigin = CastVerdict | 'click'
 
 /** One `You begin casting <Spell>.`, and the firing it has already explained (if any). */
 interface CastRecord {
@@ -215,7 +252,7 @@ export class RecentCasts {
    * A cast in the FUTURE relative to this line (possible only on an out-of-order replay) is
    * treated as no cast at all: the window is `0 <= ts - castTs <= PROC_CAST_WINDOW_MS`.
    */
-  origin(spell: string, ts: number): SpellOrigin {
+  origin(spell: string, ts: number): CastVerdict {
     const rec = this.inWindow(spell, ts)
     if (!rec) return 'proc'
     if (rec.claimTs === undefined) {
@@ -227,7 +264,7 @@ export class RecentCasts {
 
   /** The same verdict WITHOUT consuming — diagnostics and tests only. Nothing on the ingest
    *  path may use it: two readers of one claim is how the join starts double-counting. */
-  peek(spell: string, ts: number): SpellOrigin {
+  peek(spell: string, ts: number): CastVerdict {
     const rec = this.inWindow(spell, ts)
     if (!rec) return 'proc'
     return rec.claimTs === undefined || rec.claimTs === ts ? 'cast' : 'proc'
@@ -278,19 +315,44 @@ export class RecentCasts {
 /** What a cast-less lane's display name ends with. Never present in an EQ spell name. */
 export const PROC_LANE_SUFFIX = ' · proc'
 
+/**
+ * …and what a HELD-CLICKY lane's ends with (JOS-438). A second marker rather than a re-used one,
+ * because the reporter's whole complaint was that the app was calling their bow click a proc:
+ * `Firestrike · proc` and `Firestrike · click` are different claims about the same log line, and
+ * only one of them is true. The suffix rides the NAME for the reason PROC_LANE_SUFFIX does — it
+ * reaches every surface (drill, category rollup, timeline lane, clipboard, overlay) with no new
+ * plumbing, and `laneCanonKey` strips both so every join still sees ONE spell.
+ */
+export const CLICK_LANE_SUFFIX = ' · click'
+
+const LANE_SUFFIXES = [PROC_LANE_SUFFIX, CLICK_LANE_SUFFIX]
+
 /** The meter lane a landing of `spell` belongs to, given where it came from. */
 export function laneNameFor(spell: string, origin: SpellOrigin): string {
-  return origin === 'proc' ? spell + PROC_LANE_SUFFIX : spell
+  if (origin === 'proc') return spell + PROC_LANE_SUFFIX
+  return origin === 'click' ? spell + CLICK_LANE_SUFFIX : spell
 }
 
-/** True when a lane name is the cast-less half of a split. */
+/** True when a lane name is the PROC half of a split. */
 export function isProcLaneName(lane: string): boolean {
   return lane.endsWith(PROC_LANE_SUFFIX)
 }
 
-/** A lane name with the proc marker removed — the SPELL the row is about. */
+/** True when a lane name is the HELD-CLICKY half of a split. */
+export function isClickLaneName(lane: string): boolean {
+  return lane.endsWith(CLICK_LANE_SUFFIX)
+}
+
+/** True when a lane name carries EITHER cast-less marker — the join every consumer of the split
+ *  actually wants (`taggedSkills`: "is this row one of the cast-less halves"). */
+export function isCastlessLaneName(lane: string): boolean {
+  return isProcLaneName(lane) || isClickLaneName(lane)
+}
+
+/** A lane name with its cast-less marker removed — the SPELL the row is about. */
 export function baseLaneName(lane: string): string {
-  return isProcLaneName(lane) ? lane.slice(0, -PROC_LANE_SUFFIX.length) : lane
+  const suffix = LANE_SUFFIXES.find((s) => lane.endsWith(s))
+  return suffix === undefined ? lane : lane.slice(0, -suffix.length)
 }
 
 /** `spellCanonKey` for a METER LANE: the marker is display, so both halves of a split key
@@ -300,12 +362,37 @@ export function laneCanonKey(lane: string): string {
 }
 
 /**
- * Damage types eligible for cast-less detection. `spell` ONLY — see the DoT gate in the file
- * header. Expressed as a function rather than a Set so the exclusion reads as a rule with a
- * reason attached, not as a list somebody can extend without noticing what it costs.
+ * Damage lines eligible for cast-less detection, and BOTH refusals are rules with a reason:
+ *
+ *   - `spell` ONLY. A DoT tick is cast-DETACHED by construction, so it would misclassify as a
+ *     proc the moment it arrived more than twelve seconds after its cast (the DoT gate, in the
+ *     file header); `melee`/`ds` are not spell effects at all.
+ *   - NEVER A RAIN. A rain spell fires several waves off one cast, so its later waves are
+ *     cast-less by construction too — the same shape as a DoT tick, arriving on the other
+ *     lane (JOS-414; see the rain section of the header and rainSpells.ts).
+ *
+ * A function rather than a Set so neither exclusion can be extended without reading what it
+ * costs.
  */
-export function procEligibleDamage(dtype: DamageType): boolean {
-  return dtype === 'spell'
+export function procEligibleDamage(dtype: DamageType, skill: string): boolean {
+  return dtype === 'spell' && !isRainSpell(skill)
+}
+
+/**
+ * THE ONE PLACE A CAST-LESS FIRING BECOMES A CLICK (JOS-438).
+ *
+ * `held` is the set of canonical spell keys the player owns an INSTANT clicky for and that no item
+ * in the catalog grants as a weapon proc — built by main/itemClickies.ts from the `/outputfile
+ * inventory` dump, which is where the whole measurement and every stated limit lives. It is EMPTY
+ * for a character who has never written a dump, and an empty set makes this the identity function:
+ * that is the behaviour that shipped before this gate, kept deliberately rather than replaced by a
+ * catalog guess (the catalog was swept and it relabels 148 real procs — see itemClickies.ts).
+ *
+ * A `'cast'` verdict is never promoted. A cast line is direct evidence of a hand-cast, and owning
+ * a clicky for the same spell says nothing against it.
+ */
+export function castlessKind(verdict: CastVerdict, spell: string, held: ReadonlySet<string>): SpellOrigin {
+  return verdict === 'proc' && held.has(spellCanonKey(spell)) ? 'click' : verdict
 }
 
 /**
@@ -436,6 +523,16 @@ export interface SpellProcLane {
   damage: number
   heal: number
   /**
+   * TRUE when this lane's firings were attributed to a clicky the player HOLDS (JOS-438), which
+   * is what makes it a `click` lane downstream instead of a `spell` one.
+   *
+   * A property of the LANE and not of each fold, because the held set is fixed for a session:
+   * every cast-less firing of one spell gets the same answer, and a lane that ever saw a click
+   * fold is a click lane. Absent ⇒ an ordinary cast-less proc lane, which is every lane that
+   * existed before this ticket.
+   */
+  click?: true
+  /**
    * THE PER-STATE FIRING SPLIT (proc-analytics §2.1 `ProcLink`), folded on INGEST because it can never be
    * folded later: the encounter event ring is capped, truncated on finalize, and absent
    * ENTIRELY for zone sessions, so a link derived from it would be silently wrong exactly where
@@ -469,6 +566,9 @@ interface ProcFoldBase {
   spell: string
   /** `<kind>:<key>` of every state open at the firing instant (StateTimeline.active). */
   active: ReadonlySet<string>
+  /** This firing was attributed to a clicky the player HOLDS (JOS-438) — it marks the LANE, which
+   *  is where the distinction is read. Absent ⇒ an ordinary cast-less proc. */
+  click?: true
 }
 
 /** A firing whose line CARRIED a number: `amount` lands in the lane's `damage` or `heal` total. */
@@ -505,6 +605,7 @@ export function addSpellProc(lanes: Map<string, SpellProcLane>, f: SpellProcFold
     heal: 0,
     byState: new Map<string, LaneSides>()
   }
+  if (f.click) lane.click = true
   lane.hits[f.side]++
   if (f.side !== 'landing') {
     if (f.side === 'damage') lane.damage += f.amount

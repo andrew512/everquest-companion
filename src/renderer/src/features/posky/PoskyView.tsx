@@ -5,8 +5,14 @@ import { OverrideSummaryChip } from './ItemOverrides'
 import { useProgress, type QuestProgress } from './useProgress'
 import { IgnoredList } from './IgnoredList'
 import QuestFilterBar, { InventorySource } from './QuestFilterBar'
-import { countSourcePhrase } from '../inventory/countSource'
+// The `/outputfile` freshness line (JOS-44). The Sky tab draws it twice now — the inventory dump's
+// under the count-source dropdown, the achievements dump's under the counts line (JOS-429).
+import OutputKindLine from '../../components/OutputKindLine'
+import { countSourcePhrase, countsFromInventory } from '../inventory/countSource'
+// The game fact that can empty this tab and that no amount of re-exporting will fix (JOS-409).
+import { DUMP_BLIND_READY_NOTE } from './dumpBlindItems'
 import ClassUnlockList from './ClassUnlockList'
+import { TargetsView } from './TargetsView'
 import { useQuestList, type QuestListState, type TabKey } from './useQuestList'
 // The rows themselves live in their own file since JOS-389 — see its header for why.
 import { QuestList, type QuestAnchor, type QuestListProps } from './QuestList'
@@ -140,6 +146,11 @@ interface ReadyListProps extends QuestListProps {
 function ReadyList(props: ReadyListProps): JSX.Element {
   const n = props.quests.length
   const { readyFirstTimeOnly, readyRefarmCount } = props.list
+  // THE RUNE CAVEAT (JOS-409), on both states of the tab for JOS-155's reason: the thing it
+  // explains is a quest that is ABSENT, so the empty pane is precisely where it is needed most.
+  // Gated on the source actually reading the export — under `log` the dump answers nothing and its
+  // blindness explains nothing (`countsFromInventory` is that gate, shared with the freshness line).
+  const runeNote = countsFromInventory(props.countSource) ? ` ${DUMP_BLIND_READY_NOTE}` : ''
   return (
     <Box
       data-testid="posky-ready"
@@ -155,12 +166,13 @@ function ReadyList(props: ReadyListProps): JSX.Element {
         />
       </Stack>
       {n === 0 ? (
-        <Typography color="text.secondary">
+        <Typography color="text.secondary" data-testid="posky-ready-empty">
           Nothing is ready to turn in - a quest lands here the moment you are holding every item it
           needs, and leaves when you hand them over.
           {readyFirstTimeOnly && readyRefarmCount > 0
             ? ` ${String(readyRefarmCount)} you have run before ${readyRefarmCount === 1 ? 'is' : 'are'} ready now - untick the box to see ${readyRefarmCount === 1 ? 'it' : 'them'}.`
             : ''}
+          {runeNote}
         </Typography>
       ) : (
         <>
@@ -175,6 +187,7 @@ function ReadyList(props: ReadyListProps): JSX.Element {
                 sentence points at the control that fixes it rather than at a dismiss button this
                 tab deliberately does not have (questCompletion.readyQuests). */}
             {' Holding something you no longer have? Expand the quest and correct the count beside the item.'}
+            {runeNote}
           </Typography>
           <QuestList {...props} />
         </>
@@ -215,6 +228,15 @@ function PoskyTabs({ list, cleanupCount }: { list: QuestListState; cleanupCount:
         value="ready"
         label={list.ready.length ? `Ready (${list.ready.length})` : 'Ready'}
         data-testid="posky-tab-ready"
+      />
+      {/* "Targets" - who to pull next (issue #30). The COUNT is `list.targets.mobs.length`, the
+          same array the pane draws, on the Ready precedent above - the collective random-drop
+          entry and the no-known-source note are NOT in it, because the number answers "how many
+          mobs", not "how many sections". */}
+      <Tab
+        value="targets"
+        label={list.targets.mobs.length ? `Targets (${list.targets.mobs.length})` : 'Targets'}
+        data-testid="posky-tab-targets"
       />
       {/* "Cleanup" - the owner's own word for the screen (JOS-389). The count is how many items
           the model lists, i.e. how many stacks are candidates to throw away, which is exactly the
@@ -288,6 +310,12 @@ interface PoskyBodyProps {
   countSource: CountSource
   onCountSource: (s: CountSource) => void
   inventoryLoadedAt: number | null
+  /**
+   * When this app last read the `/outputfile achievements` dump (`achievementsSource.readAt`), or
+   * `null` for never (JOS-429) — the second instant of that kind's freshness line, exactly as
+   * `inventoryLoadedAt` is for the inventory one.
+   */
+  achievementsLoadedAt: number | null
   /** an item name → the Loot tab's drill-down, for the pane that draws names without quest rows */
   onOpenLoot?: (item: string) => void
   itemOverrides: readonly ItemCountOverride[]
@@ -326,6 +354,28 @@ function PoskyBody(x: PoskyBodyProps): JSX.Element {
       />
     )
   }
+  if (list.tab === 'targets') {
+    // The kill list (issue #30): derived from the same visible set as every other tab, drawn
+    // by its own view file (TargetsView.tsx) because it renders mob cards, not quest rows.
+    // `onOpenMob` rides in on the rows bundle — same router the quest rows' mob chips use, and
+    // `list.revealQuest` is the other door: a quest name on a card is the same deep link a
+    // celebration toast follows (JOS-417), so the tab a player leaves is the one they arrived
+    // for. The count source and the first-time toggle ride along on the Ready tab's JOS-294
+    // argument - between them they decide every shortfall this tab shows.
+    return (
+      <TargetsView
+        targets={list.targets}
+        onOpenMob={rows.onOpenMob}
+        onOpenQuest={list.revealQuest}
+        countSource={countSource}
+        onCountSource={onCountSource}
+        inventoryLoadedAt={inventoryLoadedAt}
+        firstTimeOnly={list.targetsFirstTimeOnly}
+        onFirstTimeOnly={list.setTargetsFirstTimeOnly}
+        refarmCount={list.targetsRefarmCount}
+      />
+    )
+  }
   if (list.tab === 'classes') {
     // The VISIBLE quests, like every other tab: a quest the user permanently ignored is not shown
     // here either, and a class's total shrinks with it rather than counting a quest the app has
@@ -359,6 +409,29 @@ function PoskyBody(x: PoskyBodyProps): JSX.Element {
         filteredCount={list.filtered.length}
         countSource={countSource}
         overrides={x.itemOverrides}
+      />
+      {/* THE SECOND `/outputfile` LINE (JOS-429), and deliberately the SAME line component the
+          inventory dump gets — `OutputKindLine quiet`, which inherits the command string, the
+          why-clause and the file's own mtime from the registry, and reads "not yet run" for a
+          player who has never typed it. Inventing a second freshness UX was the one thing the
+          ticket ruled out.
+
+          WHAT DIFFERS IS THE SLOT, AND ONLY BECAUSE THE SUBJECT DIFFERS. The inventory line hangs
+          absolutely under "Count items from" because it is about that dropdown's file and because
+          a caption appearing there would otherwise shove the whole quest list down (JOS-268's
+          geometry argument). This one is about COMPLETIONS, which no control on the bar governs —
+          it belongs to the counts line, where the tab already says where its readings came from,
+          and it sits IN FLOW because that Stack's spacing is a real gap rather than a 17px slot.
+
+          IT IS UNCONDITIONAL, unlike the inventory line's source gate. There is no "count
+          achievements from" choice to be out of step with: the dump either marks quests or it does
+          not, and the player who has not run the command is exactly the one the four reports were
+          about — telling them the command exists is the feature. */}
+      <OutputKindLine
+        quiet
+        kind="achievements"
+        loadedAt={x.achievementsLoadedAt}
+        testId="posky-achievements-fresh"
       />
       <QuestList quests={list.filtered} {...rows} />
     </>
@@ -399,6 +472,7 @@ export default function PoskyView({
     setItemOverride,
     itemOverrides,
     inventoryInfo,
+    achievementsInfo,
     sharedItems,
     ambiguousQuestNames
   } = useProgress({ onQuestComplete })
@@ -448,6 +522,7 @@ export default function PoskyView({
         countSource={countSource}
         onCountSource={setCountSource}
         inventoryLoadedAt={inventoryInfo?.readAt ?? null}
+        achievementsLoadedAt={achievementsInfo?.readAt ?? null}
         onOpenLoot={onOpenLoot}
         itemOverrides={itemOverrides}
       />
