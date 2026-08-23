@@ -464,9 +464,14 @@ function cooldownKey(def: AlertDef, ev: LogEvent): string {
 function compileAlert(def: AlertDef): CompiledAlert {
   const t: AlertTrigger = def.trigger
   const breakKinds = breakTriggerKinds(t)
-  // Only a 'custom' phrase can carry a token at all — the other three speech modes resolve to
-  // values the app owns and have no template to substitute into (shared/speechText.ts).
-  const autoTokens = autoTokensWanted(def.speech?.mode === 'custom' ? def.speech.phrase : undefined)
+  // The def's two AUTHOR-WRITTEN templates, and only those. Of the speech modes only 'custom' has
+  // a template at all — the other three resolve to values the app owns (shared/speechText.ts) —
+  // and the banner's "On-screen text" override is the same kind of thing for the eye
+  // (shared/alertBanner.ts). Either one writing `{target}` is enough to carry it.
+  const autoTokens = autoTokensWanted(
+    def.speech?.mode === 'custom' ? def.speech.phrase : undefined,
+    def.bannerText
+  )
   if ('conditions' in t) {
     return {
       def,

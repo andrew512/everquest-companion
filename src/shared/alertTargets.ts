@@ -49,21 +49,23 @@
 //
 //   c. THE READABILITY PROPERTY IS KEPT BY THE EDITOR, NOT LOST. `autoTokenNamesFor(trigger)`
 //      answers "which of these does THIS trigger fill?", and SpeechBlock's capture hint prints the
-//      answer beside the pattern's own groups. So a def that arrived in somebody else's share
-//      string still shows you the complete finite list of values it is able to say — the property
-//      control 4 exists for — it is simply computed from the trigger's KINDS as well as from its
-//      regexes.
+//      answer beside the pattern's own groups — for the phrase and for the banner override alike,
+//      which are one template language over one set of names. So a def that arrived in somebody
+//      else's share string still shows you the complete finite list of values it is able to say —
+//      the property control 4 exists for — it is simply computed from the trigger's KINDS as well
+//      as from its regexes.
 //
 //   d. IT ADDS NO EXPOSURE THAT DECLARING A GROUP DID NOT ALREADY HAVE. Anything `{target}` can
 //      say, a shared def could already have said by writing `(?<target>…)` into a `raw` pattern
 //      over the same line — with a LOOSER character class than the parser's, which is the strictly
 //      worse version. This is a convenience over an existing capability, not a new channel.
 //
-// AND THE VALUE ONLY LEAVES MAIN IF THE PHRASE ASKED FOR IT. main/modules/alerts.ts computes the
-// wanted set at COMPILE time from the def's own phrase (`autoTokensWanted`), so an alert that never
-// writes `{target}` carries no target on its firing and its `module:delta` stays byte-identical to
-// what it was before this file existed. That is a bound on the IPC surface and on what any future
-// consumer of `FiredAlert.captures` can see, and it is enforced at the producer.
+// AND THE VALUE ONLY LEAVES MAIN IF ONE OF THE DEF'S OWN TEMPLATES ASKED FOR IT. main/modules/
+// alerts.ts computes the wanted set at COMPILE time from the def's own spoken phrase and its
+// banner override (`autoTokensWanted`), so an alert that never writes `{target}` carries no target
+// on its firing and its `module:delta` stays byte-identical to what it was before this file
+// existed. That is a bound on the IPC surface and on what any future consumer of
+// `FiredAlert.captures` can see, and it is enforced at the producer.
 //
 // PURE, like every other module in `src/shared/**`: no `node:`, no Electron, no DOM.
 
@@ -241,14 +243,18 @@ export function autoTokenNamesFor(trigger: AlertTrigger): AutoTokenName[] {
 }
 
 /**
- * The auto tokens a PHRASE actually writes — the compile-time gate that keeps a target off every
- * firing that never asked for one (see the header's last paragraph).
+ * The auto tokens a def's TEMPLATES actually write — the compile-time gate that keeps a target off
+ * every firing that never asked for one (see the header's last paragraph).
  *
- * Reads the phrase, not the trigger: whether a value is worth carrying is a question about what
- * the def will SAY. A def with no custom phrase wants nothing.
+ * Reads the templates, not the trigger: whether a value is worth carrying is a question about what
+ * the def will SAY. A def that writes none of them wants nothing.
+ *
+ * VARIADIC BECAUSE THERE IS MORE THAN ONE SURFACE THAT SAYS SOMETHING. A def's spoken phrase and
+ * its banner override are both author-written templates over the same tokens, and the value has to
+ * be carried if EITHER asks for it — a union, computed once, rather than the caller deciding which
+ * surface counts.
  */
-export function autoTokensWanted(phrase: string | undefined): AutoTokenName[] {
-  if (!phrase) return []
-  const used = new Set(tokensIn(phrase))
+export function autoTokensWanted(...templates: (string | undefined)[]): AutoTokenName[] {
+  const used = new Set(templates.flatMap((t) => (t ? tokensIn(t) : [])))
   return AUTO_TOKEN_NAMES.filter((t) => used.has(t))
 }

@@ -25,9 +25,17 @@
 // call the speech resolver: the eye and the ear want different sentences, and the name is the one
 // the player wrote and already recognises from the alert list.
 //
+// …AND THE OVERRIDE IS A TEMPLATE, exactly as a custom PHRASE is. `bannerText` goes through
+// `applyCaptures` (shared/alertCaptures.ts), so `Mez broke on {target}` reads on screen the way it
+// already spoke. The two channels stay free to differ in WORDING while agreeing on what a
+// `{token}` means — one template language, one set of caps, one threat model, whichever surface
+// prints it. Only the override substitutes: `def.name` is left alone for `speechTextFor`'s stated
+// reason — the alertName fallback resolves to a value the app owns and has no template in it.
+//
 // Pure + dependency-free (types only), so `npm test` exercises every rule here with no Electron.
 
-import type { AlertDef, AlertTriggerPrimitive, AppSignal } from './alertTypes'
+import type { AlertDef, AlertTriggerPrimitive, AppSignal, FiredAlert } from './alertTypes'
+import { applyCaptures } from './alertCaptures'
 
 // ---- the kind's own config knobs -------------------------------------------------------
 //
@@ -153,10 +161,17 @@ export const MAX_BANNER_CHARS = 120
 export type BannerDef = Pick<AlertDef, 'name' | 'bannerText'>
 
 /**
+ * The firing context `alertBannerText` reads — structural, like `SpeechFiring` next door, so a
+ * `FiredAlert` satisfies it and so does a `{ captures }` literal in a test.
+ */
+export type BannerFiring = Pick<FiredAlert, 'captures'>
+
+/**
  * THE ONE DERIVATION. What this alert's banner line says:
  *
- *   1. `bannerText`, when the user filled the "On-screen text" field. An override is the only
- *      reason that field exists, so a non-empty one wins outright.
+ *   1. `bannerText`, when the user filled the "On-screen text" field — with its `{token}`s filled
+ *      in from this firing. An override is the only reason that field exists, so a non-empty one
+ *      wins outright.
  *   2. otherwise the alert's own NAME (owner ruling, 2026-08-15).
  *
  * IT NO LONGER ASKS THE SPEECH RESOLVER, and that is the ruling's whole point: a spoken phrase is
@@ -165,14 +180,26 @@ export type BannerDef = Pick<AlertDef, 'name' | 'bannerText'>
  * is exactly what a glance mid-pull can resolve. The two channels are free to differ, and the
  * override field is how you make them differ deliberately.
  *
- * No firing is needed to answer this, so none is taken: the name is the same on every landing, and
- * a parameter that is never read is a claim that it might be.
+ * WHAT IT DOES SHARE WITH THE SPOKEN CHANNEL IS THE TEMPLATE LANGUAGE. The override is text the
+ * def's AUTHOR wrote, which is the same test `speechTextFor` applies when it substitutes in the
+ * 'custom' branch and nowhere else — so `{player}` written into "On-screen text" resolves out of
+ * this firing's captures exactly as it would in a phrase, and the NAME fallback (a value the app
+ * owns) is left alone. Substitution happens BEFORE `cappedText`, so a line that grew when its
+ * tokens resolved is collapsed and cut at MAX_BANNER_CHARS like a long literal one; the values
+ * themselves are already sanitized and capped at harvest, and `applyCaptures` re-runs the
+ * sanitizer regardless (shared/alertCaptures.ts, controls 1, 2 and 5).
+ *
+ * `firing` is OPTIONAL, and absent is not a blank: an unresolved token renders LITERALLY, which is
+ * `applyCaptures`'s documented behaviour and what lets the alert editor and the tests ask this
+ * question without fabricating a firing.
  *
  * Returns null only when there is nothing truthful to print (a def with a blank name and no
  * override), in which case no banner is sent at all.
  */
-export function alertBannerText(def: BannerDef): string | null {
-  return cappedText(def.bannerText, MAX_BANNER_CHARS) ?? cappedText(def.name, MAX_BANNER_CHARS) ?? null
+export function alertBannerText(def: BannerDef, firing?: BannerFiring | null): string | null {
+  const override =
+    typeof def.bannerText === 'string' ? applyCaptures(def.bannerText, firing?.captures) : undefined
+  return cappedText(override, MAX_BANNER_CHARS) ?? cappedText(def.name, MAX_BANNER_CHARS) ?? null
 }
 
 /**
@@ -235,9 +262,9 @@ export function alertShowsOnScreen(def: Pick<AlertDef, 'showOnScreen' | 'trigger
  * the overlay window is a different renderer process and only main can reach it.
  *
  * NO LOG CONTENT BEYOND THE ALERT'S OWN TEXT crosses this wire. `text` is the resolved sentence —
- * which may contain a `{target}`/capture value, already sanitized and capped by
- * shared/alertCaptures.ts at harvest time — and there is deliberately no `matchedText`, no raw
- * line and no event payload: a banner says what the alert says, and nothing about the log.
+ * which may contain a `{target}`/capture value the override asked for, already sanitized and
+ * capped by shared/alertCaptures.ts at harvest time — and there is deliberately no `matchedText`,
+ * no raw line and no event payload: a banner says what the alert says, and nothing about the log.
  */
 export interface AlertBannerPayload {
   /** Queue identity — a repeat REFRESHES the line already on screen rather than stacking it. */

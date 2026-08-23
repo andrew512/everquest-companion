@@ -166,9 +166,9 @@ export function firingSpell(ev: LogEvent): string | undefined {
  * same visible degradation `harvestCaptures` chose for the ninth named group.
  *
  * `autoTokens` is EMPTY for nearly every alert (modules/alerts.ts compiles it from the def's own
- * phrase), and this returns its argument untouched when it is — so a firing that asked for nothing
- * is not even reallocated, and the `module:delta` stays byte-identical to what it was before the
- * token existed.
+ * phrase and banner override), and this returns its argument untouched when it is — so a firing
+ * that asked for nothing is not even reallocated, and the `module:delta` stays byte-identical to
+ * what it was before the token existed.
  *
  * It lives here, beside `firingSpell`, because it is the same kind of thing: a PURE reader that
  * turns one matched LogEvent into one field of the firing payload. modules/alerts.ts holds the

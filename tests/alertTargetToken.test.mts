@@ -43,6 +43,7 @@ import {
   resolveTarget
 } from '../src/shared/alertTargets'
 import { speechTextFor } from '../src/shared/speechText'
+import { alertBannerText } from '../src/shared/alertBanner'
 import { suggestionsFor } from '../src/renderer/src/features/alerts/suggestions'
 import type { LogEvent } from '../src/shared/logEvents'
 import type { AlertDef, FiredAlert, SpellCatalogEntry } from '../src/shared/types'
@@ -303,10 +304,36 @@ test('JOS-353 D2: a def that never writes the token carries NO captures — the 
   // …and neither does a custom phrase that says something else.
   const other = plainDef('buffApply', { spell: 'Shiftless Deeds' }, 'slowed', 'test:other-phrase')
   assert.equal(fire([other], [line])[0].captures, undefined)
-  // `autoTokensWanted` is the compile-time reader, and it reads the PHRASE.
+  // `autoTokensWanted` is the compile-time reader, and it reads the def's TEMPLATES.
   assert.deepEqual(autoTokensWanted('Mez broke on {target}'), ['target'])
   assert.deepEqual(autoTokensWanted('Mez broke'), [])
   assert.deepEqual(autoTokensWanted(undefined), [])
+  assert.deepEqual(autoTokensWanted(undefined, 'Mez broke on {target}'), ['target'], 'either template asks')
+  assert.deepEqual(autoTokensWanted(undefined, undefined), [], 'and a def with neither wants nothing')
+})
+
+test('JOS-353 D2b: the ON-SCREEN text asks for the token too — one language, two surfaces', () => {
+  // The banner override is the other AUTHOR-WRITTEN template a def carries (shared/alertBanner.ts),
+  // so it counts toward the wanted set exactly as the phrase does. Without this an alert that said
+  // `{target}` on screen and nothing at all aloud carried no target — the one token that needs no
+  // regex would be the one that printed its own braces at the surface built for reading.
+  const line = '[Fri Aug 07 09:07:24 2026] Coercer T`vala slows down.'
+  const def: AlertDef = {
+    id: 'test:banner-target',
+    name: 'Slow landed',
+    enabled: true,
+    trigger: { type: 'event', kind: 'buffApply', where: { spell: 'Shiftless Deeds' } },
+    cooldownMs: 0,
+    bannerText: 'Slow on {target}'
+  }
+  const fired = fire([def], [line])
+  assert.equal(fired.length, 1)
+  assert.deepEqual(fired[0].captures, { target: 'Coercer T`vala' })
+  assert.equal(alertBannerText(def, fired[0]), 'Slow on Coercer T`vala')
+  // …and the bound is intact: drop the token from the only template that wrote it and the firing
+  // carries nothing again, so no delta in the app grew a field it never asked for.
+  const quiet = { ...def, id: 'test:banner-plain', bannerText: 'Slow landed' }
+  assert.equal(fire([quiet], [line])[0].captures, undefined)
 })
 
 test('JOS-353 D3: a kind outside the table resolves to nothing, so the token renders literally', () => {
