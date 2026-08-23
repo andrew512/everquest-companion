@@ -87,8 +87,28 @@ async function findResult(page: Page, name: string): Promise<string | null> {
   return null
 }
 
+/**
+ * PUT AN OUT-OF-CLASS QUERY IN THE BOX and wait for the results, for the CAMERA (JOS-450).
+ *
+ * `shootBestSpells` takes two PNGs of one panel because it has two states now, and "does this read
+ * in a 260px column" is an owner's question about BOTH — the unlock panel's own arrangement. It
+ * lives here so the derivation of "a spell outside your class" exists once; the camera runs after
+ * every measurement, for the compositing reason `shootBestSpells` states.
+ */
+export async function fillOutsideClassQuery(page: Page): Promise<boolean> {
+  const loadout = await page.evaluate(
+    (s) => Array.from(document.querySelectorAll(s)).map((el) => (el as HTMLElement).innerText.trim()),
+    COMBO_CHIP
+  )
+  const target = loadout.length === 0 ? null : outsideClassSpell(loadout)
+  if (!target) return false
+  await page.fill(SEARCH, target.name, { timeout: 10_000 })
+  const drawn = await settle(() => countOf(page, RESULTS), (n) => n === 1, { timeoutMs: 8_000 })
+  return drawn === 1
+}
+
 /** Empty the box through its own clear button, the way a reader does. */
-async function clearSearch(page: Page): Promise<void> {
+export async function clearBestSpellsSearch(page: Page): Promise<void> {
   if ((await countOf(page, SEARCH_CLEAR)) > 0) await page.click(SEARCH_CLEAR, { timeout: 10_000 })
   else await page.fill(SEARCH, '', { timeout: 10_000 })
 }
@@ -150,7 +170,7 @@ export async function stepBestSpellsSearch(page: Page): Promise<void> {
     await checkResultRow(page, target, loadout)
   }
 
-  await clearSearch(page)
+  await clearBestSpellsSearch(page)
   const restored = await settle(() => bodies(page), (n) => n[0] === 0 && n[1] === 1, { timeoutMs: 8_000 })
   check(
     'clearing the box hands the ranked table back',

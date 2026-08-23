@@ -46,7 +46,11 @@ import type { ElectronApplication, Page } from 'playwright-core'
 import { ARTIFACTS, check, countOf, note, settle } from './appHarness.mjs'
 // JOS-450's half, split off for the same max-lines reason this file was split off leveling.e2e.mts.
 // The order stays here: the search runs after the simulator and hands the box back empty.
-import { stepBestSpellsSearch } from './bestSpellsSearchSteps.mjs'
+import {
+  clearBestSpellsSearch,
+  fillOutsideClassQuery,
+  stepBestSpellsSearch
+} from './bestSpellsSearchSteps.mjs'
 
 const PANEL = '[data-testid="best-spells"]'
 const SECTION = '[data-testid="best-spells-section"]'
@@ -504,12 +508,23 @@ export async function shootBestSpells(app: ElectronApplication, page: Page): Pro
     mkdirSync(ARTIFACTS, { recursive: true })
     await setShown(true)
     await page.locator(PANEL).first().scrollIntoViewIfNeeded({ timeout: 5_000 })
-    const path = join(ARTIFACTS, 'best-spells.png')
-    await page.locator(PANEL).first().screenshot({ path, timeout: 20_000 })
-    note(`best-spells readout screenshot: ${path}`)
+    await shoot(page, 'best-spells.png')
+    // …AND THE SAME PANEL SEARCHING (JOS-450). Two PNGs of one panel because it has two states now,
+    // and "does an out-of-class row read in a 260px column" is an owner's question about the second
+    // one - the unlock panel's own arrangement, one column over. The query is derived from the
+    // loadout this machine resolved, so the picture always shows a row that is not yours.
+    if (await fillOutsideClassQuery(page)) await shoot(page, 'best-spells-search.png')
+    await clearBestSpellsSearch(page)
   } catch (err: unknown) {
     note(`best-spells screenshot unavailable - ${String(err)}`)
   } finally {
     await setShown(false).catch(() => undefined)
   }
+}
+
+/** One PNG of the readout into the run's artifacts, reported through `note`. */
+async function shoot(page: Page, file: string): Promise<void> {
+  const path = join(ARTIFACTS, file)
+  await page.locator(PANEL).first().screenshot({ path, timeout: 20_000 })
+  note(`best-spells readout screenshot: ${path}`)
 }
