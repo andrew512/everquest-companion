@@ -105,7 +105,7 @@ import { effectiveSpellRank, normalizeSpellRank } from './spellScale'
 // — it is the same spell answering two different questions, the way a spell that damages and heals
 // has always been in one tab of each side.
 
-/** Which of the seven numbers a table is ranked on. */
+/** Which of the eight numbers a table is ranked on. `hits` draws on the AOE tab alone. */
 export type BestSpellColumn =
   | 'dps'
   | 'damage'
@@ -114,6 +114,7 @@ export type BestSpellColumn =
   | 'heal'
   | 'healPerMana'
   | 'mana'
+  | 'hits'
 
 /** The four answers the owner asked for in JOS-448, plus JOS-449's area reading. */
 export type BestSpellTab = 'dd' | 'dot' | 'aoe' | 'heal' | 'hot'
@@ -167,9 +168,17 @@ export const SIDE_COLUMNS: Record<'damage' | 'heal', readonly BestSpellColumn[]>
   heal: ['hps', 'heal', 'mana', 'healPerMana']
 }
 
-/** The columns one tab draws: its side's, unchanged by the over-time split. */
+/**
+ * THE AOE TAB'S FIVE (owner ask 2026-08-23: "we need another column that talks about hits
+ * simulated - so 8 for supernova, 4 for rain"). `hits` sits beside `dmg` because it is the number
+ * `dmg` was multiplied by, and only THIS tab draws it: on the single-target tabs the count is 3
+ * for a rain and 1 for everything else, which the wave arithmetic already says without a column.
+ */
+const AOE_COLUMNS: readonly BestSpellColumn[] = ['dps', 'damage', 'hits', 'mana', 'damagePerMana']
+
+/** The columns one tab draws: its side's — plus the hit count on the area reading alone. */
 export function tabColumns(tab: BestSpellTab): readonly BestSpellColumn[] {
-  return SIDE_COLUMNS[TAB_SIDE[tab]]
+  return tab === 'aoe' ? AOE_COLUMNS : SIDE_COLUMNS[TAB_SIDE[tab]]
 }
 
 /** The column a tab opens on. */
@@ -189,7 +198,8 @@ export const COLUMN_LABEL: Record<BestSpellColumn, string> = {
   hps: 'hps',
   heal: 'heal',
   healPerMana: 'heal/mana',
-  mana: 'mana'
+  mana: 'mana',
+  hits: 'hits'
 }
 
 /** The longer sentence behind a header, for the tooltip. Stated once, beside the label. */
@@ -200,7 +210,8 @@ export const COLUMN_TITLE: Record<BestSpellColumn, string> = {
   hps: 'sustained healing per second over one casting cycle: the cast plus the longer of the duration and the re-use timer',
   heal: 'total base healing at this level, every tick included',
   healPerMana: 'total healing divided by the mana it costs',
-  mana: 'what the spell costs to cast'
+  mana: 'what the spell costs to cast',
+  hits: 'how many times one cast lands at the assumed target count: the number the damage total was multiplied by'
 }
 
 /** One ranked spell. `metrics` is read AT THE VIEWED LEVEL - the whole point of the file. */
@@ -231,6 +242,14 @@ export interface BestSpellRow {
    * it (`BestSpells.aoeTargets`) is computed from these.
    */
   targets: number
+  /**
+   * HOW MANY TIMES ONE CAST LANDS in this reading — the number the damage total was multiplied by,
+   * and the `hits` column's cell (owner ask 2026-08-23). Differs from `targets` exactly where the
+   * mechanics are odd: a rain over a 4-target pack is 4 hits (the cap), the same rain on one mob is
+   * 3 (its waves), Supernova over its 8 is 8. Computed by `spellHitsFor`, the same call the metrics
+   * divide by, so the printed count can never drift from the arithmetic.
+   */
+  hits: number
 }
 
 /**
@@ -317,6 +336,7 @@ export function defaultSorts(): Record<BestSpellTab, BestSpellSort> {
  */
 export function columnValue(row: BestSpellRow, column: BestSpellColumn): number | null {
   if (column === 'mana') return row.mana
+  if (column === 'hits') return row.hits
   return row.metrics[column] ?? null
 }
 
@@ -328,6 +348,17 @@ export function columnValue(row: BestSpellRow, column: BestSpellColumn): number 
  * an unlock row at the gain level the same arithmetic rather than two derivations that agree today.
  * A spell whose lines never crossed the wire simply has no figures and no row.
  */
+/**
+ * HOW MANY TIMES ONE CAST LANDS at a target count: the waves main resolved, against however many
+ * targets the reading asks about, under the spell's cap. ONE function because two readers need the
+ * same number — the metrics divide by it and the `hits` COLUMN prints it (owner ask 2026-08-23:
+ * "we need another column that talks about hits simulated - so 8 for supernova, 4 for rain") — and
+ * two expressions would let the printed count drift from the one the figures used.
+ */
+export function spellHitsFor(spell: UnlockSpell, targets: number): number {
+  return aeHits(spell.waves ?? 1, targets, aeMaxTargets(spell.aeMaxTargets))
+}
+
 export function spellMetricsForLevel(
   spell: UnlockSpell,
   level: number,
@@ -346,10 +377,9 @@ export function spellMetricsForLevel(
     // The mote rank rides the same input for the same reason: `spellMetricsAt` resolves it once and
     // both of its folds scale by that one number (JOS-447).
     rank,
-    // AND HOW MANY TIMES THE CAST LANDS (JOS-449): the waves main resolved, against however many
-    // targets THIS reading is asking about, under the cap. `targets` 1 gives a rain its three waves
-    // and every other spell the single hit it has always had.
-    hits: aeHits(spell.waves ?? 1, targets, aeMaxTargets(spell.aeMaxTargets))
+    // AND HOW MANY TIMES THE CAST LANDS (JOS-449): `targets` 1 gives a rain its three waves and
+    // every other spell the single hit it has always had.
+    hits: spellHitsFor(spell, targets)
   }
   return spellMetricsAt(input, level, spell.clientHp)
 }
@@ -433,7 +463,8 @@ function ownedRows(
       outOfEra: spell.outOfEra === true,
       rank,
       observedRank,
-      targets
+      targets,
+      hits: spellHitsFor(spell, targets)
     })
   }
   return [...byName.values()]

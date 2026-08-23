@@ -135,7 +135,27 @@ const COLUMN_WIDTH: Record<BestSpellColumn, string> = {
   heal: '23%',
   mana: '22%',
   damagePerMana: '33%',
-  healPerMana: '33%'
+  healPerMana: '33%',
+  hits: '12%'
+}
+
+/**
+ * The AOE tab's five shares (owner ask 2026-08-23: the `hits` column). `hits` is the narrowest
+ * thing a cell can hold — one digit and a sort arrow — and the 12 points it takes come off the
+ * four numeric columns roughly in proportion, so the squeeze the JOS-448 measurement recorded
+ * lands on all of them rather than clipping one. The five add to 100, same law as the four.
+ */
+const AOE_COLUMN_WIDTH: Record<string, string> = {
+  dps: '20%',
+  damage: '21%',
+  hits: '12%',
+  mana: '20%',
+  damagePerMana: '27%'
+}
+
+/** The share one column takes on one tab: the AOE tab has five columns, every other tab four. */
+function widthOf(tab: BestSpellTab, column: BestSpellColumn): string {
+  return tab === 'aoe' ? (AOE_COLUMN_WIDTH[column] ?? COLUMN_WIDTH[column]) : COLUMN_WIDTH[column]
 }
 
 // THE `over Ns` COLUMN IS NOT DRAWN, AND THE MEASUREMENT IS WHY (JOS-448, the ticket's one design
@@ -159,10 +179,12 @@ const COLUMN_WIDTH: Record<BestSpellColumn, string> = {
 /** One sortable header. Clicking the active column flips it; clicking another takes it descending. */
 function HeadCell({
   column,
+  width,
   sort,
   onSort
 }: {
   column: BestSpellColumn
+  width: string
   sort: BestSpellSort
   onSort: (s: BestSpellSort) => void
 }): JSX.Element {
@@ -170,7 +192,7 @@ function HeadCell({
   return (
     <TableCell
       align="right"
-      sx={{ ...HEAD_SX, width: COLUMN_WIDTH[column] }}
+      sx={{ ...HEAD_SX, width }}
       sortDirection={active ? (sort.desc ? 'desc' : 'asc') : false}
     >
       <Tooltip title={COLUMN_TITLE[column]}>
@@ -323,7 +345,7 @@ function TabTable({
           <TableHead>
             <TableRow>
               {columns.map((c) => (
-                <HeadCell key={c} column={c} sort={sort} onSort={onSort} />
+                <HeadCell key={c} column={c} width={widthOf(tab, c)} sort={sort} onSort={onSort} />
               ))}
             </TableRow>
           </TableHead>

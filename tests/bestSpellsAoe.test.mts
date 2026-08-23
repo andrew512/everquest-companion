@@ -23,6 +23,7 @@ import assert from 'node:assert/strict'
 import type { ClassAbbr, ComboInterval, ComboSlot } from '../src/shared/classCombo'
 import {
   bestSpellsAt,
+  columnValue,
   defaultSorts,
   type BestSpellRow,
   type BestSpellsView
@@ -180,6 +181,18 @@ test('ARITHMETIC: a rain is capped at four HITS, a plain AE is per-target, a PB 
   // The over-time row multiplies its whole total, ticks included: 20 x 5 ticks x 4 targets.
   assert.equal(rowOf(aoe.shown, 'Test Cloud').metrics.damage, 400)
   assert.equal(rowOf(aoe.shown, 'Test Cloud').metrics.dot, true, 'an area DoT is still a DoT')
+  // THE `hits` COLUMN PRINTS THE MULTIPLIER THE FIGURES USED (owner ask 2026-08-23: "8 for
+  // supernova, 4 for rain") — and it is `columnValue`'s answer, so the sort reads the same number.
+  assert.equal(rowOf(aoe.shown, 'Test Rain').hits, 4, 'a rain at the cap')
+  assert.equal(rowOf(aoe.shown, 'Test Nova').hits, 8, 'a PB AE at its own cap')
+  assert.equal(rowOf(aoe.shown, 'Test Column').hits, 4, 'a plain AE once per target')
+  assert.equal(columnValue(rowOf(aoe.shown, 'Test Nova'), 'hits'), 8)
+})
+
+test('the single-target readings carry their hit counts too: three for a rain, one for a nuke', () => {
+  const best = bestSpellsAt(DATA, WIZ, 20, BOTH)
+  assert.equal(rowOf(best.tabs.dd.shown, 'Test Rain').hits, 3, 'one mob eats all three waves')
+  assert.equal(rowOf(best.tabs.dd.shown, 'Test Bolt').hits, 1)
 })
 
 test('A SPELL CAN BE IN THREE TABS, and that is two questions rather than double counting', () => {

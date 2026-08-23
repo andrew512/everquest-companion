@@ -39,8 +39,13 @@ import type { ResistTableWorkerReply } from '../resistTableWorker'
  *      cache was written before anything read that column, so the field can only come from a
  *      re-parse, and a sustained dps with a missing denominator is a wrong number rather than an
  *      absent one.
+ *   4  JOS-449 - the AE target cap (`aeMaxTargets`, field 143). MISSED AT MERGE and caught by the
+ *      owner in the field the same day: his AOE tab read Supernova at the default four targets
+ *      (4,848 at rank VII) instead of the client's eight, because his machine held a version-3
+ *      cache written before anything read that column. The parser change shipped without this
+ *      bump, which is exactly the staleness this constant exists to make impossible.
  */
-export const SPELL_RESIST_CACHE_VERSION = 3
+export const SPELL_RESIST_CACHE_VERSION = 4
 
 interface CacheFile {
   version: number

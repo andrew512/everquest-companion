@@ -317,9 +317,11 @@ test('each side offers the four columns that mean something for it, and mana in 
   // All seven of the owner's columns are reachable, and no column is on a side it cannot answer.
   const all = new Set([...SIDE_COLUMNS.damage, ...SIDE_COLUMNS.heal])
   assert.equal(all.size, 7)
-  // The tabs of a side draw the SAME four: the tab separates them, the columns do not need to.
+  // The single-target tabs of a side draw the SAME four: the tab separates them, the columns do
+  // not need to. The AOE tab alone adds `hits` (owner ask 2026-08-23), beside `dmg` because it is
+  // the number `dmg` was multiplied by.
   assert.deepEqual([...tabColumns('dd')], [...tabColumns('dot')])
-  assert.deepEqual([...tabColumns('dd')], [...tabColumns('aoe')])
+  assert.deepEqual([...tabColumns('aoe')], ['dps', 'damage', 'hits', 'mana', 'damagePerMana'])
   assert.deepEqual([...tabColumns('heal')], [...tabColumns('hot')])
   assert.deepEqual([...tabColumns('dd')], [...SIDE_COLUMNS.damage])
   assert.deepEqual([...tabColumns('hot')], [...SIDE_COLUMNS.heal])
