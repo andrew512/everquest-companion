@@ -17,6 +17,10 @@
 //     a time. That the other three are not merely hidden but absent, that their counts are still
 //     stated on the labels, and that a click swaps the table under the same headers, are all claims
 //     about the rendered document rather than about the model.
+//   * and since JOS-447 there is a SLIDER in that 260px column. The model half is pinned in
+//     `tests/bestSpellsRank.test.mts`; what only the app can show is that the control is drawn at
+//     all, that its label is permanent rather than appearing on drag, that the label NAMES the rank
+//     and the one axis it moves, and that the numbers under it restate when it is driven.
 //
 // SHAPES AND ORDERINGS, NEVER TODAY'S NUMBERS. The loadout is whatever this machine's log inferred
 // and the figures come from the committed catalog, so the assertions are that the drawn column is
@@ -41,6 +45,10 @@ const DIRECTIONAL = '[data-testid="best-spells-directional"]'
 const LEVEL_VALUE = '[data-testid="new-at-level-value"]'
 const LEVEL_NEXT = '[data-testid="new-at-level-next"]'
 const LEVEL_PREV = '[data-testid="new-at-level-prev"]'
+// JOS-447 — the mote-rank simulator. The slider is driven through its own hidden range input, the
+// same path `gearEffectiveHpSteps.mts` drives the gear tier slider through.
+const RANK_SLIDER = '[data-testid="best-spells-rank-slider"] input[type="range"]'
+const RANK_LABEL = '[data-testid="best-spells-rank-label"]'
 
 /** The four tabs, in the order the owner named them. The model pins the labels; this drives them. */
 const TABS = ['dd', 'dot', 'heal', 'hot'] as const
@@ -145,6 +153,24 @@ async function sortBy(page: Page, column: string): Promise<void> {
   await settle(() => tableOf(page).then((s) => s.column), (c) => c === column, { timeoutMs: 8_000 })
 }
 
+/** The panel's own claim about the rank it is simulating, and the words it says about it. */
+function simulationOf(page: Page): Promise<{ rank: string; label: string }> {
+  return page.evaluate((sels) => {
+    const panel = document.querySelector(sels[0]) as HTMLElement | null
+    const label = document.querySelector(sels[1]) as HTMLElement | null
+    return {
+      rank: panel?.dataset.simulate ?? '',
+      label: (label?.innerText || '').trim()
+    }
+  }, [PANEL, RANK_LABEL])
+}
+
+/** Focus the slider and drive it with the keyboard - the same path the control gives a user. */
+async function driveRank(page: Page, keys: readonly string[]): Promise<void> {
+  await page.focus(RANK_SLIDER, { timeout: 15_000 })
+  for (const key of keys) await page.press(RANK_SLIDER, key, { timeout: 15_000 })
+}
+
 /** Press a tab and wait for the ONE table on screen to be that tab's. */
 async function selectTab(page: Page, tab: string): Promise<void> {
   await page.click(`${TAB}[data-tab="${tab}"]`, { timeout: 10_000 })
@@ -182,6 +208,65 @@ async function checkTab(page: Page, tab: string): Promise<number> {
   const values = await columnValues(page, rank)
   check(`…and the drawn ${rank} column really descends, with any blank last`, descendingNullsLast(values), values.join(' '))
   return drawn.length
+}
+
+/**
+ * THE MOTE-RANK SIMULATOR (JOS-447), and it is a claim about the SCREEN that no unit test reaches.
+ *
+ * `tests/bestSpellsRank.test.mts` proves the model reads every row at `max(observed, simulated)`.
+ * What only the running app can show is that the control exists in a 260px column, that its label
+ * is permanent rather than appearing when it is dragged, that the label NAMES what is being
+ * simulated, and that the numbers under it actually restate.
+ *
+ * IT RUNS ON A DAMAGE TAB, because damage is the only axis v1 moves (spellScale.ts scopes it and
+ * says why). A loadout with no damage rows at all gets a note: the control is still asserted, and
+ * the unmoved healing figures there would be the designed behaviour rather than a failure.
+ *
+ * AND IT HANDS THE PANEL BACK AT BASE, like every other step here.
+ */
+async function stepSimulate(page: Page): Promise<void> {
+  if (!check('the readout offers a mote-rank simulator', (await countOf(page, RANK_SLIDER)) === 1)) return
+  const atBase = await simulationOf(page)
+  check(
+    '…which opens at base and says so PERMANENTLY, not only once it is dragged',
+    atBase.rank === '0' && atBase.label === 'base ranks',
+    `${atBase.rank} / ${atBase.label}`
+  )
+
+  const damage = (await tabsOf(page)).find((t) => TAB_RANK[t.tab] === 'dps' && t.count > 0)
+  if (!damage) {
+    note('this loadout owns no damage spells, and damage is the only axis v1 simulates')
+    return
+  }
+  await selectTab(page, damage.tab)
+  const before = (await columnValues(page, 'damage')).join(',')
+
+  await driveRank(page, ['Home', 'End'])
+  const lifted = await settle(() => simulationOf(page).then((s) => s.rank), (r) => r === '10', { timeoutMs: 8_000 })
+  check('driving it to the top of the ladder takes', lifted === '10', lifted)
+  const announced = await simulationOf(page)
+  check(
+    '…and the label ANNOUNCES the simulation: the rank every row is lifted to, and the one axis it moves',
+    announced.label === 'all at X+ · damage',
+    announced.label
+  )
+
+  const after = await settle(
+    () => columnValues(page, 'damage').then((v) => v.join(',')),
+    (v) => v !== before,
+    { timeoutMs: 8_000 }
+  )
+  check(`simulating a rank RESTATES the ${damage.tab} table's damage column`, after !== before, `${before} -> ${after}`)
+  // The rows are the same rows: a rank changes figures, never membership. `+N more` is unmoved too.
+  check(
+    '…the same rows, re-read - a rank is not a filter',
+    (await rowNames(page)).length > 0 && (await tableOf(page)).count === damage.count,
+    `${String((await tableOf(page)).count)} vs ${String(damage.count)}`
+  )
+
+  await driveRank(page, ['Home'])
+  const back = await settle(() => simulationOf(page).then((s) => s.rank), (r) => r === '0', { timeoutMs: 8_000 })
+  check('and sliding back to base restores the readout it was found in', back === '0', back)
 }
 
 /**
@@ -276,8 +361,11 @@ export async function stepBestSpells(page: Page): Promise<void> {
     note(`the widest tab here has ${String(widest.rows)} row(s) - nothing to re-rank`)
   }
 
+  await stepSimulate(page)
+
   // NO INNER SCROLLER, the JOS-289 law, restated for the control JOS-448 added: `fullWidth` tabs
-  // must not have quietly become a scroller in a 260px column.
+  // must not have quietly become a scroller in a 260px column. JOS-447 put a SLIDER in the same
+  // column, which is exactly the kind of control that overflows one, so this now covers it too.
   const scrollers = await page.evaluate((sel) => {
     const panel = document.querySelector(sel)
     if (!panel) return [] as string[]

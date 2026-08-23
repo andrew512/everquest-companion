@@ -41,6 +41,13 @@
 //
 // ERA: `outOfEraLabel`, IMPORTED from the mob page the way `UnlockList` imports it — a second copy
 // would be a second wording. Positive verdicts fold; silence is not a verdict and stays in place.
+//
+// AND THE ROWS ARE AT THEIR MOTE RANK (JOS-447). Every figure here is read at
+// `max(observed rank, simulated rank)`: the observed half is JOS-446's map, already subscribed for
+// the `yours: VIII` chip that marks those rows, and the simulated half is `SpellRankSlider` under
+// the tabs. The panel therefore answers two questions with one table - what my real spellbook does
+// today, and what it would do if a candidate were levelled - which is the owner's ask read
+// literally. The arithmetic is `shared/spellScale.ts`'s, fitted to his own log.
 
 import { type JSX, useMemo, useState } from 'react'
 import {
@@ -84,6 +91,7 @@ import { comboClassSet } from '@shared/levelUnlocks'
 import { RankChip } from './UnlockList'
 import { useObservedSpellRanks } from '../../lib/useObservedSpellRanks'
 import type { ObservedSpellRanksSnap } from '@shared/spellRanks'
+import SpellRankSlider from './SpellRankSlider'
 
 /** How many rows are drawn before the disclosure. The owner's suggestion, and it fits the column. */
 const TOP_N = 10
@@ -365,11 +373,17 @@ export function BestSpellsPanel({ level }: BestSpellsPanelProps): JSX.Element | 
   const ranks = useObservedSpellRanks()
   const [sorts, setSorts] = useState(defaultSorts)
   const [picked, setPicked] = useState<BestSpellTab | null>(null)
-  // Re-ranked by the LEVEL and by the SORT, and by nothing else — the whole readout is one pure
-  // call over an already-cached dataset, so stepping the level costs one fold of ~1,450 rows. All
-  // four tables are built every time on purpose: the tab labels carry counts, so the tabs you are
-  // not looking at are part of what the panel says.
-  const best = useMemo(() => bestSpellsAt(data, combo, level, sorts), [data, combo, level, sorts])
+  // THE SIMULATE SLIDER'S STATE, session-only and owned here (JOS-447 — SpellRankSlider's header
+  // says why it is not persisted). 0 is base, which is where every mount opens.
+  const [simulate, setSimulate] = useState(0)
+  // Re-ranked by the LEVEL, the SORT and the RANKS, and by nothing else — the whole readout is one
+  // pure call over an already-cached dataset, so stepping the level or the slider costs one fold of
+  // ~1,450 rows. All four tables are built every time on purpose: the tab labels carry counts, so
+  // the tabs you are not looking at are part of what the panel says.
+  const best = useMemo(
+    () => bestSpellsAt(data, combo, level, { sorts, observed: ranks, simulate }),
+    [data, combo, level, sorts, ranks, simulate]
+  )
   // UNTIL SOMEBODY PICKS, THE PANEL PICKS THE FIRST TAB THAT HAS ANYTHING IN IT. `dd` is the owner's
   // first-named tab and the right default for the caster this readout was written for, but a cleric
   // has no DD table at all and opening him on an empty one would be the panel failing to answer a
@@ -377,7 +391,13 @@ export function BestSpellsPanel({ level }: BestSpellsPanelProps): JSX.Element | 
   const tab = picked ?? TAB_ORDER.find((t) => best.tabs[t].shown.length > 0) ?? 'dd'
   if (best.classes.length === 0) return null
   return (
-    <Paper variant="outlined" sx={{ p: 1.5 }} data-testid="best-spells" data-level={String(level)}>
+    <Paper
+      variant="outlined"
+      sx={{ p: 1.5 }}
+      data-testid="best-spells"
+      data-level={String(level)}
+      data-simulate={String(simulate)}
+    >
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.5 }}>
         <Typography variant="subtitle2">Best at level {level}</Typography>
         {/* THE SAME ONE QUIET WORD the panel below says, for the same reason: these are base
@@ -421,6 +441,7 @@ export function BestSpellsPanel({ level }: BestSpellsPanelProps): JSX.Element | 
           />
         ))}
       </Tabs>
+      <SpellRankSlider rank={simulate} onChange={setSimulate} />
       {/* KEYED BY THE TAB so the two disclosures inside reset when the table changes: `+7 more` left
           open on the DD table is not a statement about the DoT table underneath it. */}
       <TabTable

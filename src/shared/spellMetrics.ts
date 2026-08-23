@@ -8,9 +8,11 @@
 //
 // So this is the magnitude reader, and it is a SEPARATE, DELETABLE layer for the same reason the
 // classifier is: `spells.json` records what the wiki said, and everything derived from it lives
-// where it can be deleted without taking the scrape with it. Pure over its arguments, no imports,
-// no Electron - main computes it once at fold time (src/main/data/levelUnlocks.ts) and the numbers
-// cross IPC while the effect strings stay behind.
+// where it can be deleted without taking the scrape with it. Pure over its arguments, no Electron -
+// main computes it once at fold time (src/main/data/levelUnlocks.ts) and the numbers cross IPC
+// while the effect strings stay behind. Its ONE import is `shared/spellScale.ts` (JOS-447), which
+// is the same kind of layer one level further out: the mote-rank arithmetic, fitted to the owner's
+// log, importing nothing itself.
 //
 // ── WHAT THESE NUMBERS ARE, AND WHAT THEY ARE NOT ──────────────────────────────────────────────
 //
@@ -58,6 +60,8 @@
 //   * `Stacking: Block new spell if slot 3 is effect 'Max Hitpoints' and < 1100` and
 //     `UNKNOWN CALC 118 base 406 max 446 attrib Max Hitpoints` - neither is an effect magnitude;
 //     both fail the head test for free.
+
+import { normalizeSpellRank, scaleSpellDamage } from './spellScale'
 
 /** A hitpoint line, read: how much, per tick or not, and over how many ticks the line states. */
 export interface HpLine {
@@ -260,6 +264,16 @@ export interface SpellMetricsInput {
   durationMs?: number | null
   /** `target_type` verbatim. `Lifetap` changes what the Increase line means - see below. */
   targetType?: string
+  /**
+   * THE MOTE UPGRADE LEVEL this reading is taken at (JOS-447), 0..10. Absent and 1 both mean the
+   * base spell — `shared/spellScale.ts normalizeSpellRank` owns that reading and says why.
+   *
+   * It rides on the INPUT rather than beside `level` for `recastMs`'s reason: it has to be resolved
+   * ONCE, before either fold runs, so the wiki path and the client path scale by one number. Only
+   * DAMAGE moves with it in v1; see spellScale.ts's header for what does not and which way the
+   * remaining figures err.
+   */
+  rank?: number
 }
 
 /** One EQ tick. */
@@ -414,14 +428,19 @@ interface Side {
  * stated count contributes NOTHING - the catalog has told us a rate and not how long it runs, and
  * multiplying by a guess would put a made-up total in front of a player.
  */
-function foldLine(side: Side, line: HpLine, durationTicks: number): void {
+function foldLine(side: Side, line: HpLine, durationTicks: number, rank: number): void {
+  // THE ONE PLACE A MOTE RANK TOUCHES A NUMBER (JOS-447). Both paths - the wiki's own lines and the
+  // client's slots - fold through here, so one scaling happens once rather than twice in agreement.
+  // DAMAGE ONLY in v1: the healing curve measured out at half the damage rate and the ticket scopes
+  // this to damage, so an `up` line is folded exactly as it was before the rank existed.
+  const amount = line.direction === 'down' ? scaleSpellDamage(line.amount, rank) : line.amount
   if (!line.perTick) {
-    side.total += line.amount
+    side.total += amount
     return
   }
   const ticks = line.statedTicks ?? durationTicks
   if (ticks <= 0) return
-  side.total += line.amount * ticks
+  side.total += amount * ticks
   side.overTime = true
 }
 
@@ -460,6 +479,8 @@ export function spellMetricsAt(
   client?: ClientHpFacts
 ): SpellMetrics | undefined {
   const spell = withRecast(input, client)
+  // Resolved ONCE, here, for `withRecast`'s reason: one number reaches both folds.
+  const rank = normalizeSpellRank(spell.rank)
   const lifetap = spell.targetType === 'Lifetap'
   const durationTicks = ticksOf(spell.durationMs)
   const dmg: Side = { total: 0, overTime: false }
@@ -470,10 +491,10 @@ export function spellMetricsAt(
     if (!line) continue
     if (lifetap && line.direction === 'up') continue
     any = true
-    foldLine(line.direction === 'down' ? dmg : heal, line, durationTicks)
+    foldLine(line.direction === 'down' ? dmg : heal, line, durationTicks, rank)
   }
   if (any) return assemble(dmg, heal, spell, durationTicks)
-  return client ? clientMetricsAt(spell, level, client) : undefined
+  return client ? clientMetricsAt(spell, level, client, rank) : undefined
 }
 
 /**
@@ -494,7 +515,8 @@ export function spellMetricsAt(
 function clientMetricsAt(
   spell: SpellMetricsInput,
   level: number,
-  client: ClientHpFacts
+  client: ClientHpFacts,
+  rank: number
 ): SpellMetrics | undefined {
   const slots = client.hp ?? []
   if (slots.length === 0) return undefined
@@ -507,7 +529,7 @@ function clientMetricsAt(
     const line = clientLine(slot, level, lifetap)
     if (!line) continue
     if (line.formulaUnknown) unknownFormula = true
-    foldLine(line.direction === 'down' ? dmg : heal, line, ticks)
+    foldLine(line.direction === 'down' ? dmg : heal, line, ticks, rank)
   }
   const out = assemble(dmg, heal, spell, ticks)
   if (!out) return undefined
