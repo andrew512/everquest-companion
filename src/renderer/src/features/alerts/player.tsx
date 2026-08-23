@@ -114,13 +114,18 @@ function effectiveVolume(def: AlertDef): number {
  * otherwise prints the alert's NAME (JOS-380) — deliberately not the spoken sentence, which is
  * written for the ear. Null means there was nothing truthful to print, and nothing is sent.
  *
+ * THE FIRING GOES IN because the override is a TEMPLATE: `{player}`/`{target}` in "On-screen text"
+ * resolve out of `firing.captures`, the same map and the same one-pass replacer the spoken phrase
+ * uses (shared/alertCaptures.ts). Absent — a Test button, an app signal — the tokens simply render
+ * literally, which is what the editor's preview shows too.
+ *
  * EVERY FIRING IS ITS OWN LINE. The queue's dedupe key carries the timestamp, so a second landing
  * of the same alert stacks a second line rather than re-clocking the first — which is what the
  * reporter asked for: a banner is a short-lived record of what just happened, not a status field.
  */
 function showAlertBanner(def: AlertDef, firing?: Pick<FiredAlert, 'spell' | 'captures' | 'dueAt'>): void {
   if (!alertShowsOnScreen(def)) return
-  const text = alertBannerText(def)
+  const text = alertBannerText(def, firing)
   if (!text) return
   const ts = Date.now()
   const payload: AlertBannerPayload = { id: `${def.id}:${String(ts)}`, alertId: def.id, ts, text }

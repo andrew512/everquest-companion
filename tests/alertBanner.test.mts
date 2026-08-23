@@ -5,6 +5,9 @@
 //   * what a line SAYS is ONE derivation, and it is NOT the spoken sentence (JOS-380): a filled
 //     "On-screen text" wins, otherwise the line is the alert's own NAME — the short thing the
 //     player wrote, where the phrase is written for the ear;
+//   * …and that override is a TEMPLATE: its `{token}`s resolve out of the firing's captures
+//     through the same replacer the spoken phrase uses, so the two channels differ in WORDING
+//     and never in what a token means;
 //   * the per-alert switch is absent-means-shown, so no store migration exists and nothing an
 //     existing user already wrote has changed meaning;
 //   * an editor that touched none of this saves the alert BYTE-IDENTICALLY (import dedupe);
@@ -124,6 +127,79 @@ test('an EMPTY (or whitespace) On-screen text is not an override — it means "p
 
 test('nothing truthful to say ⇒ null, and the player sends nothing', () => {
   assert.equal(alertBannerText({ name: '   ' }), null)
+})
+
+// ---- the override is a TEMPLATE ---------------------------------------------------------
+//
+// The eye and the ear say DIFFERENT WORDS (JOS-380) out of the SAME token language (JOS-103,
+// JOS-353). A user who wrote `{player}` into "On-screen text" wrote it for the same reason they
+// would write it into a phrase, and a banner that printed the braces back at them would be the
+// one surface in the app where a capture does not work.
+
+test('a {token} in the On-screen text is filled from the firing, exactly as a phrase is', () => {
+  const d = def({ name: 'Mez broke', bannerText: 'Mez broke on {target}' })
+  const firing = { captures: { target: 'a ghoul' } }
+  assert.equal(alertBannerText(d, firing), 'Mez broke on a ghoul')
+  // The channels still differ in WORDING — that is the JOS-380 ruling, and it is untouched.
+  const spoken = def({ ...d, speech: { mode: 'custom', phrase: 'Mez has dropped on {target}' } })
+  assert.equal(speechTextFor(spoken, firing), 'Mez has dropped on a ghoul')
+  assert.notEqual(alertBannerText(spoken, firing), speechTextFor(spoken, firing))
+})
+
+test('the alert NAME is never a template — only the override the user wrote is', () => {
+  // `speechTextFor` substitutes in the 'custom' branch and nowhere else, for the reason stated
+  // there: the other modes resolve to values the APP owns. The name fallback is one of those.
+  const d = def({ name: 'Mez broke on {target}' })
+  const firing = { captures: { target: 'a ghoul' } }
+  assert.equal(alertBannerText(d, firing), 'Mez broke on {target}', 'the name is printed as written')
+  assert.equal(speechTextFor(d, firing), 'Mez broke on {target}', 'and the voice agrees')
+})
+
+test('an unresolved token renders LITERALLY — no firing, no match, no silent shortening', () => {
+  const d = def({ name: 'Mez broke', bannerText: 'Mez broke on {target}' })
+  assert.equal(alertBannerText(d), 'Mez broke on {target}', 'no firing ⇒ the editor sees the token')
+  assert.equal(alertBannerText(d, { captures: {} }), 'Mez broke on {target}', 'nothing captured ⇒ same')
+  assert.equal(alertBannerText(d, { captures: { other: 'x' } }), 'Mez broke on {target}')
+})
+
+test('substitution happens BEFORE the cap, so a line that grew when it resolved is still cut', () => {
+  const d = def({ bannerText: `${'x'.repeat(MAX_BANNER_CHARS - 4)} {player}` })
+  const out = alertBannerText(d, { captures: { player: 'Fail' } }) ?? ''
+  assert.equal(out.length, MAX_BANNER_CHARS, 'capped, never refused')
+  assert.ok(!out.includes('{player}'), 'and it resolved before it was cut')
+})
+
+test('a captured value is re-sanitized on the way to the screen, not trusted from the wire', () => {
+  // Control 1 of shared/alertCaptures.ts's threat model, at this surface: `applyCaptures` runs the
+  // sanitizer on every value regardless of who assembled the map, so an escape sequence in a
+  // hand-built firing cannot reach the window that DRAWS it.
+  const d = def({ bannerText: 'landed on {player}' })
+  assert.equal(alertBannerText(d, { captures: { player: '\u001B[31mFail' } }), 'landed on Fail')
+})
+
+test('the whole path: a named group in the pattern reaches the banner line', () => {
+  // The end-to-end claim, driven through the real module rather than a hand-built firing — this
+  // is the firing the player is handed (features/alerts/player.tsx) and hands straight back.
+  const d = def({
+    id: 'puma',
+    name: 'Puma landed',
+    trigger: {
+      type: 'raw',
+      regex: String.raw`^\[[^\]]*\] (?<player>[A-Za-z' ]{1,48}) growls with the spirit of the puma\.`
+    },
+    cooldownMs: 0,
+    bannerText: 'Puma on {player}'
+  })
+  const mod = new AlertsModule()
+  mod.setDefs([d])
+  mod.reset()
+  const ev = parseEvent('[Sat Aug 02 21:14:03 2026] Fail growls with the spirit of the puma.', 1)
+  assert.ok(ev)
+  mod.onEvent(ev, true)
+  const fired = mod.flushDelta()?.delta.fired ?? []
+  assert.equal(fired.length, 1)
+  assert.deepEqual(fired[0].captures, { player: 'Fail' })
+  assert.equal(alertBannerText(d, fired[0]), 'Puma on Fail')
 })
 
 // ---- the echo that used to be a second firing -------------------------------------------
