@@ -104,7 +104,7 @@ test('C3 the CARD is the same numbers, from the same function, at the same level
   const db = loadSpellDb()
   assert.equal(buildSpellDetail(db, 'Odium').metrics, undefined, 'the report, on the card')
 
-  const card = buildSpellDetail(db, 'Odium', [], CLIENT)
+  const card = buildSpellDetail(db, 'Odium', [], { client: CLIENT })
   assert.equal(card.metricsLevel, 43, 'shaman 43 — the level the line becomes yours')
   assert.deepEqual(card.metrics, ODIUM_FIGURES)
   assert.deepEqual(spellMetricsParts(card.metrics ?? {}), ODIUM_PARTS)
@@ -153,7 +153,7 @@ test('C5 no spell that already had wiki figures moves — the wiki stays primary
 test('C6 the card is unchanged for every spell whose page states its own hitpoint line', () => {
   const db = loadSpellDb()
   for (const name of ['Superior Healing', 'Ice Comet', 'Anarchy', 'Clarity', 'Siphon']) {
-    assert.deepEqual(buildSpellDetail(db, name, [], CLIENT), buildSpellDetail(db, name), `${name} moved`)
+    assert.deepEqual(buildSpellDetail(db, name, [], { client: CLIENT }), buildSpellDetail(db, name), `${name} moved`)
   }
 })
 

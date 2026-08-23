@@ -30,7 +30,8 @@ import {
   tabColumns,
   type BestSpellRow,
   type BestSpellSort,
-  type BestSpellTab
+  type BestSpellTab,
+  type BestSpellsView
 } from '../src/shared/bestSpells'
 import { comboClassesOf, type LevelUnlockData } from '../src/shared/levelUnlocks'
 import { buildLevelUnlocks } from '../src/main/data/levelUnlocks'
@@ -66,7 +67,14 @@ function interval(slots: ComboSlot[]): ComboInterval {
 const comboOf = (classes: ClassAbbr[]): ReturnType<typeof comboClassesOf> =>
   comboClassesOf(interval(classes.map((c) => slot([c]))))
 
-const BOTH = defaultSorts()
+/**
+ * THE DEFAULT VIEW: all four tables on their own rank column, and no rank assumptions at all.
+ *
+ * A `BestSpellsView` since JOS-447 rather than a bare sorts record — the rank options ride the same
+ * object, and a view with neither of them is byte-identical to the reading this suite pinned
+ * before that ticket. `tests/bestSpellsRank.test.mts` is where the rank half is exercised.
+ */
+const BOTH: BestSpellsView = { sorts: defaultSorts() }
 
 /**
  * A hand-built catalog with one of each shape this file has a rule for: a RAMPED nuke, a flat nuke,
@@ -266,7 +274,7 @@ test('a DoT ranks by its SUSTAINED dps, which is the whole reason it gets its ow
 test('every column ranks, and flipping the direction reverses it', () => {
   const wiz = comboOf(['WIZ'])
   const by = (sort: BestSpellSort): string[] =>
-    bestSpellsAt(DATA, wiz, 35, { ...BOTH, dd: sort }).tabs.dd.shown.map((r) => r.name)
+    bestSpellsAt(DATA, wiz, 35, { sorts: { ...BOTH.sorts, dd: sort } }).tabs.dd.shown.map((r) => r.name)
   // At 35 Ramp Bolt is 300 over a 3s cast (100 dps) and Flat Bolt 150 over 1s (150 dps), so the
   // headline and the total disagree — which is exactly what a sortable table is for.
   assert.deepEqual(by({ column: 'dps', desc: true }), ['Flat Bolt', 'Ramp Bolt'])
@@ -377,8 +385,7 @@ test('re-ranking on damage per mana answers a different question, and both answe
   const wiz = comboOf(['WIZ'])
   const byDps = bestSpellsAt(REAL, wiz, 35, BOTH).tabs.dd.shown
   const byEff = bestSpellsAt(REAL, wiz, 35, {
-    ...BOTH,
-    dd: { column: 'damagePerMana', desc: true }
+    sorts: { ...BOTH.sorts, dd: { column: 'damagePerMana', desc: true } }
   }).tabs.dd.shown
   assert.equal(byDps.length, byEff.length)
   assert.notEqual(byDps[0].name, byEff[0].name, 'the fastest nuke and the most mana-efficient one differ')

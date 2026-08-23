@@ -53,11 +53,29 @@
 // sections before — one damage table and one healing table, never two of the same colour. A lifetap
 // is damage-only before it ever reaches this file (`spellMetricsAt` owns that rule).
 //
+// ── AND EVERY ROW IS READ AT ITS MOTE RANK (JOS-447, owner ask 2026-08-23) ─────────────────────
+//
+// "in the table its showing 333 damage rather than the upgraded damage. to decide whether im going
+// to use a different spell, i want to compare upgraded damage to the max i have of a different
+// spell. then it would be nice to simulate upgrade of a separate spell to understand."
+//
+// So a row's figures are taken at `max(observed rank, simulated rank)`. The OBSERVED half is
+// JOS-446's map, joined by spell LINE (`observedRankRow` strips the numeral, which is the only join
+// that works against a catalog that spells ~1,800 of its ~1,900 lines without one). The SIMULATED
+// half is the panel's slider, and MAX is what keeps the two honest together: a slider at IV must not
+// pull a spell the log has watched you cast at VIII back down to IV.
+//
+// The arithmetic itself is not here and is not the item engine's either - `shared/spellScale.ts`
+// holds it, fitted to the owner's own log, and its header carries the measurement and the two
+// places the numbers this file prints will read LOW for a levelled spell.
+//
 // Pure, node-tested (tests/bestSpells.test.mts), RELATIVE value imports — the mobSearch precedent.
 
 import type { ClassAbbr } from './classCombo'
 import { comboClassSet, type ComboClasses, type LevelUnlockData, type UnlockSpell } from './levelUnlocks'
 import { spellMetricsAt, type SpellMetrics } from './spellMetrics'
+import { observedRankRow, type ObservedSpellRanksSnap } from './spellRanks'
+import { effectiveSpellRank, normalizeSpellRank } from './spellScale'
 
 /** Which of the seven numbers a table is ranked on. */
 export type BestSpellColumn =
@@ -160,6 +178,34 @@ export interface BestSpellRow {
   metrics: SpellMetrics
   /** The wiki badges this spell's page out of era. `false` is a real answer here; absent is not. */
   outOfEra: boolean
+  /**
+   * The mote rank `metrics` was evaluated at, 0..10 - `max(observed, simulated)` (JOS-447). 0 is the
+   * base spell, and it is what every row reads before anybody touches the slider.
+   */
+  rank: number
+  /** The rank the LOG has actually seen this line at, when it has seen one above base. 0 otherwise. */
+  observedRank: number
+}
+
+/**
+ * THE QUESTION THE READOUT IS BEING ASKED, beyond the level: how to sort each of the four tables,
+ * and what to assume about mote ranks.
+ *
+ * One object rather than three parameters because the repo's factoring rule caps a function at
+ * four and `bestSpellsAt` already spends three on the data, the loadout and the level. They belong
+ * together anyway: all three are the READER's question, where the first three arguments are the
+ * world. Only `sorts` is required; a view with no rank fields is the base reading this file gave
+ * before JOS-447 existed, byte for byte.
+ */
+export interface BestSpellsView {
+  sorts: Record<BestSpellTab, BestSpellSort>
+  /** JOS-446's observed-rank map, joined by spell line key. Null before hydration, which is base. */
+  observed?: ObservedSpellRanksSnap | null
+  /**
+   * The panel's simulate slider, 0..10. Every row is lifted to AT LEAST this rank; a row already
+   * above it keeps its own (`effectiveSpellRank`), which is the owner's ask read literally.
+   */
+  simulate?: number
 }
 
 /** One tab's table, split the way `UnlockList` splits a level list. */
@@ -224,7 +270,11 @@ export function columnValue(row: BestSpellRow, column: BestSpellColumn): number 
  * an unlock row at the gain level the same arithmetic rather than two derivations that agree today.
  * A spell whose lines never crossed the wire simply has no figures and no row.
  */
-export function spellMetricsForLevel(spell: UnlockSpell, level: number): SpellMetrics | undefined {
+export function spellMetricsForLevel(
+  spell: UnlockSpell,
+  level: number,
+  rank = 0
+): SpellMetrics | undefined {
   const input = {
     effects: spell.hpLines,
     mana: spell.mana,
@@ -233,7 +283,10 @@ export function spellMetricsForLevel(spell: UnlockSpell, level: number): SpellMe
     // `writeFigures`. Passing it as the input field means `withRecast` never re-asks the client.
     recastMs: spell.recastMs,
     durationMs: spell.durationMs,
-    targetType: spell.targetType
+    targetType: spell.targetType,
+    // The mote rank rides the same input for the same reason: `spellMetricsAt` resolves it once and
+    // both of its folds scale by that one number (JOS-447).
+    rank
   }
   return spellMetricsAt(input, level, spell.clientHp)
 }
@@ -274,7 +327,13 @@ function mergeOwned(row: BestSpellRow, owned: { classes: ClassAbbr[]; gainedAt: 
  * duplicate page would put the same spell in the table two rows apart. The first record wins, and
  * a later record of the same name only widens the class list - it is the same spell.
  */
-function ownedRows(data: LevelUnlockData, want: ReadonlySet<string>, level: number): BestSpellRow[] {
+function ownedRows(
+  data: LevelUnlockData,
+  want: ReadonlySet<string>,
+  level: number,
+  view: BestSpellsView
+): BestSpellRow[] {
+  const simulate = normalizeSpellRank(view.simulate)
   const byName = new Map<string, BestSpellRow>()
   for (const spell of data.spells) {
     const owned = ownedBy(spell, want, level)
@@ -285,7 +344,11 @@ function ownedRows(data: LevelUnlockData, want: ReadonlySet<string>, level: numb
       mergeOwned(seen, owned)
       continue
     }
-    const metrics = spellMetricsForLevel(spell, level)
+    // JOS-446's map is keyed by spell LINE, so the join is the display name and `observedRankRow`
+    // strips the numeral - the catalog spells ~1,800 of its rows with no numeral at all.
+    const observedRank = normalizeSpellRank(observedRankRow(view.observed, spell.name)?.rank)
+    const rank = effectiveSpellRank(observedRank, simulate)
+    const metrics = spellMetricsForLevel(spell, level, rank)
     if (!metrics) continue
     byName.set(key, {
       name: spell.name,
@@ -293,7 +356,9 @@ function ownedRows(data: LevelUnlockData, want: ReadonlySet<string>, level: numb
       classes: owned.classes,
       mana: typeof spell.mana === 'number' && spell.mana > 0 ? spell.mana : null,
       metrics,
-      outOfEra: spell.outOfEra === true
+      outOfEra: spell.outOfEra === true,
+      rank,
+      observedRank
     })
   }
   return [...byName.values()]
@@ -368,15 +433,15 @@ export function bestSpellsAt(
   data: LevelUnlockData,
   combo: ComboClasses,
   level: number,
-  sorts: Record<BestSpellTab, BestSpellSort>
+  view: BestSpellsView
 ): BestSpells {
   const classes = comboClassSet(combo)
   const base = { level, classes, ambiguous: combo.ambiguous }
   if (classes.length === 0 || !Number.isFinite(level)) {
     return { ...base, classes: [], tabs: emptyTables() }
   }
-  const rows = ownedRows(data, new Set<string>(classes), level)
+  const rows = ownedRows(data, new Set<string>(classes), level, view)
   const tabs = emptyTables()
-  for (const tab of TAB_ORDER) tabs[tab] = tableOf(rows, TAB_MEMBER[tab], sorts[tab])
+  for (const tab of TAB_ORDER) tabs[tab] = tableOf(rows, TAB_MEMBER[tab], view.sorts[tab])
   return { ...base, tabs }
 }
