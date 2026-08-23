@@ -50,6 +50,10 @@ import { parseHpLine, spellMetricsAt } from '../../shared/spellMetrics'
 // The CLIENT'S hitpoint slots (JOS-396), threaded in from the IPC handler rather than imported:
 // `spellTable.ts` is an Electron module and this one is node-tested. See clientSpellHp.ts.
 import { clientHpFor } from './clientSpellHp'
+// The RAIN roster (JOS-449) and the area arithmetic that reads it. Both are separable overlays over
+// the scrape, like `spellEffectClass.ts`: delete either and the catalog is unchanged.
+import { rainWaves } from './rainSpells'
+import { aeHits, aeMaxTargets } from '../../shared/aoeSpells'
 import { replacedBy } from './spellLineLookup'
 import type { SpellResistTable } from '../../shared/resistTypes'
 import type { SpellDbFile } from '../../shared/types'
@@ -201,6 +205,13 @@ function replacesFor(name: string, at: readonly { cls: ClassAbbr }[]): UnlockSpe
  * recast. `recastMs` is therefore resolved HERE, once, with `withRecast`'s exact precedence (a
  * page's stated 0 is an answer and blocks the fallback), and `spellMetricsForLevel` divides by the
  * same denominator main did.
+ *
+ * AND A RAIN'S SNAPSHOT COUNTS ITS WAVES (JOS-449). The wiki's effect line states ONE wave, so the
+ * unlock card used to introduce `Frost Storm` at 512 damage while the best-spells table beside it
+ * now reads 1,536 — one panel contradicting its neighbour about the same spell. The snapshot is
+ * therefore taken at the SINGLE-TARGET hit count (`aeHits(waves, 1, cap)`, which is 3 for a rain
+ * and 1 for everything else), and both the count and the client's cap ride the row so the far end
+ * can ask the other question without re-deriving either.
  */
 function writeFigures(
   spell: UnlockSpell,
@@ -209,13 +220,20 @@ function writeFigures(
   client: SpellResistTable | null
 ): void {
   const clientHp = clientHpFor(client, s.name)
-  const metrics = spellMetricsAt(s, Math.min(...at.map((p) => p.level)), clientHp)
+  const waves = rainWaves(s.name)
+  const cap = aeMaxTargets(clientHp?.aeMaxTargets)
+  const input = { ...s, hits: aeHits(waves, 1, cap) }
+  const metrics = spellMetricsAt(input, Math.min(...at.map((p) => p.level)), clientHp)
   if (metrics) spell.metrics = metrics
   const hpLines = (s.effects ?? []).filter((line) => parseHpLine(line, LEVEL_ANY) !== null)
   if (hpLines.length > 0) spell.hpLines = hpLines
   else if (clientHp) spell.clientHp = clientHp
   const recastMs = s.recastMs ?? clientHp?.recastMs
   if (recastMs !== undefined) spell.recastMs = recastMs
+  // Only when they SAY something: a 1 and the default would be two fields on ~1,900 rows restating
+  // what their absence already states (`UnlockSpell.waves` / `aeMaxTargets`).
+  if (waves > 1) spell.waves = waves
+  if (clientHp?.aeMaxTargets !== undefined) spell.aeMaxTargets = clientHp.aeMaxTargets
 }
 
 /**

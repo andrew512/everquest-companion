@@ -36,6 +36,14 @@
 // has to cover the duration, and a faster re-use timer cannot make the same ticks arrive sooner.
 // A spell no source states a recast for is unchanged, figure for figure.
 //
+// AND A CAST CAN LAND MORE THAN ONCE SINCE JOS-449 (`SpellMetricsInput.hits`). The wiki's effect
+// line for a RAIN states ONE WAVE - `Frost Storm` says `Decrease Hitpoints by 512` and delivers
+// three waves of it - so a reader that took the line literally under-stated every rain in the game
+// threefold. The multiplier is an INPUT rather than something derived here: this file has never
+// known which spell is which, and the roster, the evidence and the target-cap arithmetic live in
+// `src/main/data/rainSpells.ts` and `shared/aoeSpells.ts` where they can be deleted without taking
+// the magnitude reader with them. Absent means 1, so every pre-JOS-449 figure is unchanged.
+//
 // The remaining caveats stay out of the UI on purpose: the caveat diet (AGENTS.md) - the panel says
 // one quiet `directional` and stops.
 //
@@ -133,6 +141,13 @@ export interface ClientHpFacts {
    * The page wins where it states one - see `spellMetricsAt`.
    */
   recastMs?: number
+  /**
+   * THE CLIENT'S OWN TARGET CAP (JOS-449, field 143), carried for `recastMs`'s reason and read by
+   * `shared/aoeSpells.ts` rather than by anything in this file — a hit count reaches
+   * `spellMetricsAt` already resolved, because only the CALLER knows whether it is asking about one
+   * mob or a pack.
+   */
+  aeMaxTargets?: number
 }
 
 /**
@@ -274,6 +289,27 @@ export interface SpellMetricsInput {
    * not (mana, cast time) and which way those figures err.
    */
   rank?: number
+  /**
+   * HOW MANY TIMES THE DAMAGE MAGNITUDE LANDS FROM ONE CAST (JOS-449). Absent and 1 are the same
+   * answer, and 1 is what every spell in the catalog reads until a caller says otherwise — so every
+   * figure this file printed before JOS-449 is unchanged by construction.
+   *
+   * It exists because the wiki's effect line for a RAIN states ONE WAVE. `Frost Storm` carries
+   * `Decrease Hitpoints by 512` and delivers three waves of it, so a reader that took the line
+   * literally under-stated the spell threefold and buried the most efficient nuke a wizard owns at
+   * 50. The count itself is not decided here: `src/main/data/rainSpells.ts` carries the roster and
+   * the evidence, `shared/aoeSpells.ts aeHits` turns waves and a target count into this number, and
+   * this file only multiplies.
+   *
+   * DAMAGE ONLY, and the asymmetry is real rather than an omission: nothing in the catalog heals in
+   * waves, and a rain's mana-drain rider is not a hitpoint line at all. A healing line is left
+   * alone so a future two-sided spell cannot silently gain a heal it does not perform.
+   *
+   * IT MULTIPLIES THE MAGNITUDE, NOT THE TOTAL, which is what keeps the mote-rank arithmetic
+   * intact: a rank scales the PER-WAVE amount (`scaleSpellDamage`) and the waves multiply what
+   * comes out, in that order, because that is the order the game applies them in.
+   */
+  hits?: number
 }
 
 /** One EQ tick. */
@@ -421,6 +457,18 @@ interface Side {
 }
 
 /**
+ * The two multipliers resolved ONCE per reading, before either fold runs: the mote rank (JOS-447)
+ * and the number of times a cast lands (JOS-449).
+ *
+ * One object rather than two arguments so `foldLine` stays inside the repo's four-parameter cap and
+ * so a third multiplier cannot be added without a name for what it is.
+ */
+interface Fold {
+  rank: number
+  hits: number
+}
+
+/**
  * Fold one read line into the damage/heal totals.
  *
  * A per-tick line contributes `amount x ticks`, where the ticks are the line's own count when it
@@ -428,13 +476,18 @@ interface Side {
  * stated count contributes NOTHING - the catalog has told us a rate and not how long it runs, and
  * multiplying by a guess would put a made-up total in front of a player.
  */
-function foldLine(side: Side, line: HpLine, durationTicks: number, rank: number): void {
+function foldLine(side: Side, line: HpLine, durationTicks: number, fold: Fold): void {
   // THE ONE PLACE A MOTE RANK TOUCHES A NUMBER (JOS-447). Both paths - the wiki's own lines and the
   // client's slots - fold through here, so one scaling happens once rather than twice in agreement.
   // Each direction scales by its own measured rate: six percent a rank for damage, three for
   // healing (owner ruling 2026-08-23 shipped the healing half; spellScale.ts holds both fits).
+  //
+  // AND THE WAVES MULTIPLY WHAT THE RANK PRODUCED (JOS-449), in that order and damage-side only -
+  // `SpellMetricsInput.hits` states why.
   const amount =
-    line.direction === 'down' ? scaleSpellDamage(line.amount, rank) : scaleSpellHeal(line.amount, rank)
+    line.direction === 'down'
+      ? scaleSpellDamage(line.amount, fold.rank) * fold.hits
+      : scaleSpellHeal(line.amount, fold.rank)
   if (!line.perTick) {
     side.total += amount
     return
@@ -481,7 +534,7 @@ export function spellMetricsAt(
 ): SpellMetrics | undefined {
   const spell = withRecast(input, client)
   // Resolved ONCE, here, for `withRecast`'s reason: one number reaches both folds.
-  const rank = normalizeSpellRank(spell.rank)
+  const fold: Fold = { rank: normalizeSpellRank(spell.rank), hits: hitsOf(spell.hits) }
   const lifetap = spell.targetType === 'Lifetap'
   const durationTicks = ticksOf(spell.durationMs)
   const dmg: Side = { total: 0, overTime: false }
@@ -492,10 +545,16 @@ export function spellMetricsAt(
     if (!line) continue
     if (lifetap && line.direction === 'up') continue
     any = true
-    foldLine(line.direction === 'down' ? dmg : heal, line, durationTicks, rank)
+    foldLine(line.direction === 'down' ? dmg : heal, line, durationTicks, fold)
   }
   if (any) return assemble(dmg, heal, spell, durationTicks)
-  return client ? clientMetricsAt(spell, level, client, rank) : undefined
+  return client ? clientMetricsAt(spell, level, client, fold) : undefined
+}
+
+/** A hit count as this file will read it: a whole number, never below one. Absent means one. */
+function hitsOf(hits: number | null | undefined): number {
+  if (typeof hits !== 'number' || !Number.isFinite(hits)) return 1
+  return Math.max(1, Math.trunc(hits))
 }
 
 /**
@@ -517,7 +576,7 @@ function clientMetricsAt(
   spell: SpellMetricsInput,
   level: number,
   client: ClientHpFacts,
-  rank: number
+  fold: Fold
 ): SpellMetrics | undefined {
   const slots = client.hp ?? []
   if (slots.length === 0) return undefined
@@ -530,7 +589,7 @@ function clientMetricsAt(
     const line = clientLine(slot, level, lifetap)
     if (!line) continue
     if (line.formulaUnknown) unknownFormula = true
-    foldLine(line.direction === 'down' ? dmg : heal, line, ticks, rank)
+    foldLine(line.direction === 'down' ? dmg : heal, line, ticks, fold)
   }
   const out = assemble(dmg, heal, spell, ticks)
   if (!out) return undefined

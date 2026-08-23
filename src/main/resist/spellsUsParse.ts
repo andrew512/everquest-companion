@@ -18,7 +18,8 @@
 //   11   buff duration formula (JOS-396) 12  buff duration
 //   29   resist type (see axisFromResistType)
 //   30   target type                    36..51  class levels, WAR..BER (255 = cannot use)
-//   78   resist adjust                  172  effect slots, `$`-separated
+//   78   resist adjust                  143  aemaxtargets (JOS-449)
+//   172  effect slots, `$`-separated
 //
 // FIELD 10 IS THE RECAST AND FIELD 9 IS NOT, which is the only trap in that line and is measured
 // rather than reasoned (owner's install, 2026-08-22). Field 9 is the RECOVERY time — the cooldown
@@ -63,6 +64,8 @@ const F_CLASS_COUNT = 16
 /** Index of the bard among the sixteen class-level fields (WAR CLR PAL RNG SHD DRU MNK BRD …). */
 const CLASS_BARD = 7
 const F_RESIST_ADJ = 78
+/** `aemaxtargets` (JOS-449) — see `aeTargetsField` for the measurement behind the index. */
+const F_AE_MAX_TARGETS = 143
 const F_SLOTS = 172
 
 const EFFECT_HITPOINTS = 0
@@ -183,6 +186,22 @@ function recastField(f: readonly string[]): { recastMs?: number } {
   return ms > 0 ? { recastMs: ms } : {}
 }
 
+/**
+ * Field 143, `aemaxtargets`, present only when POSITIVE (JOS-449) — a spreadable fragment for
+ * `recastField`'s reason, and absent-means-nothing for the same reason too: 71,864 of the file's
+ * 73,971 rows read 0 there, which is what a single-target spell says.
+ *
+ * MEASURED against the owner's install (2026-08-23) rather than taken from a struct listing: the
+ * column reads 4 on every one of the 23 rains, 4 on 45 of the 46 Targeted AE rows in the committed
+ * catalog, 8 on a PB AE and 0 on every `Single` row. `Denon's Desperate Dirge` is the one targeted
+ * AE that disagrees with its own page — the client says 5 where the wiki prose says "up to 8
+ * enemies" — and the client wins, on the same grounds `spells_us.txt` wins on names.
+ */
+function aeTargetsField(f: readonly string[]): { aeMaxTargets?: number } {
+  const n = Number(f[F_AE_MAX_TARGETS]) || 0
+  return n > 0 ? { aeMaxTargets: n } : {}
+}
+
 function rowInfo(f: readonly string[]): SpellResistInfo {
   const slots = parseSlots(f[F_SLOTS])
   const { bardOnly } = classLevels(f)
@@ -191,6 +210,7 @@ function rowInfo(f: readonly string[]): SpellResistInfo {
     resistAdj: Number(f[F_RESIST_ADJ]) || 0,
     castMs: Number(f[F_CAST_MS]) || 0,
     ...recastField(f),
+    ...aeTargetsField(f),
     targetType: Number(f[F_TARGET_TYPE]) || 0,
   }
   const hp = hpSlotOf(slots)
