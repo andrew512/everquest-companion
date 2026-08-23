@@ -26,6 +26,11 @@
 //     that it is drawn on the tab it governs and on no other, and that five labels plus a slider
 //     still divide a 260px column without one of them quietly becoming a scroller.
 //
+//   * and since JOS-450 the readout SEARCHES the whole catalog. That half lives in
+//     `bestSpellsSearchSteps.mts` (this file was at the max-lines budget, and the rule is to SPLIT);
+//     the order stays here, right after the simulator, because the search hands the box back empty
+//     and everything below is a claim about the ranked table.
+//
 // SHAPES AND ORDERINGS, NEVER TODAY'S NUMBERS. The loadout is whatever this machine's log inferred
 // and the figures come from the committed catalog, so the assertions are that the drawn column is
 // MONOTONE under its own sort and that pressing another header changes which monotone it is. A
@@ -39,6 +44,13 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ElectronApplication, Page } from 'playwright-core'
 import { ARTIFACTS, check, countOf, note, settle } from './appHarness.mjs'
+// JOS-450's half, split off for the same max-lines reason this file was split off leveling.e2e.mts.
+// The order stays here: the search runs after the simulator and hands the box back empty.
+import {
+  clearBestSpellsSearch,
+  fillOutsideClassQuery,
+  stepBestSpellsSearch
+} from './bestSpellsSearchSteps.mjs'
 
 const PANEL = '[data-testid="best-spells"]'
 const SECTION = '[data-testid="best-spells-section"]'
@@ -432,6 +444,11 @@ export async function stepBestSpells(page: Page): Promise<void> {
 
   await stepSimulate(page)
 
+  // JOS-450 — the box, and the out-of-class row it can find. It runs here because the steps above
+  // have left the panel on a tab with rows in it, which is the state "the table gave way" is a
+  // claim about, and it hands the box back empty so the checks below still see the ranked table.
+  await stepBestSpellsSearch(page)
+
   // NO INNER SCROLLER, the JOS-289 law, restated for the control JOS-448 added: `fullWidth` tabs
   // must not have quietly become a scroller in a 260px column. JOS-447 put a SLIDER in the same
   // column, which is exactly the kind of control that overflows one, so this now covers it too.
@@ -469,6 +486,7 @@ export async function stepBestSpells(page: Page): Promise<void> {
   await settle(() => panelLevel(page), (l) => l === shown, { timeoutMs: 8_000 })
 }
 
+
 /**
  * ONE PNG OF THE READOUT, for an owner who has to rule on whether a four-column table reads in a
  * third of a row (JOS-339's camera precedent, and JOS-391's: a new surface the owner asked for gets
@@ -490,12 +508,23 @@ export async function shootBestSpells(app: ElectronApplication, page: Page): Pro
     mkdirSync(ARTIFACTS, { recursive: true })
     await setShown(true)
     await page.locator(PANEL).first().scrollIntoViewIfNeeded({ timeout: 5_000 })
-    const path = join(ARTIFACTS, 'best-spells.png')
-    await page.locator(PANEL).first().screenshot({ path, timeout: 20_000 })
-    note(`best-spells readout screenshot: ${path}`)
+    await shoot(page, 'best-spells.png')
+    // …AND THE SAME PANEL SEARCHING (JOS-450). Two PNGs of one panel because it has two states now,
+    // and "does an out-of-class row read in a 260px column" is an owner's question about the second
+    // one - the unlock panel's own arrangement, one column over. The query is derived from the
+    // loadout this machine resolved, so the picture always shows a row that is not yours.
+    if (await fillOutsideClassQuery(page)) await shoot(page, 'best-spells-search.png')
+    await clearBestSpellsSearch(page)
   } catch (err: unknown) {
     note(`best-spells screenshot unavailable - ${String(err)}`)
   } finally {
     await setShown(false).catch(() => undefined)
   }
+}
+
+/** One PNG of the readout into the run's artifacts, reported through `note`. */
+async function shoot(page: Page, file: string): Promise<void> {
+  const path = join(ARTIFACTS, file)
+  await page.locator(PANEL).first().screenshot({ path, timeout: 20_000 })
+  note(`best-spells readout screenshot: ${path}`)
 }
