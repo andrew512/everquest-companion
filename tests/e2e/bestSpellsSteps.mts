@@ -235,7 +235,7 @@ async function stepSimulate(page: Page): Promise<void> {
 
   const damage = (await tabsOf(page)).find((t) => TAB_RANK[t.tab] === 'dps' && t.count > 0)
   if (!damage) {
-    note('this loadout owns no damage spells, and damage is the only axis v1 simulates')
+    note('this loadout owns no damage spells; the healing lift shares the same slider and code path')
     return
   }
   await selectTab(page, damage.tab)
@@ -246,8 +246,8 @@ async function stepSimulate(page: Page): Promise<void> {
   check('driving it to the top of the ladder takes', lifted === '10', lifted)
   const announced = await simulationOf(page)
   check(
-    '…and the label ANNOUNCES the simulation: the rank every row is lifted to, and the one axis it moves',
-    announced.label === 'all at X+ · damage',
+    '…and the label ANNOUNCES the simulation: the rank every row is lifted to',
+    announced.label === 'all at X+',
     announced.label
   )
 

@@ -91,6 +91,8 @@ import { comboClassSet } from '@shared/levelUnlocks'
 import { RankChip } from './UnlockList'
 import { useObservedSpellRanks } from '../../lib/useObservedSpellRanks'
 import type { ObservedSpellRanksSnap } from '@shared/spellRanks'
+import { LevelStepper } from './LevelStepper'
+import type { ViewedLevel } from './viewedLevel'
 import SpellRankSlider from './SpellRankSlider'
 
 /** How many rows are drawn before the disclosure. The owner's suggestion, and it fits the column. */
@@ -342,8 +344,12 @@ function TabTable({
 }
 
 export interface BestSpellsPanelProps {
-  /** The level the TAB is showing — the same number the unlock stepper displays. */
-  level: number
+  /**
+   * The tab's viewed level, WHOLE — the same lifted state the unlock panel steps (viewedLevel.ts).
+   * The owner asked for the arrows on this table too (2026-08-23), so the panel needs the setter
+   * and not just the number; both steppers are handles on the one state and can never disagree.
+   */
+  viewed: ViewedLevel
 }
 
 /**
@@ -366,7 +372,8 @@ export function useBestSpellsVisible(): boolean {
  * panel below already teaches the two ways to fix that (a `/who`, or a Profile correction), so
  * repeating the sentence in the column beside it would be the same instruction twice.
  */
-export function BestSpellsPanel({ level }: BestSpellsPanelProps): JSX.Element | null {
+export function BestSpellsPanel({ viewed }: BestSpellsPanelProps): JSX.Element | null {
+  const { level } = viewed
   const data = useLevelUnlocks()
   const combo = useCurrentComboClasses()
   // JOS-446's observed ranks, one subscription for the whole panel (the NewAtLevelPanel arrangement).
@@ -399,7 +406,11 @@ export function BestSpellsPanel({ level }: BestSpellsPanelProps): JSX.Element | 
       data-simulate={String(simulate)}
     >
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.5 }}>
-        <Typography variant="subtitle2">Best at level {level}</Typography>
+        <Typography variant="subtitle2">Best at</Typography>
+        {/* THE SAME ARROWS THE UNLOCK PANEL HAS (owner ask 2026-08-23) — a second handle on the ONE
+            lifted level, so stepping here re-ranks this table and moves the panel next door in the
+            same click. The stepper's own value line replaces the level the title used to state. */}
+        <LevelStepper level={level} onChange={(n) => viewed.pick(n)} testidPrefix="best-spells-level" />
         {/* THE SAME ONE QUIET WORD the panel below says, for the same reason: these are base
             figures with no crits, focus, AA or resist in them (recast IS in them since JOS-444).
             Said once per surface, never on a row (AGENTS.md, the caveat diet). */}

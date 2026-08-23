@@ -61,7 +61,7 @@
 //     `UNKNOWN CALC 118 base 406 max 446 attrib Max Hitpoints` - neither is an effect magnitude;
 //     both fail the head test for free.
 
-import { normalizeSpellRank, scaleSpellDamage } from './spellScale'
+import { normalizeSpellRank, scaleSpellDamage, scaleSpellHeal } from './spellScale'
 
 /** A hitpoint line, read: how much, per tick or not, and over how many ticks the line states. */
 export interface HpLine {
@@ -269,9 +269,9 @@ export interface SpellMetricsInput {
    * base spell — `shared/spellScale.ts normalizeSpellRank` owns that reading and says why.
    *
    * It rides on the INPUT rather than beside `level` for `recastMs`'s reason: it has to be resolved
-   * ONCE, before either fold runs, so the wiki path and the client path scale by one number. Only
-   * DAMAGE moves with it in v1; see spellScale.ts's header for what does not and which way the
-   * remaining figures err.
+   * ONCE, before either fold runs, so the wiki path and the client path scale by one number. Damage
+   * and healing move with it at their own fitted rates; see spellScale.ts's header for what does
+   * not (mana, cast time) and which way those figures err.
    */
   rank?: number
 }
@@ -431,9 +431,10 @@ interface Side {
 function foldLine(side: Side, line: HpLine, durationTicks: number, rank: number): void {
   // THE ONE PLACE A MOTE RANK TOUCHES A NUMBER (JOS-447). Both paths - the wiki's own lines and the
   // client's slots - fold through here, so one scaling happens once rather than twice in agreement.
-  // DAMAGE ONLY in v1: the healing curve measured out at half the damage rate and the ticket scopes
-  // this to damage, so an `up` line is folded exactly as it was before the rank existed.
-  const amount = line.direction === 'down' ? scaleSpellDamage(line.amount, rank) : line.amount
+  // Each direction scales by its own measured rate: six percent a rank for damage, three for
+  // healing (owner ruling 2026-08-23 shipped the healing half; spellScale.ts holds both fits).
+  const amount =
+    line.direction === 'down' ? scaleSpellDamage(line.amount, rank) : scaleSpellHeal(line.amount, rank)
   if (!line.perTick) {
     side.total += amount
     return

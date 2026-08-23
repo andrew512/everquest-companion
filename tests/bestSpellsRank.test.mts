@@ -198,15 +198,21 @@ test('a rank lifts the row`s own derived figures, not only its total', () => {
 
 // ---- the scope -----------------------------------------------------------------------------
 
-test('only DAMAGE moves in v1: a heal at a rank is the heal it always was', () => {
+test('each side moves at ITS measured rate: six percent for damage, three for healing', () => {
+  // Healing shipped one merge after damage (owner ruling 2026-08-23) at the half rate the log
+  // measured — spellScale.ts holds both fits and tests/spellScale.test.mts the healing evidence.
   const clr = comboOf(['CLR'])
   const at = bestSpellsAt(DATA, clr, 35, view({ observed: ranksOf({ Mend: 8 }), simulate: 6 }))
   const mend = rowOf(at.tabs.heal.shown, 'Mend')
-  assert.equal(mend.rank, 8, 'the rank IS carried, so a surface can still say so')
-  assert.equal(mend.metrics.heal, 200, 'and the healing figure is untouched, per spellScale.ts')
-  // The two-sided spell proves the split inside ONE row: its damage moves, its healing does not.
+  assert.equal(mend.rank, 8, 'observed 8 beats the simulated 6')
+  assert.equal(mend.metrics.heal, 248, '200 + floor(200 * 24/100) at three percent a rank')
+  // The two-sided spell proves the split inside ONE row: each side scales by its own rate.
   assert.equal(rowOf(at.tabs.dd.shown, 'Splitting Word').metrics.damage, 81, '60 + floor(60 * 36/100)')
-  assert.equal(rowOf(at.tabs.hot.shown, 'Splitting Word').metrics.heal, 75, 'five ticks of 15, unscaled')
+  assert.equal(
+    rowOf(at.tabs.hot.shown, 'Splitting Word').metrics.heal,
+    85,
+    'five ticks of 17: each tick is 15 + floor(15 * 18/100)'
+  )
 })
 
 // ---- the REAL committed corpus ---------------------------------------------------------------
@@ -266,15 +272,22 @@ test('JOS-447: simulating a rank lifts the WHOLE real table without disturbing i
   assert.equal(rowOf(sim, wasTop.name).metrics.damage, want)
 })
 
-test('JOS-447: a simulated rank never disturbs the OTHER tabs, which have no damage in them', () => {
+test('JOS-447: a simulated rank lifts the healing tabs at the half rate, membership untouched', () => {
   const clr = comboOf(['CLR'])
   const base = bestSpellsAt(REAL, clr, 35, BOTH)
   const sim = bestSpellsAt(REAL, clr, 35, view({ simulate: 10 }))
   assert.ok(base.tabs.heal.shown.length >= 5)
-  assert.deepEqual(
-    sim.tabs.heal.shown.map((r) => `${r.name}:${String(r.metrics.heal)}`),
-    base.tabs.heal.shown.map((r) => `${r.name}:${String(r.metrics.heal)}`)
-  )
-  // …and the rank IS still carried on those rows, so a future healing curve has somewhere to land.
-  for (const row of sim.tabs.heal.shown) assert.equal(row.rank, 10, row.name)
+  assert.equal(sim.tabs.heal.shown.length, base.tabs.heal.shown.length, 'figures move, membership never')
+  for (const row of sim.tabs.heal.shown) {
+    const was = rowOf(base.tabs.heal.shown, row.name)
+    assert.equal(row.rank, 10, row.name)
+    assert.ok((row.metrics.heal ?? 0) >= (was.metrics.heal ?? 0), row.name)
+  }
+  // The lift is the HEALING rate, not the damage one: +30 percent at X, floored per magnitude.
+  // (Asserted on an instant heal — a single magnitude — so the floor arithmetic is exact; a HoT
+  // floors per tick and a whole-total prediction would drift by the per-tick remainders.)
+  const instant = base.tabs.heal.shown.find((r) => !r.metrics.hot)
+  assert.ok(instant, 'a CLR at 35 owns an instant heal')
+  const want = (instant.metrics.heal ?? 0) + Math.floor(((instant.metrics.heal ?? 0) * 30) / 100)
+  assert.equal(rowOf(sim.tabs.heal.shown, instant.name).metrics.heal, want)
 })
