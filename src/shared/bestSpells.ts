@@ -36,6 +36,23 @@
 // same claim as `hps 0`; it is absent from the healing side entirely, and a null column value sorts
 // LAST in both directions rather than being read as the worst answer.
 //
+// ── FOUR TABLES, NOT TWO (JOS-448, owner ask 2026-08-22) ───────────────────────────────────────
+//
+// "a section for dots / section for dd / section for heal / section for hot". The split is a
+// PARTITION OF EACH SIDE ON A FLAG THE METRICS ALREADY STATE — `dot` for damage that arrives per
+// tick, `hot` for healing that does, both written by `spellMetricsAt` and neither re-derived here.
+// Nothing about the ranking changes: a table is still `{shown, outOfEra}` sorted on one column, and
+// the two damage tables rank on `dps` while the two healing ones rank on `hps`.
+//
+// It is a real question rather than a filter for tidiness. A DoT's `dps` is its whole total spread
+// over the duration it runs for, so it competes with a nuke on a measure neither spell is played on:
+// you cast the nuke again and you do not re-cast the DoT until it drops. Ranking them apart lets
+// each list be read the way it is actually used.
+//
+// A SPELL WITH BOTH A DAMAGE AND A HEALING SIDE IS IN TWO OF THE FOUR, exactly as it was in both
+// sections before — one damage table and one healing table, never two of the same colour. A lifetap
+// is damage-only before it ever reaches this file (`spellMetricsAt` owns that rule).
+//
 // Pure, node-tested (tests/bestSpells.test.mts), RELATIVE value imports — the mobSearch precedent.
 
 import type { ClassAbbr } from './classCombo'
@@ -52,28 +69,65 @@ export type BestSpellColumn =
   | 'healPerMana'
   | 'mana'
 
-/** The two answers the owner asked for: best damage spells, best healing spells. */
-export type BestSpellSide = 'damage' | 'heal'
+/** The four answers the owner asked for, in the order he named them (JOS-448). */
+export type BestSpellTab = 'dd' | 'dot' | 'heal' | 'hot'
+
+/** The tabs, in draw order. The one vocabulary: sorts, columns and `bestSpellsAt` all key on it. */
+export const TAB_ORDER: readonly BestSpellTab[] = ['dd', 'dot', 'heal', 'hot']
+
+/** Tab labels, single-sourced so a test can pin the words. Game spellings, no em dashes. */
+export const TAB_LABEL: Record<BestSpellTab, string> = {
+  dd: 'DD',
+  dot: 'DoT',
+  heal: 'Heal',
+  hot: 'HoT'
+}
+
+/** Which SIDE of the metrics a tab reads. Two tabs per side, split on the over-time flag. */
+export const TAB_SIDE: Record<BestSpellTab, 'damage' | 'heal'> = {
+  dd: 'damage',
+  dot: 'damage',
+  heal: 'heal',
+  hot: 'heal'
+}
+
+/** True for the two tabs whose rows all tick: the `over Ns` window means something only there. */
+export const TAB_OVER_TIME: Record<BestSpellTab, boolean> = { dd: false, dot: true, heal: false, hot: true }
 
 /**
- * THE COLUMNS EACH SIDE DRAWS, and why there are two lists rather than one seven-wide table.
+ * THE COLUMNS EACH TAB DRAWS, and why there are two lists rather than one seven-wide table.
  *
  * The readout lives in the Leveling tab's RIGHT column, which is a third of the row at `lg` and has
  * a 260px floor at the app's own minimum width. Seven numeric columns there is ~30px each, which is
  * not a table anybody can read. Every one of the seven is still present and still sortable — split
- * across the two sides, each holding the four that mean something for it. `mana` appears in both
- * because "what does this cost" is the same question on either side.
+ * across the two SIDES, each holding the four that mean something for it. `mana` appears in both
+ * because "what does this cost" is the same question either way.
+ *
+ * The four tabs are two per side, so the column set is the SIDE's: DD and DoT draw the damage four,
+ * Heal and HoT the healing four. Splitting the columns further per tab would make the DoT table a
+ * different shape from the DD table for no gain, and the tabs are already the thing that separates
+ * them.
  *
  * The RANK column is the side's headline (`dps` / `hps`) and is the default sort, which is the
  * owner's ask read literally: best damage spells by dps, best healing by hps.
  */
-export const SIDE_COLUMNS: Record<BestSpellSide, readonly BestSpellColumn[]> = {
+export const SIDE_COLUMNS: Record<'damage' | 'heal', readonly BestSpellColumn[]> = {
   damage: ['dps', 'damage', 'mana', 'damagePerMana'],
   heal: ['hps', 'heal', 'mana', 'healPerMana']
 }
 
-/** The column a side opens on. */
-export const SIDE_RANK_COLUMN: Record<BestSpellSide, BestSpellColumn> = { damage: 'dps', heal: 'hps' }
+/** The columns one tab draws: its side's, unchanged by the over-time split. */
+export function tabColumns(tab: BestSpellTab): readonly BestSpellColumn[] {
+  return SIDE_COLUMNS[TAB_SIDE[tab]]
+}
+
+/** The column a tab opens on. */
+export const TAB_RANK_COLUMN: Record<BestSpellTab, BestSpellColumn> = {
+  dd: 'dps',
+  dot: 'dps',
+  heal: 'hps',
+  hot: 'hps'
+}
 
 /** Header text, single-sourced so a test can pin the words. No em dashes anywhere near a player. */
 export const COLUMN_LABEL: Record<BestSpellColumn, string> = {
@@ -111,8 +165,8 @@ export interface BestSpellRow {
   outOfEra: boolean
 }
 
-/** One side of the readout, split the way `UnlockList` splits a level list. */
-export interface BestSpellsSide {
+/** One tab's table, split the way `UnlockList` splits a level list. */
+export interface BestSpellsTable {
   /** in-era and unknown, already sorted - what the table draws. */
   shown: BestSpellRow[]
   /** positively out of era, same sort - what the disclosure holds. */
@@ -133,15 +187,25 @@ export interface BestSpells {
   classes: ClassAbbr[]
   /** true when the loadout was only narrowed: the rows are an UPPER BOUND, like every other join */
   ambiguous: boolean
-  damage: BestSpellsSide
-  heal: BestSpellsSide
+  /** One table per tab, always all four - an empty tab is an honest answer, never a missing one. */
+  tabs: Record<BestSpellTab, BestSpellsTable>
 }
 
-const EMPTY_SIDE: BestSpellsSide = { shown: [], outOfEra: [] }
+const emptyTables = (): Record<BestSpellTab, BestSpellsTable> => ({
+  dd: { shown: [], outOfEra: [] },
+  dot: { shown: [], outOfEra: [] },
+  heal: { shown: [], outOfEra: [] },
+  hot: { shown: [], outOfEra: [] }
+})
 
-/** The default sort for a side: its own rank column, best first. */
-export function defaultSort(side: BestSpellSide): BestSpellSort {
-  return { column: SIDE_RANK_COLUMN[side], desc: true }
+/** The default sort for a tab: its own rank column, best first. */
+export function defaultSort(tab: BestSpellTab): BestSpellSort {
+  return { column: TAB_RANK_COLUMN[tab], desc: true }
+}
+
+/** All four defaults at once - the state a freshly mounted panel opens with. */
+export function defaultSorts(): Record<BestSpellTab, BestSpellSort> {
+  return { dd: defaultSort('dd'), dot: defaultSort('dot'), heal: defaultSort('heal'), hot: defaultSort('hot') }
 }
 
 /**
@@ -262,12 +326,28 @@ export function sortBestSpells(rows: readonly BestSpellRow[], sort: BestSpellSor
   return [...rows].sort((a, b) => compareRows(a, b, sort))
 }
 
-/** One side's rows, split by the era rule and sorted. `has` says which figure puts a row here. */
-function sideOf(
+/**
+ * WHICH TAB A SPELL BELONGS IN, asked once per tab per row.
+ *
+ * The presence of the SIDE's total decides whether the row exists at all, and the side's over-time
+ * flag decides which of that side's two tabs holds it. The flag is read POSITIVELY on the tick
+ * tables and as "not true" on the instant ones, so a metrics record that states nothing lands in DD
+ * or Heal rather than vanishing between the two - the same reading `outOfEra` gets everywhere in
+ * this app (silence is not a verdict, law 1).
+ */
+export const TAB_MEMBER: Record<BestSpellTab, (m: SpellMetrics) => boolean> = {
+  dd: (m) => m.damage !== undefined && m.dot !== true,
+  dot: (m) => m.damage !== undefined && m.dot === true,
+  heal: (m) => m.heal !== undefined && m.hot !== true,
+  hot: (m) => m.heal !== undefined && m.hot === true
+}
+
+/** One tab's rows, split by the era rule and sorted. `has` says which figure puts a row here. */
+function tableOf(
   rows: readonly BestSpellRow[],
   has: (m: SpellMetrics) => boolean,
   sort: BestSpellSort
-): BestSpellsSide {
+): BestSpellsTable {
   const shown: BestSpellRow[] = []
   const outOfEra: BestSpellRow[] = []
   for (const row of rows) {
@@ -278,28 +358,28 @@ function sideOf(
 }
 
 /**
- * THE WHOLE READOUT. Pure over the dataset, the loadout, the level and the two sorts - so the panel
+ * THE WHOLE READOUT. Pure over the dataset, the loadout, the level and the four sorts - so the panel
  * re-ranks by calling this again and nothing is cached that could disagree with what is drawn.
  *
- * A spell that both damages and heals appears on BOTH sides, which is the honest answer: it really
- * is a candidate for either job. A lifetap appears on the damage side only, because `spellMetricsAt`
- * already refuses to read the caster's own recovery as healing (its own header states why).
+ * A spell that both damages and heals appears in one DAMAGE tab AND one HEALING tab, which is the
+ * honest answer: it really is a candidate for either job. It can never be in both tabs of one side,
+ * because a side's over-time flag is one boolean. A lifetap reaches only the damage tabs, because
+ * `spellMetricsAt` already refuses to read the caster's own recovery as healing (its header says
+ * why).
  */
 export function bestSpellsAt(
   data: LevelUnlockData,
   combo: ComboClasses,
   level: number,
-  sorts: Record<BestSpellSide, BestSpellSort>
+  sorts: Record<BestSpellTab, BestSpellSort>
 ): BestSpells {
   const classes = comboClassSet(combo)
   const base = { level, classes, ambiguous: combo.ambiguous }
   if (classes.length === 0 || !Number.isFinite(level)) {
-    return { ...base, classes: [], damage: EMPTY_SIDE, heal: EMPTY_SIDE }
+    return { ...base, classes: [], tabs: emptyTables() }
   }
   const rows = ownedRows(data, new Set<string>(classes), level)
-  return {
-    ...base,
-    damage: sideOf(rows, (m) => m.damage !== undefined, sorts.damage),
-    heal: sideOf(rows, (m) => m.heal !== undefined, sorts.heal)
-  }
+  const tabs = emptyTables()
+  for (const tab of TAB_ORDER) tabs[tab] = tableOf(rows, TAB_MEMBER[tab], sorts[tab])
+  return { ...base, tabs }
 }
