@@ -4,14 +4,25 @@
 // already owns, ranked at the level being viewed. The arithmetic is all in `shared/bestSpells.ts`
 // (pure, node-tested); this file decides only how it is drawn.
 //
-// TWO SECTIONS, NOT ONE TABLE WITH A TOGGLE. The owner asked for seven sortable columns and for two
-// answers — best damage by dps, best healing by hps. This column is a third of the row at `lg` with
-// a 260px floor at the app's own minimum width, so seven numeric columns is ~30px each and reads as
-// nothing. `SIDE_COLUMNS` splits them four and four (mana in both, because "what does it cost" is
-// the same question either way) and both sections are drawn at once: a toggle would hide one of the
-// two answers behind a click, and the page is the scroller here (JOS-289) so vertical space is the
-// cheap axis. Each section carries its OWN sort, which is what makes "best damage by dps AND best
-// healing by hps" a default state rather than a thing to set up.
+// FOUR TABLES BEHIND FOUR TABS (JOS-448, owner ask 2026-08-22: "i want a section for dots/section
+// for dd/section for heal/section for hot - tabs is probably the right metaphor in the panel").
+//
+// This column is a third of the row at `lg` with a 260px floor at the app's own minimum width, so
+// seven numeric columns is ~30px each and reads as nothing. `SIDE_COLUMNS` splits them four and four
+// (mana in both, because "what does it cost" is the same question either way) and the four tabs are
+// two per side, so a tab always draws its side's four.
+//
+// THE STACK BECAME A PICKER, and that is the trade the owner named. Two sections drawn at once was
+// right when there were two: the page is the scroller here (JOS-289) so vertical space was the cheap
+// axis, and nothing was hidden behind a click. Four sections of up to ten rows each is a column of
+// eighty rows, which is a scroll rather than a readout. Tabs spend one click to buy back the height,
+// and the count on every label means the tabs you are NOT looking at still tell you whether there is
+// anything in them.
+//
+// EACH TAB KEEPS ITS OWN SORT, which is what makes "best DD by dps AND best HoT by hps" a default
+// state rather than a thing to set up, and what makes flipping to `dmg/mana` on the DoT table not
+// disturb the DD one. The SELECTION itself is deliberately NOT persisted: a glance away and back
+// should show the readout's default answer, not the last question somebody asked it.
 //
 // IT IS NOT GATED ON THE CHARTS, and that is the placement rule (owner, 2026-08-22: the readout
 // belongs on the right side of the panel). Its neighbour below, `LedgerColumn`, is every panel that
@@ -37,26 +48,30 @@ import {
   Chip,
   Paper,
   Stack,
+  Tab,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableRow,
   TableSortLabel,
+  Tabs,
   Typography
 } from '@mui/material'
 import {
   COLUMN_LABEL,
   COLUMN_TITLE,
-  SIDE_COLUMNS,
+  TAB_LABEL,
+  TAB_ORDER,
   bestSpellsAt,
   columnValue,
-  defaultSort,
+  defaultSorts,
+  tabColumns,
   type BestSpellColumn,
   type BestSpellRow,
-  type BestSpellSide,
   type BestSpellSort,
-  type BestSpellsSide
+  type BestSpellTab,
+  type BestSpellsTable
 } from '@shared/bestSpells'
 import { Tooltip } from '../../lib/Tooltip'
 import { SpellTooltip } from '../../lib/SpellCard'
@@ -75,12 +90,6 @@ const TOP_N = 10
 
 const CELL_SX = { py: 0.25, px: 0.6, fontSize: 11, borderBottom: 'none' } as const
 const HEAD_SX = { ...CELL_SX, fontWeight: 700, whiteSpace: 'nowrap', color: 'text.secondary' } as const
-
-/** The two sections, in the order the owner named them. */
-const SIDES: readonly { side: BestSpellSide; title: string }[] = [
-  { side: 'damage', title: 'Best damage' },
-  { side: 'heal', title: 'Best healing' }
-]
 
 /**
  * A figure, formatted the way `spellMetricsParts` formats the same figure on an unlock row.
@@ -109,6 +118,24 @@ const COLUMN_WIDTH: Record<BestSpellColumn, string> = {
   damagePerMana: '33%',
   healPerMana: '33%'
 }
+
+// THE `over Ns` COLUMN IS NOT DRAWN, AND THE MEASUREMENT IS WHY (JOS-448, the ticket's one design
+// note: a fifth narrow column on the DoT/HoT tabs "if it fits the 260px floor").
+//
+// It does not fit, and the four widths above are not a taste. MEASURED in the running app (a probe
+// in the leveling e2e reading each header's own `scrollWidth` plus its cell padding, sort arrow
+// included): `dps` needs 54px, `dmg` 60px, `mana` 65px and `dmg/mana` 93px, which is 272px of
+// table. At the app's own minimum width the right column is 260px, the Paper's `p: 1.5` takes 24 of
+// it, and the ~234px left over is what those percentages divide - so at the floor the four headers
+// are ALREADY 38px past what they ask for, and the unequal shares above are a decision about which
+// one clips first rather than spare room. A fifth column holding `over` and a `126s` value is
+// another ~37px, taken from columns that have none to give.
+//
+// So the window stays on the ROW, where it already is: `SpellTooltip` prints the whole
+// `spellMetricsParts` line for the spell under the cursor, `over 24s` included, and the tab label
+// itself already says that every row in the table ticks. Widening the panel is not a fix available
+// here: the 260px floor is the app's own minimum, and a readout that only reads at `lg` is wrong on
+// exactly the machine it is wrong on.
 
 /** One sortable header. Clicking the active column flips it; clicking another takes it descending. */
 function HeadCell({
@@ -238,32 +265,36 @@ function RowDisclosure({
 }
 
 /**
- * One side's table. Empty is STATED rather than blank: a wizard has no healing table and a warrior
- * has neither, and both are honest answers rather than a panel that failed to load.
+ * ONE TAB'S TABLE. Empty is STATED rather than blank: a wizard has no healing tabs at all and a
+ * warrior has none of the four, and both are honest answers rather than a panel that failed to load.
+ *
+ * The tab is a data attribute rather than the old `data-side` because the tab is now the unit the
+ * sort, the columns and the model all key on - one vocabulary, end to end.
  */
-function SideTable({
-  side,
-  title,
+function TabTable({
+  tab,
   data,
   sort,
   onSort,
   ranks
 }: {
-  side: BestSpellSide
-  title: string
-  data: BestSpellsSide
+  tab: BestSpellTab
+  data: BestSpellsTable
   sort: BestSpellSort
   onSort: (s: BestSpellSort) => void
   ranks: ObservedSpellRanksSnap | null
 }): JSX.Element {
-  const columns = SIDE_COLUMNS[side]
+  const columns = tabColumns(tab)
   const top = data.shown.slice(0, TOP_N)
   const rest = data.shown.slice(TOP_N)
   return (
-    <Box data-testid="best-spells-section" data-side={side} data-sort={sort.column} data-desc={String(sort.desc)}>
-      <Typography variant="caption" color="text.secondary">
-        {title} ({data.shown.length})
-      </Typography>
+    <Box
+      data-testid="best-spells-section"
+      data-tab={tab}
+      data-count={String(data.shown.length)}
+      data-sort={sort.column}
+      data-desc={String(sort.desc)}
+    >
       {data.shown.length === 0 && data.outOfEra.length === 0 ? (
         <Typography variant="caption" color="text.disabled" display="block" data-testid="best-spells-empty">
           nothing this loadout owns yet
@@ -330,15 +361,20 @@ export function useBestSpellsVisible(): boolean {
 export function BestSpellsPanel({ level }: BestSpellsPanelProps): JSX.Element | null {
   const data = useLevelUnlocks()
   const combo = useCurrentComboClasses()
-  // JOS-446's observed ranks, one subscription for both sections (the NewAtLevelPanel arrangement).
+  // JOS-446's observed ranks, one subscription for the whole panel (the NewAtLevelPanel arrangement).
   const ranks = useObservedSpellRanks()
-  const [sorts, setSorts] = useState<Record<BestSpellSide, BestSpellSort>>({
-    damage: defaultSort('damage'),
-    heal: defaultSort('heal')
-  })
+  const [sorts, setSorts] = useState(defaultSorts)
+  const [picked, setPicked] = useState<BestSpellTab | null>(null)
   // Re-ranked by the LEVEL and by the SORT, and by nothing else — the whole readout is one pure
-  // call over an already-cached dataset, so stepping the level costs one fold of ~1,450 rows.
+  // call over an already-cached dataset, so stepping the level costs one fold of ~1,450 rows. All
+  // four tables are built every time on purpose: the tab labels carry counts, so the tabs you are
+  // not looking at are part of what the panel says.
   const best = useMemo(() => bestSpellsAt(data, combo, level, sorts), [data, combo, level, sorts])
+  // UNTIL SOMEBODY PICKS, THE PANEL PICKS THE FIRST TAB THAT HAS ANYTHING IN IT. `dd` is the owner's
+  // first-named tab and the right default for the caster this readout was written for, but a cleric
+  // has no DD table at all and opening him on an empty one would be the panel failing to answer a
+  // question it can answer. Derived at render rather than in an effect, so it follows the level.
+  const tab = picked ?? TAB_ORDER.find((t) => best.tabs[t].shown.length > 0) ?? 'dd'
   if (best.classes.length === 0) return null
   return (
     <Paper variant="outlined" sx={{ p: 1.5 }} data-testid="best-spells" data-level={String(level)}>
@@ -363,19 +399,38 @@ export function BestSpellsPanel({ level }: BestSpellsPanelProps): JSX.Element | 
           </Tooltip>
         )}
       </Stack>
-      <Stack spacing={1}>
-        {SIDES.map((s) => (
-          <SideTable
-            key={s.side}
-            side={s.side}
-            title={s.title}
-            data={best[s.side]}
-            sort={sorts[s.side]}
-            onSort={(next) => setSorts((prev) => ({ ...prev, [s.side]: next }))}
-            ranks={ranks}
+      {/* `fullWidth` rather than `scrollable`: four labels this short divide 260px without a
+          scroller, and a scroller would put the fourth answer behind a gesture nobody expects in a
+          panel this small. The label carries its count so an empty tab says so before it is opened. */}
+      <Tabs
+        value={tab}
+        onChange={(_e, next: BestSpellTab) => setPicked(next)}
+        variant="fullWidth"
+        data-testid="best-spells-tabs"
+        sx={{ minHeight: 28, mb: 0.5, '& .MuiTabs-indicator': { height: 2 } }}
+      >
+        {TAB_ORDER.map((t) => (
+          <Tab
+            key={t}
+            value={t}
+            data-testid="best-spells-tab"
+            data-tab={t}
+            data-count={String(best.tabs[t].shown.length)}
+            label={`${TAB_LABEL[t]} (${String(best.tabs[t].shown.length)})`}
+            sx={{ minHeight: 28, minWidth: 0, px: 0.5, py: 0.25, fontSize: 10.5, textTransform: 'none' }}
           />
         ))}
-      </Stack>
+      </Tabs>
+      {/* KEYED BY THE TAB so the two disclosures inside reset when the table changes: `+7 more` left
+          open on the DD table is not a statement about the DoT table underneath it. */}
+      <TabTable
+        key={tab}
+        tab={tab}
+        data={best.tabs[tab]}
+        sort={sorts[tab]}
+        onSort={(next) => setSorts((prev) => ({ ...prev, [tab]: next }))}
+        ranks={ranks}
+      />
     </Paper>
   )
 }
