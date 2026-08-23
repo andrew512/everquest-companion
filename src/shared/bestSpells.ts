@@ -384,16 +384,24 @@ export function spellMetricsForLevel(
   return spellMetricsAt(input, level, spell.clientHp)
 }
 
-/** The target count one AOE row's figures assume: the spell's own client cap, or the default. */
-function targetsFor(spell: UnlockSpell): number {
+/**
+ * The target count one AOE row's figures assume: the spell's own client cap, or the default.
+ *
+ * EXPORTED for the search fold next door (JOS-450), which reads the same corpus at the same
+ * assumption when the AOE tab is the one asking.
+ */
+export function targetsFor(spell: UnlockSpell): number {
   return aeMaxTargets(spell.aeMaxTargets)
 }
 
 /**
  * The loadout classes that have this spell at or below `level`, and the level it first became
  * theirs. Null when nobody in the loadout owns it yet - the row does not exist at this level.
+ *
+ * EXPORTED since JOS-450: a search result asks the same question of a spell nobody in the loadout
+ * owns, and "is this one of mine yet" must have exactly one answer on this tab.
  */
-function ownedBy(
+export function ownedBy(
   spell: UnlockSpell,
   want: ReadonlySet<string>,
   level: number
@@ -409,6 +417,17 @@ function ownedBy(
     classes: [...lowest.keys()].sort((a, b) => a.localeCompare(b)),
     gainedAt: Math.min(...lowest.values())
   }
+}
+
+/**
+ * THE MANA A ROW PRINTS: the catalog's figure, or null where the page states none.
+ *
+ * NEVER 0 AS A STAND-IN, and that is the whole of the rule - a `dmg/mana` ranking handed a zero
+ * cost would crown a spell whose price the wiki simply did not record. One function since JOS-450,
+ * because the search fold builds rows of the same shape and a second ternary is a second answer.
+ */
+export function catalogMana(spell: UnlockSpell): number | null {
+  return typeof spell.mana === 'number' && spell.mana > 0 ? spell.mana : null
 }
 
 /** A duplicate wiki page for a spell already in the fold: it can only widen the row, never add one. */
@@ -458,7 +477,7 @@ function ownedRows(
       name: spell.name,
       gainedAt: owned.gainedAt,
       classes: owned.classes,
-      mana: typeof spell.mana === 'number' && spell.mana > 0 ? spell.mana : null,
+      mana: catalogMana(spell),
       metrics,
       outOfEra: spell.outOfEra === true,
       rank,
@@ -500,8 +519,14 @@ function compareRows(a: BestSpellRow, b: BestSpellRow, sort: BestSpellSort): num
   return a.name.localeCompare(b.name)
 }
 
-/** The same sort the table applies, exported so a caller can re-rank without rebuilding the rows. */
-export function sortBestSpells(rows: readonly BestSpellRow[], sort: BestSpellSort): BestSpellRow[] {
+/**
+ * The same sort the table applies, exported so a caller can re-rank without rebuilding the rows.
+ *
+ * GENERIC since JOS-450 so a WIDER row keeps its own type through the sort: a search result is a
+ * `BestSpellRow` plus its class-level chips, and a sort that handed back the narrow row would make
+ * the caller cast the chips back on.
+ */
+export function sortBestSpells<T extends BestSpellRow>(rows: readonly T[], sort: BestSpellSort): T[] {
   return [...rows].sort((a, b) => compareRows(a, b, sort))
 }
 
@@ -524,6 +549,15 @@ const TAB_MEMBER: Record<BestSpellTab, (m: SpellMetrics) => boolean> = {
   aoe: (m) => m.damage !== undefined,
   heal: (m) => m.heal !== undefined && m.hot !== true,
   hot: (m) => m.heal !== undefined && m.hot === true
+}
+
+/**
+ * Does one metrics record belong in one tab? The membership table above, as the one function two
+ * folds ask (JOS-450 added the second: the whole-catalog search answers on the tab in front of the
+ * reader, and it must place a row exactly where the ranked table would have).
+ */
+export function spellInTab(tab: BestSpellTab, metrics: SpellMetrics): boolean {
+  return TAB_MEMBER[tab](metrics)
 }
 
 /** One tab's rows, split by the era rule and sorted. `has` says which figure puts a row here. */
