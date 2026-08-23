@@ -91,9 +91,6 @@ export const TAB_SIDE: Record<BestSpellTab, 'damage' | 'heal'> = {
   hot: 'heal'
 }
 
-/** True for the two tabs whose rows all tick: the `over Ns` window means something only there. */
-export const TAB_OVER_TIME: Record<BestSpellTab, boolean> = { dd: false, dot: true, heal: false, hot: true }
-
 /**
  * THE COLUMNS EACH TAB DRAWS, and why there are two lists rather than one seven-wide table.
  *
@@ -335,7 +332,7 @@ export function sortBestSpells(rows: readonly BestSpellRow[], sort: BestSpellSor
  * or Heal rather than vanishing between the two - the same reading `outOfEra` gets everywhere in
  * this app (silence is not a verdict, law 1).
  */
-export const TAB_MEMBER: Record<BestSpellTab, (m: SpellMetrics) => boolean> = {
+const TAB_MEMBER: Record<BestSpellTab, (m: SpellMetrics) => boolean> = {
   dd: (m) => m.damage !== undefined && m.dot !== true,
   dot: (m) => m.damage !== undefined && m.dot === true,
   heal: (m) => m.heal !== undefined && m.hot !== true,
