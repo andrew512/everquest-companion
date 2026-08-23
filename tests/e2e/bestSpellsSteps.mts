@@ -1,5 +1,5 @@
-// BEST AT THIS LEVEL (JOS-445, four tabs since JOS-448) — the right column's efficiency readout,
-// asserted on screen.
+// BEST AT THIS LEVEL (JOS-445, four tabs since JOS-448, FIVE since JOS-449) — the right column's
+// efficiency readout, asserted on screen.
 //
 // Its own file for the reason `unlockRowSteps.mts` is: leveling.e2e.mts sits AT the repo max-lines
 // budget and the rule here is to SPLIT, never ratchet. The spec still owns the order and the launch.
@@ -21,6 +21,10 @@
 //     `tests/bestSpellsRank.test.mts`; what only the app can show is that the control is drawn at
 //     all, that its label is permanent rather than appearing on drag, that the label NAMES the rank
 //     and the one axis it moves, and that the numbers under it restate when it is driven.
+//   * and since JOS-449 there is a FIFTH tab whose figures rest on an ASSUMPTION. The model pins
+//     the arithmetic and the wording; what only the app can show is that the assumption is DRAWN,
+//     that it is drawn on the tab it governs and on no other, and that five labels plus a slider
+//     still divide a 260px column without one of them quietly becoming a scroller.
 //
 // SHAPES AND ORDERINGS, NEVER TODAY'S NUMBERS. The loadout is whatever this machine's log inferred
 // and the figures come from the committed catalog, so the assertions are that the drawn column is
@@ -50,11 +54,14 @@ const LEVEL_PREV = '[data-testid="new-at-level-prev"]'
 const RANK_SLIDER = '[data-testid="best-spells-rank-slider"] input[type="range"]'
 const RANK_LABEL = '[data-testid="best-spells-rank-label"]'
 
-/** The four tabs, in the order the owner named them. The model pins the labels; this drives them. */
-const TABS = ['dd', 'dot', 'heal', 'hot'] as const
+/** The five tabs, in the order the owner named them. The model pins the labels; this drives them. */
+const TABS = ['dd', 'dot', 'aoe', 'heal', 'hot'] as const
 
-/** The rank column each tab must open on: the damage pair on dps, the healing pair on hps. */
-const TAB_RANK: Record<string, string> = { dd: 'dps', dot: 'dps', heal: 'hps', hot: 'hps' }
+/** The rank column each tab must open on: the damage three on dps, the healing pair on hps. */
+const TAB_RANK: Record<string, string> = { dd: 'dps', dot: 'dps', aoe: 'dps', heal: 'hps', hot: 'hps' }
+
+/** JOS-449's visible assumption, drawn on the AOE tab and nowhere else. */
+const AOE_MARK = '[data-testid="best-spells-aoe-assumption"]'
 
 /** One tab's label, as the DOM states it: which tab, what it counts, and whether it is selected. */
 interface TabInfo {
@@ -211,6 +218,66 @@ async function checkTab(page: Page, tab: string): Promise<number> {
 }
 
 /**
+ * THE AOE TAB'S ASSUMPTION, ON SCREEN (JOS-449, owner ruling: the figures assume max target count
+ * and the surface must SAY so).
+ *
+ * `tests/bestSpellsAoe.test.mts` proves the model computes the marker from the rows in force. What
+ * only the app can show is that the words are actually DRAWN, that they are drawn on the tab they
+ * govern and on NO other (the caveat diet: the other four tabs say one quiet `directional` and
+ * stop), and that a figure on the AOE tab really is bigger than the same spell's DD figure - which
+ * is the reader's own check that the tab is answering a different question.
+ *
+ * IT HANDS THE PANEL BACK ON THE TAB IT FOUND IT ON, like every other step here.
+ */
+async function stepAoeAssumption(page: Page): Promise<void> {
+  const opened = (await tableOf(page)).tab
+  // Whichever tab the steps before this left the panel on, the absence is asserted from a tab that
+  // is NOT the AOE one - the panel is handed back to `opened` at the end either way.
+  if (opened === 'aoe') await selectTab(page, 'dd')
+  check('the assumption marker is NOT drawn on a tab it does not govern', (await countOf(page, AOE_MARK)) === 0)
+
+  await selectTab(page, 'aoe')
+  const drawn = await settle(() => countOf(page, AOE_MARK), (n) => n === 1, { timeoutMs: 8_000 })
+  if (!check('…and IS drawn, exactly once, on the AOE tab', drawn === 1, String(drawn))) return
+  const text = await page.evaluate(
+    (s) => ((document.querySelector(s) as HTMLElement | null)?.innerText ?? '').trim(),
+    AOE_MARK
+  )
+  check(
+    '…stating the target count the figures assume, in words a player can read',
+    /^x\d+( to x\d+)? targets$/.test(text),
+    text
+  )
+
+  // THE TAB REALLY ANSWERS A DIFFERENT QUESTION. Whichever spell is in both tables must read HIGHER
+  // here: a max-target reading can never state less than a single-target one. Shapes, not numbers -
+  // the loadout is whatever this machine's log inferred.
+  const aoeRows = await rowNames(page)
+  if (aoeRows.length === 0) {
+    note('this loadout owns no area spells at this level, which is an honest empty AOE tab')
+  } else {
+    const aoeDamage = await columnValues(page, 'damage')
+    await selectTab(page, 'dd')
+    const ddNames = await rowNames(page)
+    const ddDamage = await columnValues(page, 'damage')
+    const shared = aoeRows
+      .map((name, i) => ({ name, aoe: aoeDamage[i], dd: ddDamage[ddNames.indexOf(name)] }))
+      .filter((r) => ddNames.includes(r.name) && r.aoe !== null && r.dd !== null)
+    if (shared.length === 0) {
+      note('no spell is drawn in both the AOE and DD tables here, so there is no pair to compare')
+    } else {
+      const bad = shared.filter((r) => (r.aoe ?? 0) < (r.dd ?? 0))
+      check(
+        `a spell in both tables reads HIGHER on AOE than on DD (${String(shared.length)} pairs)`,
+        bad.length === 0,
+        bad.map((r) => `${r.name} ${String(r.aoe)} < ${String(r.dd)}`).join(' | ')
+      )
+    }
+  }
+  await selectTab(page, opened)
+}
+
+/**
  * THE MOTE-RANK SIMULATOR (JOS-447), and it is a claim about the SCREEN that no unit test reaches.
  *
  * `tests/bestSpellsRank.test.mts` proves the model reads every row at `max(observed, simulated)`.
@@ -292,13 +359,13 @@ export async function stepBestSpells(page: Page): Promise<void> {
   // own count, which is what makes the three tabs you are not looking at still say something.
   const tabs = await tabsOf(page)
   check(
-    'it offers the four answers the owner asked for, in his order',
+    'it offers the five answers the owner asked for, in his order',
     tabs.map((t) => t.tab).join(',') === TABS.join(','),
     tabs.map((t) => t.tab).join(',')
   )
   check(
     '…each label naming its table and counting it',
-    tabs.every((t) => /^(DD|DoT|Heal|HoT) \(\d+\)$/.test(t.label) && t.count >= 0),
+    tabs.every((t) => /^(DD|DoT|AOE|Heal|HoT) \(\d+\)$/.test(t.label) && t.count >= 0),
     tabs.map((t) => t.label).join(' | ')
   )
   check('…with exactly one selected', tabs.filter((t) => t.selected).length === 1, tabs.map((t) => `${t.tab}:${String(t.selected)}`).join(' '))
@@ -360,6 +427,8 @@ export async function stepBestSpells(page: Page): Promise<void> {
   } else {
     note(`the widest tab here has ${String(widest.rows)} row(s) - nothing to re-rank`)
   }
+
+  await stepAoeAssumption(page)
 
   await stepSimulate(page)
 

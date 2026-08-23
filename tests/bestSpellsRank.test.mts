@@ -244,16 +244,25 @@ test('JOS-447 acceptance: the owner`s Garrisons at VIII reads 492 and tops his d
   )
 
   // AND THE TABLE REALLY RE-RANKS, which is the whole reason the rank is in the model. On the
-  // damage column his spell goes from FOURTH at base (behind Inferno Shock 475, Ice Shock 415 and
-  // Lava Storm 401, with 333) to FIRST at VIII with 492.
+  // damage column his spell climbs THREE PLACES, past the three single-cast nukes above it.
+  //
+  // JOS-449 MOVED THESE TWO INDICES AND THE MOVE IS THE FIX, not a regression. This pin used to
+  // read 3 -> 0, with `Lava Storm 401` named as one of the three nukes he was behind. A rain's wiki
+  // line states ONE WAVE, so `Lava Storm` is really 1,203 and `Energy Storm` 714, and both now sit
+  // above a 492 that no rank can lift past them. The dps assertion above is untouched by the same
+  // change, and that is the honest reading of it: a rain totals more per cast and arrives on a 12s
+  // re-use timer, so it leads on `dmg` and loses on `dps`. Two columns, two answers.
   const byDamage: BestSpellsView = { sorts: { ...BOTH.sorts, dd: { column: 'damage', desc: true } } }
   const was = bestSpellsAt(REAL, wiz, 35, byDamage).tabs.dd.shown
   const now = bestSpellsAt(REAL, wiz, 35, {
     ...byDamage,
     observed: ranksOf({ [GARRISONS]: 8 })
   }).tabs.dd.shown
-  assert.equal(was.findIndex((r) => r.name === GARRISONS), 3)
-  assert.equal(now.findIndex((r) => r.name === GARRISONS), 0)
+  assert.equal(was.findIndex((r) => r.name === GARRISONS), 5, was.slice(0, 6).map((r) => r.name).join(' | '))
+  assert.equal(now.findIndex((r) => r.name === GARRISONS), 2, now.slice(0, 3).map((r) => r.name).join(' | '))
+  // The two rains he cannot out-rank on the total, named so the next reader of this pin knows why
+  // it is not 0: they are the same spell measured per cast rather than per second.
+  assert.deepEqual(now.slice(0, 2).map((r) => r.name), ['Lava Storm', 'Energy Storm'])
 })
 
 test('JOS-447: simulating a rank lifts the WHOLE real table without disturbing its membership', () => {

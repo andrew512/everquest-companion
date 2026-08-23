@@ -279,6 +279,17 @@ export interface SpellResistInfo {
    * spellsUsParse.ts, where both are measured.
    */
   recastMs?: number
+  /**
+   * THE MOST TARGETS ONE CAST CAN STRIKE, field 143 (`aemaxtargets`), present only when positive
+   * (JOS-449).
+   *
+   * Here for `recastMs`'s reason exactly: nothing else states it. The wiki says it in prose on a
+   * handful of pages and says nothing at all on most, while the client states it per spell for
+   * every area spell in the game — 4 on all 23 rains and on 45 of the 46 targeted AEs in the
+   * committed catalog, 8 on a PB AE. `shared/aoeSpells.ts` is what reads it, and it has a stated
+   * default for the reader who has no EverQuest install to read.
+   */
+  aeMaxTargets?: number
   targetType: number
   /** Slot-1-through-N effect 0 (hitpoints), when the spell has one. Drives fixed-vs-variable. */
   hpSlot?: { base: number; max: number; calc: number }

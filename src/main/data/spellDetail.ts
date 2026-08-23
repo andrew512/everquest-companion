@@ -20,6 +20,8 @@ import { parseSpellClassLevels, parseSpellRank, spellLineKey } from '../../share
 import type { SpellResistTable } from '../../shared/resistTypes'
 import type { SpellEntry } from '../../shared/types'
 import { clientHpFor } from './clientSpellHp'
+import { rainWaves } from './rainSpells'
+import { aeHits, aeMaxTargets } from '../../shared/aoeSpells'
 import { spellEffectClasses } from './spellEffectClass'
 import { normalizeSpellRank } from '../../shared/spellScale'
 import { spellNature, type SpellDb } from './spellDb'
@@ -171,6 +173,13 @@ export function buildSpellDetail(
  * finished) simply means the card behaves exactly as it did before this ticket — and because this
  * record is rebuilt on every invoke rather than cached, the next hover after the table resolves
  * carries the figures with no invalidation to arrange.
+ *
+ * AND A RAIN IS READ AT ITS WAVE TOTAL (JOS-449), on ONE target, which is the same reading the
+ * unlock row and the best-spells DD table take. The card is what the best-spells table's own
+ * tooltip prints, so a card saying `dmg 512` under a row saying `dmg 1536` would be the panel
+ * disagreeing with itself on hover. `src/main/data/rainSpells.ts` carries the roster and the
+ * evidence; the AOE reading is the leveling panel's and is not offered here, because a card has no
+ * place to state the assumption it would rest on.
  */
 function worthFields(
   e: SpellEntry,
@@ -179,14 +188,15 @@ function worthFields(
 ): Partial<SpellDetail> {
   const level = classLevels.length > 0 ? Math.min(...classLevels.map((c) => c.level)) : 1
   const client = clientHpFor(sources.client ?? null, e.name)
-  const metrics = spellMetricsAt(e, level, client)
+  const spell = { ...e, hits: aeHits(rainWaves(e.name), 1, aeMaxTargets(client?.aeMaxTargets)) }
+  const metrics = spellMetricsAt(spell, level, client)
   if (!metrics) return {}
   // AND THE SAME READING AT THE RANK THE PLAYER HOLDS (JOS-447). Second call rather than a second
   // reader, so the two lines on the card cannot disagree about anything but the rank. Skipped
   // entirely at base, where the two would be the same numbers printed twice.
   const rank = normalizeSpellRank(sources.rank)
   if (rank === 0) return { metrics, metricsLevel: level }
-  const atRank = spellMetricsAt({ ...e, rank }, level, client)
+  const atRank = spellMetricsAt({ ...spell, rank }, level, client)
   return atRank ? { metrics, metricsLevel: level, metricsAtRank: atRank, metricsRank: rank } : { metrics, metricsLevel: level }
 }
 

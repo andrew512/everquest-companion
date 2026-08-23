@@ -42,6 +42,14 @@
 // ERA: `outOfEraLabel`, IMPORTED from the mob page the way `UnlockList` imports it — a second copy
 // would be a second wording. Positive verdicts fold; silence is not a verdict and stays in place.
 //
+// AND A FIFTH TAB POINTS AT A PACK (JOS-449, owner ask 2026-08-23: "lets also have a separate AOE
+// tab that assumes max target count"). The model builds it as a SECOND fold at each spell's max
+// target count (`shared/bestSpells.ts` says why that is not a filter), so nothing here changes but
+// the tab list and ONE marker: the assumption is drawn beside `directional`, on the AOE tab only,
+// in the model's own words. The panel never computes the number it prints - a table that mixed a
+// four-target cap with an eight-target one would otherwise be captioned with a number it did not
+// use.
+//
 // AND THE ROWS ARE AT THEIR MOTE RANK (JOS-447). Every figure here is read at
 // `max(observed rank, simulated rank)`: the observed half is JOS-446's map, already subscribed for
 // the `yours: VIII` chip that marks those rows, and the simulated half is `SpellRankSlider` under
@@ -80,6 +88,7 @@ import {
   type BestSpellTab,
   type BestSpellsTable
 } from '@shared/bestSpells'
+import { AOE_ASSUMPTION_TITLE } from '@shared/aoeSpells'
 import { Tooltip } from '../../lib/Tooltip'
 import { SpellTooltip } from '../../lib/SpellCard'
 import { outOfEraLabel } from '../mobs/dropEra'
@@ -417,6 +426,23 @@ export function BestSpellsPanel({ viewed }: BestSpellsPanelProps): JSX.Element |
         <Typography variant="caption" color="text.disabled" data-testid="best-spells-directional">
           directional
         </Typography>
+        {/* THE AOE TAB'S ASSUMPTION, MADE VISIBLE (JOS-449, owner ruling: the figures assume max
+            target count and the surface must say so). It is drawn only on the tab it governs, so
+            the other four keep the one-caveat diet the line above holds them to, and the words are
+            the model's (`aoeAssumptionLabel`) so a mixed table cannot be captioned with a number it
+            did not use. */}
+        {tab === 'aoe' && (
+          <Tooltip title={AOE_ASSUMPTION_TITLE}>
+            <Typography
+              variant="caption"
+              color="text.disabled"
+              data-testid="best-spells-aoe-assumption"
+              sx={{ textDecoration: 'underline dotted', cursor: 'help' }}
+            >
+              {best.aoeTargets}
+            </Typography>
+          </Tooltip>
+        )}
         <Box sx={{ flexGrow: 1 }} />
         {best.ambiguous && (
           <Tooltip title="Covers every class your loadout could still be.">
@@ -430,9 +456,12 @@ export function BestSpellsPanel({ viewed }: BestSpellsPanelProps): JSX.Element |
           </Tooltip>
         )}
       </Stack>
-      {/* `fullWidth` rather than `scrollable`: four labels this short divide 260px without a
-          scroller, and a scroller would put the fourth answer behind a gesture nobody expects in a
-          panel this small. The label carries its count so an empty tab says so before it is opened. */}
+      {/* `fullWidth` rather than `scrollable`: labels this short divide 260px without a scroller,
+          and a scroller would put an answer behind a gesture nobody expects in a panel this small.
+          The label carries its count so an empty tab says so before it is opened.
+          JOS-449 made it FIVE, so the horizontal padding comes off (`px: 0.25`) and the font drops
+          a notch: at the 260px floor five labels of the shape `DoT (6)` need every pixel, and the
+          `no inner scroller` check in the leveling e2e is what holds the trade honest. */}
       <Tabs
         value={tab}
         onChange={(_e, next: BestSpellTab) => setPicked(next)}
@@ -448,7 +477,7 @@ export function BestSpellsPanel({ viewed }: BestSpellsPanelProps): JSX.Element |
             data-tab={t}
             data-count={String(best.tabs[t].shown.length)}
             label={`${TAB_LABEL[t]} (${String(best.tabs[t].shown.length)})`}
-            sx={{ minHeight: 28, minWidth: 0, px: 0.5, py: 0.25, fontSize: 10.5, textTransform: 'none' }}
+            sx={{ minHeight: 28, minWidth: 0, px: 0.25, py: 0.25, fontSize: 10, textTransform: 'none' }}
           />
         ))}
       </Tabs>
