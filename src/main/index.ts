@@ -32,10 +32,10 @@ import { E2E } from './e2e'
 import { OWNER_TOOLS } from './ownerTools'
 import { app, BrowserWindow, protocol, session } from 'electron'
 import { IPC } from '../shared/ipc'
-import { errorLogPath, logError, logInfo } from './errorLog'
-import { saveUserOverlay } from './data/overlayPersistence'
+import { errorLogPath, flushErrorLogSync, logError, logInfo } from './errorLog'
+import { saveUserOverlaySync } from './data/overlayPersistence'
 import { startQueueFlush, stopQueueFlush } from './feedback'
-import { startTelemetry, stopTelemetry } from './telemetry'
+import { flushRingSync, startTelemetry, stopTelemetry } from './telemetry'
 import { registerAppSchemes } from './appSchemes'
 import { applyGraphicsCompatibilityFlags, applyGraphicsSafeMode } from './graphics'
 import { installImageCacheProtocol } from './imageCache'
@@ -445,7 +445,22 @@ if (!gotSingleInstanceLock) {
 app.on('before-quit', () => {
   teardownStep('main:stopPresence', stopPresenceEffects)
   flushStoreForQuit()
+  // …and the analytics ring, for the same reason and on the same event (JOS-371). `sessionEnd` is
+  // recorded as the last window closes and its durable write is asynchronous now, so without this
+  // the last session's duration would be lost on every launch. A no-op when the previous write
+  // already landed. `before-quit` fires on EVERY quit path — `window-all-closed`'s own `app.quit()`,
+  // an auto-updater's `quitAndInstall`, an OS logoff — which is why it is here and not beside
+  // `stopTelemetry` in `window-all-closed`.
+  teardownStep('main:flushTelemetryRing', flushRingSync)
   logTopmostSavings()
+  // LAST, and it must stay last: the error log appends asynchronously now (JOS-371), so every line
+  // any step above just wrote — including a teardown step that threw into `teardownStep`'s own
+  // `logError` — is still in a queue that this process may never turn the event loop for again.
+  // ONE `appendFileSync` puts the lot on disk. It is the documented quit final; `crashGuards.ts`
+  // holds the other one, and there are no others. Called directly rather than through
+  // `teardownStep`, which would answer a failure by writing one more line into the queue that was
+  // just emptied; `flushErrorLogSync` guards its own I/O and cannot throw.
+  flushErrorLogSync()
 })
 
 /**
@@ -531,7 +546,7 @@ app.on('window-all-closed', () => {
   teardownStep('main:stopPerf', stopPerf)
   // Flush the learned message overlay one last time so the final session's observations
   // aren't lost between debounced saves (Task #36).
-  teardownStep('main:saveOverlay', () => saveUserOverlay(buffsModule.overlayRegister()))
+  teardownStep('main:saveOverlay', () => saveUserOverlaySync(buffsModule.overlayRegister()))
   // Dev only, and null in every other build: a live DSQL socket is not a timer and would hold
   // the process open long past the last window.
   teardownStep('main:triage', () => {
