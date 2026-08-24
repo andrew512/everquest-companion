@@ -46,7 +46,12 @@ import { screen, type BrowserWindow } from 'electron'
 import { IPC } from '../shared/ipc'
 import { E2E } from './e2e'
 import { logError } from './errorLog'
-import { overlayHotZones, overlayWantsHoverZones, type ZoneRect } from './overlayHotZone'
+import {
+  CHROME_STRIP_PX,
+  overlayHotZones,
+  overlayWantsHoverZones,
+  type ZoneRect
+} from './overlayHotZone'
 import { clearHoverZones, presenceSnapshot, setHoverZones, subscribeHoverTransitions } from './presence'
 import { getOverlayConfig } from './store'
 import { getOverlayWindow, overlaysParked, setOverlayIgnoreMouse } from './windows'
@@ -66,6 +71,9 @@ interface HoverProbe {
   transition: (key: string, inside: boolean) => void
   /** What each kind was last told over `overlay:hover`. */
   pushed: () => Record<string, boolean>
+  /** The chrome strip's height, so a spec can MEASURE the real header row against it rather than
+   *  restating the number (an e2e file loads no src module). See `CHROME_STRIP_PX`. */
+  stripPx: number
 }
 
 const publishedZones: Record<string, ZoneRect[]> = {}
@@ -153,7 +161,8 @@ const probe: HoverProbe | null = E2E
       transition: (key, inside) => {
         onTransition(key, inside)
       },
-      pushed: () => ({ ...pushedInside })
+      pushed: () => ({ ...pushedInside }),
+      stripPx: CHROME_STRIP_PX
     }
   : null
 

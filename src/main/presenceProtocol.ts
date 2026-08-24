@@ -661,34 +661,52 @@ export const CURSOR_POLL_MS = 8
 /**
  * THE THIRD CADENCE: the hot-zone hit test's period (JOS-370).
  *
- * 32 ms — TWO Windows timer quanta, so it is a period the platform can actually keep rather than a
- * number that rounds up to one. MEASURED the way the two above were: `setInterval(32)` in a worker
- * thread on this machine turns 31.2 times a second (156 ticks in 5.001 s), i.e. every ~32.0 ms,
- * against `setInterval(33)` which snaps to the next edge at ~46.8 ms and would have made the same
- * request cost the user a third of the budget below.
+ * 30, AND THE 30 IS MEASURED RATHER THAN CHOSEN — it is the largest request that still lands on
+ * TWO Windows timer quanta instead of three. AGENTS.md's law is that a timer ends at the next tick
+ * edge AFTER the time requested, and the edges here are ~15.6 ms apart; measured in a real worker
+ * thread on this machine (200 ticks per run):
  *
- * WHY THIS NUMBER AND NOT THE RING'S 8. The consumer is a HUMAN REACHING FOR A PIN, not a halo
+ *     setInterval(20)  every 31.06 ms   32.2 Hz
+ *     setInterval(24)  every 31.12 ms   32.1 Hz
+ *     setInterval(30)  every 31.31 ms   31.9 Hz     <- this
+ *     setInterval(31)  every 37.30 ms   26.8 Hz
+ *     setInterval(32)  every 45.89 ms   21.8 Hz     <- one quantum past the edge
+ *
+ * So 32 — the obvious "two quanta, rounded" number, and this constant's first value — would have
+ * cost a THIRD of the sample rate for asking two milliseconds too politely. 30 is the honest
+ * spelling of "two quanta", and 20 and 24 buy nothing over it: they arrive at the same edge.
+ *
+ * WHY THIS PERIOD AND NOT THE RING'S 8. The consumer is a HUMAN REACHING FOR A PIN, not a halo
  * tracking a pointer: what it has to beat is the moment somebody notices the chrome did not appear
- * under their cursor. One sample plus one IPC hop plus a paint is ~50 ms worst case at this
- * cadence, which is two display frames — and the alternative costs a timer wakeup every 8 ms for
- * as long as a meter is pinned, which is the sort of standing cost this whole program exists to
- * remove.
+ * under their cursor. Worst case is one whole period (31 ms) plus an IPC hop plus a paint — about
+ * 50 ms, which is the ticket's budget — and the alternative is a timer wakeup every 8 ms for as
+ * long as a meter is pinned, which is the sort of standing cost this program exists to remove.
  *
- * WHAT IT COSTS, stated the way the split cadence above states its own (same instrument, same
- * machine, `process.cpuUsage()` over 20 s windows with the real native surface): the coarse
- * cursor-free loop — one foreground block every ~160 ms — costs 0.05-0.08 % of one core; the same
- * loop with the hit test running at 32 ms over two zones costs 0.11-0.15 %. That is about 0.7 ms
- * of CPU per second, on a thread that is not main, and it is paid ONLY while a locked overlay is
- * on screen with EverQuest in front (`zones.size > 0` in presenceWorker.ts is the whole gate). The
- * hook it replaces cost main a synchronous callback on EVERY mouse event on the machine.
+ * WHAT IT COSTS, and where the measurement stops being able to tell. ONE SAMPLE is 0.38 us: a
+ * `GetCursorInfo` plus a compare against each held rectangle, timed at 200,000 calls x 3 rounds on
+ * this machine (0.378 / 0.378 / 0.396 us). Reading the POINT out of the struct is free — 0.002 to
+ * 0.025 us over the `cursorShowing()` the ring already makes — which is what makes "share the
+ * ring's sample" true rather than aspirational. At 31.9 Hz that is ~12 us of CPU per second,
+ * i.e. 0.0012 % of one core.
+ *
+ * The WHOLE LOOP is harder to price honestly and the number is stated with its error bar rather
+ * than rounded into confidence: Windows accounts CPU in 15.6 ms quanta, so `process.cpuUsage()`
+ * over 90 s windows reads 0.000-0.052 % for the coarse loop holding no zones and 0.087-0.121 %
+ * with the hit test running over two, against a 0.070 % floor the instrument shows for a process
+ * running NO watcher at all. The honest reading is that the added cost is at or below what that
+ * instrument can resolve, and bounded above by about 0.1 % of one core. It is paid on a thread
+ * that is not main, and ONLY while a locked overlay is on screen with EverQuest in front
+ * (`hover.active()` in presenceWorker.ts is the whole gate). The hook it replaces cost main a
+ * synchronous callback on EVERY mouse event on the machine.
  */
-export const HOVER_POLL_MS = 32
+export const HOVER_POLL_MS = 30
 
 /**
- * How many of the RING's fast ticks make one hover sample, when both are running. The ring asks
- * for the platform's floor (~16 ms), so every second tick is the same ~32 ms the constant above
- * measured — the two clocks are one clock, and the cursor is read ONCE per tick and shared
- * (presenceWorker.ts `tick`), never sampled twice for two consumers.
+ * How many of the RING's fast ticks make one hover sample, when both are running.
+ *
+ * The ring asks for the platform's floor and MEASURES at ~15.6 ms, so two of its ticks are the
+ * same two quanta `HOVER_POLL_MS` asks for directly — the two clocks are one clock. The cursor is
+ * read ONCE per tick and shared (presenceWorker.ts `tick`), never sampled twice for two consumers.
  */
 export const HOVER_EVERY_FAST_TICKS = 2
 
