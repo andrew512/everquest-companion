@@ -259,18 +259,20 @@ export function createLedgerWriter(io: DurableIo = nodeIo, ioAsync: AsyncDurable
 
   /** Everything both writers decide before a byte is touched: is one running, is this the same
    *  bytes we already wrote, is the gate serving out a backoff. One spelling, so the async path
-   *  and the sync path can never answer the same question two ways. */
-  const admit = (json: string, now: number): LedgerWriteOutcome | null => {
+   *  and the sync path can never answer the same question two ways. The STAMP is computed once by
+   *  the caller and handed to both halves — it is an O(n) walk of the whole ledger text, and
+   *  hashing it twice per write would be paying the coalescing tax twice. */
+  const admit = (stamp: string, now: number): LedgerWriteOutcome | null => {
     if (writing) return { status: 'busy' }
-    if (fingerprint(json) === lastWritten) return { status: 'unchanged' }
+    if (stamp === lastWritten) return { status: 'unchanged' }
     if (!gate.ready(now)) return { status: 'paused' }
     return null
   }
 
   /** …and everything both writers decide afterwards. `err === null` is the success arm. */
-  const settle = (json: string, now: number, err: unknown): LedgerWriteOutcome => {
+  const settle = (stamp: string, now: number, err: unknown): LedgerWriteOutcome => {
     if (err === null) {
-      lastWritten = fingerprint(json)
+      lastWritten = stamp
       return { status: 'written', recovered: gate.succeeded() }
     }
     const { delayMs } = gate.failed(now)
@@ -281,27 +283,29 @@ export function createLedgerWriter(io: DurableIo = nodeIo, ioAsync: AsyncDurable
 
   return {
     async writeAsync(dir, path, json, now = Date.now()) {
-      const refused = admit(json, now)
+      const stamp = fingerprint(json)
+      const refused = admit(stamp, now)
       if (refused) return refused
       writing = true
       try {
         await writeFileDurableAsync(dir, path, json, ioAsync)
-        return settle(json, now, null)
+        return settle(stamp, now, null)
       } catch (err) {
-        return settle(json, now, err)
+        return settle(stamp, now, err)
       } finally {
         writing = false
       }
     },
     write(dir, path, json, now = Date.now()) {
-      const refused = admit(json, now)
+      const stamp = fingerprint(json)
+      const refused = admit(stamp, now)
       if (refused) return refused
       writing = true
       try {
         writeFileDurable(dir, path, json, io)
-        return settle(json, now, null)
+        return settle(stamp, now, null)
       } catch (err) {
-        return settle(json, now, err)
+        return settle(stamp, now, err)
       } finally {
         writing = false
       }
