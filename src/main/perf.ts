@@ -59,7 +59,11 @@ import {
   type StartupProfile,
   type StartupStutterProbe
 } from '../shared/perf'
+import { formatDataWeight } from '../shared/dataWeight'
 import { startupReplayStats } from '../shared/telemetryStartup'
+// The per-file decomposition of the `dataLoaded` phase (JOS-458). A leaf holding one committed
+// table plus this launch's own heap reading.
+import { dataWeightLedger } from './dataWeight'
 import { logError, logInfo } from './errorLog'
 // THE LIVE HALF of the same subject (JOS-367), in its own leaf module for `tailIoStats.ts`'s two
 // reasons: it is plain data that knows nothing about telemetry, and a leaf cannot join the import
@@ -367,7 +371,12 @@ export function startupProfile(): StartupProfile {
     ...(replayStats === undefined ? {} : { replay: replayStats }),
     ...(stutterStats === undefined ? {} : { stutter: stutterStats }),
     ...(newBytes === undefined ? {} : { newBytes }),
-    ...(firstMbMs === undefined ? {} : { firstMbMs })
+    ...(firstMbMs === undefined ? {} : { firstMbMs }),
+    // UNCONDITIONAL, unlike its neighbours, and that is the difference between a measurement and a
+    // manifest: every other member here is absent on a launch that did not produce it, while the
+    // committed rows describe the BUILD and are true of every launch of it. The one part that is
+    // per-launch (`heapAfterDataMb`) carries its own absence inside the ledger.
+    data: dataWeightLedger()
   })
 }
 
@@ -402,6 +411,13 @@ function logStartupSummary(profile: StartupProfile): void {
     `[everquest-companion] Startup ${String(Math.round(profile.totalMs))}ms` +
       `${replayed}${blocked}${duty}${coldRead(profile)} (${worst}) - profile at ${profilePath()}`
   )
+  // THE DATA LEDGER GETS ITS OWN LINE (JOS-458) rather than another clause on the one above. The
+  // line above describes THIS launch; this one describes the BUILD, and it is the same every time
+  // until a data file changes — which is exactly the property that makes a change to it visible in
+  // errors.log the release it lands, and the reason it must not be buried mid-sentence.
+  if (profile.data !== undefined) {
+    logInfo(`[everquest-companion] ${formatDataWeight(profile.data)}`)
+  }
 }
 
 /**
