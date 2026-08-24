@@ -27,10 +27,13 @@
 //   1. NO HOOK OF ANY KIND, EVER. `forward:` appears in no `setIgnoreMouseEvents` call in this
 //      application (tests/overlayLockedSelector.test.mts pins that as source).
 //   2. THE SAMPLER EXISTS ONLY WHILE IT COULD MATTER. Zones are published for a kind only when it
-//      is locked, open, on screen, un-parked AND EverQuest has the foreground
-//      (`overlayWantsHoverZones`). With none published the worker has no hit-test block in its loop
-//      at all and goes back to its coarse ~160 ms clock — i.e. an install with no pinned overlay,
-//      or a player who alt-tabbed away, pays nothing.
+//      is locked, open, on screen and un-parked (`overlayWantsHoverZones`). With none published the
+//      worker has no hit-test block in its loop at all and goes back to its coarse ~160 ms clock —
+//      i.e. an install with no pinned overlay pays nothing, and neither does a player who alt-tabs
+//      away WITH auto-hide on, because that preference parks the overlays and a parked overlay
+//      publishes no rectangle. WHICH APP HAS THE FOREGROUND IS NOT A TERM OF ITS OWN (owner ruling
+//      2026-08-24 — overlayHotZone.ts states it in full): a pinned overlay left visible over a
+//      browser reveals its pin, exactly as the hook it replaced did.
 //   3. NOTHING IS RE-SENT THAT DID NOT CHANGE. Zones cross the wire as one line per kind and are
 //      compared by string (`presence.ts setHoverZones`); the worker answers only on an ENTER/LEAVE
 //      EDGE. Steady state — a pinned meter with the pointer anywhere else on screen — is complete
@@ -53,7 +56,7 @@ import {
   overlayWantsHoverZones,
   type ZoneRect
 } from './overlayHotZone'
-import { clearHoverZones, presenceSnapshot, setHoverZones, subscribeHoverTransitions } from './presence'
+import { clearHoverZones, setHoverZones, subscribeHoverTransitions } from './presence'
 import { getOverlayConfig } from './store'
 import { getOverlayWindow, overlaysParked, setOverlayIgnoreMouse } from './windows'
 import { windowsMayShow } from './replayGate'
@@ -110,7 +113,7 @@ function toPhysical(rect: ZoneRect): ZoneRect {
 }
 
 /** The zones this kind currently wants watched, in physical px — empty when it wants none. */
-function zonesFor(kind: OverlayKind, w: BrowserWindow | null, eqFocused: boolean): ZoneRect[] {
+function zonesFor(kind: OverlayKind, w: BrowserWindow | null): ZoneRect[] {
   if (!w || w.isDestroyed()) return []
   const want = overlayWantsHoverZones({
     locked: getOverlayConfig(kind).locked,
@@ -118,8 +121,10 @@ function zonesFor(kind: OverlayKind, w: BrowserWindow | null, eqFocused: boolean
     // A window the replay gate or a session teardown really hid is not on screen; a PARKED one is
     // on screen at opacity 0, which is a different fact and its own term below.
     visible: w.isVisible() && windowsMayShow(),
-    parked: overlaysParked(),
-    eqFocused
+    // …and the park is ALSO where the presence preferences land (presenceEffects.ts `onPresence`),
+    // which is the whole of this predicate's relationship with EverQuest since the 2026-08-24
+    // ruling. There is no `eqFocused` argument to pass any more, on purpose.
+    parked: overlaysParked()
   })
   if (!want) return []
   // The page's own zoom, so a CSS-px strip is a DIP strip — overlayHotZone.ts's `zoom` note.
@@ -133,12 +138,14 @@ function zonesFor(kind: OverlayKind, w: BrowserWindow | null, eqFocused: boolean
  * `windows.ts setOverlayIgnoreMouse`, the ONE place that changes — so the lock toggle, the park,
  * the replay gate and the renderer's own capture flips all arrive here), a window closing, a
  * display reconcile, and every presence change. It is idempotent and most calls publish nothing.
+ *
+ * PRESENCE STILL CALLS IT AND IT STILL READS NO PRESENCE FACT. A presence change can PARK the
+ * overlays (the auto-hide preferences), and the park is a term; the foreground itself is not.
  */
 export function refreshOverlayHover(): void {
   try {
-    const eqFocused = presenceSnapshot().eqFocused
     for (const kind of HOVER_KINDS) {
-      const zones = zonesFor(kind, getOverlayWindow(kind), eqFocused)
+      const zones = zonesFor(kind, getOverlayWindow(kind))
       publishedZones[kind] = zones
       setHoverZones(kind, zones)
     }

@@ -695,9 +695,19 @@ export const CURSOR_POLL_MS = 8
  * with the hit test running over two, against a 0.070 % floor the instrument shows for a process
  * running NO watcher at all. The honest reading is that the added cost is at or below what that
  * instrument can resolve, and bounded above by about 0.1 % of one core. It is paid on a thread
- * that is not main, and ONLY while a locked overlay is on screen with EverQuest in front
- * (`hover.active()` in presenceWorker.ts is the whole gate). The hook it replaces cost main a
- * synchronous callback on EVERY mouse event on the machine.
+ * that is not main, and ONLY while main is holding a rectangle (`hover.active()` in
+ * presenceWorker.ts is the whole gate; `overlayHotZone.ts overlayWantsHoverZones` is what fills
+ * it). The hook it replaces cost main a synchronous callback on EVERY mouse event on the machine.
+ *
+ * THE ON-CONDITION WIDENED ON 2026-08-24, AND THE DUTY CYCLE DID NOT. That gate used to read "a
+ * locked overlay is on screen AND EverQuest is in front"; the owner's ruling removed the second
+ * half — EQ's foreground state is a presence PREFERENCE about hiding, not an input to hover — so it
+ * now reads "a locked overlay is actually VISIBLE". Nothing about the loop moved: same 30 ms
+ * period, same 0.38 us sample, same ~12 us of CPU per second while it runs, same ceiling above.
+ * What moved is HOW LONG it runs for — a player who alt-tabs to a browser with a meter still
+ * pinned and still on screen now keeps paying that ceiling, where before the loop went coarse the
+ * moment the game lost the foreground. A player who set either auto-hide preference is unaffected:
+ * their overlays park when they leave the game, and a parked overlay publishes no rectangle.
  */
 export const HOVER_POLL_MS = 30
 

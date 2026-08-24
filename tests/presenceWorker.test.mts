@@ -275,6 +275,12 @@ test('WITH THE RING OFF THE WATCHER NEVER LOOKS AT THE CURSOR — and still does
 // cannot see are that the downstream line is understood at all, that the loop re-arms itself onto
 // the hover cadence when a rectangle arrives, and that a watcher holding NO rectangle says nothing.
 //
+// AND IT NEVER ASSUMED EVERQUEST WAS IN FRONT, which is worth saying now that nothing does: the
+// 2026-08-24 ruling removed the game's foreground from the zone-publication gate (main's side, in
+// overlayHotZone.ts), and the worker's side never had it — this loop hit-tests whatever rectangles
+// it has been handed, on a machine where the game is almost certainly not running at all. That is
+// why these assertions did not have to move.
+//
 // IT DOES NOT ASSERT WHERE THE OWNER'S CURSOR IS, because it cannot and must not: the machine
 // running this suite has a real pointer somewhere, and EverQuest may be hiding it (the flake this
 // file already carries a ledger row for). So the two claims are chosen to be true of any cursor —
