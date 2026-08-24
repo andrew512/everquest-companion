@@ -28,8 +28,15 @@ import type {
 //   F|<pid>|<x>|<y>|<w>|<h>|<exePath>|<title>   foreground window changed
 //   R|<0|1>                                      EQ process existence changed (5 s cadence)
 //   C|<0|1>                                      system cursor visibility changed
+//   V|<key>|<0|1>                                the cursor ENTERED (1) / LEFT (0) a hot zone
 //   H                                            heartbeat — "still looping" (5 s cadence)
 //   X|<reason>                                   the LAST line: why the loop is about to stop
+//
+// AND SINCE JOS-370 THE CHANNEL RUNS BOTH WAYS, in the same codec, with two lines:
+//
+//   stop                                         retire this watcher (WATCHER_STOP_MESSAGE)
+//   Z|<key>|<x>|<y>|<w>|<h>|…                    THE WHOLE hot-zone set for one key (physical px)
+//   Z                                            forget every key — the hit test is off
 //
 // THE TRANSPORT CHANGED AND THE PROTOCOL DID NOT (JOS-182). These lines used to arrive on a
 // `powershell.exe` child's stdout; they now arrive as `postMessage` strings from a worker
@@ -72,6 +79,7 @@ export type PresenceRecord =
   | { t: 'fg'; pid: number; rect: ScreenRect; exePath: string; title: string }
   | { t: 'run'; running: boolean }
   | { t: 'cursor'; visible: boolean }
+  | { t: 'hover'; key: string; inside: boolean }
   | { t: 'beat' }
   | { t: 'exit'; reason: string }
 
@@ -116,6 +124,31 @@ function parseForeground(parts: string[]): PresenceRecord | null {
 const EXIT_REASON_RE = /^[a-z][a-z0-9-]{0,62}$/
 
 /**
+ * The shape of a HOT-ZONE KEY (JOS-370). An overlay kind today (`fight`, `heal-overall`), which is
+ * why the hyphen is in the class — but the decoder deliberately does not know that union, because
+ * this file is the half with no `shared/types.ts` in its closure and a bounded token is all a
+ * codec can honestly promise. `overlayHover.ts` re-validates every key it is handed against
+ * `OVERLAY_KINDS` before it reaches a window, which is where that check belongs: a key that
+ * survives the shape test still has to name a window somebody owns.
+ */
+const HOVER_KEY_RE = /^[a-z][a-z0-9-]{0,31}$/i
+
+/** `X|<reason>` — the watcher's last word, or null when the field is not a reason. */
+function parseExit(parts: string[]): PresenceRecord | null {
+  const reason = parts[1] ?? ''
+  return parts.length === 2 && EXIT_REASON_RE.test(reason) ? { t: 'exit', reason } : null
+}
+
+/** `V|<key>|<0|1>` — one hot-zone edge (JOS-370). The key is checked by SHAPE here; whether it
+ *  names a window anybody owns is `overlayHover.ts`'s question. */
+function parseHover(parts: string[]): PresenceRecord | null {
+  const key = parts[1] ?? ''
+  const inside = boolField(parts[2])
+  if (parts.length !== 3 || inside === null || !HOVER_KEY_RE.test(key)) return null
+  return { t: 'hover', key, inside }
+}
+
+/**
  * Decode one line. Returns null for anything that is not a well-formed record, which is the only
  * correct answer for a channel that can also carry a stray blank line or a message from a build
  * that does not agree with this one about the protocol — a malformed line must never move the
@@ -124,18 +157,109 @@ const EXIT_REASON_RE = /^[a-z][a-z0-9-]{0,62}$/
 export function parsePresenceLine(line: string): PresenceRecord | null {
   const trimmed = line.replace(/\r$/, '').trim()
   if (trimmed === '') return null
-  const parts = trimmed.split('|')
-  if (parts[0] === 'F') return parseForeground(parts)
-  if (parts[0] === 'X') {
-    const reason = parts[1] ?? ''
-    return parts.length === 2 && EXIT_REASON_RE.test(reason) ? { t: 'exit', reason } : null
-  }
   // The heartbeat carries no payload, so it is the whole line or it is not a heartbeat.
   if (trimmed === 'H') return { t: 'beat' }
+  const parts = trimmed.split('|')
+  if (parts[0] === 'F') return parseForeground(parts)
+  if (parts[0] === 'X') return parseExit(parts)
+  if (parts[0] === 'V') return parseHover(parts)
   const flag = boolField(parts[1])
-  if (parts[0] === 'R') return flag === null ? null : { t: 'run', running: flag }
-  if (parts[0] === 'C') return flag === null ? null : { t: 'cursor', visible: flag }
+  if (flag === null) return null
+  if (parts[0] === 'R') return { t: 'run', running: flag }
+  if (parts[0] === 'C') return { t: 'cursor', visible: flag }
   return null
+}
+
+// ------------------------------------------------- the HOT-ZONE HIT TEST, downstream (JOS-370)
+//
+// WHAT THIS REPLACED, because the whole point is what is no longer here. A locked overlay used to
+// be `setIgnoreMouseEvents(true, {forward:true})`, and on Windows that `forward` installs a
+// low-level mouse hook (WH_MOUSE_LL) owned by the MAIN process: every mouse event on the machine
+// is then delivered through OUR message loop, so a 30 ms stall of main is a 30 ms freeze of the
+// user's cursor and of in-game mouselook — and past `LowLevelHooksTimeout` Windows silently drops
+// the hook, which killed the hover pin until the next re-lock. The hook existed for ONE reason: a
+// pinned overlay's hover sensor needed mouse MOVES to know when to take the mouse back so its pin
+// is clickable.
+//
+// So the question is asked the other way round. Main hands the watcher the RECTANGLES a locked
+// overlay reveals its chrome in, the watcher reads the cursor on its own thread and says only when
+// the answer CHANGES, and main flips the window's capture from that. Nothing of ours sits between
+// the system and a mouse event any more; a stall of ours is ours alone.
+//
+// THE ZONE SET IS SENT WHOLE, PER KEY, and that is deliberate. An incremental "zone 2 of `fight`
+// moved" protocol needs both ends to agree about how many zones a key has, and the two ends are a
+// window layout and a worker thread. One line carries everything that key currently wants watched,
+// so a key can never be half-updated and a re-publish is idempotent by string compare.
+//
+// COORDINATES ARE PHYSICAL PIXELS, like every other rectangle on this wire (`eqBoundsInDip`'s
+// note): the worker reads the cursor from Win32 and has no `screen` module to convert with, so
+// main — which does — converts on the way OUT instead.
+
+/** One hot-zone rectangle, in the physical screen pixels the wire speaks. */
+export interface HoverZone {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** "Forget every key" — the line that turns the hit test off outright. */
+export const HOVER_ZONES_CLEAR = 'Z'
+
+/** One key's WHOLE zone set as a line. An empty list is the key's own clear. */
+export function encodeHoverZones(key: string, zones: readonly HoverZone[]): string {
+  const fields = zones.flatMap((z) => [z.x, z.y, z.width, z.height].map((n) => String(Math.round(n))))
+  return ['Z', key, ...fields].join('|')
+}
+
+/** What one downstream zone line says: a key's whole set, or (key null) forget everything. */
+export interface HoverZoneUpdate {
+  readonly key: string | null
+  readonly zones: HoverZone[]
+}
+
+/**
+ * Decode one downstream line, with the upstream decoder's rule: anything malformed decodes to
+ * NOTHING rather than moving the state. A rect list that is not a multiple of four fields is a
+ * build that disagrees with this one about the protocol, and a partially-applied zone set is worse
+ * than none at all.
+ */
+/** Four integer fields per rectangle, or null the moment one of them is not one. */
+function parseZoneRects(fields: string[]): HoverZone[] | null {
+  if (fields.length % 4 !== 0) return null
+  const zones: HoverZone[] = []
+  for (let i = 0; i < fields.length; i += 4) {
+    const [x, y, width, height] = [0, 1, 2, 3].map((o) => intField(fields[i + o]))
+    if (x === null || y === null || width === null || height === null) return null
+    // A zero-area rectangle can never contain a point, so it is junk rather than a zone.
+    if (width <= 0 || height <= 0) return null
+    zones.push({ x, y, width, height })
+  }
+  return zones
+}
+
+export function parseHoverZones(line: string): HoverZoneUpdate | null {
+  const trimmed = line.replace(/\r$/, '').trim()
+  if (trimmed === HOVER_ZONES_CLEAR) return { key: null, zones: [] }
+  const parts = trimmed.split('|')
+  const key = parts[1] ?? ''
+  if (parts[0] !== 'Z' || !HOVER_KEY_RE.test(key)) return null
+  const zones = parseZoneRects(parts.slice(2))
+  return zones === null ? null : { key, zones }
+}
+
+/**
+ * Is the cursor inside this zone? Half-open on the far edges — `pointerWatch.ts pointInRect`'s
+ * rule, restated here rather than imported because that module owns a live interval and this one
+ * is what the WORKER loads.
+ */
+export function pointInHoverZone(x: number, y: number, z: HoverZone): boolean {
+  return x >= z.x && x < z.x + z.width && y >= z.y && y < z.y + z.height
+}
+
+/** One key's hot-zone answer as a line — sent ONLY on a change, like every other record here. */
+export function encodeHoverTransition(key: string, inside: boolean): string {
+  return `V|${key}|${inside ? '1' : '0'}`
 }
 
 // ------------------------------------------------------- physical pixels → DIP
@@ -534,6 +658,40 @@ export const FOREGROUND_EVERY_TICKS = 10
  */
 export const CURSOR_POLL_MS = 8
 
+/**
+ * THE THIRD CADENCE: the hot-zone hit test's period (JOS-370).
+ *
+ * 32 ms — TWO Windows timer quanta, so it is a period the platform can actually keep rather than a
+ * number that rounds up to one. MEASURED the way the two above were: `setInterval(32)` in a worker
+ * thread on this machine turns 31.2 times a second (156 ticks in 5.001 s), i.e. every ~32.0 ms,
+ * against `setInterval(33)` which snaps to the next edge at ~46.8 ms and would have made the same
+ * request cost the user a third of the budget below.
+ *
+ * WHY THIS NUMBER AND NOT THE RING'S 8. The consumer is a HUMAN REACHING FOR A PIN, not a halo
+ * tracking a pointer: what it has to beat is the moment somebody notices the chrome did not appear
+ * under their cursor. One sample plus one IPC hop plus a paint is ~50 ms worst case at this
+ * cadence, which is two display frames — and the alternative costs a timer wakeup every 8 ms for
+ * as long as a meter is pinned, which is the sort of standing cost this whole program exists to
+ * remove.
+ *
+ * WHAT IT COSTS, stated the way the split cadence above states its own (same instrument, same
+ * machine, `process.cpuUsage()` over 20 s windows with the real native surface): the coarse
+ * cursor-free loop — one foreground block every ~160 ms — costs 0.05-0.08 % of one core; the same
+ * loop with the hit test running at 32 ms over two zones costs 0.11-0.15 %. That is about 0.7 ms
+ * of CPU per second, on a thread that is not main, and it is paid ONLY while a locked overlay is
+ * on screen with EverQuest in front (`zones.size > 0` in presenceWorker.ts is the whole gate). The
+ * hook it replaces cost main a synchronous callback on EVERY mouse event on the machine.
+ */
+export const HOVER_POLL_MS = 32
+
+/**
+ * How many of the RING's fast ticks make one hover sample, when both are running. The ring asks
+ * for the platform's floor (~16 ms), so every second tick is the same ~32 ms the constant above
+ * measured — the two clocks are one clock, and the cursor is read ONCE per tick and shared
+ * (presenceWorker.ts `tick`), never sampled twice for two consumers.
+ */
+export const HOVER_EVERY_FAST_TICKS = 2
+
 /** Worst-case latency of the cursor-visibility gate: one tick that overran its quantum. */
 export const CURSOR_GATE_LATENCY_MS = WATCHER_TICK_FLOOR_MS * 2
 
@@ -908,7 +1066,7 @@ export interface PresenceWorkerInit {
 }
 
 /**
- * The two clock settings, DERIVED from whether the cursor is being watched (JOS-193).
+ * The clock settings, DERIVED from what is being watched (JOS-193, and the third lane in JOS-370).
  *
  * The fast tick exists for ONE call. Everything above is the split-cadence argument: `cursorShowing`
  * is 0.43 us and gates an 8 ms consumer, so it runs at the platform's floor while the expensive
@@ -922,14 +1080,52 @@ export interface PresenceWorkerInit {
  * (auto-hide on, ring off) gets the cheaper loop back, and the split cadence is paid for only by
  * the feature that asked for it.
  *
+ * AND THE HOT-ZONE HIT TEST IS THE THIRD LANE (JOS-370), which is a MIDDLE cadence and therefore
+ * had to be one more rung rather than a second flag on the fast one:
+ *
+ *   * with the ring ON, nothing changes at all. The loop is already at the platform's floor for
+ *     `GetCursorInfo`, and that ONE call answers both questions — is the pointer being drawn, and
+ *     where is it — so the hit test rides every second tick of a clock that was already turning.
+ *     `watchHover` cannot make this loop faster, and must not: 8 ms is the ring's number.
+ *   * with the ring OFF and a locked overlay on screen, the coarse ~160 ms tick is far too slow to
+ *     put chrome under a pointer, so the loop asks for `HOVER_POLL_MS` and the foreground block
+ *     rides every fifth tick — which is the same ~160 ms it has had since the beginning. The
+ *     expensive half of the loop is not sped up by any of this.
+ *   * with neither, the coarse single-cadence loop is exactly what it was, and `hoverEveryTicks:0`
+ *     says so in the one place the worker reads: there is no hit-test block in the loop at all.
+ *
+ * `watchHover` DEFAULTS FALSE, and that is not laziness — it is where the flag comes from. Unlike
+ * `watchCursor` (baked into `workerData` because JOS-193's ruling is that a `false` arriving one
+ * tick late is a tick the app spent in a cursor call it was told not to make), the hot zones ARRIVE
+ * AS MESSAGES and change whenever a user pins a meter or alt-tabs. A thread replacement per lock
+ * toggle would be absurd, so the worker re-derives its own cadence from whether it is currently
+ * holding any zones — presence.ts still starts it with this function's one-argument form.
+ *
  * Pure, so `tests/presence.test.mts` pins it rather than anyone re-deriving it from three constants.
  */
-export function watcherCadence(watchCursor: boolean): {
+export function watcherCadence(
+  watchCursor: boolean,
+  watchHover = false
+): {
   tickMs: number
   foregroundEveryTicks: number
+  hoverEveryTicks: number
 } {
+  const hoverEveryTicks = watchHover ? HOVER_EVERY_FAST_TICKS : 0
   if (watchCursor) {
-    return { tickMs: WATCHER_TICK_MS, foregroundEveryTicks: FOREGROUND_EVERY_TICKS }
+    return { tickMs: WATCHER_TICK_MS, foregroundEveryTicks: FOREGROUND_EVERY_TICKS, hoverEveryTicks }
   }
-  return { tickMs: WATCHER_TICK_FLOOR_MS * FOREGROUND_EVERY_TICKS, foregroundEveryTicks: 1 }
+  if (watchHover) {
+    return {
+      tickMs: HOVER_POLL_MS,
+      // …and the foreground block keeps the ~160 ms it has always had: five hover ticks.
+      foregroundEveryTicks: Math.round((WATCHER_TICK_FLOOR_MS * FOREGROUND_EVERY_TICKS) / HOVER_POLL_MS),
+      hoverEveryTicks: 1
+    }
+  }
+  return {
+    tickMs: WATCHER_TICK_FLOOR_MS * FOREGROUND_EVERY_TICKS,
+    foregroundEveryTicks: 1,
+    hoverEveryTicks: 0
+  }
 }
