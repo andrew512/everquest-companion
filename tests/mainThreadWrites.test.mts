@@ -33,8 +33,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+// The one dependency this suite reads out of node_modules. RESOLVED, never joined (AGENTS.md's
+// law): a git worktree has no local install, and a joined path ENOENTs there while the resolver
+// walks up to the install tsx itself loaded from — two workers hit exactly that in one day.
+const require = createRequire(import.meta.url)
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (p: string): string => readFileSync(join(ROOT, p), 'utf8')
@@ -197,7 +203,7 @@ test('THE OVERTURN: storeFile.ts is not on a live path, and a settings write nev
   // (b) A routine `store.set(...)` is electron-store's write, and conf has gone through the
   //     `atomically` package since v10. That writer is `atomically.writeFileSync` inside
   //     node_modules — not something this repo moves off the thread by editing its own source.
-  const conf = readFileSync(join(ROOT, 'node_modules', 'conf', 'dist', 'source', 'index.js'), 'utf8')
+  const conf = readFileSync(require.resolve('conf/dist/source/index.js'), 'utf8')
   assert.match(conf, /atomically\.writeFileSync\(/, 'conf still writes the settings file synchronously')
   assert.equal(/\bwriteFileSync\s*\(/.test(read('src/main/storeFile.ts')), false, 'and storeFile is not that writer')
 
