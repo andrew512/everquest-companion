@@ -35,7 +35,7 @@ import { IPC } from '../shared/ipc'
 import { errorLogPath, flushErrorLogSync, logError, logInfo } from './errorLog'
 import { saveUserOverlay } from './data/overlayPersistence'
 import { startQueueFlush, stopQueueFlush } from './feedback'
-import { startTelemetry, stopTelemetry } from './telemetry'
+import { flushRingSync, startTelemetry, stopTelemetry } from './telemetry'
 import { registerAppSchemes } from './appSchemes'
 import { applyGraphicsCompatibilityFlags, applyGraphicsSafeMode } from './graphics'
 import { installImageCacheProtocol } from './imageCache'
@@ -445,6 +445,13 @@ if (!gotSingleInstanceLock) {
 app.on('before-quit', () => {
   teardownStep('main:stopPresence', stopPresenceEffects)
   flushStoreForQuit()
+  // …and the analytics ring, for the same reason and on the same event (JOS-371). `sessionEnd` is
+  // recorded as the last window closes and its durable write is asynchronous now, so without this
+  // the last session's duration would be lost on every launch. A no-op when the previous write
+  // already landed. `before-quit` fires on EVERY quit path — `window-all-closed`'s own `app.quit()`,
+  // an auto-updater's `quitAndInstall`, an OS logoff — which is why it is here and not beside
+  // `stopTelemetry` in `window-all-closed`.
+  teardownStep('main:flushTelemetryRing', flushRingSync)
   logTopmostSavings()
   // LAST, and it must stay last: the error log appends asynchronously now (JOS-371), so every line
   // any step above just wrote — including a teardown step that threw into `teardownStep`'s own

@@ -47,6 +47,7 @@
 // (`tests/telemetryRingDurability.test.mts`).
 
 import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdir, open, rename, rm } from 'node:fs/promises'
 
 /**
  * Every `node:fs` call this module makes, as ONE injectable object.
@@ -130,6 +131,107 @@ export function writeFileDurable(dir: string, path: string, data: string, io: Du
     }
     try {
       io.remove(tmp)
+    } catch {
+      // Nothing further to try. A later successful write truncates it anyway.
+    }
+    throw err
+  }
+}
+
+// ------------------------------------------------------------- the same write, off the thread
+//
+// WHY THE WHOLE THING WAS SYNCHRONOUS (JOS-265, above): because there was one writer on one thread
+// and a sync call is the shortest way to spell "open, write, flush, rename, in that order". The
+// ORDER is the durability argument and nothing about it changes below. What changes is WHOSE thread
+// the four syscalls run on.
+//
+// AND THE FSYNC STAYS — it is the point (see the note above about the two installs that filed
+// `telemetry.json parse failed`). `FileHandle.sync()` is `fsync(2)` exactly as `fsyncSync` is; the
+// only difference is that libuv runs it on a threadpool thread and resolves a promise, so the main
+// process's one thread is not held for the duration of a disk flush. On a volume that is refusing
+// writes — the situation this module was BUILT for — that duration is the whole problem: an fsync
+// against a full or stalling disk is precisely the syscall that takes milliseconds instead of
+// microseconds, and while an overlay holds the mouse a main-thread stall is a system-wide one.
+//
+// SERIALISATION IS THE CALLER'S JOB, and it has to be, because two async writes really CAN
+// interleave where two sync ones could not (`ring.ts`'s header says how it keeps exactly one in
+// flight). That is the one property the sync version gave away for free and this one does not.
+
+/** The async twin of `DurableIo`, for the same reason the sync one exists: a test has to be able to
+ *  fail an individual step the way a full disk fails it, and then read back what was left behind. */
+export interface AsyncDurableIo {
+  mkdir(dir: string): Promise<void>
+  /** Create/truncate for writing. The handle owns write/sync/close, because an async fsync needs
+   *  the handle rather than a bare descriptor. */
+  open(path: string): Promise<AsyncDurableHandle>
+  rename(from: string, to: string): Promise<void>
+  /** Best-effort unlink; missing is not an error. */
+  remove(path: string): Promise<void>
+}
+
+/** One open scratch file. `sync` is `fsync(2)` — THE step a plain temp+rename is missing. */
+export interface AsyncDurableHandle {
+  write(data: string): Promise<void>
+  sync(): Promise<void>
+  close(): Promise<void>
+}
+
+/** The real thing, over `node:fs/promises` — every call lands in libuv's threadpool. */
+export const nodeIoAsync: AsyncDurableIo = {
+  mkdir: async (dir) => {
+    await mkdir(dir, { recursive: true })
+  },
+  open: async (path) => {
+    const fh = await open(path, 'w')
+    return {
+      write: async (data) => {
+        await fh.writeFile(data, 'utf8')
+      },
+      sync: () => fh.sync(),
+      close: () => fh.close()
+    }
+  },
+  rename: (from, to) => rename(from, to),
+  remove: (path) => rm(path, { force: true })
+}
+
+/**
+ * `writeFileDurable`, step for step, off the main thread.
+ *
+ * The order is the sync version's order and for the sync version's reasons: the handle is closed
+ * BEFORE the temp is removed (Windows will not unlink a file with an open handle), the flush happens
+ * BEFORE the rename (that is the point of it), and the rename happens LAST so the live path only
+ * ever names a complete file.
+ *
+ * Rejects with whatever failed. The caller decides what a failed write is worth — from here it is
+ * not knowable, and this module has no logger to decide it with.
+ */
+export async function writeFileDurableAsync(
+  dir: string,
+  path: string,
+  data: string,
+  io: AsyncDurableIo = nodeIoAsync
+): Promise<void> {
+  const tmp = tempPathFor(path)
+  await io.mkdir(dir)
+  let fh: AsyncDurableHandle | null = null
+  try {
+    fh = await io.open(tmp)
+    await fh.write(data)
+    await fh.sync()
+    await fh.close()
+    fh = null
+    await io.rename(tmp, path)
+  } catch (err) {
+    if (fh !== null) {
+      try {
+        await fh.close()
+      } catch {
+        // The descriptor is lost either way; the throw below is the failure worth reporting.
+      }
+    }
+    try {
+      await io.remove(tmp)
     } catch {
       // Nothing further to try. A later successful write truncates it anyway.
     }

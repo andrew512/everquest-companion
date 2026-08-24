@@ -295,7 +295,7 @@ test('THE WIRING: the file sink is asynchronous, and the only sync writes left a
   const src = read('src/main/errorLog.ts')
   assert.equal(src.match(/\bawait appendFile\(/g)?.length, 1, 'one async appender')
   assert.match(src, /let draining = false/)
-  assert.match(src, /if \(draining\) return\n {2}draining = true\n {2}void drain\(\)/)
+  assert.match(src, /if \(draining\) return\r?\n {2}draining = true\r?\n {2}void drain\(\)/)
   // …and the 1 MB rule did not go anywhere: both writers ask it, both write the SAME notice, and
   // the notice is spelled once so they cannot drift apart.
   assert.equal(src.match(/MAX_LOG_BYTES/g)?.length, 3, 'the ceiling, and one test of it per writer')
@@ -312,8 +312,8 @@ test('THE WIRING: the file sink is asynchronous, and the only sync writes left a
 
   // …called from the two places where "later" may never arrive, and from nowhere else in src/main.
   const guards = read('src/main/crashGuards.ts')
-  assert.match(guards, /logError\('main:uncaughtException', err\)\n {2}flushErrorLogSync\(\)/)
-  assert.match(guards, /logError\('main:unhandledRejection', reason\)\n {2}flushErrorLogSync\(\)/)
+  assert.match(guards, /logError\('main:uncaughtException', err\)\r?\n {2}flushErrorLogSync\(\)/)
+  assert.match(guards, /logError\('main:unhandledRejection', reason\)\r?\n {2}flushErrorLogSync\(\)/)
   // The quit final is LAST in `before-quit`, so a teardown step's own error line is in the batch.
   const index = read('src/main/index.ts')
   const beforeQuit = index.slice(index.indexOf("app.on('before-quit'"))
