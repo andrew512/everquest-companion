@@ -65,6 +65,10 @@ import { logError, logInfo } from './errorLog'
 // reasons: it is plain data that knows nothing about telemetry, and a leaf cannot join the import
 // cycle that would otherwise form between this file and the seam that drains it.
 import { startLiveProbe, stopLiveProbe } from './livePerfProbe'
+// …and the half that says WHO (JOS-458), started and stopped in lockstep with it and a leaf for
+// the identical two reasons. The two measurements are one window on purpose: a stall's magnitude
+// and its owner have to describe the same seconds or neither can explain the other.
+import { startStallAttribution, stopStallAttribution } from './perfAttribution'
 // The fleet half of the same measurement (JOS-57). Through the telemetry FAÇADE, like every other
 // producer in this app — the wiring may not reach around it into the ring.
 import { noteStartupReplay, scheduleSetupSnapshot } from './telemetry'
@@ -265,6 +269,13 @@ export function markStartupPhase(phase: StartupPhase, opts: MarkOptions = {}): v
     // one on a thread of its own — because a single clock can prove it was late and can never say
     // who made it late, and the freezes this hunts are reported on a machine we do not own.
     startLiveProbe()
+    // …and with them the instrument that answers WHO (JOS-458). Same instant, same window, same
+    // argument: the two clocks measure how late main was, the GC observer and the six seam
+    // brackets measure what main was doing, and a reading that covered different seconds than the
+    // lateness beside it could not explain it. It starts here rather than at `appReady` for
+    // JOS-367's reason as well — a replay's own fold is not a live stall, and the fold is already
+    // measured, by the block probe, from `appReady` to exactly this mark.
+    startStallAttribution()
   }
   if (startupProfile().complete) writeStartupProfile()
 }
@@ -556,5 +567,8 @@ export function stopPerfSampler(): void {
 export function stopPerf(): void {
   stopPerfSampler()
   stopLiveProbe()
+  // The GC observer goes with them (JOS-458). It disconnects only — the tallies are left standing
+  // so a `sessionEnd` report composed during the same teardown still carries its last interval.
+  stopStallAttribution()
   flushStartupProfile()
 }

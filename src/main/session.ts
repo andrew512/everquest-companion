@@ -69,6 +69,8 @@ import { markFunnelStep, noteLinesParsed } from './telemetry'
 import { noteTailLine, stopWatchingForQuietSwitch, watchForQuietSwitch } from './switchNudge'
 import { refreshPresenceEffects, suspendCursorStream } from './presenceEffects'
 import { setHistoricalReplayRunning } from './replayGate'
+// A leaf (see its header) — the two dump loads below are timed seams.
+import { timeSeam } from './perfAttribution'
 // WHO OWNS THE WORLD RIGHT NOW (JOS-457). Every switch takes a turn and re-asks `owns()` after
 // every point it could have been suspended; a turn that has lost touches nothing shared and
 // returns. The whole argument — why a generation and not a queue or a mutex — is in that file.
@@ -791,22 +793,34 @@ export function inventoryWrittenAt(file: string): number | null {
  * A missing dump is silence, not an error: on a machine where `/outputfile inventory` has never
  * been typed there is nothing to load, and the surfaces already render that as the never-run
  * state (the `/outputfile` registry's own line).
+ *
+ * A TIMED SEAM (JOS-458): a synchronous file read plus a parse plus a clicky re-derivation over
+ * the item corpus, on main, one statement before the rebuild fan-out. The STALENESS GUARD is
+ * outside the bracket and the missing-file arm is inside it, deliberately — a call that was
+ * refused for the wrong character did no work and must not be counted, while a call that went to
+ * the filesystem and found nothing DID, and on a cold disk that probe is the measurement.
  */
 function loadInventoryNow(ref: CharacterRef, why: 'startup' | 'watch'): void {
-  if (character?.logPath !== ref.logPath) return
-  const res = loadInventory(character.name, character.server, inventoryWrittenAt)
-  if (!res) return
-  setInventory(activeCharId(), res.counts, res.source)
-  // A dump is the ONLY evidence that a cast-less firing was a click you made (JOS-438), so a
-  // reload re-derives the set. The live tail folds against the new one from its next line; the
-  // fold that has already happened keeps whatever the persisted dump said, which is the same
-  // rule every other dump-derived surface follows.
-  installClickies()
-  logInfo(
-    `[everquest-companion] Inventory ${why === 'startup' ? 'loaded at startup' : 'auto-reloaded'}: ${res.path}`
-  )
-  sendToMain(IPC.onInventoryReload, { path: res.path, loadedAt: res.loadedAt })
-  sendToMain(IPC.onProgress, getProgress(activeCharId()))
+  // Captured rather than re-read inside the bracket: `character` is module-level and mutable, so
+  // a closure cannot carry the guard's narrowing, and re-reading it would ALSO be a second read of
+  // a value the guard has already ruled on.
+  const who = character
+  if (who?.logPath !== ref.logPath) return
+  timeSeam('inventoryLoad', () => {
+    const res = loadInventory(who.name, who.server, inventoryWrittenAt)
+    if (!res) return
+    setInventory(activeCharId(), res.counts, res.source)
+    // A dump is the ONLY evidence that a cast-less firing was a click you made (JOS-438), so a
+    // reload re-derives the set. The live tail folds against the new one from its next line; the
+    // fold that has already happened keeps whatever the persisted dump said, which is the same
+    // rule every other dump-derived surface follows.
+    installClickies()
+    logInfo(
+      `[everquest-companion] Inventory ${why === 'startup' ? 'loaded at startup' : 'auto-reloaded'}: ${res.path}`
+    )
+    sendToMain(IPC.onInventoryReload, { path: res.path, loadedAt: res.loadedAt })
+    sendToMain(IPC.onProgress, getProgress(activeCharId()))
+  })
 }
 
 /**
@@ -821,16 +835,21 @@ function loadInventoryNow(ref: CharacterRef, why: 'startup' | 'watch'): void {
  * new channel unnecessary.
  */
 function loadAchievementsNow(ref: CharacterRef, why: 'startup' | 'watch'): void {
-  if (character?.logPath !== ref.logPath) return
-  const res = loadAchievements(character.name, character.server)
-  if (!res) return
-  setAchievements(activeCharId(), res.unlocks, res.source)
-  logInfo(
-    `[everquest-companion] Achievements ${
-      why === 'startup' ? 'loaded at startup' : 'auto-reloaded'
-    }: ${res.path} (${String(res.unlocks.length)} class-unlock rewards earned)`
-  )
-  sendToMain(IPC.onProgress, getProgress(activeCharId()))
+  const who = character
+  if (who?.logPath !== ref.logPath) return
+  // A TIMED SEAM, on `loadInventoryNow`'s terms exactly — same shape of work, same second file,
+  // same place in `tailCharacter`, and the guard is likewise outside the bracket.
+  timeSeam('achievementsLoad', () => {
+    const res = loadAchievements(who.name, who.server)
+    if (!res) return
+    setAchievements(activeCharId(), res.unlocks, res.source)
+    logInfo(
+      `[everquest-companion] Achievements ${
+        why === 'startup' ? 'loaded at startup' : 'auto-reloaded'
+      }: ${res.path} (${String(res.unlocks.length)} class-unlock rewards earned)`
+    )
+    sendToMain(IPC.onProgress, getProgress(activeCharId()))
+  })
 }
 
 /** Follow the achievements dump — `startInventoryWatch`'s twin, same registry, same staleness guard. */
