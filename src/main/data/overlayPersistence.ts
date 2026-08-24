@@ -30,7 +30,7 @@
 import { app } from 'electron'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { writeFileDurable } from '../telemetry/durableWrite'
+import { writeFileDurable, writeFileDurableAsync } from '../telemetry/durableWrite'
 import type { MessageOverlay } from '../../shared/types'
 import {
   BASELINE_SOURCE,
@@ -83,14 +83,65 @@ export function loadUserSources(): OverlaySourceCounts[] {
  * ledger (JOS-419) write through, so the file on disk is either the last complete register or the
  * new one and never a half of either.
  */
-export function saveUserOverlay(register: OverlayRegister): void {
+// OFF THE MAIN THREAD SINCE JOS-371, and the ONE sync survivor is the quit final.
+//
+// WHY IT WAS SYNCHRONOUS: because `writeFileDurable` was, and nothing here needed it to be
+// anything else. What that meant in practice is that every sixty seconds — `session.ts`'s tick,
+// for the whole time the app is open — the main process stopped to write a file and fsync it.
+// While an overlay holds the mouse (the whole point of JOS-371), a main-thread stall is a
+// system-wide one, and an fsync is exactly the syscall that goes from microseconds to milliseconds
+// on a busy volume.
+//
+// WHAT GUARANTEES THE SAME ATOMICITY: the same temp+fsync+rename, in the same order, through
+// `writeFileDurableAsync` — the file on disk is still either the last complete register or the new
+// one and never a half of either. What the async writer does NOT get for free is the guarantee that
+// two writes cannot overlap, and two overlapping writes share ONE `.tmp` path, so `writing` is the
+// latch: a save arriving while one is in flight is dropped rather than queued. That costs at most
+// one 60-second window of a register that only ever accretes, and the next tick writes the superset.
+
+/** True while a durable write is in libuv's threadpool. See the note above: one at a time. */
+let writing = false
+
+/** The file this register serialises to. One spelling, so the async saver and the quit final can
+ *  never write two different shapes of the same document. */
+function overlayFile(register: OverlayRegister): string {
   const file: OverlayRegisterFile = {
     version: OVERLAY_REGISTER_VERSION,
     updatedAt: register.updatedAt,
     sources: persistableSources(register)
   }
+  return JSON.stringify(file)
+}
+
+export function saveUserOverlay(register: OverlayRegister): void {
+  if (writing) return
+  writing = true
+  const data = overlayFile(register)
+  void writeFileDurableAsync(app.getPath('userData'), userOverlayPath(), data)
+    .catch(() => {
+      // Non-fatal — the overlay is a nicety, not required state.
+    })
+    .finally(() => {
+      writing = false
+    })
+}
+
+/**
+ * THE QUIT FINAL (JOS-371) — the documented synchronous survivor, called from `window-all-closed`
+ * so the final session's observations are not lost between debounced saves. That teardown step
+ * already existed and was already the last save of a run; all that changed is that it is now the
+ * only one that blocks.
+ *
+ * IT STANDS DOWN WHILE A WRITE IS IN FLIGHT, for the reason the telemetry ring's final does: the
+ * two writers share one `.tmp` path, so starting a sync write on top of a threadpool write is two
+ * writers filling one scratch file with one of them renaming mid-fill — a torn register, which is
+ * the exact failure temp+fsync+rename exists to prevent. The in-flight write carries everything up
+ * to a moment ago; a last minute of learned messages is re-mined by the next fold anyway (JOS-231).
+ */
+export function saveUserOverlaySync(register: OverlayRegister): void {
+  if (writing) return
   try {
-    writeFileDurable(app.getPath('userData'), userOverlayPath(), JSON.stringify(file))
+    writeFileDurable(app.getPath('userData'), userOverlayPath(), overlayFile(register))
   } catch {
     // Non-fatal — the overlay is a nicety, not required state.
   }

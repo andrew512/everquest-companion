@@ -33,7 +33,7 @@ import { OWNER_TOOLS } from './ownerTools'
 import { app, BrowserWindow, protocol, session } from 'electron'
 import { IPC } from '../shared/ipc'
 import { errorLogPath, flushErrorLogSync, logError, logInfo } from './errorLog'
-import { saveUserOverlay } from './data/overlayPersistence'
+import { saveUserOverlaySync } from './data/overlayPersistence'
 import { startQueueFlush, stopQueueFlush } from './feedback'
 import { flushRingSync, startTelemetry, stopTelemetry } from './telemetry'
 import { registerAppSchemes } from './appSchemes'
@@ -546,7 +546,7 @@ app.on('window-all-closed', () => {
   teardownStep('main:stopPerf', stopPerf)
   // Flush the learned message overlay one last time so the final session's observations
   // aren't lost between debounced saves (Task #36).
-  teardownStep('main:saveOverlay', () => saveUserOverlay(buffsModule.overlayRegister()))
+  teardownStep('main:saveOverlay', () => saveUserOverlaySync(buffsModule.overlayRegister()))
   // Dev only, and null in every other build: a live DSQL socket is not a timer and would hold
   // the process open long past the last window.
   teardownStep('main:triage', () => {
