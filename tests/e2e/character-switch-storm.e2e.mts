@@ -59,8 +59,10 @@
  * Run: `npm run test:e2e -- character-switch-storm`.
  */
 import type { ElectronApplication, Page } from 'playwright-core'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import {
+  ARTIFACTS,
   buildIfStale,
   check,
   dumpArtifacts,
@@ -99,6 +101,16 @@ const PAD_BATCH = 1_000
  */
 const STORM_PICKS = 8
 const STORM_GAP_MS = 200
+
+/**
+ * G4's target (JOS-458): a superseded pick should be told so in under half a second.
+ *
+ * Half a second is the owner-ratified figure and it is a UI number rather than an engine one — it
+ * is roughly where a click stops feeling answered and starts feeling ignored, which is the
+ * complaint G4 exists to prevent. The spec REPORTS against it rather than failing on it; see
+ * `reportPreemption` for why a harness measurement cannot yet carry that verdict.
+ */
+const PREEMPT_TARGET_MS = 500
 
 /** The seeded boss-defeat alert's own cooldown (`DEFAULT_COOLDOWN_MS`, features/alerts/player.tsx),
  *  waited out ONCE after the control kill so a quiet storm means SUPPRESSED, not rate-limited. */
@@ -248,6 +260,16 @@ function padFile(path: string, lines: number): number {
 interface StormPick {
   ok: boolean
   name: string
+  /**
+   * PICK-TO-PREEMPTION-EFFECTIVE, in milliseconds (JOS-458, goal G4): from the instant this pick
+   * was handed to `setCharacter` to the instant its promise came back.
+   *
+   * For a DROPPED pick that is the whole measurement — how long the app took to tell a person
+   * their click had been superseded, which is the number G4 puts a 500 ms target on. For the pick
+   * that WON it is something else entirely (the full fold it then performed), which is why the
+   * readout below reads this column only over the dropped ones and says so.
+   */
+  ms: number
 }
 
 interface StormState {
@@ -273,16 +295,27 @@ function startStorm(page: Page, picks: readonly string[], gapMs: number): Promis
         __eqDeltas?: number
         eq: { setCharacter: (x: string) => Promise<{ ok: boolean; character?: { name?: string } }> }
       }
-      const state = { done: false, deltasAtEnd: -1, picks: [] as { ok: boolean; name: string }[] }
+      const state = {
+        done: false,
+        deltasAtEnd: -1,
+        picks: [] as { ok: boolean; name: string; ms: number }[]
+      }
       w.__eqStorm = state
       void (async () => {
-        const inFlight: Promise<{ ok: boolean; character?: { name?: string } }>[] = []
+        const inFlight: Promise<{ ok: boolean; character?: { name?: string }; ms: number }>[] = []
         for (const p of paths) {
-          inFlight.push(w.eq.setCharacter(p))
+          // STAMPED HERE, ONE STATEMENT BEFORE THE CALL, and read again in the `then` — so the
+          // measurement is the round trip this pick actually experienced and not the storm's
+          // wall clock minus a gap the driver itself chose. `performance.now()` because the
+          // renderer has one and it is monotonic; nothing crosses a process boundary with it.
+          const at = performance.now()
+          inFlight.push(
+            w.eq.setCharacter(p).then((r) => ({ ...r, ms: Math.round(performance.now() - at) }))
+          )
           await new Promise((r) => setTimeout(r, gap))
         }
         const results = await Promise.all(inFlight)
-        state.picks = results.map((r) => ({ ok: r.ok, name: r.character?.name ?? '' }))
+        state.picks = results.map((r) => ({ ok: r.ok, name: r.character?.name ?? '', ms: r.ms }))
         state.deltasAtEnd = w.__eqDeltas ?? 0
         state.done = true
       })()
@@ -294,7 +327,11 @@ function startStorm(page: Page, picks: readonly string[], gapMs: number): Promis
 function stormState(page: Page): Promise<StormState> {
   return page.evaluate(() => {
     const w = window as unknown as {
-      __eqStorm?: { done: boolean; deltasAtEnd: number; picks: { ok: boolean; name: string }[] }
+      __eqStorm?: {
+        done: boolean
+        deltasAtEnd: number
+        picks: { ok: boolean; name: string; ms: number }[]
+      }
       __eqDeltas?: number
     }
     const s = w.__eqStorm
@@ -305,6 +342,62 @@ function stormState(page: Page): Promise<StormState> {
       picks: s?.picks ?? []
     }
   })
+}
+
+/**
+ * PREEMPTION LATENCY (JOS-458, goal G4): print it, and write it down per run.
+ *
+ * WHAT IT MEASURES AND WHY ONLY THE DROPPED PICKS. A storm's last pick WINS, and its round trip is
+ * the whole fold it went on to perform — seconds, legitimately. Every other pick was superseded,
+ * and the question G4 asks is how long a person waits to be TOLD that. Averaging the two together
+ * would produce a number that is neither, and that grows with the size of the log.
+ *
+ * IT IS REPORTED, NOT ASSERTED, and the reason is the same one the bench's post-fold window gives:
+ * this measurement rides a harness whose window never composites and whose picks are fired by a
+ * loop rather than a hand. The number is real and comparable run over run — which is what the
+ * artifact is for — but a red check on a 500 ms target measured under those conditions would be
+ * a claim about G4 that this spec cannot make. Raising it to a check is a decision for the owner
+ * once there are runs on the board to set the threshold from.
+ */
+function reportPreemption(picks: readonly StormPick[]): void {
+  const dropped = picks.filter((p) => !p.ok).map((p) => p.ms)
+  if (dropped.length === 0) {
+    note('preemption latency: no pick was preempted in this run — nothing to measure')
+    return
+  }
+  const sorted = [...dropped].sort((a, b) => a - b)
+  const worst = sorted[sorted.length - 1]
+  const median = sorted[Math.floor(sorted.length / 2)]
+  note(
+    `preemption latency (pick → dropped): worst ${String(worst)}ms, median ${String(median)}ms, ` +
+      `over ${String(dropped.length)} preempted picks (G4 target <${String(PREEMPT_TARGET_MS)}ms) ` +
+      `— ${worst < PREEMPT_TARGET_MS ? 'inside' : 'OUTSIDE'} target`
+  )
+  // A LEDGER LINE, the bench's shape (`.bench/replay.jsonl`), so a change to the switch controller
+  // is comparable against the runs before it instead of against a number somebody remembers. It
+  // goes to the run's own artifact directory rather than a shared file: specs run in parallel, and
+  // ARTIFACTS is already per-run-per-spec for exactly that reason.
+  try {
+    mkdirSync(ARTIFACTS, { recursive: true })
+    appendFileSync(
+      join(ARTIFACTS, 'preemption.jsonl'),
+      `${JSON.stringify({
+        ts: new Date().toISOString(),
+        picks: picks.length,
+        gapMs: STORM_GAP_MS,
+        preempted: dropped.length,
+        worstMs: worst,
+        medianMs: median,
+        allMs: sorted,
+        winnerMs: picks[picks.length - 1]?.ms ?? null,
+        targetMs: PREEMPT_TARGET_MS
+      })}\n`,
+      'utf8'
+    )
+    note(`preemption ledger: ${join(ARTIFACTS, 'preemption.jsonl')}`)
+  } catch {
+    // A ledger that could not be written is not a failing spec — the number is already printed.
+  }
 }
 
 /** The toast overlay window (the top-centre announcement strip), which defaults ON. */
@@ -400,6 +493,9 @@ async function drive(page: Page, strip: Page, log: FixtureLog, otherPath: string
   )
   const last = state.picks[STORM_PICKS - 1]
   check('the LAST pick is the one that won', last.ok && last.name === 'Primitive', JSON.stringify(last))
+
+  // ── G4: HOW FAST A SUPERSEDED CLICK IS TOLD SO (JOS-458) ────────────────────────────────────
+  reportPreemption(state.picks)
 
   const attached = await settle(
     () =>
