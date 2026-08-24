@@ -125,6 +125,62 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.9.0',
+    date: '2026-08-23',
+    entries: [
+      {
+        kind: 'new',
+        text: 'The Leveling tab has a new right-hand readout: of every spell you own, what is worth casting at the level you are looking at. Five tabs - DD, DoT, AOE, Heal, HoT - each a table you can sort by dps, total, mana, or per-mana efficiency, with the same level arrows the panel beside it has.'
+      },
+      {
+        kind: 'new',
+        text: 'It answers the question the spell list never could: a spell gained at 18 is read at YOUR level, so a ramping nuke shows what it hits for now, not what it hit for when you bought it. The per-second figures include each spell’s re-use timer, so a slow-recast bomb and a spammable nuke are finally on one honest scale.'
+      },
+      {
+        kind: 'new',
+        text: 'It knows which spells you have leveled with motes - your log already says so - and shows yours: VIII on those rows with the damage read at that rank. A simulate slider lifts the whole table to any rank, so you can ask whether leveling a different spell would beat the one you have. The scaling was measured from real combat logs, not guessed.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Rain spells finally count all three waves - Frost Storm is 1,536 damage on one target, not the 512 the wiki line says - and the AOE tab prices every area spell at its real max target count from your own game files, with a hits column so the arithmetic is visible. Searching the readout reaches every class, so you can window-shop outside your own.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'If your gear carries a damage or healing focus - including one socketed as an exaltation - the readout and the spell card now apply it to every spell inside its level range, and name the item doing it.'
+      },
+      {
+        kind: 'new',
+        text: 'The August 18 Mistmoore rework is in the data: the new loot with its effects, Princess Cherista’s real drop list, and the reworked named spawns - Cherista’s Fangs and its Lifebite proc included.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Healing-over-time spells read their real numbers now. The wiki wrote the base of a level curve and dropped the curve on a handful of pages - Ethereal Cleansing showed 40 total healing where the game heals about 400 - and your game’s own spell file settles it.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The Gear tab’s Owned column no longer claims items you auto-sold at the corpse. Looted-and-sold in one line means you never held it.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A summoned pet’s kills are credited from the moment your first buff lands on it, not from the first time it happens to speak. Four of a necromancer’s kills in one Hate session were going uncounted.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Dragging a selection on the Level-over-time chart now clips to where your log actually ends, and when the stats panel is showing only one instance tier of a zone it says so - 6m of 1h 42m selected, this tier only - instead of quietly reading a farming session as fifteen idle minutes.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Sky data caught up with the wiki’s restructure: quest givers are back on every test, the Bard reward is spelled Spear of Harmony everywhere, and Wind Rune Ozah’s real dropper - Protector of Sky - is on its card.'
+      }
+    ]
+  },
+  {
     version: '1.8.0',
     date: '2026-08-21',
     entries: [
