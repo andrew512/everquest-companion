@@ -273,12 +273,17 @@ export function markStartupPhase(phase: StartupPhase, opts: MarkOptions = {}): v
     // one on a thread of its own — because a single clock can prove it was late and can never say
     // who made it late, and the freezes this hunts are reported on a machine we do not own.
     startLiveProbe()
-    // …and with them the instrument that answers WHO (JOS-458). Same instant, same window, same
-    // argument: the two clocks measure how late main was, the GC observer and the six seam
-    // brackets measure what main was doing, and a reading that covered different seconds than the
-    // lateness beside it could not explain it. It starts here rather than at `appReady` for
-    // JOS-367's reason as well — a replay's own fold is not a live stall, and the fold is already
-    // measured, by the block probe, from `appReady` to exactly this mark.
+    // …and with them the GC half of the instrument that answers WHO (JOS-458). Same instant, same
+    // window, same argument as the probes beside it: `gc` is a POPULATION the fleet reads as a
+    // rate, and a 1.4M-event fold's garbage is nothing like a running session's, so mixing a boot
+    // into it would move every install's numbers by an amount that depends on the size of its log.
+    //
+    // THE SEAM BRACKETS ARE NOT STARTED HERE AND DO NOT NEED TO BE — they record from process
+    // start, deliberately, because a per-seam max is not a distribution and because the launch's
+    // own first `registryFlush` and `worldRebuilt` fire one statement before THIS MARK is reached.
+    // Gating them on it would have excluded the cold fan-out, which is the single most interesting
+    // instance of the seam the ticket suspects most. `perfAttribution.ts`'s header has the full
+    // argument.
     startStallAttribution()
   }
   if (startupProfile().complete) writeStartupProfile()

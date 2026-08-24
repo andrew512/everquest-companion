@@ -18,6 +18,27 @@
 //     is known to do bounded-but-large work on its own loop. A seam never entered reports NOTHING
 //     — absence is the reading that clears it.
 //
+// ============================ THE TWO HALVES START AT DIFFERENT TIMES ============================
+// AND THAT IS DELIBERATE RATHER THAN AN OVERSIGHT, so it is stated where a reader will look:
+//
+//   * THE SEAM BRACKETS ARE LIVE FROM PROCESS START. `timeSeam` records unconditionally; nothing
+//     gates it on `startStallAttribution`. That is the correct behaviour and not a leak, because
+//     a seam tally is a PER-SEAM MAX AND COUNT, never a distribution — the argument that keeps the
+//     lateness probe out of the fold (JOS-367: a replay's own fold is not a live stall, and a
+//     population mixing them answers neither question) simply does not apply to a max. And the
+//     launch's OWN first `registryFlush` and `worldRebuilt` happen at the end of `tailCharacter`,
+//     one statement before `startTailing()` resolves — i.e. BEFORE `markStartupPhase('replayDone')`
+//     is even called. Those two are the cold fan-out: the single most interesting instance of the
+//     seam this ticket suspects most. Gating the brackets on the mark would have silently excluded
+//     exactly them.
+//   * THE GC OBSERVER STARTS AT `replayDone`, beside `startLiveProbe`. A 1.4M-event fold generates
+//     enormous garbage that is nothing like a running session's, and `gc` IS a population — the
+//     fleet reads `gcPauses` over `gcReports`. Mixing a boot into that would move every install's
+//     numbers by an amount that depends on how big its log is.
+//
+// The consequence, stated plainly: the FIRST drained interval of a session carries seam readings
+// from the launch and GC readings only from after it. Both are honest about their own window.
+//
 // A LEAF, LIKE `livePerfProbe.ts` AND `log/tailIoStats.ts`, AND FOR THE SAME TWO REASONS. It is
 // plain data in memory with no idea the user's telemetry switch exists (the telemetry seam drains
 // it and applies the gate, once, where every other producer does), and it must not join an import
@@ -188,10 +209,12 @@ function noteGcEntry(entry: PerformanceEntry): void {
 // ---- lifecycle -------------------------------------------------------------------------------
 
 /**
- * Start the GC observer. Idempotent, and called from `markStartupPhase('replayDone')` beside
- * `startLiveProbe()` — the same moment, for the same reason JOS-367 chose it: a replay's own fold
- * is not a live stall, and a population that mixed the two could answer neither question. The
- * startup fold is already measured, by the block probe, from `appReady` to exactly here.
+ * Start THE GC OBSERVER — and only it; the seam brackets have been recording since process start
+ * (see the header for why the two halves differ, and why that is the right way round).
+ *
+ * Idempotent, and called from `markStartupPhase('replayDone')` beside `startLiveProbe()` — the
+ * same moment, for the same reason JOS-367 chose it: a replay's own fold is not a live stall, and
+ * a population that mixed the two could answer neither question.
  *
  * A platform that refuses the observer is NOT an error the user should hear about and not a reason
  * to lose the seam readings: `gcTally` simply stays `null`, and absent is a documented answer

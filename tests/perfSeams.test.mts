@@ -180,6 +180,20 @@ test('the seam drain is a DELTA: the second read of an unchanged interval is nul
   resetStallAttribution()
 })
 
+test('THE SEAM BRACKETS RECORD BEFORE THE OBSERVER STARTS — the cold fan-out is not excluded', () => {
+  // `startStallAttribution` is never called here, and that is the assertion: the launch's own
+  // first `registryFlush` and `worldRebuilt` fire one statement before
+  // `markStartupPhase('replayDone')` reaches it, so a bracket gated on the observer would have
+  // silently dropped exactly the cold fan-out this ticket suspects most.
+  resetStallAttribution()
+  noteSeam('worldRebuilt', 900, NOW)
+  const tally = takeSeamTally()
+  assert.equal(tally?.worldRebuilt?.maxMs, 900)
+  // …while the GC half, which IS a population the fleet reads as a rate, is still absent.
+  assert.equal(takeGcTally(), null)
+  resetStallAttribution()
+})
+
 test('the GC drain is null while the observer is not running, and zeros once it is', () => {
   resetStallAttribution()
   // `startStallAttribution` is deliberately NOT called: this asserts the absent arm, which is the
