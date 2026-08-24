@@ -32,7 +32,7 @@ import { E2E } from './e2e'
 import { OWNER_TOOLS } from './ownerTools'
 import { app, BrowserWindow, protocol, session } from 'electron'
 import { IPC } from '../shared/ipc'
-import { errorLogPath, logError, logInfo } from './errorLog'
+import { errorLogPath, flushErrorLogSync, logError, logInfo } from './errorLog'
 import { saveUserOverlay } from './data/overlayPersistence'
 import { startQueueFlush, stopQueueFlush } from './feedback'
 import { startTelemetry, stopTelemetry } from './telemetry'
@@ -446,6 +446,14 @@ app.on('before-quit', () => {
   teardownStep('main:stopPresence', stopPresenceEffects)
   flushStoreForQuit()
   logTopmostSavings()
+  // LAST, and it must stay last: the error log appends asynchronously now (JOS-371), so every line
+  // any step above just wrote — including a teardown step that threw into `teardownStep`'s own
+  // `logError` — is still in a queue that this process may never turn the event loop for again.
+  // ONE `appendFileSync` puts the lot on disk. It is the documented quit final; `crashGuards.ts`
+  // holds the other one, and there are no others. Called directly rather than through
+  // `teardownStep`, which would answer a failure by writing one more line into the queue that was
+  // just emptied; `flushErrorLogSync` guards its own I/O and cannot throw.
+  flushErrorLogSync()
 })
 
 /**
