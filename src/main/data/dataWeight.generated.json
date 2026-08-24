@@ -3,37 +3,37 @@
     {
       "file": "src/main/data/items.json",
       "bytes": 8751290,
-      "parseMs": 28,
+      "parseMs": 29,
       "heapMb": 20.3
     },
     {
       "file": "src/main/data/messageOverlay.baseline.json",
       "bytes": 410455,
-      "parseMs": 1.1,
+      "parseMs": 1.8,
       "heapMb": 0.7
     },
     {
       "file": "src/main/data/pageEra.json",
       "bytes": 233804,
-      "parseMs": 1.4,
+      "parseMs": 1.3,
       "heapMb": 0.7
     },
     {
       "file": "src/main/data/resistBaseline.json",
-      "bytes": 969399,
+      "bytes": 969398,
       "parseMs": 2.3,
       "heapMb": 1.7
     },
     {
       "file": "src/main/data/spellLines.json",
-      "bytes": 202839,
+      "bytes": 191748,
       "parseMs": 0.4,
       "heapMb": 0.2
     },
     {
       "file": "src/main/data/spells.json",
       "bytes": 1071438,
-      "parseMs": 1.6,
+      "parseMs": 1.7,
       "heapMb": 1
     },
     {

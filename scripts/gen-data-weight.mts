@@ -77,7 +77,13 @@ const retained: unknown[] = []
 
 function price(file: string): DataWeightRow {
   const text = readFileSync(join(ROOT, file), 'utf8')
-  const bytes = Buffer.byteLength(text, 'utf8')
+  // NORMALIZED bytes, not on-disk bytes (JOS-458 follow-up, caught by CI on the ledger's first
+  // day): these corpora are single-line minified JSON, so their one newline is LF or CRLF
+  // depending on the CHECKOUT's autocrlf — the same commit measured 410455 on the dev box and
+  // 410456 on the CI runner. The ledger records the canonical (LF) size, which every checkout
+  // agrees on; a one-byte line ending is not a data-weight change and must not be able to redden
+  // a build. The tripwire measures the same way.
+  const bytes = Buffer.byteLength(text.replace(/\r\n/g, '\n'), 'utf8')
   forceGc()
   const heap0 = process.memoryUsage().heapUsed
   const t0 = performance.now()

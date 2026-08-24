@@ -19,7 +19,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readdirSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -51,11 +51,14 @@ function bigJsonIn(dir: string): string[] {
 test('EVERY LISTED FILE still exists and is still exactly that many bytes', () => {
   assert.ok(rows.length > 0, 'the ledger is empty — run npm run gen:data-weight')
   for (const row of rows) {
-    const size = statSync(join(ROOT, row.file)).size
+    // NORMALIZED bytes, exactly as the generator measures (see its `price`): these are one-line
+    // minified files, so on-disk size differs by one byte between an LF and a CRLF checkout of the
+    // SAME commit — CI proved it on the ledger's first day. The canonical size is the LF one.
+    const size = Buffer.byteLength(readFileSync(join(ROOT, row.file), 'utf8').replace(/\r\n/g, '\n'), 'utf8')
     assert.equal(
       size,
       row.bytes,
-      `${row.file} is ${String(size)} bytes, the ledger says ${String(row.bytes)} — run npm run gen:data-weight`
+      `${row.file} is ${String(size)} normalized bytes, the ledger says ${String(row.bytes)} — run npm run gen:data-weight`
     )
   }
 })
