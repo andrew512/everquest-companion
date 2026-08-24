@@ -274,9 +274,12 @@ function onPresence(state: PresenceState): void {
   try {
     parkOverlays(overlaysShouldHide(state, getOverlayAutoHide()))
     applyRing(state)
-    // The hot zones depend on presence too (JOS-370): a pinned overlay wants the mouse only while
-    // EverQuest has the foreground, and a park retracts every rectangle it holds. Both of those are
-    // decided above, so this is the pass that publishes what they imply.
+    // The hot zones depend on presence through EXACTLY ONE thing, and since the 2026-08-24 ruling
+    // that is the PARK decided on the line above: an overlay the auto-hide preferences took off
+    // screen retracts every rectangle it holds. EQ merely holding the foreground moves nothing here
+    // any more (overlayHotZone.ts `overlayWantsHoverZones` states why) — so this call is the pass
+    // that publishes what a park/unpark implies, and on any other presence edge it publishes
+    // nothing at all.
     refreshOverlayHover()
   } catch (err) {
     // A window that died between the check and the call must not kill the watcher pump.

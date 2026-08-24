@@ -54,7 +54,7 @@ import { OVERLAY_KINDS, type OverlayKind } from '../src/shared/types'
 /** A meter-sized window somewhere on a second monitor, so nothing accidentally passes at the origin. */
 const WINDOW: ZoneRect = { x: 1920, y: 300, width: 380, height: 320 }
 
-const ALIVE = { locked: true, alive: true, visible: true, parked: false, eqFocused: true }
+const ALIVE = { locked: true, alive: true, visible: true, parked: false }
 
 // ----------------------------------------------------------------------------- the three answers
 
@@ -154,8 +154,24 @@ test('nothing is watched in a state where taking the mouse would be wrong', () =
   // PARKED is the one that would be a BUG rather than a waste: on screen at opacity 0, so capture
   // here is an invisible rectangle eating clicks over whatever the user switched to (JOS-427).
   assert.equal(overlayWantsHoverZones({ ...ALIVE, parked: true }), false)
-  // And the ticket's condition (b): the player is in the game, or nobody is reaching for a pin.
-  assert.equal(overlayWantsHoverZones({ ...ALIVE, eqFocused: false }), false)
+})
+
+test('EQ HOLDING THE FOREGROUND IS NOT A TERM — a pinned overlay over a browser reveals its pin', () => {
+  // OWNER RULING, 2026-08-24, overturning JOS-370's condition (b): presence PREFERENCES are what
+  // mean "hide when EQ is not open or not in the foreground"; EQ should not impact hover state
+  // otherwise. The shipped gate had a fifth `eqFocused` term, so a meter pinned over a browser
+  // published no rectangle and could not reveal its own pin — where the WH_MOUSE_LL hook this
+  // feature replaced had forwarded moves from every app on the machine.
+  //
+  // Stated as an ABSENCE, which is the only way a removed term can be pinned: the predicate's
+  // argument object is now exactly four booleans, and every one of them is about the WINDOW.
+  assert.deepEqual(Object.keys(ALIVE).sort(), ['alive', 'locked', 'parked', 'visible'])
+  assert.equal(overlayWantsHoverZones(ALIVE), true, 'a visible pinned overlay is always watched')
+  // …and the honest coupling that replaced it: a user who DID ask for auto-hide is off the moment
+  // they leave the game, because `presenceEffects.ts onPresence` PARKS the overlays and the park is
+  // the term above. Nothing here re-derives a preference.
+  assert.equal(overlayWantsHoverZones({ ...ALIVE, parked: true }), false)
+  assert.equal(overlayWantsHoverZones({ ...ALIVE, visible: false }), false)
 })
 
 // ----------------------------------------------------------------------------- the cadence

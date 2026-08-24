@@ -146,15 +146,27 @@ export function overlayHotZones(kind: OverlayKind, bounds: ZoneRect, zoom = 1): 
  *   - `parked` — on screen at opacity 0 (JOS-427). This is the one that would be a BUG rather than
  *     an inefficiency: capture handed to an invisible rectangle is a click-eater over whatever the
  *     user just alt-tabbed to, which is exactly the hard gate `setOverlayIgnoreMouse` already keeps.
- *   - `eqFocused` — the ticket's condition (b). The user is in the game; when they are not, they are
- *     looking at something else and a floating meter has no business taking their pointer.
+ *
+ * ==================== WHAT IS NOT A TERM, AND WAS FOR ONE RELEASE ====================
+ * WHICH APPLICATION HOLDS THE FOREGROUND. `eqFocused` shipped here as a fifth term with JOS-370 and
+ * the owner overturned it the day after (ruling, 2026-08-24): presence PREFERENCES are what mean
+ * "hide when EQ is not open or not in the foreground"; EQ should not impact hover state otherwise.
+ * The defect it caused is small and exact — a meter pinned over a browser stopped revealing its own
+ * pin, because main published no rectangle for it, where the WH_MOUSE_LL hook this replaced had
+ * forwarded moves from every app on the machine.
+ *
+ * THE COUPLING THAT REMAINS IS THE HONEST ONE, and it is why nothing has to be re-derived here: an
+ * overlay the auto-hide preferences hid is PARKED (`presenceEffects.ts onPresence`, JOS-427's
+ * opacity flip), and a parked overlay already publishes nothing by the term above. So a player who
+ * asked for "take them off when I leave the game" still pays no hit test the moment they alt-tab,
+ * and a player who did not ask for it keeps a pin they can reach. This predicate never reads a
+ * preference and never reads presence; it reads what the window IS.
  */
 export function overlayWantsHoverZones(o: {
   locked: boolean
   alive: boolean
   visible: boolean
   parked: boolean
-  eqFocused: boolean
 }): boolean {
-  return o.locked && o.alive && o.visible && !o.parked && o.eqFocused
+  return o.locked && o.alive && o.visible && !o.parked
 }
