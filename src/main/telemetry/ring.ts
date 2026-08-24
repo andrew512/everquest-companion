@@ -230,9 +230,16 @@ export function writeRing(next: TelemetryRing, now = Date.now()): void {
  * It writes only what is OWED — a launch whose last write already landed does no I/O at all — and it
  * respects the gate exactly as the async path does, so a quit on a full disk does not restart the
  * storm on its way out.
+ *
+ * AND IT STANDS DOWN WHILE A WRITE IS IN FLIGHT, which is not a shortcut: the two writers share one
+ * `.tmp` path, so a sync write started on top of a threadpool write would be two writers filling one
+ * scratch file with one of them renaming mid-fill — a TORN telemetry.json, which is the exact
+ * failure temp+fsync+rename exists to make impossible. What is lost instead is bounded and is
+ * already the accepted loss of this file: the in-flight write carries everything up to a moment ago,
+ * and the ring is disposable by design (ring.ts's header). Never a torn file to buy a last record.
  */
 export function flushRingSync(): void {
-  if (owed === null) return
+  if (owed === null || writing) return
   const { data, now } = owed
   owed = null
   if (!writeGate.ready(now)) return

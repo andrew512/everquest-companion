@@ -406,8 +406,10 @@ test('THE QUIT FINAL: the one sync write left in the ring, and a drop outlives a
   // final — the ONLY `writeFileDurable` (sync) call left here — and it respects the same gate.
   assert.equal(RING_SRC.match(/[^c]\bwriteFileDurable\(/g)?.length, 1)
   const flush = RING_SRC.slice(RING_SRC.indexOf('export function flushRingSync'))
-  assert.ok(flush.indexOf('if (owed === null) return') < flush.indexOf('writeFileDurable('))
+  assert.ok(flush.indexOf('if (owed === null || writing) return') < flush.indexOf('writeFileDurable('))
   assert.match(flush, /if \(!writeGate\.ready\(now\)\) return/)
+  // NEVER A TORN FILE TO BUY A LAST RECORD: the two writers share one `.tmp`, so a sync write
+  // started on top of a threadpool write would be two writers filling one scratch file.
   // A drop cannot cancel a write already in the threadpool, so it discards what is owed and asks
   // the drain to delete again on its way out — the file must not come back after "turn it off".
   const drop = RING_SRC.slice(RING_SRC.indexOf('export function dropRing'), RING_SRC.indexOf('export function resetRingCache'))
