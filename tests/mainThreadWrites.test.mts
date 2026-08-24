@@ -92,6 +92,18 @@ test('THE ITEM-KNOWLEDGE CACHE writes atomically and off the thread, on its exis
   }
 })
 
+test('THE MOB-KNOWLEDGE CACHE writes atomically and off the thread, on its existing debounce', () => {
+  // JOS-460: mobLookup.ts was written field for field against itemLookup.ts and inherited the same
+  // defect — a bare `writeFileSync` onto the LIVE path, which truncates first, so a process killed
+  // mid-write left a torn file that `loadCache` reads as an EMPTY one: every mob this install ever
+  // resolved, silently gone. Same fix, same shape, asserted the same way.
+  const src = read('src/main/mobLookup.ts')
+  assert.equal(/\bwriteFileSync\s*\(/.test(src), false, 'no bare truncating write on a live path')
+  assert.match(src, /void writeFileDurableAsync\(dirname\(path\), path,/)
+  assert.match(src, /let saving = false/)
+  assert.match(src, /if \(saving\) \{/, 'a save asked for mid-write re-arms rather than racing the temp')
+})
+
 test('EVERY SYNC SURVIVOR ON THESE PATHS IS A NAMED FINAL, and there are no others', () => {
   // errorLog: one appendFileSync + one writeFileSync, both inside `flushErrorLogSync`.
   const errorLog = read('src/main/errorLog.ts')
