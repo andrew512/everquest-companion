@@ -39,6 +39,11 @@ import {
 } from '../src/shared/perfSeams'
 import { PERF_INTERVAL_MS } from '../src/shared/feedbackPerf'
 import { LIVE_PROBE_REPORT_MS, LIVE_STALL_LATE_MS, LIVE_TIMELINE_MS } from '../src/shared/perfLive'
+import { bucketOf, type TelemetryEvent } from '../src/shared/telemetry'
+import { LIVE_STALL_MS_EDGES } from '../src/shared/telemetryLive'
+import { validateTelemetryEvent } from '../src/shared/telemetryValidate'
+import { LIVE_METRICS, foldLiveRiders } from '../src/shared/telemetryRollupLive'
+import { gcStallStats, seamStallStats } from '../src/main/telemetry/liveFacts'
 import {
   noteGcSamples,
   noteSeam,
@@ -240,6 +245,145 @@ test('the ring stays bounded under a caller that never stops — cap, not just c
   // …and it kept the NEWEST, which is the half a report about a freeze just now needs.
   assert.equal(seen[seen.length - 1].at, NOW + 19_999)
   resetStallAttribution()
+})
+
+// ---- the wire half: bucketing, validation, rollup ---------------------------------------------
+
+test('the millisecond becomes a decade at exactly one seam, and the counts stay counts', () => {
+  const stats = gcStallStats({
+    pauses: 12,
+    majorPauses: 3,
+    maxMs: 640,
+    totalMs: 1_100,
+    over100: 2,
+    worstAt: NOW
+  })
+  assert.deepEqual(stats, {
+    pauses: 12,
+    majorPauses: 3,
+    // 640 and 1100 land on the SAME ladder the main-loop lateness uses, which is the property
+    // that lets "GC took 640 ms" be laid against "main was 640 ms late".
+    maxBucket: bucketOf(640, LIVE_STALL_MS_EDGES),
+    totalBucket: bucketOf(1_100, LIVE_STALL_MS_EDGES),
+    over100: 2
+  })
+})
+
+test('seamStallStats walks the ENUM, so a key the machine invented has no route onto the wire', () => {
+  const forged = {
+    worldRebuilt: { calls: 2, over100Calls: 1, maxMs: 900, totalMs: 1_000, worstAt: NOW },
+    // Not a member of PERF_SEAMS. It is not rejected — it simply has no route across, which is the
+    // posture every constructor on this wire takes toward a field it does not name.
+    'zone:PlaneOfSky': { calls: 9, over100Calls: 9, maxMs: 9_000, totalMs: 9_000, worstAt: NOW }
+  } as unknown as SeamTally
+  const stats = seamStallStats(forged)
+  assert.deepEqual(Object.keys(stats), ['worldRebuilt'])
+  assert.deepEqual(stats.worldRebuilt, {
+    calls: 2,
+    maxBucket: bucketOf(900, LIVE_STALL_MS_EDGES),
+    over100: 1
+  })
+})
+
+/** A heartbeat carrying both attribution riders, at values a real session could produce. */
+function heartbeat(extra: Record<string, unknown>): Record<string, unknown> {
+  return { t: 'sessionHeartbeat', uptimeMs: 600_000, ...extra }
+}
+
+const GC_WIRE = { pauses: 12, majorPauses: 3, maxBucket: 6, totalBucket: 7, over100: 2 }
+const SEAMS_WIRE = {
+  worldRebuilt: { calls: 4, maxBucket: 7, over100: 2 },
+  combatSnapshot: { calls: 600, maxBucket: 1, over100: 0 }
+}
+
+test('both attribution riders survive validation on a heartbeat, field for field', () => {
+  const result = validateTelemetryEvent(heartbeat({ gc: GC_WIRE, seams: SEAMS_WIRE }))
+  assert.equal(result.ok, true)
+  const ev = (result as { value: TelemetryEvent }).value
+  if (ev.t !== 'sessionHeartbeat') throw new Error('not a heartbeat')
+  assert.deepEqual(ev.gc, GC_WIRE)
+  assert.deepEqual(ev.seams, SEAMS_WIRE)
+})
+
+test('sessionEnd carries them too — a session that ends before its first heartbeat is the bad one', () => {
+  const end = { t: 'sessionEnd', durationMs: 900_000, viewsVisited: 3, gc: GC_WIRE, seams: SEAMS_WIRE }
+  const result = validateTelemetryEvent(end)
+  assert.equal(result.ok, true)
+  const ev = (result as { value: TelemetryEvent }).value
+  if (ev.t !== 'sessionEnd') throw new Error('not a sessionEnd')
+  assert.equal(ev.gc?.majorPauses, 3)
+  assert.equal(ev.seams?.worldRebuilt?.maxBucket, 7)
+})
+
+test('ABSENT IS LEGAL — the batch an older client sends is unchanged by either rider existing', () => {
+  const old = validateTelemetryEvent(heartbeat({}))
+  assert.equal(old.ok, true)
+  const ev = (old as { value: TelemetryEvent }).value
+  if (ev.t !== 'sessionHeartbeat') throw new Error('not a heartbeat')
+  assert.equal(ev.gc, undefined)
+  assert.equal(ev.seams, undefined)
+})
+
+test('THE VALIDATOR WALKS THE ENUM TOO — a forged seam key cannot become a usage_daily dimension', () => {
+  const forged = { ...SEAMS_WIRE, 'Primitive@freeport': { calls: 1, maxBucket: 0, over100: 0 } }
+  const result = validateTelemetryEvent(heartbeat({ seams: forged }))
+  // ACCEPTED, and the key is simply not copied — the additive-field posture, applied to a key
+  // rather than a field. A rejection here would let one bad client's batch take out the whole
+  // flush (telemetryPermanentRefusal classes a 400 as permanent and DROPS it).
+  assert.equal(result.ok, true)
+  const ev = (result as { value: TelemetryEvent }).value
+  if (ev.t !== 'sessionHeartbeat') throw new Error('not a heartbeat')
+  assert.deepEqual(Object.keys(ev.seams ?? {}), ['combatSnapshot', 'worldRebuilt'])
+})
+
+test('OUT-OF-LADDER VALUES ARE REFUSED, by name — a bucket index is not a millisecond', () => {
+  const badGc = validateTelemetryEvent(heartbeat({ gc: { ...GC_WIRE, maxBucket: 640 } }))
+  assert.equal(badGc.ok, false)
+  assert.equal((badGc as { field: string }).field, 'gc.maxBucket')
+  const badSeam = validateTelemetryEvent(
+    heartbeat({ seams: { registryFlush: { calls: 1, maxBucket: 900, over100: 0 } } })
+  )
+  assert.equal(badSeam.ok, false)
+  assert.equal((badSeam as { field: string }).field, 'seams.registryFlush.maxBucket')
+})
+
+test('A NAMED SEAM IS ALL THREE OR NONE — a frequency with no cost beside it describes nothing', () => {
+  const partial = validateTelemetryEvent(heartbeat({ seams: { worldRebuilt: { calls: 4 } } }))
+  assert.equal(partial.ok, false)
+  assert.equal((partial as { field: string }).field, 'seams.worldRebuilt.maxBucket')
+})
+
+test('THE ROLLUP dimensions every seam row by its own name, and gives each count a denominator', () => {
+  const rows: { metric: string; dim: string; n: number }[] = []
+  foldLiveRiders((metric, dim, n) => rows.push({ metric, dim, n }), '-', {
+    gc: GC_WIRE,
+    seams: SEAMS_WIRE
+  })
+  const at = (metric: string): { metric: string; dim: string; n: number }[] =>
+    rows.filter((r) => r.metric === metric)
+  // The GC group: one report row whatever the counts say, so a zero interval is still counted.
+  assert.deepEqual(at(LIVE_METRICS.gcReports), [{ metric: 'gcReports', dim: '-', n: 1 }])
+  assert.equal(at(LIVE_METRICS.gcMajor)[0].n, 3)
+  assert.equal(at(LIVE_METRICS.gcMax)[0].dim, '6')
+  // The seam group: every row dimensioned by a member of the enum.
+  assert.deepEqual(
+    at(LIVE_METRICS.seamStalls).map((r) => [r.dim, r.n]),
+    [
+      ['combatSnapshot', 0],
+      ['worldRebuilt', 2]
+    ]
+  )
+  for (const row of at(LIVE_METRICS.seamCalls)) {
+    assert.ok((PERF_SEAMS as readonly string[]).includes(row.dim), `dim ${row.dim} is not a seam`)
+  }
+})
+
+test('THE ROLLUP WALKS THE ENUM — a forged key that somehow got past a validator still writes no row', () => {
+  const rows: string[] = []
+  foldLiveRiders((metric, dim) => rows.push(`${metric}/${dim}`), '-', {
+    seams: { 'C:/Users/someone/eqlog.txt': { calls: 1, maxBucket: 0, over100: 1 } } as never
+  })
+  assert.deepEqual(rows, [])
 })
 
 test('the GC ring keeps the pause kind, unbucketed, for the report that reads it', () => {

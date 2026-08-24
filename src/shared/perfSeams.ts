@@ -110,6 +110,10 @@ export type GcKind = (typeof GC_KINDS)[number]
  *  is the reading that eliminates it, and is a different claim from `maxMs: 0`. */
 export interface SeamTallyEntry {
   calls: number
+  /** Calls at or over `SEAM_STALL_MS`. Kept BESIDE the max rather than derived from it, because
+   *  "one seam call in this interval was slow" and "eleven were" are the difference between a
+   *  one-off and a regression, and a maximum cannot tell them apart. */
+  over100Calls: number
   maxMs: number
   totalMs: number
   /** `Date.now()` when the worst call ENDED. The reason a reader can line this up against the
@@ -162,12 +166,14 @@ function ms(n: number): number {
  */
 export function addSeamCall(tally: SeamTally, seam: PerfSeamName, took: number, at: number): SeamTally {
   const took0 = ms(took)
+  const stall = took0 >= SEAM_STALL_MS ? 1 : 0
   const prior = tally[seam]
   const entry: SeamTallyEntry =
     prior === undefined
-      ? { calls: 1, maxMs: took0, totalMs: took0, worstAt: ms(at) }
+      ? { calls: 1, over100Calls: stall, maxMs: took0, totalMs: took0, worstAt: ms(at) }
       : {
           calls: prior.calls + 1,
+          over100Calls: prior.over100Calls + stall,
           maxMs: Math.max(prior.maxMs, took0),
           totalMs: prior.totalMs + took0,
           worstAt: took0 > prior.maxMs ? ms(at) : prior.worstAt
