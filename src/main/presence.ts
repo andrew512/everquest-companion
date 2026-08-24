@@ -687,7 +687,7 @@ function startWatcher(): void {
   // A NEW WATCHER INHERITS THE QUESTION (JOS-370). The hot zones are main's, not the thread's, so a
   // replacement is told them immediately rather than waiting for the next overlay edge — otherwise
   // a restart in the middle of a session leaves every pinned overlay unable to reveal its pin.
-  for (const line of hoverZoneLines.values()) w.postMessage(line)
+  for (const line of hoverZoneLines.values()) if (watchesSomething(line)) w.postMessage(line)
   // The watcher must never be the reason the app stays alive at quit. A worker thread refs the
   // parent's event loop until it exits; `unref` gives that up, and `stopPresence()` on quit is
   // what actually ends it.
@@ -834,10 +834,19 @@ const hoverZoneLines = new Map<string, string>()
  */
 export function setHoverZones(key: string, zones: readonly HoverZone[]): void {
   const line = encodeHoverZones(key, zones)
+  // THE RETRACTION IS REMEMBERED TOO, and forgetting it was a real bug in the first cut: a key
+  // dropped from this map compares unequal on the very next pass, so an UNLOCKED overlay re-sent
+  // its own "watch nothing" line on every presence change and every capture flip for the rest of
+  // the session. Only what is actually watched is replayed to a restarted watcher (`startWatcher`).
   if (hoverZoneLines.get(key) === line) return
-  if (zones.length === 0) hoverZoneLines.delete(key)
-  else hoverZoneLines.set(key, line)
+  hoverZoneLines.set(key, line)
   watcher?.postMessage(line)
+}
+
+/** Does this remembered line ask for anything? `Z|<key>` with no rectangles is a retraction, and a
+ *  replacement watcher starts with nothing to retract. */
+function watchesSomething(line: string): boolean {
+  return line.split('|').length > 2
 }
 
 /** Retract every key at once — the feature going off, or a teardown. */

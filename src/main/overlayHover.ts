@@ -48,6 +48,7 @@ import { E2E } from './e2e'
 import { logError } from './errorLog'
 import {
   CHROME_STRIP_PX,
+  hotZoneStyle,
   overlayHotZones,
   overlayWantsHoverZones,
   type ZoneRect
@@ -75,6 +76,13 @@ interface HoverProbe {
    *  restating the number (an e2e file loads no src module). See `CHROME_STRIP_PX`. */
   stripPx: number
 }
+
+/**
+ * The kinds this file has anything to say about: everyone whose renderer runs a hover sensor. The
+ * three strips answer 'none' and are excluded once, here, so neither the publisher nor the
+ * ref-count has to remember it — and so a strip can never end up holding a watcher thread open.
+ */
+const HOVER_KINDS = OVERLAY_KINDS.filter((kind) => hotZoneStyle(kind) !== 'none')
 
 const publishedZones: Record<string, ZoneRect[]> = {}
 const pushedInside: Record<string, boolean> = {}
@@ -127,11 +135,18 @@ function zonesFor(kind: OverlayKind, w: BrowserWindow | null, eqFocused: boolean
  * display reconcile, and every presence change. It is idempotent and most calls publish nothing.
  */
 export function refreshOverlayHover(): void {
-  const eqFocused = presenceSnapshot().eqFocused
-  for (const kind of OVERLAY_KINDS) {
-    const zones = zonesFor(kind, getOverlayWindow(kind), eqFocused)
-    publishedZones[kind] = zones
-    setHoverZones(kind, zones)
+  try {
+    const eqFocused = presenceSnapshot().eqFocused
+    for (const kind of HOVER_KINDS) {
+      const zones = zonesFor(kind, getOverlayWindow(kind), eqFocused)
+      publishedZones[kind] = zones
+      setHoverZones(kind, zones)
+    }
+  } catch (err) {
+    // This runs from `setOverlayIgnoreMouse`, which is on the path of every lock toggle and every
+    // capture flip — a window that died between the liveness check and `getBounds()` must not take
+    // an overlay's click-through state down with it.
+    logError('main:overlayHover', err)
   }
 }
 
@@ -166,10 +181,18 @@ const probe: HoverProbe | null = E2E
     }
   : null
 
-/** Does anything need the presence watcher for the hit test right now? The ref-count's third
- *  reason (shared/presencePrefs.ts `presenceNeeded`) — see `presenceEffects.ts` for the wiring. */
+/**
+ * Does anything need the presence watcher for the hit test right now? The ref-count's third reason
+ * (shared/presencePrefs.ts `presenceNeeded`) — see `presenceEffects.ts` for the wiring.
+ *
+ * IT ASKS ONLY THE KINDS THAT CAN EVER WANT A RECTANGLE, and that is load-bearing rather than tidy:
+ * the three STRIPS ship LOCKED (that is their resting state — a celebration card is click-through
+ * until it has something to show) and have no hover sensor at all, so counting them would make
+ * "nothing is pinned" false on a default install and hold a watcher thread open for windows that
+ * publish nothing.
+ */
 export function overlayHoverNeeded(): boolean {
-  return OVERLAY_KINDS.some((kind) => {
+  return HOVER_KINDS.some((kind) => {
     const w = getOverlayWindow(kind)
     return w !== null && !w.isDestroyed() && getOverlayConfig(kind).locked
   })
