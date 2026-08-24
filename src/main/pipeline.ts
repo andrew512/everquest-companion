@@ -19,6 +19,9 @@
 
 import { IPC } from '../shared/ipc'
 import { logInfo } from './errorLog'
+// A leaf (see its header) — it starts at `replayDone` and is imported here only to bracket the
+// rebuild fan-out below.
+import { timeSeam } from './perfAttribution'
 import { LogBus } from './log/bus'
 import { EpochDetector } from './log/epochDetector'
 import { SessionDetector } from './log/sessionDetector'
@@ -123,10 +126,19 @@ export function sendToModuleOverlays(channel: string, ...args: unknown[]): void 
  * Every `log:character` send in this process goes through here (session.ts's two, index.ts's
  * live-epoch re-send), so "who is told the world was rebuilt" is answered in one place rather
  * than at each call site — which is precisely how the overlays came to be missing from it.
+ *
+ * A TIMED SEAM (JOS-458), and the one this ticket suspects most. It fires in the minute after a
+ * fold — which is exactly the window the two field reports describe — and its cost is a FAN-OUT:
+ * one `webContents.send` per open module-reading window, each of which serializes the payload and
+ * wakes a renderer that immediately asks for a full snapshot back. The bracket covers OUR half
+ * (the sends), never the renderers' work, so a large number here is main's own bill and nobody
+ * else's.
  */
 export function sendWorldRebuilt(character: CharacterRef | null): void {
-  sendToMain(IPC.onCharacter, character)
-  sendToModuleOverlays(IPC.onCharacter, character)
+  timeSeam('worldRebuilt', () => {
+    sendToMain(IPC.onCharacter, character)
+    sendToModuleOverlays(IPC.onCharacter, character)
+  })
 }
 
 // The extension framework. Modules own their slice of log-derived state and push

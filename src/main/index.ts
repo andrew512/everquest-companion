@@ -46,6 +46,7 @@ import { installSpeechCacheProtocol } from './speech/cache'
 import { registerIpc } from './ipc'
 import { DATA_READY_MS, bus, buffsModule, epoch, sendWorldRebuilt, sessionDetector } from './pipeline'
 import { markStartupPhase, startPerfSampler, stopPerf } from './perf'
+import { noteHeapAfterData } from './dataWeight'
 import { initProcessPriority } from './processPriority'
 import { getProcessPriorityPrefs } from './storeProcessPriority'
 import { initPresenceEffects, stopPresenceEffects } from './presenceEffects'
@@ -117,6 +118,12 @@ const PROCESS_START_MS = Date.now()
 // (see shared/perf.ts STARTUP_PHASES for the full table).
 markStartupPhase('storeLoaded', { atMs: STORE_READY_MS })
 markStartupPhase('dataLoaded', { atMs: DATA_READY_MS })
+// …and the one figure in the data-weight ledger that is measured on THIS machine (JOS-458). Here,
+// and only here: this statement is the first moment after every committed corpus has been parsed
+// and the last moment before the app allocates anything of its own, so the reading describes the
+// DATA rather than the session. One `process.memoryUsage()` call, unconditional for the same
+// reason the marks above are.
+noteHeapAfterData()
 
 // Epoch detection subscription (Task #49; launch-anchored in Task #50). Runs LAST — after
 // pipeline.ts's registry + combat subscriptions, which is why it is added here rather than
