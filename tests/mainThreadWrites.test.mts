@@ -73,6 +73,25 @@ test('THE FOUR LIVE-PATH WRITERS all reach disk asynchronously', () => {
   }
 })
 
+test('THE ITEM-KNOWLEDGE CACHE writes atomically and off the thread, on its existing debounce', () => {
+  // This one was not just synchronous, it was a bare `writeFileSync` onto the LIVE path — which
+  // truncates first, so a process killed mid-write left a torn file that `loadCache` reads as an
+  // EMPTY one. The async durable write cannot produce that, and the debounce that was already
+  // there is what serialises it.
+  const src = read('src/main/itemLookup.ts')
+  assert.equal(/\bwriteFileSync\s*\(/.test(src), false, 'no bare truncating write on a live path')
+  assert.match(src, /void writeFileDurableAsync\(dirname\(path\), path,/)
+  assert.match(src, /let saving = false/)
+  assert.match(src, /if \(saving\) \{/, 'a save asked for mid-write re-arms rather than racing the temp')
+
+  // …and the three DERIVED indexes this module used to build during main's module evaluation are
+  // built on first use now, which is only ever a live lookup — see the file's own header for the
+  // measurement and for why the 8.6 MB corpus itself cannot leave from here.
+  for (const lazy of ['function itemDb(', 'function poskyByItem(', 'function questsByItem(']) {
+    assert.ok(src.includes(lazy), `${lazy} must be a function, not a module-scope constant`)
+  }
+})
+
 test('EVERY SYNC SURVIVOR ON THESE PATHS IS A NAMED FINAL, and there are no others', () => {
   // errorLog: one appendFileSync + one writeFileSync, both inside `flushErrorLogSync`.
   const errorLog = read('src/main/errorLog.ts')
