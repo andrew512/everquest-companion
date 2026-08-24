@@ -30,7 +30,7 @@
 import { app } from 'electron'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { writeFileDurable, writeFileDurableAsync } from '../telemetry/durableWrite'
+import { writeFileDurableAsync, writeFileDurableFinal } from '../telemetry/durableWrite'
 import type { MessageOverlay } from '../../shared/types'
 import {
   BASELINE_SOURCE,
@@ -71,33 +71,29 @@ export function loadUserSources(): OverlaySourceCounts[] {
   }
 }
 
-/**
- * Persist the user's register to userData (best-effort; a write error is swallowed).
- *
- * ATOMIC SINCE JOS-419, and it was the last in-place truncating write of a user-knowledge store in
- * the app. `writeFileSync` onto the live path truncates it FIRST: a process killed mid-write — an
- * update's force-quit, a full disk, the power going — left a half-written register, and
- * `loadUserSources` reads a file that will not parse as an EMPTY one. Every message this install
- * had ever learned, silently gone, with nothing on disk to say so. `writeFileDurable` is the same
- * temp+fsync+rename the telemetry ring (JOS-265), the settings store (JOS-272) and the resist
- * ledger (JOS-419) write through, so the file on disk is either the last complete register or the
- * new one and never a half of either.
- */
-// OFF THE MAIN THREAD SINCE JOS-371, and the ONE sync survivor is the quit final.
+// PERSIST THE USER'S REGISTER — atomically since JOS-419, and off the main thread since JOS-371.
 //
-// WHY IT WAS SYNCHRONOUS: because `writeFileDurable` was, and nothing here needed it to be
-// anything else. What that meant in practice is that every sixty seconds — `session.ts`'s tick,
-// for the whole time the app is open — the main process stopped to write a file and fsync it.
-// While an overlay holds the mouse (the whole point of JOS-371), a main-thread stall is a
-// system-wide one, and an fsync is exactly the syscall that goes from microseconds to milliseconds
-// on a busy volume.
+// ATOMIC SINCE JOS-419, and it was the last in-place truncating write of a user-knowledge store in
+// the app. A `writeFileSync` onto the live path truncates it FIRST: a process killed mid-write — an
+// update's force-quit, a full disk, the power going — left a half-written register, and
+// `loadUserSources` reads a file that will not parse as an EMPTY one. Every message this install had
+// ever learned, silently gone, with nothing on disk to say so. The durable write is the same
+// temp+fsync+rename the telemetry ring (JOS-265), the settings store (JOS-272) and the resist ledger
+// (JOS-419) go through, so the file is either the last complete register or the new one and never a
+// half of either.
 //
-// WHAT GUARANTEES THE SAME ATOMICITY: the same temp+fsync+rename, in the same order, through
-// `writeFileDurableAsync` — the file on disk is still either the last complete register or the new
-// one and never a half of either. What the async writer does NOT get for free is the guarantee that
-// two writes cannot overlap, and two overlapping writes share ONE `.tmp` path, so `writing` is the
-// latch: a save arriving while one is in flight is dropped rather than queued. That costs at most
-// one 60-second window of a register that only ever accretes, and the next tick writes the superset.
+// AND OFF THE THREAD SINCE JOS-371. It was synchronous only because `writeFileDurable` was, and what
+// that meant in practice is that every sixty seconds — session.ts's tick, for the whole time the app
+// is open — the main process stopped to write a file AND fsync it. While one of this app's overlays
+// holds the mouse, a main-thread stall is a system-wide one, and an fsync is exactly the syscall
+// that goes from microseconds to milliseconds on a busy volume. The atomicity argument above is
+// untouched: same steps, same order, `writeFileDurableAsync`.
+//
+// WHAT ASYNC COSTS, and how it is paid: two writes can now overlap, and two overlapping writes would
+// share one `.tmp` path. `writing` is the latch on the periodic saver — a save arriving while one is
+// in flight is dropped rather than queued, which costs at most one 60-second window of a register
+// that only ever accretes, and the next tick writes the superset. The QUIT FINAL cannot be dropped
+// that way, so it writes through its own scratch file instead (`writeFileDurableFinal`).
 
 /** True while a durable write is in libuv's threadpool. See the note above: one at a time. */
 let writing = false
@@ -132,16 +128,17 @@ export function saveUserOverlay(register: OverlayRegister): void {
  * already existed and was already the last save of a run; all that changed is that it is now the
  * only one that blocks.
  *
- * IT STANDS DOWN WHILE A WRITE IS IN FLIGHT, for the reason the telemetry ring's final does: the
- * two writers share one `.tmp` path, so starting a sync write on top of a threadpool write is two
- * writers filling one scratch file with one of them renaming mid-fill — a torn register, which is
- * the exact failure temp+fsync+rename exists to prevent. The in-flight write carries everything up
- * to a moment ago; a last minute of learned messages is re-mined by the next fold anyway (JOS-231).
+ * IT WRITES THROUGH ITS OWN SCRATCH FILE, for the reason the telemetry ring's final does: sharing
+ * one `.tmp` with a write that is still in the threadpool is two writers filling one scratch file
+ * with one of them renaming mid-fill — a torn register, which is the exact failure temp+fsync+rename
+ * exists to prevent. With two scratch paths, whichever rename lands last publishes a COMPLETE
+ * register; at quit the process almost always goes before the threadpool write returns, so the
+ * final's own bytes are the ones that survive.
  */
 export function saveUserOverlaySync(register: OverlayRegister): void {
-  if (writing) return
+  const path = userOverlayPath()
   try {
-    writeFileDurable(app.getPath('userData'), userOverlayPath(), overlayFile(register))
+    writeFileDurableFinal(app.getPath('userData'), path, overlayFile(register))
   } catch {
     // Non-fatal — the overlay is a nicety, not required state.
   }

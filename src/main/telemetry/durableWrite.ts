@@ -93,11 +93,22 @@ export const nodeIo: DurableIo = {
   }
 }
 
-/** The scratch file a durable write goes through. Exported because `dropRing` has to delete it:
- *  a failed write can leave one holding events, and "off" that leaves events in a sibling file
- *  is the switch lying in a different filename. */
-export function tempPathFor(path: string): string {
-  return `${path}.tmp`
+/**
+ * The scratch file a durable write goes through. Exported because `dropRing` has to delete it:
+ * a failed write can leave one holding events, and "off" that leaves events in a sibling file
+ * is the switch lying in a different filename.
+ *
+ * `tag` NAMES A SECOND SCRATCH FILE FOR A SECOND WRITER (JOS-371). While the live path wrote
+ * synchronously there was only ever one writer, so one temp path was enough. Now a quit final can
+ * run while an asynchronous write is still in libuv's threadpool, and two writers sharing one
+ * scratch file is two of them filling it with one renaming mid-fill — a TORN file, the precise
+ * failure this whole module exists to make impossible. A tagged path costs nothing and removes the
+ * hazard outright: whichever rename lands last publishes a COMPLETE file, and the loser's bytes
+ * were complete too. Every producer of a tagged temp must delete it wherever it deletes the plain
+ * one.
+ */
+export function tempPathFor(path: string, tag?: string): string {
+  return tag === undefined ? `${path}.tmp` : `${path}.${tag}.tmp`
 }
 
 /**
@@ -111,7 +122,38 @@ export function tempPathFor(path: string): string {
  * it is not knowable, and this module has no logger to decide it with.
  */
 export function writeFileDurable(dir: string, path: string, data: string, io: DurableIo = nodeIo): void {
-  const tmp = tempPathFor(path)
+  writeVia({ dir, path, tmp: tempPathFor(path) }, data, io)
+}
+
+/**
+ * THE QUIT FINAL'S WRITER (JOS-371) — the same durable write, through a DIFFERENT scratch file.
+ *
+ * It exists because the live path is asynchronous now and a shutdown final can therefore run while
+ * a write is still in libuv's threadpool. Two writers sharing one `.tmp` is two of them filling one
+ * scratch file with one renaming mid-fill — a torn file, the precise failure this module exists to
+ * prevent. With two scratch paths, whichever rename lands last publishes a COMPLETE file and the
+ * loser's bytes were complete too; at quit the process almost always goes before the threadpool
+ * write returns, so the final's own bytes are the ones that survive.
+ *
+ * A caller that deletes `tempPathFor(path)` must delete `tempPathFor(path, FINAL_TEMP_TAG)` too.
+ */
+export function writeFileDurableFinal(dir: string, path: string, data: string, io: DurableIo = nodeIo): void {
+  writeVia({ dir, path, tmp: tempPathFor(path, FINAL_TEMP_TAG) }, data, io)
+}
+
+/** The tag the two shutdown finals in this app write under. */
+export const FINAL_TEMP_TAG = 'quit'
+
+/** Where one durable write puts its bytes: the directory to ensure, the live path to publish, and
+ *  the scratch file to fill. A record rather than three more parameters. */
+interface DurableTarget {
+  dir: string
+  path: string
+  tmp: string
+}
+
+/** The write itself. Both exported spellings above are this, with a different scratch file. */
+function writeVia({ dir, path, tmp }: DurableTarget, data: string, io: DurableIo): void {
   io.mkdir(dir)
   let fd: number | null = null
   try {

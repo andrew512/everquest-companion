@@ -99,32 +99,57 @@ test('EVERY SYNC SURVIVOR ON THESE PATHS IS A NAMED FINAL, and there are no othe
   const flush = errorLog.slice(errorLog.indexOf('export function flushErrorLogSync('))
   assert.deepEqual(syncWrites(flush).sort(), ['appendFileSync', 'writeFileSync'], 'both live in the final')
 
-  // ring: one `writeFileDurable` (the sync twin), inside `flushRingSync`, and no raw sync write.
+  // ring: no raw sync write at all, and the ONE synchronous durable write is the quit final's.
   const ring = read('src/main/telemetry/ring.ts')
   assert.deepEqual(syncWrites(ring), [])
   const ringFinal = ring.slice(ring.indexOf('export function flushRingSync('))
-  assert.match(ringFinal, /writeFileDurable\(/)
-  assert.equal(ring.match(/[^c]\bwriteFileDurable\(/g)?.length, 1, 'exactly one sync durable write')
+  assert.match(ringFinal, /writeFileDurableFinal\(/)
+  assert.equal(ring.match(/writeFileDurableFinal\(/g)?.length, 1, 'exactly one sync durable write')
 
   // overlay: the same shape — one sync durable write, inside the quit final.
   const overlay = read('src/main/data/overlayPersistence.ts')
   assert.deepEqual(syncWrites(overlay), [])
   const overlayFinal = overlay.slice(overlay.indexOf('export function saveUserOverlaySync('))
-  assert.match(overlayFinal, /writeFileDurable\(/)
-  assert.equal(overlay.match(/[^c]\bwriteFileDurable\(/g)?.length, 1)
+  assert.match(overlayFinal, /writeFileDurableFinal\(/)
+  assert.equal(overlay.match(/writeFileDurableFinal\(/g)?.length, 1)
 })
 
-test('A QUIT FINAL STANDS DOWN WHILE A WRITE IS IN FLIGHT — never a torn file for a last record', () => {
-  // Both writers share ONE `.tmp` path (`tempPathFor`), so a synchronous write started on top of a
-  // threadpool write would be two writers filling one scratch file with one of them renaming
-  // mid-fill. That is the exact failure temp+fsync+rename exists to prevent, so the final declines
-  // instead. What is lost is bounded by the cadence that was already this file's accepted loss.
+test('A QUIT FINAL WRITES THROUGH ITS OWN SCRATCH FILE — never a torn file for a last record', () => {
+  // A final can run while a write is still in libuv's threadpool, and two writers sharing one
+  // `.tmp` is two of them filling one scratch file with one renaming mid-fill — the exact failure
+  // temp+fsync+rename exists to prevent. Two scratch paths remove the hazard outright: whichever
+  // rename lands last publishes a COMPLETE file, and the loser's bytes were complete too.
+  const durable = read('src/main/telemetry/durableWrite.ts')
+  assert.match(durable, /export const FINAL_TEMP_TAG = 'quit'/)
+  assert.match(durable, /tmp: tempPathFor\(path, FINAL_TEMP_TAG\)/)
+  assert.match(durable, /export function tempPathFor\(path: string, tag\?: string\)/)
+  // And whoever deletes the plain temp deletes the tagged one — "off" that leaves events in a
+  // sibling file is the switch lying in a different filename.
   const ring = read('src/main/telemetry/ring.ts')
-  assert.match(ring.slice(ring.indexOf('export function flushRingSync(')), /if \(owed === null \|\| writing\) return/)
-  const overlay = read('src/main/data/overlayPersistence.ts')
-  assert.match(overlay.slice(overlay.indexOf('export function saveUserOverlaySync(')), /if \(writing\) return/)
-  // The ledger's writer answers `busy` for the same reason, from inside the writer itself.
+  const remove = ring.slice(ring.indexOf('function removeRingFiles('), ring.indexOf('export function dropRing('))
+  assert.match(remove, /rmSync\(tempPathFor\(path\), \{ force: true \}\)/)
+  assert.match(remove, /rmSync\(tempPathFor\(path, FINAL_TEMP_TAG\), \{ force: true \}\)/)
+  // The two writers that CAN be dropped are dropped instead of racing: the overlay's periodic saver
+  // and the ledger's writer both refuse while one is in flight, and both losses are bounded by a
+  // cadence that was already their accepted loss.
+  assert.match(read('src/main/data/overlayPersistence.ts'), /export function saveUserOverlay\(register: OverlayRegister\): void \{\r?\n {2}if \(writing\) return/)
   assert.match(read('src/main/resist/ledgerFile.ts'), /if \(writing\) return \{ status: 'busy' \}/)
+})
+
+test('WHAT IS OWED STAYS OWED UNTIL THE BYTES ARE DOWN — the quit final must have something to write', () => {
+  // MEASURED THE HARD WAY. The drain first cleared `owed` on the way IN, which looked equivalent
+  // and was not: `drainWrites()` runs synchronously up to its first `await`, so a `writeRing`
+  // during `window-all-closed` emptied `owed` in the same tick, `before-quit` found nothing
+  // outstanding, and the process exited before the threadpool write landed. The telemetry e2e's
+  // restart assertions went red on exactly that — the heartbeat's records never reached disk.
+  const ring = read('src/main/telemetry/ring.ts')
+  const drain = ring.slice(ring.indexOf('async function drainWrites('), ring.indexOf('export function writeRing('))
+  assert.match(drain, /const pending = owed/)
+  assert.equal(drain.match(/if \(owed === pending\) owed = null/g)?.length, 2, 'discharged on both settle arms')
+  assert.ok(
+    drain.indexOf('await writeFileDurableAsync') < drain.indexOf('if (owed === pending) owed = null'),
+    'owed is discharged AFTER the bytes are down, never before'
+  )
 })
 
 test('THE FINALS ARE WIRED WHERE THE APP ACTUALLY ENDS', () => {

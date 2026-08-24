@@ -35,7 +35,13 @@ import { logError, logInfo } from '../errorLog'
 // The durability half, in its own Electron-free leaf (JOS-265). Its header carries the whole
 // argument — the error store's ENOSPC exemplars, why there is no writer queue and no lock retry,
 // and what the fsync is for. This file keeps only the decisions that need `app` or a logger.
-import { createWriteGate, tempPathFor, writeFileDurable, writeFileDurableAsync } from './durableWrite'
+import {
+  createWriteGate,
+  FINAL_TEMP_TAG,
+  tempPathFor,
+  writeFileDurableAsync,
+  writeFileDurableFinal
+} from './durableWrite'
 
 /** Bumped only if this file's shape changes. Unreadable/older ⇒ start empty, never migrate. */
 export const TELEMETRY_RING_VERSION = 1
@@ -170,17 +176,30 @@ function noteWriteResult(err: unknown, now: number): void {
   )
 }
 
-/** Drain `owed` until nothing is owed. The ONLY caller of the async durable write in this file. */
+/**
+ * Drain `owed` until nothing is owed. The ONLY caller of the async durable write in this file.
+ *
+ * WHAT IS OWED STAYS OWED UNTIL THE BYTES ARE DOWN, and that is not tidiness — it is the whole
+ * reason the quit final has anything to write. Clearing `owed` on the way IN looked equivalent and
+ * was not: `drainWrites()` runs synchronously up to its first `await`, so a `writeRing` during
+ * `window-all-closed` emptied `owed` in the same tick, `before-quit` then found nothing outstanding,
+ * and the process exited before the threadpool write ever landed. MEASURED: the telemetry e2e's
+ * restart assertions went red on exactly that — the heartbeat's `startupReplay`, `liveStall` and
+ * `errorReport` records never reached the ring on disk.
+ */
 async function drainWrites(): Promise<void> {
   while (owed !== null) {
-    const { data, now } = owed
-    owed = null
+    const pending = owed
     const dir = app.getPath('userData')
     try {
-      await writeFileDurableAsync(dir, join(dir, RING_FILE), data)
-      noteWriteResult(null, now)
+      await writeFileDurableAsync(dir, join(dir, RING_FILE), pending.data)
+      // …and only what THIS write carried is discharged: a newer ring that arrived mid-write is
+      // still owed, and the loop takes it next.
+      if (owed === pending) owed = null
+      noteWriteResult(null, pending.now)
     } catch (err) {
-      noteWriteResult(err, now)
+      if (owed === pending) owed = null
+      noteWriteResult(err, pending.now)
     }
   }
   writing = false
@@ -231,21 +250,22 @@ export function writeRing(next: TelemetryRing, now = Date.now()): void {
  * respects the gate exactly as the async path does, so a quit on a full disk does not restart the
  * storm on its way out.
  *
- * AND IT STANDS DOWN WHILE A WRITE IS IN FLIGHT, which is not a shortcut: the two writers share one
- * `.tmp` path, so a sync write started on top of a threadpool write would be two writers filling one
- * scratch file with one of them renaming mid-fill — a TORN telemetry.json, which is the exact
- * failure temp+fsync+rename exists to make impossible. What is lost instead is bounded and is
- * already the accepted loss of this file: the in-flight write carries everything up to a moment ago,
- * and the ring is disposable by design (ring.ts's header). Never a torn file to buy a last record.
+ * IT WRITES THROUGH ITS OWN SCRATCH FILE, and that is what makes it safe to run on top of a write
+ * that is still in the threadpool. Sharing one `.tmp` would be two writers filling one scratch file
+ * with one of them renaming mid-fill — a TORN telemetry.json, the exact failure temp+fsync+rename
+ * exists to make impossible. With two scratch paths, whichever rename lands last publishes a
+ * COMPLETE file and the loser's bytes were complete too; at quit the process almost always goes
+ * before the threadpool write returns, so the last record is the one that survives.
  */
 export function flushRingSync(): void {
-  if (owed === null || writing) return
+  if (owed === null) return
   const { data, now } = owed
   owed = null
   if (!writeGate.ready(now)) return
   const dir = app.getPath('userData')
+  const path = join(dir, RING_FILE)
   try {
-    writeFileDurable(dir, join(dir, RING_FILE), data)
+    writeFileDurableFinal(dir, path, data)
     noteWriteResult(null, now)
   } catch (err) {
     noteWriteResult(err, now)
@@ -261,6 +281,7 @@ function removeRingFiles(): void {
   try {
     rmSync(path, { force: true })
     rmSync(tempPathFor(path), { force: true })
+    rmSync(tempPathFor(path, FINAL_TEMP_TAG), { force: true })
   } catch (err) {
     logError('main:telemetryRing', { message: 'telemetry.json delete failed', err })
   }

@@ -403,13 +403,13 @@ test('ONE WRITE IN FLIGHT: the async ring writer serialises itself and coalesces
 test('THE QUIT FINAL: the one sync write left in the ring, and a drop outlives an in-flight write', () => {
   // `sessionEnd` is recorded as the last window closes; an async write scheduled at that moment is
   // one the process may never turn the event loop for again. `flushRingSync` is the documented
-  // final — the ONLY `writeFileDurable` (sync) call left here — and it respects the same gate.
-  assert.equal(RING_SRC.match(/[^c]\bwriteFileDurable\(/g)?.length, 1)
+  // final — the ONLY synchronous durable write left here — and it respects the same gate.
+  assert.equal(RING_SRC.match(/writeFileDurableFinal\(/g)?.length, 1)
   const flush = RING_SRC.slice(RING_SRC.indexOf('export function flushRingSync'))
-  assert.ok(flush.indexOf('if (owed === null || writing) return') < flush.indexOf('writeFileDurable('))
+  assert.ok(flush.indexOf('if (owed === null) return') < flush.indexOf('writeFileDurableFinal('))
   assert.match(flush, /if \(!writeGate\.ready\(now\)\) return/)
-  // NEVER A TORN FILE TO BUY A LAST RECORD: the two writers share one `.tmp`, so a sync write
-  // started on top of a threadpool write would be two writers filling one scratch file.
+  // NEVER A TORN FILE TO BUY A LAST RECORD: it writes through its OWN scratch file, so it can run
+  // on top of a threadpool write without two writers ever filling one temp.
   // A drop cannot cancel a write already in the threadpool, so it discards what is owed and asks
   // the drain to delete again on its way out — the file must not come back after "turn it off".
   const drop = RING_SRC.slice(RING_SRC.indexOf('export function dropRing'), RING_SRC.indexOf('export function resetRingCache'))
