@@ -46,11 +46,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use protocol::generated::{
-    AttachResult, EngineMessage, Epoch, EpochMessage, EpochMessageKind, EpochReason, FoldProgress,
-    HealthResult, HealthResultStatus, LogMark, RequestId, ResetMessage, ResetMessageKind,
+    AttachResult, DiffMessage, DiffMessageKind, EngineMessage, Epoch, EpochMessage,
+    EpochMessageKind, EpochReason, FoldProgress, HealthResult, HealthResultStatus, LogMark,
+    RequestId, ResetMessage, ResetMessageKind, Row,
 };
 
 use crate::ingest::{self, Starter};
+use crate::views::{self, FrameKind, Meter, Prepared, SourceDef};
 
 /// The generation a fresh process starts in.
 ///
@@ -171,7 +173,7 @@ pub struct Mark {
 struct Listener {
     id: ListenerId,
     outbox: Sender<EngineMessage>,
-    /// The subscribe-request ids open on this connection.
+    /// The subscriptions open on this connection, by the id of the request that opened each.
     ///
     /// THEY LIVE HERE, NOT ON THE CONNECTION, for two reasons that only became true when a fold
     /// arrived: a landing fold must reset EVERY open subscription, which is a statement about all
@@ -179,7 +181,37 @@ struct Listener {
     /// the same lock that can bump it. Per-connection ISOLATION is unchanged — request ids are
     /// client-chosen and two renderers routinely pick the same number, so a subscription is named
     /// by (listener, id) and one client still cannot unsubscribe another's stream.
-    subscriptions: std::collections::BTreeSet<i64>,
+    subscriptions: std::collections::BTreeMap<i64, Sub>,
+}
+
+/// ONE SUBSCRIPTION'S SERVER-SIDE STATE — the query, and what the client is holding because of it.
+///
+/// THE ENGINE KEEPS A COPY OF THE CLIENT'S WINDOW, and that is not a cache in ruling 5's sense: it
+/// is not an answer kept in case it is asked for again, it is the OTHER OPERAND of the diff. There
+/// is no way to compute "what changed" without knowing what was last sent, and the alternative —
+/// asking the client — is a round trip per frame on a stream whose whole point is that it does not
+/// have one.
+struct Sub {
+    /// The validated descriptor. Every name in it resolved when it was opened, so nothing
+    /// downstream re-checks anything.
+    view: views::View,
+    /// The rows the client holds, or `None` when a fresh RESET IS OWED — before the first one, and
+    /// after a fold lands. A subscription that owes a reset can be sent nothing else: rule 1.
+    held: Option<Vec<Row>>,
+    /// The view's total as of the last frame, so a `total` that did not move is not re-sent.
+    total: i64,
+    /// The source revision `held` was cut at. A subscription whose source has not moved since is
+    /// not re-cut at all, which is what makes an idle session cost nothing.
+    revision: Option<u64>,
+}
+
+/// What one source's subscriptions need before a serve pass builds anything.
+struct SourceNeed {
+    source: &'static SourceDef,
+    /// At least one subscription over it owes a reset.
+    owed: bool,
+    /// The revisions the open subscriptions were last cut at.
+    held: Vec<Option<u64>>,
 }
 
 /// Names one connection's membership of the world. Opaque on purpose: it is a receipt to hand back
@@ -238,7 +270,7 @@ impl World {
         state.listeners.push(Listener {
             id,
             outbox: outbox.clone(),
-            subscriptions: std::collections::BTreeSet::new(),
+            subscriptions: std::collections::BTreeMap::new(),
         });
         Membership { id, outbox, inbox }
     }
@@ -250,18 +282,38 @@ impl World {
         self.lock().listeners.retain(|l| l.id != id);
     }
 
-    /// Open one subscription and answer with the epoch its reset must name.
+    /// Open one subscription over a validated view, and answer with the epoch its reset must name.
     ///
     /// ONE CRITICAL SECTION, and that closes the caveat phase 0 wrote down here: a caller that read
     /// the epoch and then built a reset from it was racing an attach on another connection, so a
     /// subscription's opening reset could name a generation that had already been superseded. It
     /// cannot now — the registration and the stamp happen together, and an attach that lands after
     /// this returns finds the subscription already registered and resets it when its fold lands.
-    pub fn open_subscription(&self, listener: ListenerId, subscription: i64) -> Epoch {
+    ///
+    /// IT OPENS OWING A RESET, which is why the ack's own reset is empty even over a fold that is
+    /// already live. The rows live on the INGEST THREAD and this call is on a connection thread —
+    /// the same wall `module.snapshot` talks through a channel to get past — so the honest opening
+    /// frame is the empty window the protocol requires, and the fold answers with a full one at the
+    /// next boundary it already reaches (one tail nap). A client cannot tell that from any other
+    /// reset, which is the point of reset-then-diffs holding for an empty window.
+    pub fn open_subscription(
+        &self,
+        listener: ListenerId,
+        subscription: i64,
+        view: views::View,
+    ) -> Epoch {
         let mut state = self.lock();
         let epoch = Epoch(state.epoch);
         if let Some(l) = state.listeners.iter_mut().find(|l| l.id == listener) {
-            l.subscriptions.insert(subscription);
+            l.subscriptions.insert(
+                subscription,
+                Sub {
+                    view,
+                    held: None,
+                    total: 0,
+                    revision: None,
+                },
+            );
         }
         epoch
     }
@@ -274,7 +326,94 @@ impl World {
             .listeners
             .iter_mut()
             .find(|l| l.id == listener)
-            .is_some_and(|l| l.subscriptions.remove(&subscription))
+            .is_some_and(|l| l.subscriptions.remove(&subscription).is_some())
+    }
+
+    /// SERVE EVERY OPEN SUBSCRIPTION — the view layer's cadence tick.
+    ///
+    /// Called from the ingest thread at [`views::SERVE_EVERY`] at most, after each tail drain and
+    /// between the naps that follow it. Three things happen, in this order, and the order is the
+    /// design:
+    ///
+    /// 1. **A short lock** learns which sources are subscribed and what revision each subscription
+    ///    was last cut at. Nothing is built yet.
+    /// 2. **Outside the lock**, each source whose revision moved — or that owes somebody a reset —
+    ///    is built. That is the expensive step (a source's whole row set), and it happens on the
+    ///    ingest thread with the world unlocked, so a connection asking `session.health` is never
+    ///    behind a fold's loot ledger.
+    /// 3. **Under the lock**, the ownership is re-asked and the frames are cut, diffed and pushed.
+    ///    A turn that lost the world between steps 2 and 3 writes nothing, by the same law every
+    ///    other `report_*` obeys — which is exactly why the build in step 2 is safe to do outside.
+    ///
+    /// `folded_at` is when the ingest folded the events this pass is reporting, or `None` when it
+    /// folded none (a pass that exists only to answer a subscription that just opened). It is the
+    /// origin of the fold-to-frame measurement and nothing else.
+    pub fn serve_views(
+        &self,
+        generation: u64,
+        rows: &dyn views::Rows,
+        folded_at: Option<Instant>,
+        meter: &mut Meter,
+    ) -> bool {
+        let prepared = self.prepare(rows, false);
+        if prepared.is_empty() {
+            return self.owns(generation);
+        }
+        let mut state = self.lock();
+        if !self.owns(generation) {
+            return false;
+        }
+        serve(&mut state, &prepared, false, folded_at, meter);
+        true
+    }
+
+    /// Which sources have to be built for the next serve pass, and their rows.
+    ///
+    /// `force` is a landing fold: every subscription is owed a reset, so every subscribed source is
+    /// built whatever its revision says.
+    fn prepare(&self, rows: &dyn views::Rows, force: bool) -> Vec<Prepared> {
+        let needs = {
+            let state = self.lock();
+            let mut needs: Vec<SourceNeed> = Vec::new();
+            for listener in &state.listeners {
+                for sub in listener.subscriptions.values() {
+                    let source = sub.view.source;
+                    let need = match needs.iter_mut().find(|n| n.source.id == source.id) {
+                        Some(need) => need,
+                        None => {
+                            needs.push(SourceNeed {
+                                source,
+                                owed: false,
+                                held: Vec::new(),
+                            });
+                            needs.last_mut().expect("just pushed")
+                        }
+                    };
+                    need.owed |= sub.held.is_none();
+                    need.held.push(sub.revision);
+                }
+            }
+            needs
+        };
+
+        needs
+            .into_iter()
+            .filter_map(|need| {
+                // THE CHANGE SIGNAL IS READ FIRST AND IT IS CHEAP — a counter the module bumps on
+                // any change it could have made. Everything after this line is only paid for when
+                // something actually moved.
+                let revision = rows.revision(need.source).unwrap_or(0);
+                let stale = need.held.iter().any(|held| *held != Some(revision));
+                if !force && !need.owed && !stale {
+                    return None;
+                }
+                Some(Prepared {
+                    source: need.source.id,
+                    revision,
+                    rows: rows.rows(need.source).unwrap_or_default(),
+                })
+            })
+            .collect()
     }
 
     /// Answer `session.health`.
@@ -506,7 +645,20 @@ impl World {
     ///
     /// EXACTLY ONE PER WINNING ATTACH. A preempted ingest never reaches here, and one that does can
     /// only pass through it once — the tail loop that follows has no way back.
-    pub fn report_fold_landed(&self, generation: u64, mark: FoldMark) -> bool {
+    ///
+    /// THE RESET CARRIES ROWS NOW (JOS-480), and the phase-0 note that said it would is closed. The
+    /// sources are built BEFORE the lock is taken, for the reason [`World::serve_views`] gives at
+    /// length; the stamp, the status and the send still happen in one critical section, so a reset
+    /// can still only ever name the generation that landed.
+    pub fn report_fold_landed(
+        &self,
+        generation: u64,
+        mark: FoldMark,
+        rows: &dyn views::Rows,
+        folded_at: Option<Instant>,
+        meter: &mut Meter,
+    ) -> bool {
+        let prepared = self.prepare(rows, true);
         let mut state = self.lock();
         if !self.owns(generation) {
             return false;
@@ -515,19 +667,7 @@ impl World {
         state.fold.checkpoint = mark.checkpoint;
         state.fold.events = mark.events;
         state.fold.last_ts = mark.last_ts;
-        let landed = state.epoch;
-        state.listeners.retain(|listener| {
-            listener.subscriptions.iter().all(|subscription| {
-                let reset = EngineMessage::ResetMessage(ResetMessage {
-                    kind: ResetMessageKind::Reset,
-                    id: RequestId(*subscription),
-                    epoch: Epoch(landed),
-                    total: 0,
-                    rows: Vec::new(),
-                });
-                listener.outbox.send(reset).is_ok()
-            })
-        });
+        serve(&mut state, &prepared, true, folded_at, meter);
         true
     }
 
@@ -582,11 +722,116 @@ fn broadcast(state: &mut State, message: &EngineMessage) {
         .retain(|listener| listener.outbox.send(message.clone()).is_ok());
 }
 
+/// SERVE EVERY SUBSCRIPTION OVER A PREPARED SOURCE — the whole of reset-then-diffs, in one place.
+///
+/// It runs under the world's lock, which is what stamps every frame it sends with the epoch that
+/// was current when it was cut. `reset_all` is a landing fold: every window is a new world's and
+/// there is nothing to diff against.
+///
+/// A SUBSCRIPTION WHOSE SOURCE WAS NOT PREPARED IS SKIPPED, silently and correctly: the pass
+/// decided nothing about that source had moved, so there is nothing to say about it.
+fn serve(
+    state: &mut State,
+    prepared: &[Prepared],
+    reset_all: bool,
+    folded_at: Option<Instant>,
+    meter: &mut Meter,
+) {
+    let landed = state.epoch;
+    state.listeners.retain_mut(|listener| {
+        let mut alive = true;
+        for (id, sub) in &mut listener.subscriptions {
+            if !alive {
+                break;
+            }
+            let Some(source) = prepared.iter().find(|p| p.source == sub.view.source.id) else {
+                continue;
+            };
+            if !reset_all && sub.held.is_some() && sub.revision == Some(source.revision) {
+                continue;
+            }
+            let (rows, total) = views::cut(&sub.view, &source.rows);
+            let owed = reset_all || sub.held.is_none();
+            let message = if owed {
+                Some((
+                    FrameKind::Reset,
+                    rows.len(),
+                    0,
+                    EngineMessage::ResetMessage(ResetMessage {
+                        kind: ResetMessageKind::Reset,
+                        id: RequestId(*id),
+                        epoch: Epoch(landed),
+                        total,
+                        rows: rows.clone(),
+                    }),
+                ))
+            } else {
+                let held = sub.held.as_deref().unwrap_or_default();
+                let ops = views::diff(held, &rows);
+                // A FRAME THAT SAYS NOTHING IS NOT SENT. `total` moving on its own is still
+                // something to say — a filtered view can shrink outside the window — so the two
+                // conditions are separate rather than one.
+                if ops.is_empty() && total == sub.total {
+                    sub.revision = Some(source.revision);
+                    continue;
+                }
+                Some((
+                    FrameKind::Diff,
+                    0,
+                    ops.len(),
+                    EngineMessage::DiffMessage(DiffMessage {
+                        kind: DiffMessageKind::Diff,
+                        id: RequestId(*id),
+                        epoch: Epoch(landed),
+                        // Present ONLY when it moved — the schema says so, and fixture 03 is a
+                        // meter tick with no `total` for exactly this reason.
+                        total: (total != sub.total).then_some(total),
+                        ops,
+                    }),
+                ))
+            };
+            if let Some((kind, row_count, ops, message)) = message {
+                // THE BYTES ARE THE FRAME'S OWN. Measured from the message that is about to go out
+                // rather than estimated from the rows, because a payload budget that is estimated
+                // is a payload budget nobody is keeping (see `views::meter`).
+                let bytes = serde_json::to_string(&message).map_or(0, |json| json.len());
+                meter.frame(source.source, kind, row_count, ops, bytes, folded_at);
+                alive = listener.outbox.send(message).is_ok();
+            }
+            sub.held = Some(rows);
+            sub.total = total;
+            sub.revision = Some(source.revision);
+        }
+        alive
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::{FoldMark, World};
-    use protocol::generated::{EngineMessage, EpochReason, HealthResultStatus};
+    use crate::views::{self, Meter};
+    use protocol::generated::{EngineMessage, EpochReason, HealthResultStatus, ViewDescriptor};
     use std::sync::Arc;
+
+    /// A validated view over the one source this build serves. These tests are about the EPOCH, the
+    /// generation and the subscription bookkeeping; the view is the smallest real one there is, and
+    /// `views::NoRows` below is what makes every window it cuts empty.
+    fn a_view() -> views::View {
+        views::validate(&ViewDescriptor {
+            source: "loot.ledger".to_owned(),
+            filter: None,
+            sort: Vec::new(),
+            window: None,
+        })
+        .ok()
+        .expect("loot.ledger is registered")
+    }
+
+    /// Serve every subscription off a world with no fold behind it — which is what a landing fold
+    /// does here, and what makes the reset arrive.
+    fn land(world: &World, generation: u64, mark: FoldMark) -> bool {
+        world.report_fold_landed(generation, mark, &views::NoRows, None, &mut Meter::new())
+    }
 
     /// A path standing in for a log. NOTHING IN THIS MODULE OPENS IT: these tests drive the world
     /// with the ingest replaced by a no-op, so the epoch, the subscription and the generation laws
@@ -684,7 +929,7 @@ mod tests {
         assert!(!world.owns(loser));
         assert!(!world.report_status(loser, HealthResultStatus::Live));
         assert!(!world.report_progress(loser, mark(10, 50.0)));
-        assert!(!world.report_fold_landed(loser, mark(10, 100.0)));
+        assert!(!land(&world, loser, mark(10, 100.0)));
         assert!(!world.report_idle(loser));
     }
 
@@ -720,12 +965,12 @@ mod tests {
         let world = world();
         let listener = world.join();
         let bystander = world.join();
-        world.open_subscription(listener.id, 7);
-        world.open_subscription(listener.id, 9);
+        world.open_subscription(listener.id, 7, a_view());
+        world.open_subscription(listener.id, 9, a_view());
         world.attach(A_LOG);
         let generation = generation(&world);
 
-        assert!(world.report_fold_landed(generation, mark(3, 100.0)));
+        assert!(land(&world, generation, mark(3, 100.0)));
         assert!(matches!(world.health().status, HealthResultStatus::Live));
 
         let mut reset_ids = Vec::new();
@@ -754,7 +999,7 @@ mod tests {
         let world = world();
         let mine = world.join();
         let theirs = world.join();
-        world.open_subscription(mine.id, 7);
+        world.open_subscription(mine.id, 7, a_view());
 
         assert!(!world.close_subscription(theirs.id, 7));
         assert!(world.close_subscription(mine.id, 7));

@@ -39,6 +39,29 @@ pub struct Clock {
     tz: Tz,
 }
 
+/// A wall-clock reading: the calendar fields an instant shows on one zone.
+///
+/// THE INVERSE OF [`Clock::parse_eq_timestamp`], and it exists for exactly one caller — the view
+/// layer, which has to render a loot row's `at` cell as the display form the loot ledger draws
+/// (JOS-480). It hands back FIELDS rather than a formatted string on purpose: a format is a display
+/// decision and belongs to whoever is drawing the pixel, while resolving an instant through the
+/// zone the timestamps were parsed in is this file's job and nowhere else's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Civil {
+    /// Calendar year.
+    pub year: i32,
+    /// Month, 1..=12.
+    pub month: u32,
+    /// Day of month, 1..=31.
+    pub day: u32,
+    /// Hour of a 24-hour clock, 0..=23.
+    pub hour: u32,
+    /// Minute, 0..=59.
+    pub minute: u32,
+    /// Second, 0..=59.
+    pub second: u32,
+}
+
 fn stamp_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
@@ -71,6 +94,32 @@ impl Clock {
 
     pub fn tz(&self) -> Tz {
         self.tz
+    }
+
+    /// Read an epoch-millis instant back as the WALL CLOCK it shows on this zone.
+    ///
+    /// `parse_eq_timestamp` resolves a local wall clock to an instant; this resolves an instant
+    /// back to a local wall clock, through the same zone. The two are inverses everywhere the
+    /// mapping is one-to-one, and the two DST corner cases are the places it is not — a repeated
+    /// hour reads back as one of its two spellings, a skipped one never occurs. Neither is a
+    /// display problem: the string a reader sees is the wall clock their machine would show.
+    ///
+    /// `None` for an instant chrono cannot place, which on this platform means one outside the
+    /// representable range. A stamp the parser could not read is 0, and 0 is a real instant
+    /// (1970) — the CALLER decides what an unknown timestamp renders as, exactly as
+    /// `formatDate.ts` does with its falsy-ts rule.
+    #[must_use]
+    pub fn civil(&self, ms: i64) -> Option<Civil> {
+        let utc = chrono::DateTime::from_timestamp_millis(ms)?;
+        let local = utc.with_timezone(&self.tz).naive_local();
+        Some(Civil {
+            year: chrono::Datelike::year(&local),
+            month: chrono::Datelike::month(&local),
+            day: chrono::Datelike::day(&local),
+            hour: chrono::Timelike::hour(&local),
+            minute: chrono::Timelike::minute(&local),
+            second: chrono::Timelike::second(&local),
+        })
     }
 
     /// `parseEqTimestamp`. A stamp the pattern declines, or a date V8 would call NaN, is 0 —
@@ -134,6 +183,28 @@ mod tests {
             la().parse_eq_timestamp("Wed Aug 19 16:21:47 2026"),
             1787181707000
         );
+    }
+
+    #[test]
+    fn the_wall_clock_reads_back_out_of_the_instant_it_resolved_to() {
+        // The round trip through the same zone, on the corpus's own first line.
+        let ms = la().parse_eq_timestamp("Wed Aug 19 16:21:47 2026");
+        let civil = la().civil(ms).expect("a representable instant");
+        assert_eq!(
+            (
+                civil.year,
+                civil.month,
+                civil.day,
+                civil.hour,
+                civil.minute,
+                civil.second
+            ),
+            (2026, 8, 19, 16, 21, 47)
+        );
+        // …and a UTC clock reads the same instant seven hours later, which is the whole reason the
+        // zone is a property of the Clock rather than of the caller.
+        let utc = Clock::new(chrono_tz::UTC).civil(ms).expect("an instant");
+        assert_eq!((utc.day, utc.hour), (19, 23));
     }
 
     #[test]

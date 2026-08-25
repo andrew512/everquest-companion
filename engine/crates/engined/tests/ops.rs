@@ -190,7 +190,7 @@ fn unsubscribing_closes_the_stream_and_saying_it_twice_is_not_found() {
     let engine = Engine::start();
     let mut client = engine.connected();
 
-    client.send(&subscribe(7, "combat.live"));
+    client.send(&subscribe(7, "loot.ledger"));
     let _ack = client.recv();
     let _reset = client.recv();
 

@@ -42,7 +42,7 @@ pub mod timestamp;
 /// `chrono-tz` version — two tz databases in one process is a way for two answers to appear.
 pub use chrono_tz::Tz;
 pub use parse::Parser;
-pub use timestamp::{host_timezone, Clock};
+pub use timestamp::{host_timezone, Civil, Clock};
 
 /// Build the parser the app builds: the effective spell DB (spells.json + every load-time overlay +
 /// the committed message-overlay corrections) installed, and the tailed character's name known.

@@ -56,6 +56,7 @@
 use std::collections::HashSet;
 
 use crate::ingest::{Event, EventSink, ModuleSnapshot, SinkFactory, SinkInputs, SinkReport};
+use crate::views;
 
 /// The factory `main.rs` hands the world: every attach folds the whole registry.
 #[must_use]
@@ -66,6 +67,14 @@ pub fn folding_sinks() -> SinkFactory {
 /// One attach's fold, and the counters the ingest reports off it.
 pub struct FoldSink {
     fold: fold::Fold,
+    /// THE PARSER'S OWN CLOCK, kept because a VIEW has to render an instant (JOS-480).
+    ///
+    /// The one thing a view source needs that the fold does not: `loot.ledger`'s `at` cell is the
+    /// wall clock the log's timestamps were read in, and reading it through a second clock built
+    /// from the same zone would be a second answer waiting to disagree — the same argument the
+    /// spell DB's single copy makes one level up. It is the ZONE that is load-bearing here, never a
+    /// wall-clock READ: nothing in this file asks what time it is now.
+    clock: eqlog::Clock,
 }
 
 impl FoldSink {
@@ -75,6 +84,7 @@ impl FoldSink {
         let launch_ms = fold::epoch::launch_ms(inputs.clock);
         Self {
             fold: fold::Fold::new(registry_for(inputs, launch_ms), launch_ms),
+            clock: eqlog::Clock::new(inputs.clock.tz()),
         }
     }
 }
@@ -178,6 +188,30 @@ impl EventSink for FoldSink {
             seq: published.get("seq").and_then(serde_json::Value::as_i64)?,
             state: published.get("state").cloned()?,
         })
+    }
+
+    /// THE VIEW LAYER'S DOOR (JOS-480). One `match` on the source, and each arm reads its module
+    /// through that module's own pull seam — never through `snapshot()`, which would serialize the
+    /// whole thing to draw fifty rows of it.
+    ///
+    /// A SOURCE WHOSE MODULE IS NOT REGISTERED ANSWERS `None`, and the view layer serves an empty
+    /// window rather than refusing: the descriptor was valid, this fold simply has nothing behind
+    /// it. That is the same distinction `module.snapshot` draws between `notFound` and
+    /// `unavailable`, one level down.
+    fn source_rows(&self, source: &'static views::SourceDef) -> Option<Vec<views::SourceRow>> {
+        match source.id {
+            id if id == views::loot::LEDGER.id => {
+                Some(views::loot::rows(self.fold.registry.loot()?, &self.clock))
+            }
+            _ => None,
+        }
+    }
+
+    fn source_revision(&self, source: &'static views::SourceDef) -> Option<u64> {
+        match source.id {
+            id if id == views::loot::LEDGER.id => Some(self.fold.registry.loot()?.revision()),
+            _ => None,
+        }
     }
 }
 

@@ -31,16 +31,87 @@ pub struct LootRow {
     created: Option<String>,
 }
 
+/// READ-ONLY ACCESSORS, for the view layer and nothing else (JOS-480).
+///
+/// `loot.ledger` is the first product view source, and it reads THESE rather than the module's
+/// published JSON. That is not an optimization dressed as a design: `snapshot()` serializes the
+/// whole ledger into a fresh `serde_json::Value` tree, and a view that re-derived its window from
+/// one would pay for every row in the log to draw fifty of them — every time a subscription is
+/// serviced. Reading the rows directly costs the window and nothing else.
+///
+/// NOTHING HERE IS MUTABLE and nothing here is new state: these are the fields `snapshot()` already
+/// publishes, named. The published shape is untouched, so the six-slice oracle is untouched.
+impl LootRow {
+    /// The loot's own instant, in epoch millis — THE LOG'S clock.
+    #[must_use]
+    pub fn ts(&self) -> i64 {
+        self.ts
+    }
+    /// The item's name, as the line spelled it.
+    #[must_use]
+    pub fn item(&self) -> &str {
+        &self.item
+    }
+    /// The corpse or container the line named, when it named one.
+    #[must_use]
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
+    /// The zone the module was standing in when the row was folded. Absent for rows folded before
+    /// the scan reached a zone line.
+    #[must_use]
+    pub fn zone(&self) -> Option<&str> {
+        self.zone.as_deref()
+    }
+    /// Where a looted-and-routed item went (`sold`, `destroyed`, `combined`, a storage name).
+    /// Absent means ordinary kept loot.
+    #[must_use]
+    pub fn disposition(&self) -> Option<&str> {
+        self.disposition.as_deref()
+    }
+    /// The stack size the line stated, when it stated one.
+    #[must_use]
+    pub fn count(&self) -> Option<i64> {
+        self.count
+    }
+    /// What a `combined` row produced.
+    #[must_use]
+    pub fn created(&self) -> Option<&str> {
+        self.created.as_deref()
+    }
+}
+
 #[derive(Default)]
 pub struct LootModule {
     loot: Vec<LootRow>,
     zone: Option<String>,
     seq: i64,
+    /// HOW A READER KNOWS THE LEDGER MOVED, without reading it (JOS-480).
+    ///
+    /// Bumped on every push and on every clear, and it is NOT module state: it is absent from
+    /// `snapshot()`, so no golden and no oracle can see it. A length would nearly do — this vector
+    /// only ever grows or empties — but "nearly" is the word that makes a change signal wrong: a
+    /// rebirth boundary that clears 500 rows and folds 500 more between two services of a
+    /// subscription would leave the length exactly where it was, and the view would serve a dead
+    /// character's window as if nothing had happened. A counter cannot do that.
+    revision: u64,
 }
 
 impl LootModule {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The ledger, oldest first — the order the rows were folded in. See [`LootRow`]'s accessors.
+    #[must_use]
+    pub fn rows(&self) -> &[LootRow] {
+        &self.loot
+    }
+
+    /// A monotonic signal that moves whenever the ledger could have changed. See the field.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 }
 
@@ -53,6 +124,7 @@ impl EqModule for LootModule {
         self.loot.clear();
         self.zone = None;
         self.seq = 0;
+        self.revision += 1;
     }
 
     fn on_event(&mut self, ev: &Event, _live: bool) {
@@ -60,19 +132,30 @@ impl EqModule for LootModule {
         match ev.kind() {
             // Character rebirth (Task #49): loot before the boundary is a dead same-name
             // character's. `zone` is KEPT — it is world state, not character-scoped.
-            "epoch" => self.loot.clear(),
+            "epoch" => {
+                self.loot.clear();
+                self.revision += 1;
+            }
             "zone" => self.zone = ev.str("zone").map(str::to_string),
-            "loot" => self.loot.push(LootRow {
-                ts: ev.ts(),
-                item: ev.str("item").unwrap_or_default().to_string(),
-                source: ev.str("source").map(str::to_string),
-                zone: self.zone.clone(),
-                disposition: ev.str("disposition").map(str::to_string),
-                count: ev.int("count"),
-                created: ev.str("created").map(str::to_string),
-            }),
+            "loot" => {
+                self.loot.push(LootRow {
+                    ts: ev.ts(),
+                    item: ev.str("item").unwrap_or_default().to_string(),
+                    source: ev.str("source").map(str::to_string),
+                    zone: self.zone.clone(),
+                    disposition: ev.str("disposition").map(str::to_string),
+                    count: ev.int("count"),
+                    created: ev.str("created").map(str::to_string),
+                });
+                self.revision += 1;
+            }
             _ => {}
         }
+    }
+
+    /// The view layer's door onto this module — see [`crate::EqModule::as_loot`].
+    fn as_loot(&self) -> Option<&LootModule> {
+        Some(self)
     }
 
     fn snapshot(&self) -> Value {

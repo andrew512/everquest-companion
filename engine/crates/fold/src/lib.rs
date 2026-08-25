@@ -108,6 +108,21 @@ pub trait EqModule {
     fn as_roster(&self) -> Option<&dyn combat::RosterSource> {
         None
     }
+
+    /// THE LOOT-LEDGER PULL SEAM (JOS-480 / the view layer's first product source).
+    ///
+    /// Exactly the shape `as_roster` is, and for exactly its reason: one module can answer, so one
+    /// module implements one method and the other nineteen say nothing. A downcast would work and
+    /// would put `Any` on a contract whose whole point is that a module is known by what it can
+    /// answer rather than by what it is.
+    ///
+    /// WHY A VIEW DOES NOT READ `snapshot()` INSTEAD. It could — the ledger is in there — but
+    /// `snapshot()` builds a fresh JSON tree of EVERY row, and a subscription over a fifty-row
+    /// window would pay for the whole log's loot every time it was serviced. The rows are already
+    /// in memory in the module's own shape; the seam hands them over rather than a copy of them.
+    fn as_loot(&self) -> Option<&modules::loot::LootModule> {
+        None
+    }
 }
 
 /// REGISTRATION ORDER = BUS DELIVERY ORDER, and it is load-bearing — `src/main/modules/wiring.ts`
@@ -188,6 +203,12 @@ impl Registry {
     /// modules, made once per delivery — the TS's `rosterProvider` closure costs a call too.
     pub fn roster(&self) -> Option<&dyn combat::RosterSource> {
         self.mods.iter().find_map(|m| m.as_roster())
+    }
+
+    /// The registered module that answers the loot-ledger pull, or `None` when none does — the
+    /// same linear scan `roster` is, made once per view service rather than once per event.
+    pub fn loot(&self) -> Option<&modules::loot::LootModule> {
+        self.mods.iter().find_map(|m| m.as_loot())
     }
 
     /// ONE MODULE'S PUBLISHED SNAPSHOT, by the id it answers to — `{ "seq": …, "state": … }`, the
