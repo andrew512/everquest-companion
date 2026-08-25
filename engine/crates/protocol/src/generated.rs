@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:35aecb5d73df536ab00809aa780d6a5df370fa4c45d4dca7bc18681afb422444
+//! schema-digest: sha256:8c55c03f75727ce7926a5ef17f7fe636d1b3b82be42bebd6054e4cc98575ddce
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -512,6 +512,9 @@ impl ::std::convert::From<::std::collections::BTreeMap<::std::string::String, cr
 ///    },
 ///    {
 ///      "$ref": "#/$defs/SessionMarkAddRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/RespawnConfirmSightingRequest"
 ///    }
 ///  ]
 ///}
@@ -542,6 +545,7 @@ pub enum ClientMessage {
     KnowledgeSearchRequest(KnowledgeSearchRequest),
     KnowledgeDefineRequest(KnowledgeDefineRequest),
     SessionMarkAddRequest(SessionMarkAddRequest),
+    RespawnConfirmSightingRequest(RespawnConfirmSightingRequest),
 }
 impl ::std::convert::From<Hello> for ClientMessage {
     fn from(value: Hello) -> Self {
@@ -651,6 +655,11 @@ impl ::std::convert::From<KnowledgeDefineRequest> for ClientMessage {
 impl ::std::convert::From<SessionMarkAddRequest> for ClientMessage {
     fn from(value: SessionMarkAddRequest) -> Self {
         Self::SessionMarkAddRequest(value)
+    }
+}
+impl ::std::convert::From<RespawnConfirmSightingRequest> for ClientMessage {
+    fn from(value: RespawnConfirmSightingRequest) -> Self {
+        Self::RespawnConfirmSightingRequest(value)
     }
 }
 ///`CombatSearchFightsParams`
@@ -5334,6 +5343,9 @@ impl ::std::convert::TryFrom<::std::string::String> for ReplyKind {
 ///    },
 ///    {
 ///      "$ref": "#/$defs/SessionMarkAck"
+///    },
+///    {
+///      "$ref": "#/$defs/RespawnConfirmAck"
 ///    }
 ///  ]
 ///}
@@ -5354,6 +5366,7 @@ pub enum ReplyResult {
     KnowledgeResult(KnowledgeResult),
     KnowledgeSearchResult(KnowledgeSearchResult),
     SessionMarkAck(SessionMarkAck),
+    RespawnConfirmAck(RespawnConfirmAck),
 }
 impl ::std::convert::From<EchoResult> for ReplyResult {
     fn from(value: EchoResult) -> Self {
@@ -5413,6 +5426,11 @@ impl ::std::convert::From<KnowledgeSearchResult> for ReplyResult {
 impl ::std::convert::From<SessionMarkAck> for ReplyResult {
     fn from(value: SessionMarkAck) -> Self {
         Self::SessionMarkAck(value)
+    }
+}
+impl ::std::convert::From<RespawnConfirmAck> for ReplyResult {
+    fn from(value: RespawnConfirmAck) -> Self {
+        Self::RespawnConfirmAck(value)
     }
 }
 ///Client-chosen correlation id. A reply carries the id of its request; every stream message carries the id of the subscribe request that opened it.
@@ -6047,6 +6065,169 @@ impl ::std::convert::TryFrom<&::std::string::String> for ResistTag {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for ResistTag {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///RE-BASED, OR A NO-OP — and `confirmed: false` IS NOT AN ERROR. It is `respawnModule.confirmSighting`'s own `false` on the wire: the id names no row this fold has, or the row is not currently seen, which is what a click that lost a race with a death looks like. The caller is the app's IPC handler, which has already answered the person from its OWN module's `false`; this ack is a dev-log line and a test's grip, never a branch (`serveCommands.ts`'s fire-and-forget law). IT CARRIES ONE FIELD AND THE NAME IS THE DISCRIMINATOR. `applied` would have made this the seventh member of the `DefineAck` family and unseparable from six other ops by shape — the collision `accepted` walked into when `sessionMarks.add` met `AttachResult`, and `status` walked into twice, taught the guard matrix (`src/shared/dataServer/ops.ts`) that a field two arms carry cannot tell them apart. `confirmed` is this shape's own word: no other result carries it, and it is what the act is called everywhere else in the feature. IT DELIBERATELY DOES NOT SAY WHICH OF THE TWO REFUSALS HAPPENED. The app-side seam answers one boolean for both, and an engine that answered a finer question would be a second opinion about a seam whose whole job is to match — the honest report of what the fold now holds is the module's own state, which the next `module.snapshot` states in full.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "RespawnConfirmAck",
+///  "description": "RE-BASED, OR A NO-OP — and `confirmed: false` IS NOT AN ERROR. It is `respawnModule.confirmSighting`'s own `false` on the wire: the id names no row this fold has, or the row is not currently seen, which is what a click that lost a race with a death looks like. The caller is the app's IPC handler, which has already answered the person from its OWN module's `false`; this ack is a dev-log line and a test's grip, never a branch (`serveCommands.ts`'s fire-and-forget law). IT CARRIES ONE FIELD AND THE NAME IS THE DISCRIMINATOR. `applied` would have made this the seventh member of the `DefineAck` family and unseparable from six other ops by shape — the collision `accepted` walked into when `sessionMarks.add` met `AttachResult`, and `status` walked into twice, taught the guard matrix (`src/shared/dataServer/ops.ts`) that a field two arms carry cannot tell them apart. `confirmed` is this shape's own word: no other result carries it, and it is what the act is called everywhere else in the feature. IT DELIBERATELY DOES NOT SAY WHICH OF THE TWO REFUSALS HAPPENED. The app-side seam answers one boolean for both, and an engine that answered a finer question would be a second opinion about a seam whose whole job is to match — the honest report of what the fold now holds is the module's own state, which the next `module.snapshot` states in full.",
+///  "type": "object",
+///  "required": [
+///    "confirmed"
+///  ],
+///  "properties": {
+///    "confirmed": {
+///      "description": "True when the fold re-based that row's clock onto its sighting. False when there was nothing to re-base.",
+///      "type": "boolean"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct RespawnConfirmAck {
+    ///True when the fold re-based that row's clock onto its sighting. False when there was nothing to re-base.
+    pub confirmed: bool,
+}
+///THE ROW, AND NOTHING ELSE — the whole of what the ipc handler takes (`IPC.respawnConfirmSighting`). ONE IDENTIFIER, NO SECOND ADDRESSING SCHEME: `rowId` is the id the surfaces draw and the id the fold keys its history by, so a zone and a mob key spelled separately here would be a second way to name a row and a second thing to keep in step with `RespawnRow.id`. NO INSTANT RIDES THIS COMMAND, which is the one place it differs from `SessionMarkAddParams` and is not an oversight: the instant the clock re-bases onto is the row's OWN `seenTs`, a LOG timestamp the fold already holds, so a caller's clock has nothing to say about it — and handing one over would let the app move an engine clock to a moment the engine's log never stated (ruling 18 law 1, from the other direction).
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "RespawnConfirmSightingParams",
+///  "description": "THE ROW, AND NOTHING ELSE — the whole of what the ipc handler takes (`IPC.respawnConfirmSighting`). ONE IDENTIFIER, NO SECOND ADDRESSING SCHEME: `rowId` is the id the surfaces draw and the id the fold keys its history by, so a zone and a mob key spelled separately here would be a second way to name a row and a second thing to keep in step with `RespawnRow.id`. NO INSTANT RIDES THIS COMMAND, which is the one place it differs from `SessionMarkAddParams` and is not an oversight: the instant the clock re-bases onto is the row's OWN `seenTs`, a LOG timestamp the fold already holds, so a caller's clock has nothing to say about it — and handing one over would let the app move an engine clock to a moment the engine's log never stated (ruling 18 law 1, from the other direction).",
+///  "type": "object",
+///  "required": [
+///    "rowId"
+///  ],
+///  "properties": {
+///    "rowId": {
+///      "description": "`<zone key>::<mob key>`, exactly as `RespawnRow.id` spells it. VALIDATED AT THE DOOR AND NOT TRUSTED HERE: the ipc handler refuses a non-string, an empty string and anything past 160 chars before this command is ever composed (the `sounds:getData` rule), and the engine's own seam refuses an id its history does not carry — which is the same `false` a stale click gets.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct RespawnConfirmSightingParams {
+    ///`<zone key>::<mob key>`, exactly as `RespawnRow.id` spells it. VALIDATED AT THE DOOR AND NOT TRUSTED HERE: the ipc handler refuses a non-string, an empty string and anything past 160 chars before this command is ever composed (the `sounds:getData` rule), and the engine's own seam refuses an id its history does not carry — which is the same `false` a stale click gets.
+    #[serde(rename = "rowId")]
+    pub row_id: ::std::string::String,
+}
+///"YES, THAT SIGHTING WAS THE SPAWN — START THE CLOCK THERE" (owner ruling, respawn round 3). THE THIRD RESPAWN INPUT AND THE ONLY ONE THAT IS A COMMAND. A death line is the log's; the watch list is a PREFERENCE and rides `respawn.define`, which the world records so the next attach can re-apply it; this is neither. It is a judgement about ONE spawn of ONE mob in ONE session, and `src/main/ipc/respawn.ts` says out loud that it PERSISTS NOTHING — the fold it lives in is rebuilt from the log at every launch and the log has never heard of it, so a stored copy would outlive its subject. THE ENGINE THEREFORE STORES NOTHING EITHER, exactly as `sessionMarks.add` stores nothing and for the identical reason: an impure input that is not persisted cannot make a replay diverge from a live fold, which is what keeps ruling 18's determinism law structural here rather than carefully avoided. It is `sessionMarks.add`'s sibling in every way but one — it CANNOT be refused for being early. A mark cannot enter a replaying fold at all (`combat/engine.ts sessionMark` refuses while hydrating and the ack carries the status it refused under); a confirm has no such law app-side, because `respawnModule.confirmSighting` has exactly two refusals and both are about the ROW rather than about the world. So the ack below says which of `taken` or `nothing to take` happened and nothing about what the fold was doing.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "RespawnConfirmSightingRequest",
+///  "description": "\"YES, THAT SIGHTING WAS THE SPAWN — START THE CLOCK THERE\" (owner ruling, respawn round 3). THE THIRD RESPAWN INPUT AND THE ONLY ONE THAT IS A COMMAND. A death line is the log's; the watch list is a PREFERENCE and rides `respawn.define`, which the world records so the next attach can re-apply it; this is neither. It is a judgement about ONE spawn of ONE mob in ONE session, and `src/main/ipc/respawn.ts` says out loud that it PERSISTS NOTHING — the fold it lives in is rebuilt from the log at every launch and the log has never heard of it, so a stored copy would outlive its subject. THE ENGINE THEREFORE STORES NOTHING EITHER, exactly as `sessionMarks.add` stores nothing and for the identical reason: an impure input that is not persisted cannot make a replay diverge from a live fold, which is what keeps ruling 18's determinism law structural here rather than carefully avoided. It is `sessionMarks.add`'s sibling in every way but one — it CANNOT be refused for being early. A mark cannot enter a replaying fold at all (`combat/engine.ts sessionMark` refuses while hydrating and the ack carries the status it refused under); a confirm has no such law app-side, because `respawnModule.confirmSighting` has exactly two refusals and both are about the ROW rather than about the world. So the ack below says which of `taken` or `nothing to take` happened and nothing about what the fold was doing.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "respawn.confirmSighting"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/RespawnConfirmSightingParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct RespawnConfirmSightingRequest {
+    pub id: RequestId,
+    pub op: RespawnConfirmSightingRequestOp,
+    pub params: RespawnConfirmSightingParams,
+}
+///`RespawnConfirmSightingRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "respawn.confirmSighting"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum RespawnConfirmSightingRequestOp {
+    #[serde(rename = "respawn.confirmSighting")]
+    RespawnConfirmSighting,
+}
+impl ::std::fmt::Display for RespawnConfirmSightingRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::RespawnConfirmSighting => f.write_str("respawn.confirmSighting"),
+        }
+    }
+}
+impl ::std::str::FromStr for RespawnConfirmSightingRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "respawn.confirmSighting" => Ok(Self::RespawnConfirmSighting),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for RespawnConfirmSightingRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for RespawnConfirmSightingRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for RespawnConfirmSightingRequestOp {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,

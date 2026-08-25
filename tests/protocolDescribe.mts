@@ -175,6 +175,11 @@ function describeCore(message: Exclude<ClientMessage, DefineMessage | CombatMess
       return `unsubscribe#${String(message.id)} of ${String(message.params.subscription)}`
     case 'sessionMarks.add':
       return `mark#${String(message.id)} at ${String(message.params.at)}`
+    // THE ROW AND NOTHING ELSE, and the description carries no instant because the command does
+    // not: a confirm re-bases onto the row's own `seenTs`, which is a LOG timestamp the fold
+    // already holds. A mark's whole point is the caller's clock; this one's is the caller's ROW.
+    case 'respawn.confirmSighting':
+      return `confirm#${String(message.id)} ${message.params.rowId}`
     default: {
       const unreachable: never = message
       throw new Error(`unhandled client message ${JSON.stringify(unreachable)}`)

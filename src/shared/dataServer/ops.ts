@@ -23,6 +23,7 @@ import type {
   KnowledgeSearchResult,
   ModuleSnapshotResult,
   PerfSnapshotResult,
+  RespawnConfirmAck,
   SessionMarkAck,
   SubscribeAck
 } from './protocol.generated'
@@ -49,6 +50,11 @@ interface ResultRegistry {
   // always applies; a mark can be REFUSED while the fold is still replaying, and the caller has to
   // branch on it — `pressNewSession`'s "both halves or neither" is exactly that branch.
   'sessionMarks.add': SessionMarkAck
+  // THE SECOND COMMAND, AND THE SECOND ANSWER THAT IS NOT AN ACKNOWLEDGEMENT (JOS-494). A confirm
+  // re-bases one clock or does nothing at all, and the two are as different to a reader of the dev
+  // log as a taken mark is from a refused one — so it gets its own shape rather than borrowing
+  // `DefineAck`, whose `applied` six ops already mean.
+  'respawn.confirmSighting': RespawnConfirmAck
   // THE COMBAT SURFACE (JOS-485). Two ops and two shapes: the meter's whole state, and a ranked
   // answer to a search box. Neither is a `view.*` — one is the app's own `combat:snapshot` IPC
   // moved server-side, the other is a question rather than a window — and the third surface the
@@ -134,6 +140,13 @@ export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> 
   // no epoch. Same reasoning as `session.health`'s: a guard both arms pass cannot tell them apart,
   // and the matrix in `tests/dataServerOps.test.mts` is what would catch it if it did.
   'sessionMarks.add': (r) => 'accepted' in r && !('epoch' in r),
+  // `confirmed` — A WORD NO OTHER ARM CARRIES, and chosen for that rather than found to be free.
+  // The two collisions above are the whole argument: `applied` would have made this a seventh
+  // member of the define family and separable from none of them, and `accepted` is already two
+  // arms deep. A one-field result has exactly one chance to be discriminating, so the field is
+  // named after what the act is called (`confirmSighting`, `respawn-confirm-sighting`) rather than
+  // after the generic shape of an ack.
+  'respawn.confirmSighting': (r) => 'confirmed' in r,
   // `snapshot` rather than `now`: the payload is the field this result exists for, and a name as
   // generic as `now` is the one a later result shape is most likely to want too. The lesson is
   // JOS-483's — a guard is only worth its line if no other arm can pass it — and `status` losing its

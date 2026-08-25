@@ -340,6 +340,7 @@ test('every fixture message VALIDATES against the schema and narrows through the
     'fire',
     'knowledgeMiss',
     'sessionMarks.add',
+    'respawn.confirmSighting',
     'conCard',
     'moduleChanged'
   ]) {

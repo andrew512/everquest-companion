@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:35aecb5d73df536ab00809aa780d6a5df370fa4c45d4dca7bc18681afb422444
+// schema-digest: sha256:8c55c03f75727ce7926a5ef17f7fe636d1b3b82be42bebd6054e4cc98575ddce
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -40,6 +40,7 @@ export type ClientMessage =
   | KnowledgeSearchRequest
   | KnowledgeDefineRequest
   | SessionMarkAddRequest
+  | RespawnConfirmSightingRequest
 /**
  * The per-launch shared secret. Minted by Electron main at spawn, handed to the engine out of band, presented once at hello. It is never persisted and never reused across launches. Compare it in CONSTANT TIME (src/main/dataServer/token.ts, engine/crates/protocol/src/token.rs) - a byte-at-a-time compare over a loopback socket is a timing oracle. The shape rules are environment-neutral and live in src/shared/dataServer/token.ts.
  */
@@ -97,6 +98,7 @@ export type ReplyResult =
   | KnowledgeResult
   | KnowledgeSearchResult
   | SessionMarkAck
+  | RespawnConfirmAck
 /**
  * The world's generation. Monotonic within one engine process. A client that sees an epoch it did not expect DROPS ALL STATE and waits for the reset — it never reconciles across a bump.
  */
@@ -522,6 +524,23 @@ export interface SessionMarkAddParams {
   at: number
 }
 /**
+ * "YES, THAT SIGHTING WAS THE SPAWN — START THE CLOCK THERE" (owner ruling, respawn round 3). THE THIRD RESPAWN INPUT AND THE ONLY ONE THAT IS A COMMAND. A death line is the log's; the watch list is a PREFERENCE and rides `respawn.define`, which the world records so the next attach can re-apply it; this is neither. It is a judgement about ONE spawn of ONE mob in ONE session, and `src/main/ipc/respawn.ts` says out loud that it PERSISTS NOTHING — the fold it lives in is rebuilt from the log at every launch and the log has never heard of it, so a stored copy would outlive its subject. THE ENGINE THEREFORE STORES NOTHING EITHER, exactly as `sessionMarks.add` stores nothing and for the identical reason: an impure input that is not persisted cannot make a replay diverge from a live fold, which is what keeps ruling 18's determinism law structural here rather than carefully avoided. It is `sessionMarks.add`'s sibling in every way but one — it CANNOT be refused for being early. A mark cannot enter a replaying fold at all (`combat/engine.ts sessionMark` refuses while hydrating and the ack carries the status it refused under); a confirm has no such law app-side, because `respawnModule.confirmSighting` has exactly two refusals and both are about the ROW rather than about the world. So the ack below says which of `taken` or `nothing to take` happened and nothing about what the fold was doing.
+ */
+export interface RespawnConfirmSightingRequest {
+  id: RequestId
+  op: 'respawn.confirmSighting'
+  params: RespawnConfirmSightingParams
+}
+/**
+ * THE ROW, AND NOTHING ELSE — the whole of what the ipc handler takes (`IPC.respawnConfirmSighting`). ONE IDENTIFIER, NO SECOND ADDRESSING SCHEME: `rowId` is the id the surfaces draw and the id the fold keys its history by, so a zone and a mob key spelled separately here would be a second way to name a row and a second thing to keep in step with `RespawnRow.id`. NO INSTANT RIDES THIS COMMAND, which is the one place it differs from `SessionMarkAddParams` and is not an oversight: the instant the clock re-bases onto is the row's OWN `seenTs`, a LOG timestamp the fold already holds, so a caller's clock has nothing to say about it — and handing one over would let the app move an engine clock to a moment the engine's log never stated (ruling 18 law 1, from the other direction).
+ */
+export interface RespawnConfirmSightingParams {
+  /**
+   * `<zone key>::<mob key>`, exactly as `RespawnRow.id` spells it. VALIDATED AT THE DOOR AND NOT TRUSTED HERE: the ipc handler refuses a non-string, an empty string and anything past 160 chars before this command is ever composed (the `sounds:getData` rule), and the engine's own seam refuses an id its history does not carry — which is the same `false` a stale click gets.
+   */
+  rowId: string
+}
+/**
  * The handshake answer. `ok: false` is a courtesy sent immediately before the engine closes the connection — a client must treat a closed connection with no reply as the same outcome.
  */
 export interface HelloReply {
@@ -780,6 +799,15 @@ export interface SessionMarkAck {
    * What the engine's ingest was doing at the moment it decided, in `HealthResult.status`'s own words. `live` accompanies every acceptance; anything else accompanies a refusal.
    */
   status: 'starting' | 'attaching' | 'folding' | 'live' | 'idle'
+}
+/**
+ * RE-BASED, OR A NO-OP — and `confirmed: false` IS NOT AN ERROR. It is `respawnModule.confirmSighting`'s own `false` on the wire: the id names no row this fold has, or the row is not currently seen, which is what a click that lost a race with a death looks like. The caller is the app's IPC handler, which has already answered the person from its OWN module's `false`; this ack is a dev-log line and a test's grip, never a branch (`serveCommands.ts`'s fire-and-forget law). IT CARRIES ONE FIELD AND THE NAME IS THE DISCRIMINATOR. `applied` would have made this the seventh member of the `DefineAck` family and unseparable from six other ops by shape — the collision `accepted` walked into when `sessionMarks.add` met `AttachResult`, and `status` walked into twice, taught the guard matrix (`src/shared/dataServer/ops.ts`) that a field two arms carry cannot tell them apart. `confirmed` is this shape's own word: no other result carries it, and it is what the act is called everywhere else in the feature. IT DELIBERATELY DOES NOT SAY WHICH OF THE TWO REFUSALS HAPPENED. The app-side seam answers one boolean for both, and an engine that answered a finer question would be a second opinion about a seam whose whole job is to match — the honest report of what the fold now holds is the module's own state, which the next `module.snapshot` states in full.
+ */
+export interface RespawnConfirmAck {
+  /**
+   * True when the fold re-based that row's clock onto its sighting. False when there was nothing to re-base.
+   */
+  confirmed: boolean
 }
 /**
  * A refused request. An error is always a reply to a request id — a failure with no request behind it closes the connection instead.
