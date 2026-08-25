@@ -37,7 +37,7 @@
 //
 // ── WHAT IT DOES WHEN THERE IS NO ENGINE ───────────────────────────────────────────────────────
 //
-// It says so, once, with a `null` push, and does not arm a timer at all. `EQC_ENGINE` unset and a
+// It says so, once, with a `null` push, and does not arm a timer at all. `EQC_ENGINE=0` and a
 // build with no engine binary are the same answer to the panel — there is no ENGINE section to
 // draw — and they are distinguished nowhere but in `engineSupervisorStatus()`, which owns that
 // gate so this file does not re-decide it.

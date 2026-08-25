@@ -360,12 +360,14 @@ if (!gotSingleInstanceLock) {
         void runSmokeFeedback()
       })
     markStartupPhase('tailAttached')
-    // THE DATA-SERVER ENGINE (JOS-459 phase 0, docs/plans/data-server.md), behind `EQC_ENGINE=1`
-    // and nothing else. A NO-OP on every launch that is not a developer's: without the env var this
-    // returns before touching anything. `EQ_E2E` is NOT a second gate here, and that is deliberate
-    // rather than an omission — engineHost.ts's header carries the argument, and JOS-470's
-    // tests/e2e/engine-boots.e2e.mts is the spec that opts IN by setting both variables. Every
-    // other spec in that suite sets neither and therefore runs with no engine at all.
+    // THE DATA-SERVER ENGINE (JOS-459, docs/plans/data-server.md), and since JOS-495 THIS IS THE
+    // ORDINARY PATH: `EQC_ENGINE=0` is what makes it return before touching anything, and nothing
+    // else does. A dev checkout that has never run `cargo build` still gets the old app, because
+    // the supervisor finds no binary — absence is decided by the disk now, not by the flag.
+    // `EQ_E2E` is NOT a second gate here, and that is deliberate rather than an omission —
+    // engineHost.ts's header carries the argument, and tests/e2e/engine-boots.e2e.mts is the spec
+    // that names the flag at both ends: on for its own launches, `EQC_ENGINE=0` for the absence
+    // contract at step 5, which after the flip is the only way to reach that path at all.
     //
     // HERE, right after the tail attaches, because the engine is the eventual successor to that
     // fold and this is where its lifecycle belongs in the boot order — and because the supervisor

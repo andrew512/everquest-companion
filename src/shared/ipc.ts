@@ -991,8 +991,9 @@ export const IPC = {
   //
   // renderer -> main: open this window's ONE connection to the engine. Arg: a numeric nonce the
   // renderer minted, echoed on the push so a window that asked twice can tell the answers apart.
-  // Answers `{ok:false, reason}` when no engine is running on this launch, which is every launch
-  // without `EQC_ENGINE=1` — main's whole gate for the feature (src/main/dataServer/engineHost.ts).
+  // Answers `{ok:false, reason}` when no engine is running on this launch — since JOS-495 that is
+  // `EQC_ENGINE=0` or a checkout carrying no binary, not the default it used to be. Main's whole
+  // gate for the feature is one function (src/main/dataServer/engineHost.ts).
   engineConnect: 'engine:connect',
   // main -> renderer: the port, with the launch's token beside it. `event.ports[0]` is one end of a
   // `MessageChannelMain` whose other end main is pumping RAW SOCKET BYTES through — main never

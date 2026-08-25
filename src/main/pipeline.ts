@@ -139,9 +139,9 @@ export function sendWorldRebuilt(character: CharacterRef | null): void {
     sendToMain(IPC.onCharacter, character)
     sendToModuleOverlays(IPC.onCharacter, character)
   })
-  // …AND ANYTHING IN-PROCESS THAT NEEDS THE SAME NEWS (JOS-479). Null on every launch that did not
-  // ask for an engine, so with `EQC_ENGINE` unset this is one null check and the behaviour above is
-  // untouched. See `setWorldRebuiltObserver`.
+  // …AND ANYTHING IN-PROCESS THAT NEEDS THE SAME NEWS (JOS-479). Null on any launch that did not
+  // ask for an engine — `EQC_ENGINE=0` since JOS-495 — where this is one null check and the
+  // behaviour above is untouched. See `setWorldRebuiltObserver`.
   worldRebuiltObserver?.(character)
 }
 
@@ -157,8 +157,8 @@ export function sendWorldRebuilt(character: CharacterRef | null): void {
  *
  * A REGISTRATION RATHER THAN AN IMPORT, and that is a dependency decision rather than a style one:
  * the client host reads `registry` out of THIS module, so an import in the other direction would be
- * a cycle at module-evaluation time. The composition of the engine feature (engineHost.ts, behind
- * `EQC_ENGINE=1`) installs this; nothing else ever does.
+ * a cycle at module-evaluation time. The composition of the engine feature (engineHost.ts, unless
+ * `EQC_ENGINE=0`) installs this; nothing else ever does.
  *
  * IT RUNS OUTSIDE THE `timeSeam` BRACKET on purpose. That bracket measures OUR half of the
  * rebuild fan-out — the `webContents.send`s — and folding a dev-only probe into the same
