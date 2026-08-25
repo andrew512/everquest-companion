@@ -206,6 +206,33 @@ From the first two workers (JOS-464/465), now law for later phases:
   renderer never even re-derives (no munging, ruling 4). Any future "make the client smarter"
   proposal should be read against that ruling first.
 
+From the phase-0/1 wave (JOS-466/467/468/469), added to the ledger:
+
+- **An untagged union with `deny_unknown_fields` cannot answer `unknownOp`.** A request naming an
+  op the build lacks fails to deserialize as a whole message and takes its `id` with it — and an
+  error that cannot name a request id is a client that hangs. The receiving side keeps the raw
+  frame alongside the typed parse and reads exactly `id`+`op` from it after the typed parse fails
+  (engined's `ops::classify`). Known-op lists come from the generated tag enums, never literals.
+- **Schema gap noted for phase 3:** `session.progress` acks with `SubscribeAck` (semantically
+  exact — progress IS a subscription to the connection-wide channel); if the views work wants a
+  dedicated ack arm, add it then.
+- **Redact child streams at the door.** A child process can echo its own stdin — the first real
+  boot proved it, putting the launch token one report away from `errors.log` and the fleet. Every
+  line off a supervised child's stdout/stderr passes `redactToken` before anything reads it.
+- **The JS↔Rust semantic divergence catalogue** (eqlog's `jsstr.rs`, each measured): JS `.`
+  excludes FOUR line terminators (the regex crate's excludes one — embedded bare CRs in chat
+  lines parse to nothing in TS and must in Rust too); JS `trim`/`\s` is the ECMA set, not
+  Unicode `White_Space` (disagrees in both directions: U+FEFF, U+0085); `JSON.stringify` escapes
+  only `"`, `\` and C0. And **key order is a code-path property, not a type property** — TS
+  object literals serialize in per-branch insertion order, so byte-identical Rust serializes
+  key-by-key at the branch, never via a derive.
+- **`app.getAppPath()` is not the checkout on every dev launch** — against a built
+  `out/main/index.js` it is that directory. Resource probes take `appPath` + `cwd` +
+  `resourcesPath` (the `bundledImageRoots` trio).
+- **A rejected token arrives as silence-then-FIN** — a clean close the transport rightly does not
+  report as an error. Anything probing "is it up" must watch the close itself or the commonest
+  refusal becomes the slowest timeout.
+
 ## Boundary verdicts (each resolves a census finding)
 
 1. `combat.snapshot(now, opts)` — the only wall-clock-parameterized read: the now-evaluation
