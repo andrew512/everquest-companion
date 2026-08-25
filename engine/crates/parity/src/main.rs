@@ -122,6 +122,16 @@ fn main() -> ExitCode {
 /// `meta` carries what the reader needs to know the run was the one it thinks it was: the event
 /// count (`ScanResult.seq`), the character, the zone, and the launch instant the epoch boundary
 /// was resolved at — the one derived event this cluster's modules read.
+///
+/// PHASE 2d (JOS-477) ADDS TWO MORE SECTIONS, joined to the golden's own by name: `combat` — the
+/// full-fat snapshot at `now = lastEventTs`, opts `{ maxSegments: 100000, timeline: true,
+/// showUnparsed: true }` — and `scopes`, the uncapped per-scope walk. THE INSTANT IS THE LOG'S,
+/// never a wall clock: `Fold::last_ts()` is the same `max(ev.ts)` the recorder's bus listener
+/// accumulates, and passing anything else would make a golden recorded on Monday fail on Tuesday.
+///
+/// `lastEventTs` travels in `meta` beside them so the comparator can prove the two folds agreed
+/// about WHICH instant they were asked about before it reads anything into their disagreeing about
+/// what was true at it.
 fn snapshots(parser: &eqlog::Parser, bytes: &[u8], tz: eqlog::Tz, character: &str) -> ExitCode {
     let known: HashSet<String> = parser
         .spell_db()
@@ -130,16 +140,33 @@ fn snapshots(parser: &eqlog::Parser, bytes: &[u8], tz: eqlog::Tz, character: &st
     let clock = eqlog::Clock::new(tz);
     let launch_ms = fold::epoch::launch_ms(&clock);
     let started = std::time::Instant::now();
-    let mut folder = fold::Fold::new(fold::cluster_2a(known), launch_ms);
+    // The engine is constructed exactly as `foldArm.mts construct()` constructs it: the roster seam
+    // installed (here, structurally — `Fold` hands the registry's roster module to the engine on
+    // every delivery), then `reset()`, then the player name off the slice filename. It calls
+    // `setCombo`, `setDerivedEmitter` and `setHeldClickies` nowhere, and neither do we.
+    let mut engine = fold::combat::CombatEngine::new();
+    engine.reset();
+    engine.set_player_name(character);
+    let mut folder = fold::Fold::new(fold::cluster_2a(known), launch_ms).with_combat(engine);
+    // …and `with_combat` resets, so the name is re-injected after it the way every construction
+    // path does. `CombatEngine::reset` re-seeds an injected name by itself, so this is the same
+    // ordering stated twice rather than two different orderings.
     folder.fold_bytes(parser, bytes);
     let ms = started.elapsed().as_millis();
+    let last_ts = folder.last_ts();
     let mut out = folder.registry.snapshots();
+    if let Some(engine) = &folder.combat {
+        let roster = folder.registry.roster();
+        out["combat"] = engine.snapshot(last_ts, &fold::combat::SnapshotOpts::full(), roster);
+        out["scopes"] = serde_json::Value::Array(engine.walk_scopes(last_ts, roster));
+    }
     out["meta"] = serde_json::json!({
         "events": folder.events(),
         "ms": ms,
         "character": character,
         "tz": tz.to_string(),
         "launchMs": launch_ms,
+        "lastEventTs": last_ts,
     });
     let stdout = std::io::stdout();
     let mut w = BufWriter::with_capacity(1 << 20, stdout.lock());

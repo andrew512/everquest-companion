@@ -16,7 +16,13 @@ printed as SKIP on every parity run, green ones included.
 | 2a | JOS-471 ✅ | `loot` `turnins` `classUnlocks` `kills` `leveling` `outputFiles` `spellSets` `itemTiers` `observedSpellRanks` |
 | 2b | — | `respawn` `progression` `character` `roster` `combo` |
 | 2c | — | `alerts` `buffs` `buffTimers` |
-| 2d | — | `consider` `resist` `eventFeed` |
+| 2d | JOS-477 🟡 | `consider` `resist` `eventFeed` + **the combat engine** (`src/combat/`, partial) |
+
+The combat engine is not in `WIRING_ORDER` — it is not a module. It is the bus subscriber that sits
+AFTER all twenty of them (`pipeline.ts:311,326`), and `Fold` carries it in its own `combat` field
+for exactly that reason; `src/combat/mod.rs`'s header carries the submodule-vs-crate argument. Its
+port is **deliberately partial** and the header says which half is which. Prove it with `--ledger`
+(below), never by eye.
 
 ## Adding a module (the 2b/2c/2d recipe)
 
@@ -77,9 +83,19 @@ printed as SKIP on every parity run, green ones included.
 ## Proving it
 
 ```
-npm run oracle:rust-fold -- [slice...] [--snapshots=<module,module>] [--no-build] [--keep-going]
-                            [--slices=<dir>] [--goldens=<dir>] [--tz=<zone>]
+npm run oracle:rust-fold -- [slice...] [--snapshots=<module,module>] [--ledger] [--no-build]
+                            [--keep-going] [--slices=<dir>] [--goldens=<dir>] [--tz=<zone>]
 ```
+
+`--snapshots=<list>` accepts the two COMBAT sections by name as well — `--snapshots=combat,scopes`
+narrows a run to the engine, and `--snapshots=kills` narrows it away from one.
+
+`--ledger` swaps the first-divergence report for a full walk that buckets every disagreement by
+class (`.combat.segments[].total`, indices erased), prints the count per class with one worked
+example, and states the agreement rate. It exists because the combat engine will be red for several
+shifts and "it diverged at `.combat.selected`" is equally true on the first shift and the fifth.
+**It is not a second bar and it cannot turn a red run green** — the exit code is still decided by
+whether anything diverged at all (`tests/bench/parityLedger.mts` carries the argument).
 
 The slices and goldens are gitignored and machine-local, so a **worktree** run needs the two
 directory flags pointing at the main checkout, plus `--tz` matching the zone the goldens were
