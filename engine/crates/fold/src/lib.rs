@@ -199,6 +199,20 @@ pub trait EqModule {
         None
     }
 
+    /// THE RESPAWN WRITE SEAM (JOS-494) — `as_respawn`'s mirror, and a SEPARATE method rather than
+    /// a `&mut` on that one.
+    ///
+    /// The split is the same law `engined::ingest`'s two doors are built on: an `Ask` is handed the
+    /// fold by `&` and an `ingest::Write` by `&mut`, so which door a request belongs on is decided
+    /// by the compiler rather than by a convention. Here that law reaches one module. Every one of
+    /// the seven `as_*` pull seams above serves a VIEW and may only read; `respawn.confirmSighting`
+    /// is the only thing a person can press that reaches this module without being a preference,
+    /// and it MOVES a clock. Widening `as_respawn` to `&mut` for its sake would have let a view
+    /// mutate the world it is drawing, and nothing but a comment would have said not to.
+    fn as_respawn_mut(&mut self) -> Option<&mut modules::respawn::RespawnModule> {
+        None
+    }
+
     /// The progression columns and the recent-kill ring.
     fn as_progression(&self) -> Option<&modules::progression::ProgressionModule> {
         None
@@ -476,6 +490,15 @@ impl Registry {
     /// The registered module that answers the respawn pull.
     pub fn respawn(&self) -> Option<&modules::respawn::RespawnModule> {
         self.mods.iter().find_map(|m| m.as_respawn())
+    }
+
+    /// THE SAME MODULE, TO BE WRITTEN TO (JOS-494) — see [`EqModule::as_respawn_mut`] for why the
+    /// read and the write are two seams. `None` for a registry that carries no respawn module,
+    /// which is the honest answer rather than an absence: a confirmation with nothing to confirm
+    /// re-based no clock, exactly as [`Registry::define`] answers `false` for a family nobody
+    /// claims.
+    pub fn respawn_mut(&mut self) -> Option<&mut modules::respawn::RespawnModule> {
+        self.mods.iter_mut().find_map(|m| m.as_respawn_mut())
     }
 
     /// The registered module that answers the progression pull.

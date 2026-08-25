@@ -469,6 +469,41 @@ impl RespawnModule {
         self.rev += 1;
     }
 
+    /// "YES, THAT SIGHTING WAS THE SPAWN — START THE CLOCK THERE" (owner ruling, round 3), and it
+    /// is `src/main/modules/respawn.ts confirmSighting` line for line.
+    ///
+    /// THE ONE THING A SIGHTING IS NEVER ALLOWED TO DO ON ITS OWN. Everything else in this module
+    /// records evidence: a death starts a clock, a mention lights a row. This MOVES a clock, and
+    /// only a person can ask for it — which is why it arrives as a pushed command
+    /// (`respawn.confirmSighting`) rather than out of an event, and why it is the third input the
+    /// header names as advancing `rev` without advancing any log seq.
+    ///
+    /// `id` IS THE ROW'S OWN ID, which is how the surfaces name a row and how this fold keys its
+    /// history — one identifier, no second addressing scheme to keep in step.
+    ///
+    /// TWO REFUSALS AND BOTH ARE ABOUT THE ROW, never about what the world is doing. `false` when
+    /// the id names no entry, and `false` when the entry is not CURRENTLY seen — the same test
+    /// [`Self::row_for`] uses to decide a row may open in the seen state, so a click can only
+    /// confirm a sighting the screen was actually drawing. A stale click (the mob died between the
+    /// render and the press) is therefore a no-op rather than a clock re-based onto an instant
+    /// nothing is claiming any more. Nothing needs to undo a confirmation afterwards either: the
+    /// later of `confirmed_ts` and `last_ts` is the base ([`base_of`]), so the next death wins by
+    /// arithmetic.
+    pub fn confirm_sighting(&mut self, id: &str) -> bool {
+        let Some(h) = self.history.get_mut(id) else {
+            return false;
+        };
+        let base = base_of(h);
+        let Some(seen) = h.seen_ts.filter(|s| *s > base) else {
+            return false;
+        };
+        h.confirmed_ts = Some(seen);
+        // THE REVISION MOVES, for the reason the header gives: a confirmation advances no log seq,
+        // so a reader deduping on `seq` would swallow the very push that carries it (JOS-87).
+        self.rev += 1;
+        true
+    }
+
     fn record_death(&mut self, key: &str, display: &str, ts: i64) {
         let id = format!("{}::{}", id_key(&self.zone), key);
         let mut h = match self.history.get(&id) {
@@ -797,6 +832,12 @@ impl EqModule for RespawnModule {
     fn as_respawn(&self) -> Option<&RespawnModule> {
         Some(self)
     }
+
+    /// THE WRITE SEAM (JOS-494) — the one above, by `&mut`. See `EqModule::as_respawn_mut` for why
+    /// they are two methods.
+    fn as_respawn_mut(&mut self) -> Option<&mut RespawnModule> {
+        Some(self)
+    }
 }
 
 impl crate::Defines for RespawnModule {
@@ -818,5 +859,157 @@ impl crate::Defines for RespawnModule {
         self.prefs = prefs;
         self.reindex_watches();
         self.rev += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RespawnModule, RespawnPrefs, RespawnRow, RespawnWatchPref};
+    use crate::event::Event;
+    use crate::EqModule;
+
+    /// The zone line the stay begins with. Every timestamp below is derived from this one, so the
+    /// arithmetic in the assertions is readable rather than a set of magic epochs.
+    const T_ZONE: i64 = 1_787_181_000_000;
+    /// The kill that starts the clock — a minute into the stay.
+    const T_DEATH: i64 = T_ZONE + 60_000;
+    /// The line that NAMES the mob again, two minutes after it died. Nothing about this instant
+    /// moves a clock on its own; that is the ruling this file's round 3 turns on.
+    const T_SEEN: i64 = T_DEATH + 120_000;
+    /// Ten seconds later — where the ordering clock stands while the assertions read rows.
+    const NOW: i64 = T_SEEN + 10_000;
+
+    /// The user's own number, so the estimate ladder answers `custom` and the countdown is a round
+    /// minute. It is the same construction `tests/respawnSeen.test.mts` uses over there.
+    const CUSTOM_SEC: i64 = 60;
+
+    fn watching_the_knight() -> RespawnPrefs {
+        RespawnPrefs {
+            watches: vec![RespawnWatchPref {
+                key: "a vis ghoul knight".to_owned(),
+                display: "a vis ghoul knight".to_owned(),
+                custom_sec: Some(CUSTOM_SEC),
+            }],
+        }
+    }
+
+    fn ev(json: &str) -> Event {
+        Event::from_json(json).expect("a JSON object")
+    }
+
+    fn zone(ts: i64) -> String {
+        format!(r#"{{"kind":"zone","seq":0,"ts":{ts},"raw":"z","zone":"The Ruins of Old Guk"}}"#)
+    }
+
+    fn death(seq: i64, ts: i64) -> String {
+        format!(
+            r#"{{"kind":"death","seq":{seq},"ts":{ts},"raw":"d","name":"a vis ghoul knight","bySelf":true}}"#
+        )
+    }
+
+    /// `<Mob> hits YOU for N points of damage.` — the shape the e2e plays, and the shape the owner
+    /// was looking at when the ruling was made.
+    fn hits_you(seq: i64, ts: i64) -> String {
+        format!(
+            r#"{{"kind":"damage","seq":{seq},"ts":{ts},"raw":"h","attacker":"a vis ghoul knight","target":"You","amount":106}}"#
+        )
+    }
+
+    /// A module standing in Old Guk, one kill deep, with the mob seen alive since.
+    fn seen_after_a_kill() -> RespawnModule {
+        let mut m = RespawnModule::new(NOW, watching_the_knight());
+        m.on_event(&ev(&zone(T_ZONE)), false);
+        m.on_event(&ev(&death(1, T_DEATH)), false);
+        m.on_event(&ev(&hits_you(2, T_SEEN)), true);
+        m
+    }
+
+    fn only_row(m: &RespawnModule) -> RespawnRow {
+        let mut rows = m.watch_rows(NOW);
+        assert_eq!(rows.len(), 1, "the watch list has exactly one mob in it");
+        rows.remove(0)
+    }
+
+    #[test]
+    fn confirming_a_sighting_re_bases_the_clock_and_says_that_is_what_happened() {
+        // THE APP NEVER DOES THIS BY ITSELF (owner ruling, round 3). The fixture above lit the row
+        // — a combat line naming a watched mob — and the clock did NOT move for it; this call is
+        // the person saying "that sighting WAS the spawn". `tests/respawnSeen.test.mts` makes the
+        // same claim against the TypeScript, assertion for assertion.
+        let mut m = seen_after_a_kill();
+
+        let before = only_row(&m);
+        assert_eq!(before.basis, "death", "evidence alone touches no clock");
+        assert_eq!(before.base_ts, T_DEATH);
+        assert_eq!(before.seen_ts, Some(T_SEEN));
+        let rev_before = m.revision();
+
+        assert!(m.confirm_sighting(&before.id));
+
+        let after = only_row(&m);
+        assert!(
+            m.revision() > rev_before,
+            "a confirmation must advance the module revision too — it advances no log seq"
+        );
+        assert_eq!(
+            after.base_ts, T_SEEN,
+            "the clock now counts from the sighting"
+        );
+        assert_eq!(after.basis, "sighting");
+        // THE ROW LEAVES THE SEEN STATE, because the evidence is now AT the base rather than after
+        // it. Fresh evidence will mark it again, which is correct: it is up.
+        assert_eq!(after.seen_ts, None);
+        assert_eq!(after.seen_via, None);
+        // AND THE LADDER LEARNED NOTHING FROM IT. A confirmation is not a death and never a gap
+        // sample: the estimate is still the user's minute and the kill count is still one.
+        assert_eq!(after.samples, 0);
+        assert_eq!(after.kills, 1);
+        assert_eq!(after.estimate_ms, Some(CUSTOM_SEC * 1000));
+        assert_eq!(after.source, "custom");
+    }
+
+    #[test]
+    fn a_kill_of_the_seen_mob_resumes_the_normal_death_driven_clock() {
+        // "Death messages keep driving the cycle exactly as today." The later of (death,
+        // confirmation) wins by arithmetic, so the next kill takes the base back with no code
+        // anywhere that undoes a confirmation.
+        let mut m = seen_after_a_kill();
+        let id = only_row(&m).id;
+        assert!(m.confirm_sighting(&id));
+        assert_eq!(only_row(&m).basis, "sighting");
+
+        let t_second_death = T_DEATH + 420_000;
+        m.on_event(&ev(&death(3, t_second_death)), true);
+
+        let row = only_row(&m);
+        assert_eq!(row.basis, "death");
+        assert_eq!(row.base_ts, t_second_death);
+        assert_eq!(row.kills, 2);
+        assert_eq!(row.seen_ts, None);
+        // THE GAP IS MEASURED BETWEEN THE TWO DEATHS (seven minutes), never from the confirmation.
+        assert_eq!(row.samples, 1);
+        assert_eq!(row.observed_ms, Some(420_000));
+    }
+
+    #[test]
+    fn a_confirmation_with_nothing_to_confirm_is_refused_rather_than_invented() {
+        // THE TWO REFUSALS, AND BOTH ARE ABOUT THE ROW. A row that is due but has been seen by
+        // nothing is a countdown the log is not claiming anything about; an id this fold does not
+        // carry is a click that raced a death or a stale window. Neither may move a clock, and
+        // neither may move the revision — a push that carried no change would make every dedupe
+        // downstream a lie.
+        let mut m = RespawnModule::new(NOW, watching_the_knight());
+        m.on_event(&ev(&zone(T_ZONE)), false);
+        m.on_event(&ev(&death(1, T_DEATH)), false);
+
+        let row = only_row(&m);
+        let rev = m.revision();
+        assert!(
+            !m.confirm_sighting(&row.id),
+            "the row is due, but nothing has been seen"
+        );
+        assert!(!m.confirm_sighting("no such row"));
+        assert_eq!(m.revision(), rev, "a refusal publishes nothing");
+        assert_eq!(only_row(&m).basis, "death");
     }
 }

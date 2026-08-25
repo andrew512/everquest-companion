@@ -228,6 +228,24 @@ pub trait EventSink {
         false
     }
 
+    /// CONFIRM A SIGHTING (JOS-494) — `respawn.confirmSighting`'s effect on the respawn clocks.
+    ///
+    /// `true` when the fold RE-BASED that row's clock onto the sighting the log last made. `false`
+    /// when there was nothing to re-base, which covers a sink with no respawn module and a row the
+    /// module refuses (unknown id, or not currently seen) with one answer — and one answer is
+    /// right, because that is the single boolean the app's own seam returns for the same three
+    /// cases (`src/main/modules/respawn.ts confirmSighting`).
+    ///
+    /// `&mut self` AND THE SAME BOUNDARIES `define` AND `session_mark` ARE APPLIED AT, for the
+    /// third time and the same reason: a confirmation is a POINT ON THE EVENT STREAM. Every event
+    /// before it folded against the death's clock and every event after it against the sighting's,
+    /// and no event folded half-way — which matters here rather than being ceremony, because the
+    /// very next death line re-bases the row back and a confirm applied inside one would be a
+    /// clock whose base depended on where in a line it landed.
+    fn confirm_sighting(&mut self, _row_id: &str) -> bool {
+        false
+    }
+
     /// THE ALERT FIRES THIS SINK PRODUCED SINCE THE LAST DRAIN (JOS-482, owner ruling 22).
     ///
     /// Structurally empty for a historical scan: firing is live-only by the boundary law, which the
@@ -457,22 +475,44 @@ pub struct MarkAsk {
     pub answer: std::sync::mpsc::Sender<bool>,
 }
 
+/// ONE CONFIRMED SIGHTING, and the way back (JOS-494) — `respawn.confirmSighting`'s effect on the
+/// respawn clocks.
+///
+/// THE THIRD WRITE, AND THE DOOR CHOSE ITSELF AGAIN. `answer_asks` takes the sink by `&dyn`, so a
+/// read arm cannot mutate; confirming re-bases a clock and bumps a module's revision, so it will
+/// not compile over there — exactly the structural placement [`Write`]'s own header promises, now
+/// demonstrated three times.
+///
+/// IT CARRIES NO INSTANT, which is the one place it differs from [`MarkAsk`] and is the whole of
+/// why it needed no clock ruling. A mark's subject IS an instant, stamped app-side so the loot
+/// split and the meter split share one boundary. A confirmation's subject is a ROW: the instant it
+/// re-bases onto is that row's own `seenTs`, a LOG timestamp this fold already holds, so there is
+/// nothing for a caller's clock to say and nothing for this struct to carry.
+pub struct ConfirmAsk {
+    /// The row the person pressed — `<zone key>::<mob key>`, the id the fold keys its history by.
+    pub row_id: String,
+    /// Where the answer goes: whether a clock actually moved.
+    pub answer: std::sync::mpsc::Sender<bool>,
+}
+
 /// EVERY STATEMENT MADE *TO* THE FOLD — the write door, the mirror image of [`Ask`].
 ///
-/// TWO ARMS AND ONE RULE: an arm here is handed the sink by `&mut`, so it may fold, define, or
+/// THREE ARMS AND ONE RULE: an arm here is handed the sink by `&mut`, so it may fold, define, or
 /// otherwise MOVE the world; an arm on [`Ask`] is handed it by `&`, so it may only read. Which door
 /// a new request belongs on is therefore decided by the compiler rather than by a convention, and a
 /// read that quietly grew a mutation would not compile where it lives.
 ///
-/// ONE CHANNEL FOR BOTH WRITES, for exactly the reason `Ask` is one channel for every read: the
-/// door's property is that the fold is reached at a boundary it already services, and a third
-/// channel would be a third thing this loop has to remember to drain in all four places
+/// ONE CHANNEL FOR EVERY WRITE, for exactly the reason `Ask` is one channel for every read: the
+/// door's property is that the fold is reached at a boundary it already services, and a second
+/// channel would be a second thing this loop has to remember to drain in all four places
 /// (mid-scan, the live poll, the nap, and the landing).
 pub enum Write {
     /// One family of app knowledge — see [`DefineAsk`].
     Define(DefineAsk),
     /// One session mark — see [`MarkAsk`].
     Mark(MarkAsk),
+    /// One confirmed sighting — see [`ConfirmAsk`].
+    Confirm(ConfirmAsk),
 }
 
 /// ONE REQUEST FOR ONE MODULE'S STATE, and the way back.
@@ -1377,7 +1417,9 @@ fn answer_asks(answers: &Receiver<Ask>, sink: &dyn EventSink, serving: &Serving)
 /// place it can take effect and a half-applied world would be worse than a lost receipt. For a
 /// DEFINE that is also exactly right: the world already holds the set, so the fold is now in step
 /// with what the world holds. For a MARK the receipt is the only record there is (a mark is stored
-/// nowhere, by design), so a lost one costs the client its answer and nothing else.
+/// nowhere, by design), so a lost one costs the client its answer and nothing else — and a CONFIRM
+/// is a mark's twin on that axis: nothing persists it either, and the module's own next snapshot is
+/// a better statement of what happened than the receipt was.
 fn answer_writes(writes: &Receiver<Write>, sink: &mut dyn EventSink) {
     while let Ok(write) = writes.try_recv() {
         match write {
@@ -1391,6 +1433,13 @@ fn answer_writes(writes: &Receiver<Write>, sink: &mut dyn EventSink) {
             Write::Mark(ask) => {
                 let took = sink.session_mark(ask.at);
                 let _dropped = ask.answer.send(took);
+            }
+            // THE MODULE'S OWN TWO REFUSALS ANSWER, and there is no gate above them at all — see
+            // `World::confirm_sighting`. A confirmation is about a ROW, so "is the world live" is
+            // not a question that could bear on it.
+            Write::Confirm(ask) => {
+                let moved = sink.confirm_sighting(&ask.row_id);
+                let _dropped = ask.answer.send(moved);
             }
         }
     }
