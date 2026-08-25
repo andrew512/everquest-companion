@@ -50,8 +50,8 @@
               "resets": 0,
               "diffs": 0,
               "rows": 0,
-              "bytes": 0,
-              "widestBytes": 0,
+              "payloadWeight": 0,
+              "widestPayloadWeight": 0,
               "subscribers": 1
             }
           ]
@@ -86,8 +86,8 @@
               "resets": 2,
               "diffs": 41,
               "rows": 100,
-              "bytes": 18734,
-              "widestBytes": 4096,
+              "payloadWeight": 18734,
+              "widestPayloadWeight": 4096,
               "foldToFrameUsMean": 29,
               "foldToFrameUsMax": 812,
               "subscribers": 1

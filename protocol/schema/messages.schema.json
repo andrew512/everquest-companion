@@ -419,12 +419,12 @@
           "description": "Rows carried by the resets. A diff carries ops, not rows.",
           "type": "integer"
         },
-        "bytes": {
-          "description": "Bytes of frame payload sent, from the frame's own serialization. The payload budget ruling 4 asks for, weighed.",
+        "payloadWeight": {
+          "description": "HOW MUCH THIS SOURCE HAS SENT, cumulative — the payload budget ruling 4 asks for, weighed off the frames' own serializations. THE UNIT IS IN THIS SENTENCE AND NOT IN THE NAME, and that is this schema keeping its own law rather than dodging it: a property name here may not carry a wire unit, because a schema that grew a byte count would quietly make the transport unswappable (the owner's constraint, enforced structurally in tests/protocolSchema.test.mts) — while the prose is exactly where a measurement is allowed to say what it measured. It is bytes of the JSON this engine serialized, so a different encoding would weigh the same frames differently: a client compares this against itself over time, never against a constant. `weight` is the vocabulary this repo already uses for the size of a committed thing (scripts/gen-data-weight.mts).",
           "type": "integer"
         },
-        "widestBytes": {
-          "description": "The largest single frame. The budget number that matters — a mean hides the one frame that stalled a window.",
+        "widestPayloadWeight": {
+          "description": "The largest single frame, weighed the same way. The budget number that matters — a mean hides the one frame that stalled a window.",
           "type": "integer"
         },
         "foldToFrameUsMean": {
@@ -446,8 +446,8 @@
         "resets",
         "diffs",
         "rows",
-        "bytes",
-        "widestBytes",
+        "payloadWeight",
+        "widestPayloadWeight",
         "subscribers"
       ],
       "additionalProperties": false

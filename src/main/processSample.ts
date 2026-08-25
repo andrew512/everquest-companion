@@ -44,10 +44,11 @@
 //     would need presence's message-based graceful-stop protocol to avoid re-introducing the very
 //     terminate crash the rule exists for — a whole lifecycle for two reads every two seconds.
 //
-// WINDOWS ONLY, AND NEVER UNDER `EQ_E2E`. `priorityIsSupported`'s exact rule, restated for the
-// same reason: the calls are Win32, and an integration test must not map an FFI engine into the
-// process running it. Everywhere else this module answers `null`, which the panel already knows
-// how to draw — absent is a documented answer, and it is not zero.
+// WINDOWS ONLY. The calls are Win32; everywhere else this module answers `null`, which the panel
+// already knows how to draw — absent is a documented answer, and it is not zero. `EQ_E2E` is NOT a
+// second gate, and `processSampleIsSupported` argues why: this module only reads, so the rule that
+// applies is `engineHost.ts`'s (the test mode changes as little about the product as possible)
+// rather than `priorityIsSupported`'s (do not reschedule the machine running the suite).
 //
 // NOTHING HERE WRITES. Three read-only calls on a handle opened for querying, on a pid this app
 // spawned itself. It cannot change a priority, cannot signal, cannot terminate.
@@ -162,10 +163,19 @@ const QUERY_AND_READ = 0x0400 | 0x0010
  *  The fallback, so a process that refuses the wider handle still reports its CPU. */
 const QUERY_LIMITED = 0x1000
 
-/** Four `FILETIME`s: creation, exit, kernel, user. Eight bytes each, read as little-endian u64. */
-const TIMES_BYTES = 32
-const KERNEL_OFFSET = 16
-const USER_OFFSET = 24
+/**
+ * One `FILETIME`: eight bytes, read as a little-endian u64 of 100-nanosecond intervals.
+ *
+ * FOUR SEPARATE BUFFERS, NOT ONE OF 32 BYTES WITH OFFSETS — and this is a bug this file already
+ * had and a hand-run already caught, so it is written down rather than left to be rediscovered.
+ * `GetProcessTimes` takes four INDEPENDENT `LPFILETIME` out-parameters and writes eight bytes at
+ * each pointer. Handing it the same buffer four times is legal C and perfectly silent: all four
+ * stamps land at byte 0, the last writer wins, and a read at offset 16 or 24 finds the zeros it was
+ * initialised with. MEASURED before the fix: a child in a six-second busy loop reported `cpuMs: 0`
+ * and the panel drew a permanent 0%, which is the exact class of lie this instrument exists to
+ * prevent — a measurement nobody took, wearing the clothes of one that was.
+ */
+const FILETIME_BYTES = 8
 
 /** `PROCESS_MEMORY_COUNTERS` on x64: two DWORDs then eight `SIZE_T`s, the second of which is the
  *  working set. `cb` is written before every call because the API reads it. */
@@ -181,9 +191,20 @@ const TICKS_PER_MS = 10_000
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Win32Fn = (...args: any[]) => any
 
-/** Is this machine one where the native read is even attempted? `priorityIsSupported`'s rule. */
-export function processSampleIsSupported(env: { platform: string; e2e: boolean }): boolean {
-  return env.platform === 'win32' && !env.e2e
+/**
+ * Is this machine one where the native read is even attempted?
+ *
+ * WINDOWS ONLY, and `EQ_E2E` IS DELIBERATELY NOT A SECOND GATE — which is a difference from
+ * `priorityIsSupported` worth stating, because the two look alike and the reasoning is not the same.
+ * That module WRITES: it reprioritises real processes, and an integration test must not reschedule
+ * the machine running it. This one only READS — a query handle, two counters, a close — and changes
+ * nothing about any process. So the rule `engineHost.ts` names applies instead: *the test mode
+ * changes as little about the product as possible*. Gating it would make the e2e exercise a
+ * different app than the one that ships, and would hide the one number this whole feature exists to
+ * show behind a branch nobody in the field takes.
+ */
+export function processSampleIsSupported(env: { platform: string }): boolean {
+  return env.platform === 'win32'
 }
 
 interface Native {
@@ -226,7 +247,10 @@ function loadNative(): Native {
 
   // Scratch buffers allocated ONCE. This runs at the panel's cadence rather than 69 times a
   // second, so the argument is weaker than presence's — but one idiom in the repo beats two.
-  const times = Buffer.alloc(TIMES_BYTES)
+  const created = Buffer.alloc(FILETIME_BYTES)
+  const exited = Buffer.alloc(FILETIME_BYTES)
+  const kernel = Buffer.alloc(FILETIME_BYTES)
+  const user = Buffer.alloc(FILETIME_BYTES)
   const counters = Buffer.alloc(COUNTERS_BYTES)
 
   const isHandle = (v: unknown): boolean => v !== null && v !== undefined && v !== 0
@@ -244,11 +268,14 @@ function loadNative(): Native {
       }
       if (!isHandle(handle)) return null
       try {
-        times.fill(0)
-        if (GetProcessTimes(handle, times, times, times, times) !== true) return null
-        const kernel = times.readBigUInt64LE(KERNEL_OFFSET)
-        const user = times.readBigUInt64LE(USER_OFFSET)
-        const cpuMs = Number(kernel + user) / TICKS_PER_MS
+        kernel.fill(0)
+        user.fill(0)
+        if (GetProcessTimes(handle, created, exited, kernel, user) !== true) return null
+        // KERNEL + USER, which is what "this process used a core" means: a fold is user time and
+        // a file read is kernel time, and a panel that reported only one of them would tell a
+        // player their engine was idle while it saturated a disk.
+        const ticks = kernel.readBigUInt64LE(0) + user.readBigUInt64LE(0)
+        const cpuMs = Number(ticks) / TICKS_PER_MS
         let workingSetBytes: number | null = null
         if (wide) {
           counters.fill(0)
@@ -277,9 +304,7 @@ function loadNative(): Native {
  */
 export function systemProcessReader(): ProcessReader {
   if (native === undefined) {
-    if (
-      !processSampleIsSupported({ platform: process.platform, e2e: process.env.EQ_E2E === '1' })
-    ) {
+    if (!processSampleIsSupported({ platform: process.platform })) {
       native = null
     } else {
       try {

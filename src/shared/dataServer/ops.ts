@@ -58,7 +58,13 @@ export const OPS_ARE_EXHAUSTIVE: OpsAreExhaustive = true
 export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> = {
   echo: (r) => 'text' in r,
   'session.attach': (r) => 'accepted' in r,
-  'session.health': (r) => 'status' in r,
+  // `status` ALONE STOPPED BEING A DISCRIMINATOR when `perf.snapshot` arrived (JOS-483): that
+  // result restates the five facts health gives, `status` among them, and neither shape has a
+  // required field the other lacks. So the guard names what health is NOT — it carries no serve
+  // table — which is the smallest true statement that separates the two. A guard both arms pass is
+  // a guard that cannot tell them apart, and the matrix in `tests/dataServerOps.test.mts` is what
+  // caught this rather than a caller reading a field that was not there.
+  'session.health': (r) => 'status' in r && !('serve' in r),
   'session.progress': (r) => 'subscribed' in r,
   // `module` rather than `state`: it is the field no other arm carries, and it is the one a caller
   // reads first anyway. `state` would be a weaker guard for the same cost — the schema lets it be

@@ -24,8 +24,9 @@
 import { type JSX } from 'react'
 import { Divider, Stack, Typography } from '@mui/material'
 import {
-  eventFreshnessMs,
   engineFireCount,
+  eventFreshnessMs,
+  formatAge,
   formatBytes,
   formatEngineState,
   formatMicros,
@@ -111,7 +112,7 @@ function ServeRow({ row }: { row: PerfServeSource }): JSX.Element {
   return (
     <Fact
       label={`${row.source} ${watchers}`}
-      value={`${count(row.frames)} frames · ${formatBytes(row.bytes)} · ${latency}`}
+      value={`${count(row.frames)} frames · ${formatBytes(row.payloadWeight)} · ${latency}`}
     />
   )
 }
@@ -134,7 +135,7 @@ function ServeTable({ sample }: { sample: EnginePerfSample }): JSX.Element {
 /** How far behind the log's own clock the engine's last folded event is. */
 function freshness(sample: EnginePerfSample): string | null {
   const ms = eventFreshnessMs(sample)
-  return ms === null ? null : `${formatMs(ms)} behind`
+  return ms === null ? null : `${formatAge(ms)} behind`
 }
 
 /**

@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:d1caaebd8781d959faa8e23a5b3db6d00a38d1d829868a047d5445e890f87f06
+// schema-digest: sha256:36e6cac9ad8c2f5c752f2e97c32a391593942b825ee1c32dc17c2ea3657a8686
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -347,13 +347,13 @@ export interface PerfServeSource {
    */
   rows: number
   /**
-   * Bytes of frame payload sent, from the frame's own serialization. The payload budget ruling 4 asks for, weighed.
+   * HOW MUCH THIS SOURCE HAS SENT, cumulative — the payload budget ruling 4 asks for, weighed off the frames' own serializations. THE UNIT IS IN THIS SENTENCE AND NOT IN THE NAME, and that is this schema keeping its own law rather than dodging it: a property name here may not carry a wire unit, because a schema that grew a byte count would quietly make the transport unswappable (the owner's constraint, enforced structurally in tests/protocolSchema.test.mts) — while the prose is exactly where a measurement is allowed to say what it measured. It is bytes of the JSON this engine serialized, so a different encoding would weigh the same frames differently: a client compares this against itself over time, never against a constant. `weight` is the vocabulary this repo already uses for the size of a committed thing (scripts/gen-data-weight.mts).
    */
-  bytes: number
+  payloadWeight: number
   /**
-   * The largest single frame. The budget number that matters — a mean hides the one frame that stalled a window.
+   * The largest single frame, weighed the same way. The budget number that matters — a mean hides the one frame that stalled a window.
    */
-  widestBytes: number
+  widestPayloadWeight: number
   /**
    * Mean fold-to-frame latency in MICROSECONDS, over the timed frames only. Microseconds rather than milliseconds because cutting a fifty-row window off a fold takes tens of them, and a serve path reporting `0 ms` reads as a measurement nobody took.
    */

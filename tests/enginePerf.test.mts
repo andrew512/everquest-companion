@@ -17,7 +17,7 @@
 //
 // WHAT IS NOT HERE. The koffi bindings themselves — offsets, prototypes, access rights. Those are
 // Win32 facts and the only honest test of them is a real process on a real Windows box, which is
-// `tests/e2e/enginePerf.e2e.mts`'s job. This suite owns everything above the FFI boundary.
+// `the panel steps that ride tests/e2e/engine-parity.e2e.mts`'s job. This suite owns everything above the FFI boundary.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -32,6 +32,7 @@ import {
   engineFireCount,
   eventFreshnessMs,
   formatBytes,
+  formatAge,
   formatEngineState,
   formatMicros,
   formatParity,
@@ -140,13 +141,15 @@ test('two readings inside one clock tick measure nothing, and say so', () => {
   assert.equal(cpuPercentBetween({ cpuMs: 100, at: 0 }, { cpuMs: 10, at: 1_000 }), 0)
 })
 
-test('the native read is attempted on Windows only, and never under the e2e harness', () => {
-  // `priorityIsSupported`'s exact rule: the calls are Win32, and an integration test must not map
-  // an FFI engine into the process running it.
-  assert.equal(processSampleIsSupported({ platform: 'win32', e2e: false }), true)
-  assert.equal(processSampleIsSupported({ platform: 'win32', e2e: true }), false)
-  assert.equal(processSampleIsSupported({ platform: 'darwin', e2e: false }), false)
-  assert.equal(processSampleIsSupported({ platform: 'linux', e2e: false }), false)
+test('the native read is attempted on Windows only — and the e2e is NOT a second gate', () => {
+  // The gate is the platform and nothing else. `processPriority` skips under `EQ_E2E` because it
+  // WRITES (an integration test must not reschedule the machine running it); this only reads, so
+  // the rule that applies is `engineHost.ts`'s — the test mode changes as little about the product
+  // as possible — and gating it would hide the one number this feature exists to show behind a
+  // branch nobody in the field ever takes.
+  assert.equal(processSampleIsSupported({ platform: 'win32' }), true)
+  assert.equal(processSampleIsSupported({ platform: 'darwin' }), false)
+  assert.equal(processSampleIsSupported({ platform: 'linux' }), false)
 })
 
 test('forgetting drops the marks, so the next sample is a first sample again', () => {
@@ -193,6 +196,18 @@ test('byte counts read at the scale a scan actually produces', () => {
   assert.equal(formatBytes(18_734), '18 kB')
   assert.equal(formatBytes(9_185_240), '9 MB')
   assert.equal(formatBytes(2 * 1024 * 1024 * 1024), '2 GB')
+})
+
+test('an age follows its own scale — milliseconds to weeks, and never 1695178.84 s', () => {
+  // MEASURED, on the run that produced this ticket's acceptance evidence: a fixture whose last log
+  // line was three weeks old rendered through `formatMs` as `1695178.84 s`, which buries the one
+  // fact the row exists to carry. Freshness spans nine orders of magnitude; the unit follows.
+  assert.equal(formatAge(0), '0 ms')
+  assert.equal(formatAge(940), '940 ms')
+  assert.equal(formatAge(2_500), '2.5 s')
+  assert.equal(formatAge(90_000), '2 min')
+  assert.equal(formatAge(5_400_000), '1.5 h')
+  assert.equal(formatAge(1_695_178_840), '19.6 days')
 })
 
 test('freshness is the HOST clock minus the LOG clock, and absent when nothing has folded', () => {

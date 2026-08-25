@@ -242,8 +242,11 @@ fn a_subscribe_and_an_append_fill_the_serve_table() {
     let opening = row(&opened, SOURCE).expect("a row for the source");
     assert_eq!(opening.subscribers, 1, "one connection is watching");
     assert!(opening.resets >= 1);
-    assert!(opening.bytes > 0, "a frame that was sent has a size");
-    assert!(opening.widest_bytes > 0);
+    assert!(
+        opening.payload_weight > 0,
+        "a frame that was sent has a size"
+    );
+    assert!(opening.widest_payload_weight > 0);
 
     // …AND NOW A LIVE LINE, which the next frame reports and which therefore HAS a fold instant
     // behind it. This is the measurement ruling 19 names: fold to frame, end to end, in
@@ -268,7 +271,7 @@ fn a_subscribe_and_an_append_fill_the_serve_table() {
     let again = ask_perf(&mut client, id);
     let row_again = row(&again, SOURCE).expect("a row for the source");
     assert!(row_again.frames >= row_now.frames);
-    assert!(row_again.bytes >= row_now.bytes);
+    assert!(row_again.payload_weight >= row_now.payload_weight);
     assert_eq!(row_again.subscribers, 1);
 
     // THE SUBSCRIBER COUNT IS LIVE AND THE FRAME COUNTS ARE NOT. Closing the window stops somebody

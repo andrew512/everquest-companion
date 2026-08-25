@@ -88,6 +88,7 @@ import { closeWindows, mainWindow } from './appWindow.mjs'
 import { launchOnFixture, type FixtureLaunch } from './logFixture.mjs'
 import { PARITY_PROBE_MODULES } from '../../src/main/dataServer/parityProbe'
 import { settleParity, tapOutput, type AppOutput, type ParitySay } from './engineSteps.mjs'
+import { stepEnginePerfPanel } from './enginePerfSteps.mjs'
 
 /**
  * The richest committed fixture whose subject is the MODEL rather than a window: buff landings and
@@ -236,6 +237,8 @@ async function main(): Promise<void> {
   // FIRST, before anything is driven: every line the app prints from here is this spec's evidence.
   const out = tapOutput(launch.app)
   let parity: ParitySay | null = null
+  /** The ENGINE section's verbatim text — JOS-483's acceptance evidence, echoed at the end. */
+  let panel: string | null = null
   try {
     await mainWindow(launch.app)
     parity = await settleParity(out)
@@ -249,12 +252,20 @@ async function main(): Promise<void> {
       stepEngineServesTheFileFact(launch, parity)
       if (stepProbeIsSound(parity)) stepVerdicts(parity)
     }
+    // STEP 5 — THE ENGINE IN THE APP'S OWN PERFORMANCE PANEL (JOS-483, owner ruling 19). It rides
+    // this spec rather than launching a sixth app because the only expensive thing it needs is an
+    // engine that has folded something and been compared — which is the state this spec has just
+    // spent a whole scan reaching, and which the panel's parity row then reports.
+    panel = await stepEnginePerfPanel(await mainWindow(launch.app))
     await closeWindows(launch.app)
   } finally {
     await launch.close()
   }
 
   if (parity !== null) note(`the probe reported: ${parity.line}`)
+  if (panel !== null) {
+    note('…and the app’s own performance panel showed the engine — ruling 19 delivered in the product')
+  }
   if (failures.length === 0) {
     note('LOG ONLY, by ruling: the probe writes one dev-log line and no product code reads a verdict')
     note('buffs AGREE closes JOS-479\'s wall-clock asymmetry: the engine ticks its own world now (ruling 22)')

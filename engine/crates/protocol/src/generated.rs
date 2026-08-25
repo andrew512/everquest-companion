@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:d1caaebd8781d959faa8e23a5b3db6d00a38d1d829868a047d5445e890f87f06
+//! schema-digest: sha256:36e6cac9ad8c2f5c752f2e97c32a391593942b825ee1c32dc17c2ea3657a8686
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -1985,20 +1985,16 @@ impl ::std::default::Default for PerfIngest {
 ///  "description": "ONE SOURCE'S SERVE PATH, cumulative for this generation — the counters `views::meter` keeps, exactly as ruling 19 names them. QUEUE TIME IS NEVER COUNTED AS COMPUTE: `foldToFrameUs*` is measured from the instant the fold produced what the frame reports to the instant the frame reached the connection's outbox, and a frame with no fold behind it (the fresh reset a just-opened subscription is owed) is COUNTED but not TIMED — which is why the two latency fields are optional and their absence means `no frame here had a fold behind it`, never `zero microseconds`.",
 ///  "type": "object",
 ///  "required": [
-///    "bytes",
 ///    "diffs",
 ///    "frames",
+///    "payloadWeight",
 ///    "resets",
 ///    "rows",
 ///    "source",
 ///    "subscribers",
-///    "widestBytes"
+///    "widestPayloadWeight"
 ///  ],
 ///  "properties": {
-///    "bytes": {
-///      "description": "Bytes of frame payload sent, from the frame's own serialization. The payload budget ruling 4 asks for, weighed.",
-///      "type": "integer"
-///    },
 ///    "diffs": {
 ///      "type": "integer"
 ///    },
@@ -2012,6 +2008,10 @@ impl ::std::default::Default for PerfIngest {
 ///    },
 ///    "frames": {
 ///      "description": "Frames actually sent — `resets + diffs`. Reported rather than left to the caller's addition so the row reads without arithmetic.",
+///      "type": "integer"
+///    },
+///    "payloadWeight": {
+///      "description": "HOW MUCH THIS SOURCE HAS SENT, cumulative — the payload budget ruling 4 asks for, weighed off the frames' own serializations. THE UNIT IS IN THIS SENTENCE AND NOT IN THE NAME, and that is this schema keeping its own law rather than dodging it: a property name here may not carry a wire unit, because a schema that grew a byte count would quietly make the transport unswappable (the owner's constraint, enforced structurally in tests/protocolSchema.test.mts) — while the prose is exactly where a measurement is allowed to say what it measured. It is bytes of the JSON this engine serialized, so a different encoding would weigh the same frames differently: a client compares this against itself over time, never against a constant. `weight` is the vocabulary this repo already uses for the size of a committed thing (scripts/gen-data-weight.mts).",
 ///      "type": "integer"
 ///    },
 ///    "resets": {
@@ -2029,8 +2029,8 @@ impl ::std::default::Default for PerfIngest {
 ///      "description": "Open subscriptions over this source RIGHT NOW, across every connection — a live count, not a cumulative one, and the world's answer rather than the meter's. It is what makes a row with no recent frames readable: nobody is watching, as against nothing is moving.",
 ///      "type": "integer"
 ///    },
-///    "widestBytes": {
-///      "description": "The largest single frame. The budget number that matters — a mean hides the one frame that stalled a window.",
+///    "widestPayloadWeight": {
+///      "description": "The largest single frame, weighed the same way. The budget number that matters — a mean hides the one frame that stalled a window.",
 ///      "type": "integer"
 ///    }
 ///  },
@@ -2041,8 +2041,6 @@ impl ::std::default::Default for PerfIngest {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct PerfServeSource {
-    ///Bytes of frame payload sent, from the frame's own serialization. The payload budget ruling 4 asks for, weighed.
-    pub bytes: i64,
     pub diffs: i64,
     ///The worst timed frame, in microseconds.
     #[serde(
@@ -2060,6 +2058,9 @@ pub struct PerfServeSource {
     pub fold_to_frame_us_mean: ::std::option::Option<i64>,
     ///Frames actually sent — `resets + diffs`. Reported rather than left to the caller's addition so the row reads without arithmetic.
     pub frames: i64,
+    ///HOW MUCH THIS SOURCE HAS SENT, cumulative — the payload budget ruling 4 asks for, weighed off the frames' own serializations. THE UNIT IS IN THIS SENTENCE AND NOT IN THE NAME, and that is this schema keeping its own law rather than dodging it: a property name here may not carry a wire unit, because a schema that grew a byte count would quietly make the transport unswappable (the owner's constraint, enforced structurally in tests/protocolSchema.test.mts) — while the prose is exactly where a measurement is allowed to say what it measured. It is bytes of the JSON this engine serialized, so a different encoding would weigh the same frames differently: a client compares this against itself over time, never against a constant. `weight` is the vocabulary this repo already uses for the size of a committed thing (scripts/gen-data-weight.mts).
+    #[serde(rename = "payloadWeight")]
+    pub payload_weight: i64,
     pub resets: i64,
     ///Rows carried by the resets. A diff carries ops, not rows.
     pub rows: i64,
@@ -2067,9 +2068,9 @@ pub struct PerfServeSource {
     pub source: ::std::string::String,
     ///Open subscriptions over this source RIGHT NOW, across every connection — a live count, not a cumulative one, and the world's answer rather than the meter's. It is what makes a row with no recent frames readable: nobody is watching, as against nothing is moving.
     pub subscribers: i64,
-    ///The largest single frame. The budget number that matters — a mean hides the one frame that stalled a window.
-    #[serde(rename = "widestBytes")]
-    pub widest_bytes: i64,
+    ///The largest single frame, weighed the same way. The budget number that matters — a mean hides the one frame that stalled a window.
+    #[serde(rename = "widestPayloadWeight")]
+    pub widest_payload_weight: i64,
 }
 ///THE ENGINE'S OWN PERFORMANCE, ASKED FOR (owner ruling 19 surface, JOS-483). Everything `session.health` says about where the fold has got to, plus what the ingest cost to build and what the serve path has cost since — the counters `views::meter` already keeps, read WITHOUT resetting them so two asks read as a progression rather than as two disconnected windows. It is answered through the same one door `module.snapshot` uses: the meter lives on the ingest thread, the request arrives on a connection thread, and the ingest answers at a boundary it already reaches. THE APP MUST NOT POLL THIS IDLY. It is the in-app performance panel's data and the panel is open a few seconds at a time; a perf surface that costs a round trip a second while nobody is looking at it is the bug it exists to find.
 ///

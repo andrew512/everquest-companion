@@ -136,6 +136,27 @@ export function eventFreshnessMs(sample: EnginePerfSample): number | null {
   return Math.max(0, sample.ts - last)
 }
 
+/**
+ * AN AGE A PERSON READS, at whatever scale it happens to be.
+ *
+ * `shared/perf.ts`'s `formatMs` is the right formatter for a lag figure and the wrong one here, and
+ * a real run is what showed it: a fixture log whose last line is three weeks old rendered as
+ * `1695178.84 s`, which is a number nobody can read and which buries the one fact it was drawn to
+ * carry. Freshness spans nine orders of magnitude — a live session is milliseconds behind, a log
+ * the game has not written to since last month is weeks — so the unit follows the value.
+ *
+ * COARSE ON PURPOSE ABOVE A MINUTE. "3 days behind" and "3.06 days behind" answer the same question,
+ * and the second one invites arithmetic nobody wanted to do (`formatCpu`'s argument, one panel over).
+ */
+export function formatAge(ms: number): string {
+  const v = Math.max(0, finite(ms) ? ms : 0)
+  if (v < 1_000) return `${String(Math.round(v))} ms`
+  if (v < 60_000) return `${String(Math.round(v / 100) / 10)} s`
+  if (v < 3_600_000) return `${String(Math.round(v / 60_000))} min`
+  if (v < 86_400_000) return `${String(Math.round(v / 360_000) / 10)} h`
+  return `${String(Math.round(v / 8_640_000) / 10)} days`
+}
+
 /** `live · epoch 2` — the engine's state in the two terms that decide what everything else means. */
 export function formatEngineState(sample: EnginePerfSample): string {
   const engine = sample.engine
