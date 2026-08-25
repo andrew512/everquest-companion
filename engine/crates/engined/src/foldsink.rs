@@ -100,9 +100,28 @@ pub fn folding_sinks() -> SinkFactory {
     std::sync::Arc::new(|inputs| Box::new(FoldSink::new(inputs)))
 }
 
+/// THE PROCESS'S KNOWLEDGE CORPUS.
+///
+/// One `Arc`, handed to the registry at every attach and held by the world for the `knowledge.*`
+/// ops. It is the SAME instance both times — a second corpus would be a second overlay, so a name
+/// the app pushed in answer to a miss would be a hit on one path and a miss on the other, forever.
+///
+/// THE CONCRETE TYPE, NOT THE TRAIT. `fold::knowledge::Knowledge` carries only what a MODULE needs
+/// to ask (an item, a mob, the identity keys, the miss ledger), and deliberately so — the fold has
+/// no business knowing a spell catalog or a search exist. The world answers ops off the wider
+/// surface and hands the registry the narrower one, which is one value seen two ways rather than
+/// two values.
+#[must_use]
+pub fn corpus() -> std::sync::Arc<knowledge::Corpus> {
+    knowledge::shared()
+}
+
 /// One attach's fold, and the counters the ingest reports off it.
 pub struct FoldSink {
     fold: fold::Fold,
+    /// The process's corpus, kept so this sink can drain its miss ledger at the ingest's boundary.
+    /// The SAME instance the registry was handed — see [`corpus`].
+    knowledge: std::sync::Arc<knowledge::Corpus>,
     /// THE PARSER'S OWN CLOCK, kept because a VIEW has to render an instant (JOS-480).
     ///
     /// The one thing a view source needs that the fold does not: `loot.ledger`'s `at` cell is the
@@ -138,6 +157,7 @@ impl FoldSink {
             clock: eqlog::Clock::new(inputs.clock.tz()),
             live: false,
             beats: 0,
+            knowledge: corpus(),
         }
     }
 
@@ -173,8 +193,34 @@ fn combat_for(inputs: &SinkInputs<'_>) -> fold::combat::CombatEngine {
 }
 
 /// `ClusterDeps`, assembled — the one place either crate's construction is spelled.
+///
+/// ── AND THE ONE PLACE THE KNOWLEDGE LOOKUPS ARE INSTALLED (JOS-486) ────────────────────────────
+///
+/// `Registry::install_knowledge` is called HERE and in no other construction in this repo. That is
+/// the ticket's condition and it is structural rather than conventional: `fold::registered()` —
+/// which the parity runner, the bench arm and every fold test call — cannot reach a corpus, because
+/// the `fold` crate cannot name the crate that holds one (the dependency runs `knowledge → fold`).
+/// So the world the six goldens were recorded in is still exactly what those callers build:
+/// `consider` with no `lookupMob` and `eventFeed` with no `lookupItem`, which is what `foldArm.mts`
+/// passes and what every golden records (`knowledge` absent from every consider row, the feed `[]`).
+/// The proof is the DEFAULT `oracle:rust-fold` staying green.
+///
+/// A PRODUCTION FOLD DIFFERS FROM THAT WORLD ONLY ON THE LIVE TAIL. Both probes sit behind the
+/// `live` gate — the feed admits nothing historical at all, and consider enriches live cons plus a
+/// bounded backfill on the first WALL-CLOCK TICK, which `fold_bytes` never calls. A historical fold
+/// with a corpus installed is byte-for-byte the same fold as one without, which is the property the
+/// oracle checks and the reason this line is safe to write.
 fn registry_for(inputs: &SinkInputs<'_>, launch_ms: i64) -> fold::Registry {
-    fold::registered(fold::ClusterDeps {
+    let mut registry = fold::registered(cluster_deps(inputs, launch_ms));
+    let lookups: std::sync::Arc<dyn fold::knowledge::Knowledge> = corpus();
+    registry.install_knowledge(&lookups);
+    registry
+}
+
+/// The deps themselves. Split from `registry_for` so the install above reads as the one extra act
+/// it is, rather than hiding at the bottom of a forty-line struct literal.
+fn cluster_deps(inputs: &SinkInputs<'_>, launch_ms: i64) -> fold::ClusterDeps {
+    fold::ClusterDeps {
         // ── committed data, read off the parser's OWN catalog ──────────────────────────────────
         // The SAME database the parser is emitting `candidates` out of, never a second load: two
         // loads is two answers waiting to disagree after an overlay change (`Parser::spell_db`
@@ -218,7 +264,7 @@ fn registry_for(inputs: &SinkInputs<'_>, launch_ms: i64) -> fold::Registry {
         // which is what the bench world and all six goldens recorded.
         self_name: None,
         respawn_prefs: fold::modules::respawn::RespawnPrefs::default(),
-    })
+    }
 }
 
 /// The SERVER out of a log's file name — the second half of what `character_of` reads.
@@ -392,6 +438,34 @@ impl EventSink for FoldSink {
                 })
                 .collect(),
         })
+    }
+
+    /// WHAT YOU HAVE LOOTED OFF ONE CREATURE (JOS-486) — the half of a `knowledge.mob` answer that
+    /// only a FOLD can give, read through the module's own pull seam.
+    ///
+    /// It is on the sink rather than on the corpus because the two halves have different owners and
+    /// different lifetimes: the catalog is committed data that outlives every generation, and this is
+    /// character-scoped, epoch-scoped state the `consider` module clears on a rebirth. Joining them
+    /// anywhere but at the read would mean one of them holding a stale copy of the other.
+    ///
+    /// A build with no `consider` module answers with no rows — the same value a creature nothing has
+    /// been looted from answers with, so neither is a special case.
+    fn own_loot_drops(&self, spellings: &[String]) -> Vec<fold::knowledge::SeenDrop> {
+        self.fold
+            .registry
+            .own_loot()
+            .map(|index| index.drops_across(spellings))
+            .unwrap_or_default()
+    }
+
+    /// The names this fold's own probes could not answer — drained at the ingest's boundary and
+    /// announced connection-wide, exactly as `take_fires` is.
+    ///
+    /// IT IS THE CORPUS'S LEDGER, NOT THE FOLD'S. A miss made by a `knowledge.item` op on a
+    /// connection thread lands in the same place, which is why each name is announced once for the
+    /// process rather than once per asker.
+    fn take_knowledge_misses(&mut self) -> Vec<fold::knowledge::Miss> {
+        fold::knowledge::Knowledge::take_misses(&*self.knowledge)
     }
 
     fn source_revision(&self, source: &'static views::SourceDef) -> Option<u64> {

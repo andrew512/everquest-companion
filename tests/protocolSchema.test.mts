@@ -289,6 +289,11 @@ function describeEngine(message: EngineMessage): string {
     // subscription, and it is a thing that happened rather than window state to reconcile.
     case 'fire':
       return `fire ${message.rule} [${message.sound}] at ${String(message.at)}`
+    // NO id AND NO epoch EITHER (JOS-486), and for a third reason on top of the fire's two: a miss
+    // describes the process's CORPUS — committed data plus an overlay that survives an attach — so
+    // there is no generation it could belong to.
+    case 'knowledgeMiss':
+      return `knowledgeMiss ${message.domain}/${message.name}`
     default: {
       const unreachable: never = message
       throw new Error(`unhandled engine message ${JSON.stringify(unreachable)}`)
@@ -320,6 +325,14 @@ function describeDefine(message: DefineMessage): string {
       return `${at} combo×${String(message.params.corrections.length)}`
     case 'roster.define':
       return `${at} roster×${String(message.params.edits.length)}`
+    // THE ONE DEFINE THAT IS NOT A FULL-SET REPLACE (JOS-486), and the description says so at
+    // length: the other five carry user PREFERENCES, which a store can restate whole, and this one
+    // carries the WIKI, which is unbounded and learned one answer at a time. It lands in this
+    // function because it is a `*.define` BY NAME, and the count it reports is deliberately `×1` —
+    // that is what a push of one entry is, and printing a set size it does not have would be the
+    // line above pretending the two commands are the same law.
+    case 'knowledge.define':
+      return `${at} knowledge/${message.params.domain} ${message.params.name}×1`
     default: {
       const unreachable: never = message
       throw new Error(`unhandled define ${JSON.stringify(unreachable)}`)
@@ -355,13 +368,36 @@ function describeCombat(message: CombatMessage): string {
 }
 
 function isCombat(message: ClientMessage): message is CombatMessage {
-  return message.op.startsWith('combat.')
+  return message.op.startsWith('combat.'),
+ * THE KNOWLEDGE FAMILY (JOS-486), split out on exactly the terms `describeDefine` is — and here the
+ * repo's own complexity ceiling is what asked for the split rather than a preference. Four more
+ * `case` labels put `describeClient` at 16 against a maximum of 12, and that number is a measurement
+ * of this tree (p95 is 8): a switch that has grown a fifth family is a switch asking to have one
+ * lifted out. The exhaustive-`never` property survives the lift intact, because the halves are
+ * disjoint by TYPE rather than by a runtime string test — `knowledge.define` is EXCLUDED here and
+ * lands in `describeDefine`, which is where its ack shape says it belongs.
+ */
+type KnowledgeMessage = Exclude<Extract<ClientMessage, { op: `knowledge.${string}` }>, DefineMessage>
+
+function isKnowledge(message: ClientMessage): message is KnowledgeMessage {
+  return message.op.startsWith('knowledge.')
+}
+
+function describeKnowledge(message: KnowledgeMessage): string {
+  // The three lookups name a THING and the search names a STRING, which is the whole difference
+  // between them and the reason `total` exists on only one of the two answers.
+  const what =
+    message.op === 'knowledge.search' ? JSON.stringify(message.params.query) : message.params.name
+  return `${message.op}#${String(message.id)} ${what}`
 }
 
 /** Same trick on the client half. */
 function describeClient(message: ClientMessage): string {
+  // ORDER IS LOAD-BEARING: `knowledge.define` satisfies both tests at runtime, and it belongs to the
+  // ack family, so the define check goes first and the type exclusion above says the same thing.
   if (isDefine(message)) return describeDefine(message)
-  if (isCombat(message)) return describeCombat(message)
+  if (isCombat(message)) return describeCombat(message),
+  if (isKnowledge(message)) return describeKnowledge(message)
   switch (message.op) {
     case 'hello':
       return `hello v${String(message.protocolVersion)}`
@@ -446,12 +482,15 @@ test('every fixture message VALIDATES against the schema and narrows through the
     'respawn.define',
     'combo.define',
     'roster.define',
+    'knowledge.item', 'knowledge.mob', 'knowledge.spell',
+    'knowledge.search', 'knowledge.define',
     'reply',
     'error',
     'reset',
     'diff',
     'epoch',
-    'fire'
+    'fire',
+    'knowledgeMiss'
   ]) {
     assert.ok(seen.has(tag), `no fixture demonstrates \`${tag}\``)
   }

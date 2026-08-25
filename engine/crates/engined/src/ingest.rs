@@ -247,6 +247,24 @@ pub trait EventSink {
         None
     }
 
+    /// THE NAMES THE FOLD'S OWN KNOWLEDGE PROBES COULD NOT ANSWER (JOS-486), drained here and
+    /// announced connection-wide as `knowledgeMiss` frames.
+    ///
+    /// THE SAME SHAPE AS `take_fires` AND FOR THE SAME REASON: a lookup called from inside a fold
+    /// cannot reach the world, so it buffers and this thread drains at a boundary it already reaches.
+    /// Unlike a fire, a miss is not a thing that HAPPENED in the log — it is a fact about the
+    /// process's corpus, which is why the frame carries no epoch and why the drain is not
+    /// generation-gated on the way out (see `World::announce_knowledge_misses`).
+    fn take_knowledge_misses(&mut self) -> Vec<fold::knowledge::Miss> {
+        Vec::new()
+    }
+
+    /// WHAT YOU HAVE LOOTED OFF ONE CREATURE, for a `knowledge.mob` answer — the fold's half of a
+    /// join whose other half is committed data. A sink with no such index answers with no rows.
+    fn own_loot_drops(&self, _spellings: &[String]) -> Vec<fold::knowledge::SeenDrop> {
+        Vec::new()
+    }
+
     /// A monotonic signal that moves whenever `source` could have changed.
     ///
     /// THE WHOLE COST MODEL OF THE VIEW LAYER RESTS ON THIS. A subscription is re-cut only when its
@@ -418,6 +436,8 @@ pub enum Ask {
     Combat(CombatAsk),
     /// A ranked search of the fight history — see [`FightSearchAsk`].
     Fights(FightSearchAsk),
+    /// What has been looted off one creature — see [`LootAsk`].
+    Loot(LootAsk),
 }
 
 /// ONE REQUEST FOR THE COMBAT ENGINE'S SNAPSHOT (JOS-485).
@@ -446,6 +466,25 @@ pub struct FightSearchAsk {
     pub limit: usize,
     /// Where the answer goes. `None` means this fold carries no combat engine.
     pub answer: std::sync::mpsc::Sender<Option<FightSearch>>,
+}
+
+/// ONE REQUEST FOR THE OWN-LOOT HALF OF A MOB ANSWER (JOS-486).
+///
+/// SAME DOOR, SAME REASON, AND A THIRD ARM RATHER THAN A SHORTCUT. The `knowledge.mob` op joins two
+/// things: the committed catalog, which the world can read for itself because it is process-wide
+/// committed data, and YOUR LOOT HISTORY, which lives inside the `consider` module on the ingest
+/// thread and is character-scoped and epoch-scoped. Reading the second one any other way would mean
+/// either sharing the fold (a second owner of state whose whole design is one door) or publishing a
+/// copy of it into the world after every loot line (a cache, which ruling 5 forbids). So the world
+/// posts an ask and the fold answers at a boundary it already reaches.
+///
+/// THE ANSWER IS NEVER `None`: a fold with no such index, and a creature nothing has been looted
+/// from, both answer with no rows — which is the same sentence and deserves the same value.
+pub struct LootAsk {
+    /// Every `mobKey` the creature answers to, canonical first — the corpus resolved them.
+    pub spellings: Vec<String>,
+    /// Where the answer goes.
+    pub answer: std::sync::mpsc::Sender<Vec<fold::knowledge::SeenDrop>>,
 }
 
 /// ONE REQUEST FOR THE INGEST'S OWN COST (owner ruling 19 surface, JOS-483).
@@ -1000,6 +1039,12 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
                 return Ok(Ended::Preempted);
             }
         }
+        // …AND THE NAMES THE FOLD'S PROBES COULD NOT ANSWER (JOS-486), beside the fires and for the
+        // same reason: the app has to hear about a live loot line's unknown item on the tick that
+        // folded it, not on the next view cadence. Not generation-gated: a miss describes the
+        // PROCESS's corpus rather than this generation's world, and the answer that comes back
+        // (`knowledge.define`) survives an attach exactly as the world's other defines do.
+        world.announce_knowledge_misses(&sink.take_knowledge_misses());
         // THE VIEWS, AT THEIR OWN CADENCE. Everything the drain above folded collapses into at most
         // one frame per subscription per `views::SERVE_EVERY` — rule 2 of the diff protocol, held
         // as a cadence rather than as a per-event push.
@@ -1155,11 +1200,12 @@ fn nap(
 /// must never stall it. A send that fails is an asker that gave up (its deadline passed, or its
 /// connection closed) and is dropped without comment — there is nobody left to tell.
 ///
-/// EVERY ARM IS A READ. A module snapshot, a combat snapshot and a fight search all take `&self` on
-/// the sink, and a perf snapshot peeks the meter, so nothing this function does can advance the fold
-/// or change what the next frame reports — which is what makes it safe to call at every boundary,
-/// including inside the nap. That is a property of the `Ask` enum rather than of this loop: a new
-/// arm that needed `&mut` would not compile here, and would belong on the define door instead.
+/// EVERY ARM IS A READ. A module snapshot, a combat snapshot, a fight search and an own-loot read
+/// all take `&self` on the sink, and a perf snapshot peeks the meter, so nothing this function does
+/// can advance the fold or change what the next frame reports — which is what makes it safe to call
+/// at every boundary, including inside the nap. That is a property of the `Ask` enum rather than of
+/// this loop: a new arm that needed `&mut` would not compile here, and would belong on the define
+/// door instead.
 fn answer_asks(answers: &Receiver<Ask>, sink: &dyn EventSink, serving: &Serving) {
     while let Ok(ask) = answers.try_recv() {
         match ask {
@@ -1174,6 +1220,9 @@ fn answer_asks(answers: &Receiver<Ask>, sink: &dyn EventSink, serving: &Serving)
             }
             Ask::Fights(ask) => {
                 let _dropped = ask.answer.send(sink.search_fights(&ask.query, ask.limit));
+            }
+            Ask::Loot(ask) => {
+                let _dropped = ask.answer.send(sink.own_loot_drops(&ask.spellings));
             }
         }
     }

@@ -51,8 +51,9 @@ use std::time::Instant;
 use protocol::generated::{
     AttachResult, DiffMessage, DiffMessageKind, EngineMessage, Epoch, EpochMessage,
     EpochMessageKind, EpochReason, FireMessage, FireMessageKind, FoldProgress, HealthResult,
-    HealthResultStatus, LogMark, PerfIngest, PerfServeSource, PerfSnapshotResult,
-    PerfSnapshotResultStatus, RequestId, ResetMessage, ResetMessageKind, Row,
+    HealthResultStatus, KnowledgeMissMessage, KnowledgeMissMessageKind, KnowledgePushDomain,
+    LogMark, PerfIngest, PerfServeSource, PerfSnapshotResult, PerfSnapshotResultStatus, RequestId,
+    ResetMessage, ResetMessageKind, Row,
 };
 
 use crate::ingest::{self, Starter};
@@ -134,6 +135,14 @@ pub struct World {
 struct Inner {
     /// When this process started. See the header: process metadata, never world state.
     started: Instant,
+    /// THE PROCESS'S KNOWLEDGE CORPUS (JOS-486) — committed data plus the overlay the app pushes.
+    ///
+    /// IT IS NOT WORLD STATE AND IT DOES NOT MOVE WITH THE EPOCH, which is the same statement
+    /// `defines` makes one field down: a character switch is not the app withdrawing what it
+    /// fetched, and `items.json` says the same thing about the same item in every generation. It is
+    /// held here so that the `knowledge.*` ops are answerable by a world with NO FOLD AT ALL — a
+    /// corpus question names nothing that could be absent, exactly as a perf question does not.
+    knowledge: Arc<knowledge::Corpus>,
     /// THE INGEST'S OWNERSHIP TOKEN. Written only under `state`'s lock; read without it.
     generation: AtomicU64,
     /// What an accepted attach starts. See [`ingest::Starter`] — this is the phase-2a seam, and the
@@ -283,6 +292,19 @@ struct Sub {
     revision: Option<u64>,
 }
 
+/// The loot rows a `knowledge.mob` join was handed, as the trait the corpus reads them through.
+///
+/// A one-line adapter rather than a second trait implementation somewhere clever: the corpus asks
+/// for `drops_across(keys)` and the world has already asked the fold for exactly those keys, so the
+/// answer is the answer.
+struct Seen(Vec<fold::knowledge::SeenDrop>);
+
+impl fold::knowledge::OwnLoot for Seen {
+    fn drops_across(&self, _spellings: &[String]) -> Vec<fold::knowledge::SeenDrop> {
+        self.0.clone()
+    }
+}
+
 /// What one source's subscriptions need before a serve pass builds anything.
 struct SourceNeed {
     source: &'static SourceDef,
@@ -322,9 +344,19 @@ impl World {
     /// moves.
     #[must_use]
     pub fn with_ingest(ingest: Starter) -> Self {
+        Self::with_parts(ingest, crate::foldsink::corpus())
+    }
+
+    /// A world whose knowledge corpus is the caller's. The corpus is otherwise the process's one
+    /// instance ([`crate::foldsink::corpus`]) and must be, or a name the app pushed in answer to a
+    /// miss would be a hit on one path and a miss on the other; this exists for tests that want
+    /// their own overlay and their own miss ledger.
+    #[must_use]
+    pub fn with_parts(ingest: Starter, knowledge: Arc<knowledge::Corpus>) -> Self {
         Self {
             inner: Arc::new(Inner {
                 started: Instant::now(),
+                knowledge,
                 generation: AtomicU64::new(0),
                 ingest,
                 state: Mutex::new(State {
@@ -879,6 +911,90 @@ impl World {
         });
         broadcast(&mut state, &frame);
         true
+    }
+
+    /// THE PROCESS'S CORPUS, for the ops that read it directly — `knowledge.item`, `knowledge.spell`
+    /// and `knowledge.search` name nothing a fold owns, so they are answered without one.
+    #[must_use]
+    pub fn knowledge(&self) -> &Arc<knowledge::Corpus> {
+        &self.inner.knowledge
+    }
+
+    /// ANSWER `knowledge.mob` — the join the two owners have to make together.
+    ///
+    /// THE CORPUS RESOLVES THE IDENTITY, THE FOLD ANSWERS FOR THE LOOT, AND THE CORPUS JOINS. The
+    /// order is the design: the roster's statement that two spellings are one creature lives in
+    /// committed data, so the keys are known before anything is asked of the fold, and what crosses
+    /// the thread boundary is a handful of rows rather than a handle on somebody's state.
+    ///
+    /// AN ENGINE WITH NO FOLD STILL ANSWERS, with an empty loot history — the same value a creature
+    /// nothing has been looted from gets. A mob card before the first attach is a real card: the drop
+    /// table, the quest cross-ref and the era evidence are all committed data, and the one thing
+    /// missing is a history that genuinely does not exist yet.
+    #[must_use]
+    pub fn knowledge_mob(&self, name: &str) -> fold::knowledge::Answer {
+        use fold::knowledge::Knowledge as _;
+        let keys = self.inner.knowledge.identity_keys(name);
+        let seen = self.own_loot(keys);
+        self.inner.knowledge.mob(name, &Seen(seen))
+    }
+
+    /// Ask the current fold what has been looted off one creature. No fold, or a fold that does not
+    /// answer in time, is an empty history rather than a refusal: the rest of the card is committed
+    /// data and is worth drawing.
+    fn own_loot(&self, spellings: Vec<String>) -> Vec<fold::knowledge::SeenDrop> {
+        if spellings.is_empty() {
+            return Vec::new();
+        }
+        let asks = {
+            let state = self.lock();
+            state.asks.clone()
+        };
+        let Some(asks) = asks else {
+            return Vec::new();
+        };
+        let (answer, wait) = channel();
+        let ask = ingest::Ask::Loot(ingest::LootAsk { spellings, answer });
+        if asks.send(ask).is_err() {
+            return Vec::new();
+        }
+        wait.recv_timeout(SNAPSHOT_PATIENCE).unwrap_or_default()
+    }
+
+    /// ANNOUNCE EVERY NAME THIS PROCESS COULD NOT ANSWER — the `knowledgeMiss` frames.
+    ///
+    /// CONNECTION-WIDE, like the epoch and the fire, because the fetch is the app's and one app
+    /// makes it once however many windows are open.
+    ///
+    /// **NOT GENERATION-GATED, and that is the difference from every other broadcast in this file.**
+    /// A `report_*` re-asks ownership inside the lock because it states something about THIS
+    /// generation's world, and a preempted fold must not be able to write one. A miss states
+    /// something about the PROCESS's corpus — this build has no page for that name — which is
+    /// equally true whichever fold noticed it and equally true after the next attach. The answer it
+    /// asks for lands in the overlay, which survives an attach exactly as the world's `defines` do.
+    /// Dropping a miss because the fold that found it lost the world would mean the name is simply
+    /// never fetched: the corpus records it as ANNOUNCED and never offers it again.
+    pub fn announce_knowledge_misses(&self, misses: &[fold::knowledge::Miss]) {
+        if misses.is_empty() {
+            return;
+        }
+        let mut state = self.lock();
+        for miss in misses {
+            let Ok(domain) = KnowledgePushDomain::try_from(miss.domain.as_str()) else {
+                // A domain the wire has no arm for cannot be announced, and the honest outcome is
+                // silence rather than a frame nobody can read. The corpus only ever records the two
+                // it can be pushed answers for (`knowledge::FETCHABLE_DOMAINS`), so this is
+                // unreachable by construction — and stated rather than `unwrap`ped, because an
+                // engine that panicked on a diagnostic would be worse than one that says nothing.
+                continue;
+            };
+            let frame = EngineMessage::KnowledgeMissMessage(KnowledgeMissMessage {
+                kind: KnowledgeMissMessageKind::KnowledgeMiss,
+                domain,
+                name: miss.name.clone(),
+            });
+            broadcast(&mut state, &frame);
+        }
     }
 
     /// What the fold has consumed: the log, THE MARK, and what was counted reaching it.

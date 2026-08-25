@@ -169,6 +169,22 @@
       "additionalProperties": false
     },
 
+    "KnowledgeMissMessage": {
+      "title": "KnowledgeMissMessage",
+      "description": "THE ENGINE COULD NOT ANSWER A NAME, AND THE APP OWNS THE NETWORK (boundary verdict 5: \"The wiki FETCH stays app-side in v1 — app fetches on an engine miss-event and pushes the result in — so the engine ships without a network stack. Scrape throttles preserved.\"). This is that miss-event, and the answer comes back as a `knowledge.define` command.\n\nCONNECTION-WIDE, AND THEREFORE CARRYING NO `id` — the `EpochMessage`/`FireMessage` precedent. A miss belongs to the PROCESS rather than to any subscription or any request: the same name is missing whether it was asked for by a `knowledge.item` op on one connection or by the fold's own probe on the ingest thread, and every window on this app would want the same fetch made once.\n\nIT CARRIES NO `epoch` EITHER, and that is the `FireMessage` argument exactly. Every frame that carries a generation describes WINDOW STATE a client has to reconcile across a bump; this describes the CORPUS, which is committed data plus an overlay that survives an attach (a character switch is not the app withdrawing what it fetched). There is nothing to drop and nothing to re-request, so a generation number would be a field with no reader.\n\nEACH NAME IS ANNOUNCED AT MOST ONCE PER PROCESS. A stacked loot burst probes one name many times and a `/con` ring re-cons the same mob three times in five seconds; asking the app to fetch each of those would be the engine breaking the etiquette law on the app's behalf. A `knowledge.define` for the name makes every later lookup a hit, so nothing has to un-remember anything.",
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["knowledgeMiss"] },
+        "domain": { "$ref": "#/$defs/KnowledgePushDomain" },
+        "name": {
+          "description": "The name to look up, in the spelling the FETCH should use — the display name for an item (what `resolvePage(display)` searches for), and for a mob the CANONICAL spelling the raid roster states, because that is the spelling the wiki and the committed catalog use. Never a folded key: a key is a join handle and the wiki has no page for one.",
+          "type": "string"
+        }
+      },
+      "required": ["kind", "domain", "name"],
+      "additionalProperties": false
+    },
+
     "EpochReason": {
       "title": "EpochReason",
       "type": "string",

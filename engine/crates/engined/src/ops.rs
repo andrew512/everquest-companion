@@ -17,9 +17,11 @@ use protocol::generated::{
     CombatSearchFightsResult, CombatSnapshotOpts, CombatSnapshotRequestOp, CombatSnapshotResult,
     CombatState, ComboDefineRequestOp, DefineAck, EchoRequestOp, EchoResult, EngineMessage,
     ErrorCode, ErrorReply, ErrorReplyKind, FightSearchHit, FightSummary, HelloOp,
-    ModuleSnapshotRequestOp, ModuleSnapshotResult, PerfSnapshotRequestOp, ProtocolError, Reply,
-    ReplyKind, ReplyResult, RequestId, ResetMessage, ResetMessageKind, RespawnDefineRequestOp,
-    RosterDefineRequestOp, SessionAttachRequestOp, SessionHealthRequestOp,
+    KnowledgeDefineRequestOp, KnowledgeDomain, KnowledgeItemRequestOp, KnowledgeMobRequestOp,
+    KnowledgeRecord, KnowledgeResult, KnowledgeSearchRequestOp, KnowledgeSearchResult,
+    KnowledgeSpellRequestOp, ModuleSnapshotRequestOp, ModuleSnapshotResult, PerfSnapshotRequestOp,
+    ProtocolError, Reply, ReplyKind, ReplyResult, RequestId, ResetMessage, ResetMessageKind,
+    RespawnDefineRequestOp, RosterDefineRequestOp, SessionAttachRequestOp, SessionHealthRequestOp,
     SessionProgressRequestOp, SubscribeAck, ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
 };
 
@@ -370,6 +372,88 @@ impl Session {
                     ),
                 }
             }
+
+            // ── THE KNOWLEDGE SURFACE (JOS-486, design surface 5) ───────────────────────────────
+            //
+            // FOUR READS AND A PUSH, and none of them can fail. There is no `notFound` arm anywhere
+            // below and that is the design rather than an omission: a name no corpus holds is an
+            // ANSWER — `found: false` beside a record carrying every local association the engine
+            // could still gather (an item's posky quest uses, a mob's own-loot history and quest
+            // cross-ref) — because that is exactly what `lookupItem`/`lookupMob` answer with today
+            // and because a hover card with a name in it is never nothing to draw.
+            //
+            // NOR IS THERE AN `unavailable` ARM. `module.snapshot` has one because a world with no
+            // fold cannot answer a module question at all; a corpus question names nothing that
+            // could be absent — it is committed data, in this binary, whatever is attached. Only
+            // `knowledge.mob` touches the fold, and only for the own-loot HALF of its join, which is
+            // honestly empty on an engine that has folded nothing.
+            //
+            // A MISS IS ANNOUNCED AFTER THE REPLY IS BUILT, not before: the asker gets its answer,
+            // and every connection — including this one — hears the name that could not be answered.
+            ClientMessage::KnowledgeItemRequest(request) => {
+                let name = request.params.name;
+                let answer = fold::knowledge::Knowledge::item(&**world.knowledge(), &name);
+                knowledge_reply(world, request.id, KnowledgeDomain::Item, name, &answer)
+            }
+
+            ClientMessage::KnowledgeMobRequest(request) => {
+                let name = request.params.name;
+                let answer = world.knowledge_mob(&name);
+                knowledge_reply(world, request.id, KnowledgeDomain::Mob, name, &answer)
+            }
+
+            // THE ONE READ THAT NEVER MISSES. The spell catalog has no app-side fetcher, so a name
+            // it does not carry is not a question anybody can answer — see `KnowledgePushDomain`.
+            ClientMessage::KnowledgeSpellRequest(request) => {
+                let name = request.params.name;
+                let answer = world.knowledge().spell(&name);
+                reply(
+                    request.id,
+                    ReplyResult::KnowledgeResult(KnowledgeResult {
+                        domain: KnowledgeDomain::Spell,
+                        name,
+                        found: answer.found,
+                        record: record_of(&answer.record),
+                    }),
+                )
+            }
+
+            ClientMessage::KnowledgeSearchRequest(request) => {
+                let params = request.params;
+                let hits = world.knowledge().search(
+                    &params.query,
+                    params.domain.map(|d| d.to_string()).as_deref(),
+                    params.limit.and_then(|n| usize::try_from(n).ok()),
+                );
+                reply(
+                    request.id,
+                    ReplyResult::KnowledgeSearchResult(
+                        serde_json::from_value::<KnowledgeSearchResult>(hits)
+                            .unwrap_or_else(|_| empty_search(&params.query)),
+                    ),
+                )
+            }
+
+            // THE PUSH-BACK. `applied` is pinned true by the schema and the shape is what refuses
+            // the impossible: `KnowledgePushDomain` has two members, so a `spell` push is a
+            // `badParams` refusal one layer up in `classify` rather than a runtime check here. No
+            // `count`, because the payload is one entry rather than a list — which is the same
+            // sentence `DefineAck` already makes for `buffTrust` and `respawn`.
+            ClientMessage::KnowledgeDefineRequest(request) => {
+                let params = request.params;
+                world.knowledge().define(
+                    &params.domain.to_string(),
+                    &params.name,
+                    &serde_json::Value::Object(params.entry.0),
+                );
+                reply(
+                    request.id,
+                    ReplyResult::DefineAck(DefineAck {
+                        applied: true,
+                        count: None,
+                    }),
+                )
+            }
         }
     }
 }
@@ -427,6 +511,46 @@ fn shape_of(value: &serde_json::Value) -> &'static str {
         serde_json::Value::String(_) => "string",
         serde_json::Value::Array(_) => "array",
         serde_json::Value::Object(_) => "object",
+    }
+}
+
+/// The reply for a lookup, plus the announcement a miss owes every connection.
+fn knowledge_reply(
+    world: &World,
+    id: RequestId,
+    domain: KnowledgeDomain,
+    name: String,
+    answer: &fold::knowledge::Answer,
+) -> Outcome {
+    let out = reply(
+        id,
+        ReplyResult::KnowledgeResult(KnowledgeResult {
+            domain,
+            name,
+            found: answer.found,
+            record: record_of(&answer.record),
+        }),
+    );
+    world.announce_knowledge_misses(&fold::knowledge::Knowledge::take_misses(
+        &**world.knowledge(),
+    ));
+    out
+}
+
+/// A record onto the wire's open object. A non-object answer is impossible — every path in the
+/// corpus builds one — and an empty map is the honest fallback rather than a panic in an op table.
+fn record_of(value: &serde_json::Value) -> KnowledgeRecord {
+    KnowledgeRecord(value.as_object().cloned().unwrap_or_default())
+}
+
+/// The answer a search gives when its own result could not be read back as the wire shape. Nothing
+/// produces it today (the corpus builds the shape from the same schema this deserializes against);
+/// it exists so the op table has no `unwrap` in it.
+fn empty_search(query: &str) -> KnowledgeSearchResult {
+    KnowledgeSearchResult {
+        query: query.trim().to_owned(),
+        total: 0,
+        hits: Vec::new(),
     }
 }
 
@@ -608,6 +732,11 @@ fn is_known_op(op: &str) -> bool {
         RosterDefineRequestOp::RosterDefine.to_string(),
         CombatSnapshotRequestOp::CombatSnapshot.to_string(),
         CombatSearchFightsRequestOp::CombatSearchFights.to_string(),
+        KnowledgeItemRequestOp::KnowledgeItem.to_string(),
+        KnowledgeMobRequestOp::KnowledgeMob.to_string(),
+        KnowledgeSpellRequestOp::KnowledgeSpell.to_string(),
+        KnowledgeSearchRequestOp::KnowledgeSearch.to_string(),
+        KnowledgeDefineRequestOp::KnowledgeDefine.to_string(),
     ]
     .iter()
     .any(|known| known == op)
@@ -979,6 +1108,279 @@ mod tests {
             panic!("a perf snapshot result");
         };
         assert!(result.serve.is_empty());
+    }
+
+    // ── THE KNOWLEDGE SURFACE (JOS-486) ────────────────────────────────────────────────────────
+    //
+    // THESE TESTS HOLD THEIR OWN CORPUS, and that is not tidiness. `knowledge::shared()` is a
+    // process-wide singleton with an overlay and a miss ledger in it, and a test binary runs its
+    // tests in one process: a `knowledge.define` in one test would be a hit in another, and a name
+    // announced once would never be announced again. `World::with_parts` exists for exactly this.
+    // The CORPUS ITSELF is the real committed one either way — this crate proves the op table over
+    // the bytes the product ships, and `knowledge`'s own suite proves the indexes.
+
+    fn knowledge_table() -> (World, Session, crate::world::Membership) {
+        let world = World::with_parts(
+            std::sync::Arc::new(|_world, _generation, _log| {}),
+            std::sync::Arc::new(knowledge::Corpus::new()),
+        );
+        let membership = world.join();
+        let session = Session::new(membership.id);
+        (world, session, membership)
+    }
+
+    fn ask(id: i64, op: &str, params: serde_json::Value) -> ClientMessage {
+        serde_json::from_value(serde_json::json!({ "id": id, "op": op, "params": params }))
+            .expect("the request is the shape the schema states")
+    }
+
+    fn knowledge_result(messages: &[EngineMessage]) -> &protocol::generated::KnowledgeResult {
+        let [EngineMessage::Reply(reply)] = messages else {
+            panic!("one reply, got {messages:?}");
+        };
+        let ReplyResult::KnowledgeResult(result) = &reply.result else {
+            panic!("a knowledge result");
+        };
+        result
+    }
+
+    /// Every `knowledgeMiss` frame this connection was sent, drained.
+    fn misses(membership: &crate::world::Membership) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        while let Ok(message) = membership.inbox.try_recv() {
+            if let EngineMessage::KnowledgeMissMessage(miss) = message {
+                out.push((miss.domain.to_string(), miss.name));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn an_item_the_committed_corpus_holds_is_answered_and_nobody_is_asked_to_fetch() {
+        let (world, mut session, membership) = knowledge_table();
+        let messages = sent(session.dispatch(
+            &world,
+            ask(
+                1,
+                "knowledge.item",
+                serde_json::json!({ "name": "Cloak of Flames" }),
+            ),
+        ));
+        let result = knowledge_result(&messages);
+        assert!(result.found);
+        assert_eq!(result.name, "Cloak of Flames");
+        assert_eq!(
+            result.record.get("name"),
+            Some(&serde_json::json!("Cloak of Flames"))
+        );
+        assert!(
+            misses(&membership).is_empty(),
+            "a corpus hit announces nothing"
+        );
+    }
+
+    #[test]
+    fn a_miss_answers_the_asker_and_tells_every_connection_once() {
+        let (world, mut session, membership) = knowledge_table();
+        // A SECOND CONNECTION, joined to the same world: a miss is connection-WIDE, so a bystander
+        // that asked for nothing hears it too — which is what makes one app fetch it once however
+        // many windows are open.
+        let bystander = world.join();
+
+        let messages = sent(session.dispatch(
+            &world,
+            ask(
+                1,
+                "knowledge.item",
+                serde_json::json!({ "name": "Shard of Nothing" }),
+            ),
+        ));
+        let result = knowledge_result(&messages);
+        assert!(!result.found, "the corpus has no page for it");
+        // AND IT STILL ANSWERS. `found: false` is not an absence — the record is a card with the
+        // player's own name in it, which is what `lookupItem` hands back today.
+        assert_eq!(
+            result.record.get("name"),
+            Some(&serde_json::json!("Shard of Nothing"))
+        );
+        assert_eq!(result.record.get("offline"), Some(&serde_json::json!(true)));
+
+        assert_eq!(
+            misses(&membership),
+            vec![("item".to_owned(), "Shard of Nothing".to_owned())]
+        );
+        assert_eq!(
+            misses(&bystander),
+            vec![("item".to_owned(), "Shard of Nothing".to_owned())]
+        );
+
+        // …and asking again asks the app for nothing: the etiquette law is the engine's too.
+        sent(session.dispatch(
+            &world,
+            ask(
+                2,
+                "knowledge.item",
+                serde_json::json!({ "name": "Shard of Nothing" }),
+            ),
+        ));
+        assert!(misses(&membership).is_empty());
+    }
+
+    #[test]
+    fn the_answer_pushed_back_turns_the_same_lookup_into_a_hit() {
+        // THE WHOLE OF BOUNDARY VERDICT 5, in one conversation: the engine cannot fetch, the app
+        // can, and this is how the answer crosses back.
+        let (world, mut session, membership) = knowledge_table();
+        let before = sent(session.dispatch(
+            &world,
+            ask(
+                1,
+                "knowledge.item",
+                serde_json::json!({ "name": "Shard of Nothing" }),
+            ),
+        ));
+        assert!(!knowledge_result(&before).found);
+        assert_eq!(misses(&membership).len(), 1);
+
+        let ack = sent(session.dispatch(
+            &world,
+            ask(
+                2,
+                "knowledge.define",
+                serde_json::json!({
+                    "domain": "item",
+                    "name": "Shard of Nothing",
+                    "entry": { "page": "Shard of Nothing", "lore": true }
+                }),
+            ),
+        ));
+        let [EngineMessage::Reply(reply)] = ack.as_slice() else {
+            panic!("one reply");
+        };
+        let ReplyResult::DefineAck(ack) = &reply.result else {
+            panic!("a define ack");
+        };
+        assert!(ack.applied);
+        assert_eq!(ack.count, None, "one entry is not a list");
+
+        let after = sent(session.dispatch(
+            &world,
+            ask(
+                3,
+                "knowledge.item",
+                serde_json::json!({ "name": "Shard of Nothing" }),
+            ),
+        ));
+        let result = knowledge_result(&after);
+        assert!(result.found);
+        assert_eq!(result.record.get("lore"), Some(&serde_json::json!(true)));
+        assert!(misses(&membership).is_empty(), "nothing left to ask about");
+    }
+
+    #[test]
+    fn a_mob_card_is_a_real_card_before_the_first_attach() {
+        // The asymmetry with `module.snapshot` restated one surface up: a corpus question names
+        // nothing that could be absent. The one part a fold owns — your loot history — is honestly
+        // empty on an engine that has folded nothing, which is not the same as unavailable.
+        let (world, mut session, _membership) = knowledge_table();
+        let messages = sent(session.dispatch(
+            &world,
+            ask(
+                1,
+                "knowledge.mob",
+                serde_json::json!({ "name": "a sand giant" }),
+            ),
+        ));
+        let result = knowledge_result(&messages);
+        assert!(result.found);
+        assert_eq!(result.name, "a sand giant");
+        assert_eq!(
+            result.record.get("dropsSeen"),
+            None,
+            "absent, never an empty claim"
+        );
+    }
+
+    #[test]
+    fn the_spell_surface_answers_and_the_search_surface_ranks() {
+        let (world, mut session, membership) = knowledge_table();
+        let spell = sent(session.dispatch(
+            &world,
+            ask(
+                1,
+                "knowledge.spell",
+                serde_json::json!({ "name": "Complete Heal" }),
+            ),
+        ));
+        let result = knowledge_result(&spell);
+        assert!(result.found);
+        assert!(matches!(
+            result.domain,
+            protocol::generated::KnowledgeDomain::Spell
+        ));
+        // A spell the catalog lacks announces NOTHING — there is no app-side spell fetcher to ask.
+        sent(session.dispatch(
+            &world,
+            ask(
+                2,
+                "knowledge.spell",
+                serde_json::json!({ "name": "Spell Of Nothing" }),
+            ),
+        ));
+        assert!(misses(&membership).is_empty());
+
+        let search = sent(session.dispatch(
+            &world,
+            ask(
+                3,
+                "knowledge.search",
+                serde_json::json!({ "query": "Cloak of Flames", "limit": 5 }),
+            ),
+        ));
+        let [EngineMessage::Reply(reply)] = search.as_slice() else {
+            panic!("one reply");
+        };
+        let ReplyResult::KnowledgeSearchResult(hits) = &reply.result else {
+            panic!("a search result");
+        };
+        assert_eq!(hits.query, "Cloak of Flames");
+        assert!(hits.total >= 1);
+        assert_eq!(hits.hits[0].name, "Cloak of Flames", "exact ranks first");
+        assert!(hits.hits.len() <= 5);
+    }
+
+    #[test]
+    fn every_knowledge_op_is_an_op_this_build_knows() {
+        // THE SAME PIN `module.snapshot` and `perf.snapshot` carry, five times: an op missing from
+        // the known-op list answers `unknownOp` to a request with a typo'd param, which sends a
+        // client hunting for a feature that is right there.
+        for op in [
+            "knowledge.item",
+            "knowledge.mob",
+            "knowledge.spell",
+            "knowledge.search",
+            "knowledge.define",
+        ] {
+            let raw = serde_json::json!({"id": 1, "op": op, "params": {"nam": "typo"}});
+            let Some(EngineMessage::ErrorReply(refusal)) = refuse(&classify(&raw)) else {
+                panic!("a refusal for {op}");
+            };
+            assert!(matches!(refusal.error.code, ErrorCode::BadParams), "{op}");
+        }
+    }
+
+    #[test]
+    fn a_push_for_a_corpus_with_no_fetcher_is_refused_by_shape() {
+        // `KnowledgePushDomain` has two members, so `spell` is not a runtime check this file makes
+        // — it is a frame the generated types cannot read, and `classify` names it `badParams`.
+        let raw = serde_json::json!({
+            "id": 1, "op": "knowledge.define",
+            "params": { "domain": "spell", "name": "Complete Heal", "entry": {} }
+        });
+        let Some(EngineMessage::ErrorReply(refusal)) = refuse(&classify(&raw)) else {
+            panic!("a refusal");
+        };
+        assert!(matches!(refusal.error.code, ErrorCode::BadParams));
     }
 
     #[test]

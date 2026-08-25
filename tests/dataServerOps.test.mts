@@ -50,7 +50,12 @@ const EVERY_OP: RequestOp[] = [
   'combo.define',
   'roster.define',
   'combat.snapshot',
-  'combat.searchFights'
+  'combat.searchFights',
+  'knowledge.item',
+  'knowledge.mob',
+  'knowledge.spell',
+  'knowledge.search',
+  'knowledge.define'
 ]
 
 test('the registry names every op, and the compile-time pin agrees', () => {
@@ -92,7 +97,39 @@ test('EVERY GUARD IS DISCRIMINATING — no two ops accept each other’s result'
     // the search result carries an EMPTY `hits` beside a non-zero `corpus`, because that is the
     // answer to a query that matched nothing and a guard reading truthiness would miss it.
     'combat.snapshot': { now: 1787181707000, snapshot: { hydrating: false, segments: [] } },
-    'combat.searchFights': { hits: [], corpus: 1428 }
+    'combat.searchFights': { hits: [], corpus: 1428 },
+    // THE KNOWLEDGE SURFACE (JOS-486). The three lookups share `KnowledgeResult` the way the
+    // subscribe family shares `SubscribeAck` — but they are NOT a family in the sense below,
+    // because the shape names its own `domain`: a caller holding an item card and a mob card can
+    // tell them apart from the value alone, which is exactly what `DefineAck` cannot do. So the
+    // three are given DIFFERENT domains here and the matrix still may not separate them by guard.
+    'knowledge.item': {
+      domain: 'item',
+      name: "Rune of Al'Kabor",
+      found: true,
+      record: { name: "Rune of Al'Kabor", lore: true, quest: true, questUses: [] }
+    },
+    'knowledge.mob': {
+      domain: 'mob',
+      name: 'a sand giant',
+      found: true,
+      record: { name: 'a sand giant', cached: true }
+    },
+    // A MISS IS A LEGAL ANSWER AND THE MATRIX SAYS SO: `found: false` with a record that is still a
+    // card. A guard that read `found` rather than `record` would call this the wrong shape.
+    'knowledge.spell': {
+      domain: 'spell',
+      name: 'Spell Of Nothing',
+      found: false,
+      record: { queried: 'Spell Of Nothing', found: false, illusion: false }
+    },
+    'knowledge.search': {
+      query: 'rune',
+      total: 41,
+      hits: [{ domain: 'item', name: "Rune of Al'Kabor", page: "Rune of Al'Kabor" }]
+    },
+    // …and the push-back is a `DefineAck` with no `count`, because one entry is not a list.
+    'knowledge.define': { applied: true }
   }
   for (const op of EVERY_OP) {
     assert.equal(RESULT_GUARDS[op](shapes[op]), true, `${op} refused its own result`)
@@ -110,8 +147,16 @@ test('EVERY GUARD IS DISCRIMINATING — no two ops accept each other’s result'
       'buffTrust.define',
       'respawn.define',
       'combo.define',
-      'roster.define'
-    ])
+      'roster.define',
+      // `knowledge.define` joins the ack family (JOS-486) — it is a define BY SHAPE even though it
+      // is not one by LAW: it carries one entry rather than a whole set, which the schema argues at
+      // length beside the op. The ack it answers with is the same ack, so the guard cannot separate
+      // it from the other five, and pretending otherwise would be a guard that lies.
+      'knowledge.define'
+    ]),
+    // The three lookups mean one shape. They are separable by VALUE (`domain`) and not by guard,
+    // which is the honest place to draw that line: a guard is a shape check, not a content check.
+    new Set<RequestOp>(['knowledge.item', 'knowledge.mob', 'knowledge.spell'])
   ]
   const shareShape = (a: RequestOp, b: RequestOp): boolean =>
     families.some((family) => family.has(a) && family.has(b))
