@@ -109,8 +109,9 @@ function newestEngineSourceMtime(): number {
 
 /**
  * `cargo`, which is NOT on PATH in a fresh shell on this machine (AGENTS.md's toolchain note says
- * so for the shell; a spawned harness inherits whatever the shell had). PATH first — a developer
- * who put a different toolchain in front means it — then rustup's default install location.
+ * so for the shell; a spawned harness inherits whatever the shell had). Rustup's default install
+ * location FIRST, deterministically — it is the toolchain `engine/rust-toolchain.toml` pins — and
+ * bare `cargo` only as the fallback for a machine that installed Rust some other way.
  */
 function cargoBinary(): string {
   const home = process.env.USERPROFILE ?? process.env.HOME ?? ''
