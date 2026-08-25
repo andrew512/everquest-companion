@@ -181,6 +181,80 @@ jobs:
           if-no-files-found: warn
 
   # =========================================================================
+  # THE ENGINE (engine/, JOS-459 phase 0). Its own job, on every ref.
+  #
+  # WHY A SEPARATE JOB rather than steps bolted onto `build`: this is a
+  # different toolchain with a different cache, it has nothing to say about
+  # the installer, and running it in parallel means the Rust checks cost no
+  # wall clock. It is also the only job here with no `if:` guard — the two
+  # jobs above are mutually exclusive by ref, but the wire contract has to
+  # verify on a tag exactly as much as on a push, because a tag is what ships.
+  #
+  # WHAT IT PROVES, and it is not just "it compiles":
+  #   * `cargo test` runs the STALENESS suite, which regenerates
+  #     crates/protocol/src/generated.rs from protocol/schema and diffs every
+  #     byte. A schema edit that landed without `npm run gen:protocol` is red
+  #     here. (`npm test` in the build job catches the same drift by digest,
+  #     without needing a toolchain — see tests/protocolSchema.test.mts.)
+  #   * …and the fixture suite, which round-trips the four worked moments from
+  #     docs/plans/data-server.md through the generated Rust types. The same
+  #     bytes are round-tripped through the TypeScript types in `npm test`, so
+  #     a shape only one language can express fails on the side that cannot.
+  #
+  # The toolchain version is NOT chosen here: engine/rust-toolchain.toml pins
+  # it, and rustup honours that file automatically. That pin is load-bearing —
+  # generation ends in rustfmt, so two rustfmt versions disagreeing about a
+  # line break would fail the staleness test on a schema nobody touched.
+  # =========================================================================
+  engine:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 (v4.4.0)
+        with:
+          persist-credentials: false
+
+      # rustup ships on the GitHub Windows image; this installs whatever
+      # engine/rust-toolchain.toml names, with the components it lists.
+      - name: Install the pinned toolchain
+        working-directory: engine
+        run: |
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+
+      # The registry index, the downloaded crate sources, and the build
+      # directory. Keyed on the lockfile: a dependency bump invalidates it,
+      # nothing else does.
+      - name: Cache cargo
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 (v4.3.0)
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            engine/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('engine/Cargo.lock', 'engine/rust-toolchain.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Format
+        working-directory: engine
+        run: cargo fmt --all --check
+
+      # `-D warnings` on purpose: the generated file allows clippy wholesale
+      # inside itself (generated code is not reviewable debt), so everything
+      # this gate sees is code a person wrote.
+      - name: Clippy
+        working-directory: engine
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test
+        working-directory: engine
+        run: cargo test --workspace
+
+  # =========================================================================
   # TAG REFS ONLY: the publish path. The ONLY job that holds a write token.
   # =========================================================================
   release:
