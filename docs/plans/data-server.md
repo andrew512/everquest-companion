@@ -71,6 +71,15 @@ parses, aggregates, compresses, and serves; the UI becomes a query/subscribe cli
     Build no cache now — but every interface is designed so a cache can appear underneath it
     TRANSPARENTLY, including to the engine's own internal callers. See "Cache transparency"
     below.
+19. *(2026-08-24)* **The app's performance surface includes the engine's own numbers in the end
+    state.** Owner verbatim: "the performance chip should incl perf of the server in end state."
+    Surface 8 (`perf.budgets`/`perf.timeline`) is not just CI plumbing: the in-app performance
+    panel and bug reports carry engine-side metrics (fold rate, serve latency, budget status)
+    exactly as they carry main/renderer stalls today. Lands with phase 3; the JOS-458 instrument
+    family becomes engine-native and stays user-visible.
+20. *(2026-08-24)* **The owner is informed explicitly when the real client first tests against
+    the server** — the moment a renderer surface reads the live engine (start of the phase-3
+    cutover), not after. Standing notification obligation on the integrator.
 
 ## The shape
 
