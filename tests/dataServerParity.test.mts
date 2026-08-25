@@ -10,6 +10,11 @@
 // THE CLAIM THIS FILE CARES ABOUT MOST IS THE ANTI-VACUITY ONE. A probe that quietly compared
 // nothing and reported "0 divergences" would be strictly worse than no probe: it would read like
 // proof. So DRIFT is a SKIP, skips are counted separately from agreements, and the line says so.
+//
+// SINCE JOS-481 THE LINE ALSO CARRIES A FACT NOBODY COMPARES — `logMtimeMs`, the file's own stamp,
+// which owner ruling 21 made the server's to read and report. It has no second side, so it is not a
+// verdict; what is pinned here is its PLACE (in front of the mark clause, because a log path ends
+// the sentence) and its ABSENT form.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -37,6 +42,7 @@ function line(verdicts: ParityVerdict[]): string {
   return parityLine({
     logPath: LOG,
     mark: { log: LOG, offset: 129297 },
+    logMtimeMs: 1787181709431,
     epoch: 2,
     engineStatus: 'live',
     engineEvents: 1599,
@@ -139,21 +145,53 @@ test('the line names every module, states its coordinate, and carries the prefix
   const text = line(verdicts)
   assert.ok(text.startsWith(PARITY_LINE_PREFIX), text)
   assert.match(text, /5 agree, 0 diverge, 0 skipped of 5/)
-  assert.match(text, /\[epoch 2, engine live, 1599 events, mark 129297 of C:\\Users\\Public/)
+  assert.match(
+    text,
+    /\[epoch 2, engine live, 1599 events, mtime 1787181709431, mark 129297 of C:\\Users\\Public/
+  )
   for (const m of PARITY_PROBE_MODULES) assert.match(text, new RegExp(`${m} AGREE\\(seq 1598\\)`))
   assert.equal(text.includes('\n'), false, 'ONE line per probe run')
+})
+
+test('THE MARK CLAUSE IS LAST, so every other clause can be read by name in front of it', () => {
+  // A parsing contract, not taste: the log path is the one field that can contain anything a
+  // filesystem allows — commas, spaces, the word `of` — so it ends the sentence and the file fact
+  // ruling 21 added goes in FRONT of it. The e2e's own reader depends on exactly this
+  // (`engineSteps.mts readParity`), and a clause appended after the mark would silently be read as
+  // part of the path.
+  const text = line([])
+  assert.ok(text.endsWith(`mark 129297 of ${LOG}] — `), text)
+})
+
+test('an engine that could not state the file fact says so rather than dropping the clause', () => {
+  // `no mtime` rather than an omission, for the same reason the line elides nothing else: a missing
+  // clause would make "the stat failed" and "this build does not serve it" the same observation.
+  const text = parityLine({
+    logPath: LOG,
+    mark: { log: LOG, offset: 129297 },
+    logMtimeMs: null,
+    epoch: 2,
+    engineStatus: 'live',
+    engineEvents: 1599,
+    verdicts: []
+  })
+  assert.match(text, /1599 events, no mtime, mark 129297 of/)
 })
 
 test('a probe taken before either world has folded says so rather than inventing numbers', () => {
   const text = parityLine({
     logPath: LOG,
     mark: null,
+    logMtimeMs: null,
     epoch: null,
     engineStatus: 'attaching',
     engineEvents: null,
     verdicts: []
   })
-  assert.match(text, /\[no epoch, engine attaching, nothing folded, no engine mark yet, app C:\\/)
+  assert.match(
+    text,
+    /\[no epoch, engine attaching, nothing folded, no mtime, no engine mark yet, app C:\\/
+  )
   assert.match(text, /0 agree, 0 diverge, 0 skipped of 0/)
 })
 
@@ -163,6 +201,7 @@ test('TWO FOLDS OF DIFFERENT FILES IS A SHOUT, not a field to compare by eye', (
   const text = parityLine({
     logPath: 'C:\\a\\eqlog_Primitive_freeport.txt',
     mark: { log: 'C:\\b\\eqlog_Someone_else.txt', offset: 12 },
+    logMtimeMs: 1787181709431,
     epoch: 2,
     engineStatus: 'live',
     engineEvents: 3,
