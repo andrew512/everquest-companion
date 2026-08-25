@@ -104,8 +104,10 @@ impl<V> JsMap<V> {
         self.entries.iter().map(|(_, v)| v)
     }
 
-    /// `for (const v of map.values()) v.field = …` — the roster's offline-gap sweep walks every
-    /// member and marks the stale ones in place.
+    /// `for (const v of map.values()) v.field = …` — a walk that WRITES to every value without
+    /// touching the keys. The roster's offline-gap sweep marks its stale members in place, and the
+    /// crowd-control half re-reads the estimator across every live hold of one (line, caster) after
+    /// a sample lands.
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
         self.entries.iter_mut().map(|(_, v)| v)
     }

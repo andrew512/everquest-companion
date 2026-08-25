@@ -97,6 +97,26 @@ impl Event {
             None => Vec::new(),
         }
     }
+
+    /// The raw value behind a key, for the fields that are neither a string, a number nor an array
+    /// OF strings: `buffApply.candidates` and `cc.candidates` are arrays of OBJECTS
+    /// (`{ name, durationMs, illusion }`) and the 2c modules that read them walk each element.
+    /// Everything else goes through the typed accessors above, which is why this one is
+    /// deliberately last rather than first.
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        match self.v.get(key) {
+            None | Some(Value::Null) => None,
+            some => some,
+        }
+    }
+
+    /// `ev.<key> != null` in the TS sense — the key is present AND not null. A 2c module branches
+    /// on the DIFFERENCE between an absent optional and a present one whose value is falsy
+    /// (`buffFade.target` absent means SELF; `''` would mean an unnamed entity), so the question
+    /// has to be askable without reading the value.
+    pub fn has(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
 }
 
 #[cfg(test)]

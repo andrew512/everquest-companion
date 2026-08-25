@@ -43,8 +43,10 @@ pub mod epoch;
 pub mod event;
 pub mod jsfn;
 pub mod jsmap;
+pub mod message_overlay;
 pub mod modules;
 pub mod session;
+pub mod spell_facts;
 
 use event::Event;
 use serde_json::{json, Value};
@@ -72,6 +74,23 @@ pub trait EqModule {
     /// and no module overrides it; it is here so the contract does not have to change later.
     fn flush_delta(&mut self) -> Option<Value> {
         None
+    }
+
+    /// THE DERIVED EVENTS THIS MODULE SYNTHESIZED WHILE FOLDING THE EVENT IT WAS JUST HANDED, in
+    /// emission order — `bus.emitDerived` (cluster 2c).
+    ///
+    /// A HAND-BACK RATHER THAN A CALLBACK, and the difference is ownership rather than taste. Over
+    /// there `wiring.ts` injects `emitDerived: (ev, live) => bus.emitDerived(ev, live)` into the
+    /// buffs module, so the module holds a reference to the queue and pushes into it mid-fold. A
+    /// module here cannot hold a mutable reference to a queue the registry is iterating; so it
+    /// buffers its own emissions and the registry takes them the instant `on_event` returns. The
+    /// resulting ORDER is identical, and that is the only thing the fold can observe: within one
+    /// module, emission order; across modules, registration order; and the whole batch delivered
+    /// after the primary event has reached every module, which is exactly `LogBus.emit`'s drain.
+    ///
+    /// One producer (`buffs`, `buffExpired`). Defaulted empty for the other nineteen.
+    fn take_derived(&mut self) -> Vec<Event> {
+        Vec::new()
     }
 
     /// THE GROUP-ROSTER PULL SEAM (JOS-477 / cluster 2b's `roster` module).
@@ -134,7 +153,7 @@ impl Registry {
     }
 
     /// Register in delivery order. It is the CALLER's job to register in `WIRING_ORDER` — see
-    /// `cluster_2a`, which is the one caller that matters and which asserts it.
+    /// `registered`, which is the one caller that matters and which asserts it.
     pub fn register(&mut self, m: Box<dyn EqModule>) {
         self.mods.push(m);
     }
@@ -145,10 +164,18 @@ impl Registry {
         }
     }
 
-    /// Deliver one event to every module, in order.
-    pub fn dispatch(&mut self, ev: &Event, live: bool) {
+    /// Deliver one event to every module, in order, appending whatever any of them SYNTHESIZED
+    /// while folding it to the caller's derived queue (see `EqModule::take_derived`). The queue is
+    /// the caller's because it is the bus's: `Fold` owns it and drains it, and a module that emits
+    /// while a drain is running appends to the very queue being drained — which is what
+    /// `LogBus.drain`'s shift-until-empty does.
+    pub fn dispatch(&mut self, ev: &Event, live: bool, derived: &mut Vec<Event>) {
         for m in &mut self.mods {
             m.on_event(ev, live);
+            let mut out = m.take_derived();
+            if !out.is_empty() {
+                derived.append(&mut out);
+            }
         }
     }
 
@@ -206,11 +233,13 @@ pub struct Fold {
     epoch: epoch::EpochDetector,
     /// The OFFLINE-GAP detector (JOS-475). `index.ts` subscribes it after the epoch detector and it
     /// hands its gap back through the same `emitDerived`, so it is queued in that order here too.
-    /// Cluster 2b needs it: `progression` publishes every gap's contents verbatim in three columns
-    /// and `roster` marks members stale across one — see `session.rs` for the argument and the
-    /// counts. `buffExpired` is still 2c's.
+    /// TWO clusters need it: `progression` publishes every gap's contents verbatim in three columns
+    /// and `roster` marks members stale across one (2b), and `buffs` folds it to PAUSE every
+    /// beneficial buff by the length of the absence (2c) — see `session.rs`.
     sessions: session::SessionDetector,
-    /// The bus's derived queue. Two producers today; 2c adds `buffExpired` beside them.
+    /// The bus's derived queue. THREE producers, exactly as over there: the registry's own modules
+    /// (`buffs`, whose `buffExpired` cluster 2c brought), the epoch detector, and the offline-gap
+    /// detector.
     derived: Vec<Event>,
     events: u64,
     last_ts: i64,
@@ -276,40 +305,52 @@ impl Fold {
         self.last_ts
     }
 
-    /// One primary event: dispatch to the modules, let the detectors observe it, then drain
-    /// whatever they queued through the SAME dispatch loop. That is `LogBus.emit` exactly.
+    /// One primary event: deliver it, then drain whatever anybody queued through the SAME delivery.
+    /// That is `LogBus.emit` exactly.
+    ///
+    /// THE ORDER OF THE THREE PRODUCERS IS THE SUBSCRIPTION ORDER, and it decides the queue's
+    /// order: the twenty modules first (so a `buffExpired` precedes both detectors' output for the
+    /// same primary event), then the epoch detector, then the offline-gap detector — which is how
+    /// `foldArm.mts construct` subscribes them, and therefore how the goldens were recorded.
     pub fn on_primary(&mut self, ev: &Event, live: bool) {
         self.events += 1;
         self.last_ts = self.last_ts.max(ev.ts());
-        self.registry.dispatch(ev, live);
-        // …then the engine, which is the next subscriber on the bus (see the `combat` field). The
-        // two field borrows are disjoint, which is what lets the engine pull the roster out of the
-        // registry that has just finished folding this same line.
-        if let Some(c) = &mut self.combat {
-            c.on_event(ev, live, self.registry.roster());
-        }
-        if let Some(derived) = self.epoch.observe(ev) {
-            self.derived.push(derived);
-        }
-        if let Some(gap) = self.sessions.observe(ev) {
-            self.derived.push(gap);
-        }
-        // Shift-until-empty, so anything a derived event queues in turn is delivered too.
+        self.observe(ev, live);
+        // Shift-until-empty, so anything a derived event queues IN TURN is delivered too — and it
+        // can: `buffs` folds an `epoch` by clearing its live state, and a censored instance is
+        // still an instance that may announce its own end.
         let mut i = 0;
         while i < self.derived.len() {
             let d = self.derived[i].clone();
             i += 1;
-            self.registry.dispatch(&d, live);
-            // A DERIVED EVENT REACHES THE ENGINE TOO. `LogBus.emit` drains through the same
-            // listener loop, and the engine is one of those listeners — `epoch` is a kind
-            // `ingest.ts:182` handles by name (it drops the fight, the zone and the world), so
-            // delivering it to the modules alone would leave the engine holding a dead
-            // character's encounter.
-            if let Some(c) = &mut self.combat {
-                c.on_event(&d, live, self.registry.roster());
-            }
+            self.observe(&d, live);
         }
         self.derived.clear();
+    }
+
+    /// One delivery: every module, then every detector. Used for a primary event and for each
+    /// event of the drain alike, because the bus makes no distinction between them — the detectors
+    /// are ordinary subscribers and they refuse the derived kinds BY NAME rather than by position
+    /// (`epochDetector.observe`'s first line, `sessionDetector.observe`'s).
+    fn observe(&mut self, ev: &Event, live: bool) {
+        self.registry.dispatch(ev, live, &mut self.derived);
+        // …then the engine, which is the next subscriber on the bus (see the `combat` field). The
+        // two field borrows are disjoint, which is what lets the engine pull the roster out of the
+        // registry that has just finished folding this same line.
+        //
+        // A DERIVED EVENT REACHES IT TOO, and that is why this is one function rather than two:
+        // `LogBus.emit` drains through the same listener loop, and `epoch` is a kind the engine
+        // handles BY NAME (it drops the fight, the zone and the world), so delivering a boundary to
+        // the modules alone would leave the engine holding a dead character's encounter.
+        if let Some(c) = &mut self.combat {
+            c.on_event(ev, live, self.registry.roster());
+        }
+        if let Some(d) = self.epoch.observe(ev) {
+            self.derived.push(d);
+        }
+        if let Some(d) = self.sessions.observe(ev) {
+            self.derived.push(d);
+        }
     }
 
     /// Fold a complete log through `eqlog::scan`. Historical, so `live` is false from the first
@@ -357,13 +398,21 @@ pub struct ClusterDeps {
     /// `deps.respawnPrefs` — the shipped default is an EMPTY watch list and that is what every
     /// non-Electron caller passes.
     pub respawn_prefs: modules::respawn::RespawnPrefs,
+    /// `deps.spellDb` one size up from `known_spell` — the whole of `db.byKey`, projected into the
+    /// scalar facts the BUFFS model reads (`spell_facts.rs`), because `wiring.ts` hands the spell
+    /// database itself to that module. An EMPTY one is the TS's absent `db?`: every read answers
+    /// nothing, which is exactly what a caller with no catalog gets over there.
+    pub facts: spell_facts::SpellFacts,
 }
 
-/// CLUSTERS 2a + 2b, registered in `WIRING_ORDER`'s relative order.
+/// EVERY PORTED MODULE, registered in `WIRING_ORDER`'s relative order — which since JOS-476 is all
+/// twenty of them.
 ///
-/// The name says which clusters are IN it rather than which are missing, and `Registry::missing()`
-/// says the rest — a reader of one line then knows both halves.
-pub fn cluster_2a_2b(deps: ClusterDeps) -> Registry {
+/// The name has moved twice and for the same reason both times: it was `cluster_2a` while nine
+/// modules were all there was, then `cluster_2a_2b`, and a registry that names the tickets IN it is
+/// a registry a reader has to date. `Registry::missing()` is the half that still says what a given
+/// build did not register, and it is the half the parity report prints.
+pub fn registered(deps: ClusterDeps) -> Registry {
     let ClusterDeps {
         known_spell,
         spell_classes,
@@ -372,6 +421,7 @@ pub fn cluster_2a_2b(deps: ClusterDeps) -> Registry {
         character,
         self_name,
         respawn_prefs,
+        facts,
     } = deps;
     let mut r = Registry::new();
     // combo goes FIRST (design § 5.1): within one bus delivery every later module — and the combat
@@ -406,6 +456,20 @@ pub fn cluster_2a_2b(deps: ClusterDeps) -> Registry {
     r.register(Box::new(
         modules::observed_spell_ranks::ObservedSpellRanksModule::new(known_spell),
     ));
+    r.register(Box::new(modules::alerts::AlertsModule::new()));
+    // THE SHARED HALVES (JOS-140 ruling 1). `wiring.ts` constructs the crowd-control module FROM the
+    // buffs module's own anchors and learner (`new BuffTimersModule(buffs.castAnchors(),
+    // buffs.spellStats())`), so the two cannot end up with two ideas of whose spell just landed or
+    // how long it lasts. One `Rc<RefCell<…>>`, cloned into both, is that line.
+    let core = modules::buffs::shared_core(facts.clone());
+    r.register(Box::new(modules::buffs::BuffsModule::new(
+        facts,
+        core.clone(),
+    )));
+    r.register(Box::new(modules::buff_timers::BuffTimersModule::new(core)));
+    r.register(Box::new(modules::consider::ConsiderModule::new()));
+    r.register(Box::new(modules::resist::ResistModule::new()));
+    r.register(Box::new(modules::event_feed::EventFeedModule::new()));
     r
 }
 
@@ -414,7 +478,7 @@ mod tests {
     use super::*;
 
     fn fold_lines(lines: &[&str]) -> Value {
-        let mut fold = Fold::new(cluster_2a_2b(ClusterDeps::default()), i64::MAX);
+        let mut fold = Fold::new(registered(ClusterDeps::default()), i64::MAX);
         for line in lines {
             let ev = Event::from_json(line).expect("a JSON object");
             fold.on_primary(&ev, false);
@@ -435,7 +499,7 @@ mod tests {
     /// The registered cluster is a SUBSEQUENCE of the wiring order, and everything else is named.
     #[test]
     fn registration_follows_the_wiring_order_and_names_what_is_absent() {
-        let r = cluster_2a_2b(ClusterDeps::default());
+        let r = registered(ClusterDeps::default());
         let ids = r.ids();
         let mut at = 0usize;
         for id in &ids {
@@ -445,16 +509,18 @@ mod tests {
                 .unwrap_or_else(|| panic!("{id} is out of wiring order"));
             at += found + 1;
         }
-        assert_eq!(ids.len(), 14);
-        assert_eq!(r.missing().len(), WIRING_ORDER.len() - 14);
-        // 2c and 2d, still owed and still named by the report.
-        assert!(r.missing().contains(&"buffs"));
-        assert!(r.missing().contains(&"consider"));
-        assert!(!r.missing().contains(&"loot"));
-        assert!(!r.missing().contains(&"respawn"));
+        // ALL TWENTY, since JOS-476 — so `missing()` is empty and the SKIP line is a statement
+        // that nothing was skipped rather than an absent line. The assertion is written against
+        // `WIRING_ORDER.len()` rather than against 20, so a module ADDED to the wiring over there
+        // fails here until it is ported, which is the whole no-silent-caps mechanism.
+        assert_eq!(ids.len(), WIRING_ORDER.len());
+        assert!(r.missing().is_empty(), "{:?}", r.missing());
         // combo and roster are the two whose POSITION is load-bearing rather than free.
         assert_eq!(ids[0], "combo");
         assert_eq!(ids[1], "roster");
+        // …and eventFeed stays LAST: a row appended while an earlier module's delta is being
+        // emitted still rides out on the same flush pass.
+        assert_eq!(ids[ids.len() - 1], "eventFeed");
     }
 
     /// A loot row is tagged with the zone the module was standing in, and an absent optional field
@@ -575,7 +641,7 @@ mod tests {
         let mut known = HashSet::new();
         known.insert("shiftless deeds".to_string());
         let mut fold = Fold::new(
-            cluster_2a_2b(ClusterDeps {
+            registered(ClusterDeps {
                 known_spell: known,
                 ..Default::default()
             }),
@@ -611,7 +677,7 @@ mod tests {
     /// character-scoped module's state — while `outputFiles` deliberately keeps its receipts.
     #[test]
     fn the_launch_boundary_drops_the_dead_characters_state() {
-        let mut fold = Fold::new(cluster_2a_2b(ClusterDeps::default()), 1000);
+        let mut fold = Fold::new(registered(ClusterDeps::default()), 1000);
         for line in [
             r#"{"kind":"loot","seq":0,"ts":500,"raw":"l","item":"Beta Sword"}"#,
             r#"{"kind":"outputFile","seq":1,"ts":600,"raw":"o","file":"Inventory.txt"}"#,
@@ -666,16 +732,19 @@ mod tests {
     }
 
     /// A module whose state moves ONLY on events reports the seq of the LAST event it was handed,
-    /// derived events included — and THREE of them deliberately do not (JOS-87).
+    /// derived events included — and FOUR of them deliberately do not (JOS-87).
     ///
     /// `combo`, `character` and `respawn` each have a SECOND INPUT that advances no log seq (a user
-    /// correction, `setCharacter`, a watch edit), so each reports a private revision counter
-    /// instead. `useModule` dedupes with `d.seq <= knownSeq`, so publishing the event seq there
-    /// would let the renderer drop the very push that carries the out-of-band change. The
-    /// distinction is a CONTRACT, not an accident, so the test names both sides.
+    /// correction, `setCharacter`, a watch edit), and `buffTimers` has `onTick`, which expires holds
+    /// on a log that is idle — which is precisely when someone is watching a mez run out. Each
+    /// reports a private revision counter instead. `useModule` dedupes with `d.seq <= knownSeq`, so
+    /// publishing the event seq there would let the renderer drop the very push that carries the
+    /// out-of-band change. The distinction is a CONTRACT, not an accident, so the test names both
+    /// sides — and `buffTimers` is the one the goldens catch outright, recording 0 for three of the
+    /// six slices.
     #[test]
     fn the_published_seq_is_the_last_event_folded_except_where_a_revision_is_owed() {
-        const OWN_REVISION: [&str; 3] = ["combo", "character", "respawn"];
+        const OWN_REVISION: [&str; 4] = ["combo", "character", "respawn", "buffTimers"];
         let snaps = fold_lines(&[
             r#"{"kind":"unknown","seq":0,"ts":1,"raw":"x"}"#,
             r#"{"kind":"unknown","seq":41,"ts":2,"raw":"x"}"#,
@@ -683,16 +752,452 @@ mod tests {
         for m in snaps["modules"].as_array().expect("modules") {
             let id = m["id"].as_str().expect("an id");
             if OWN_REVISION.contains(&id) {
-                // Two unknown events move none of the three, so each is still at what its
+                // Two unknown events move none of the four, so each is still at what its
                 // CONSTRUCTION spent: one `reset()` apiece, plus `character`'s `setCharacter` —
-                // which the composition root always makes, ref or no ref.
-                let want = if id == "character" { 2 } else { 1 };
+                // which the composition root always makes, ref or no ref — and NONE for
+                // `buffTimers`, whose `reset()` zeroes the counter rather than spending it.
+                let want = match id {
+                    "character" => 2,
+                    "buffTimers" => 0,
+                    _ => 1,
+                };
                 assert_eq!(m["snapshot"]["seq"], want, "{id}");
                 continue;
             }
             assert_eq!(m["snapshot"]["seq"], 41, "{id}");
         }
     }
+
+    // ── CLUSTER 2c (JOS-476) ──────────────────────────────────────────────────────────────────
+
+    /// The cast-recency map keeps the RANK, refuses a stamp that went backwards, and survives the
+    /// launch boundary — alerts is the one character-facing module with no `epoch` branch.
+    #[test]
+    fn the_cast_recency_map_is_rank_sensitive_and_outlives_the_epoch() {
+        let mut fold = Fold::new(registered(ClusterDeps::default()), 1000);
+        for line in [
+            r#"{"kind":"castBegin","seq":0,"ts":500,"raw":"c","spell":"Mesmerization III"}"#,
+            r#"{"kind":"castBegin","seq":1,"ts":400,"raw":"c","spell":"Mesmerization III"}"#,
+            r#"{"kind":"castBegin","seq":2,"ts":600,"raw":"c","spell":"Mesmerization"}"#,
+            r#"{"kind":"loot","seq":3,"ts":1500,"raw":"l","item":"Live Sword"}"#,
+        ] {
+            fold.on_primary(&Event::from_json(line).expect("object"), false);
+        }
+        let state = state_of(&fold.registry.snapshots(), "alerts");
+        // Two ranks are two names, the older stamp did not win, and the epoch at ts 1500 did not
+        // take the map with it.
+        assert_eq!(state["spellLastCast"]["Mesmerization III"], 500);
+        assert_eq!(state["spellLastCast"]["Mesmerization"], 600);
+        assert_eq!(state["defs"], json!([]));
+        assert_eq!(state["history"], json!({}));
+        assert!(state.get("poisonSlowSeen").is_none(), "{state}");
+    }
+
+    /// A slow proc mints the recency record, and a LATER one moves the target while an out-of-order
+    /// one only counts.
+    #[test]
+    fn the_slow_poison_record_counts_every_proc_and_names_the_newest_target() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"poisonProc","seq":0,"ts":100,"raw":"p","effect":"slow","target":"a spectre","strike":"Weakening Strike"}"#,
+            r#"{"kind":"poisonProc","seq":1,"ts":50,"raw":"p","effect":"slow","target":"a ghoul","strike":"Weakening Strike"}"#,
+            r#"{"kind":"poisonProc","seq":2,"ts":90,"raw":"p","effect":"damage","target":"a rat","strike":"Blinding Strike"}"#,
+        ]);
+        assert_eq!(
+            state_of(&snaps, "alerts")["poisonSlowSeen"],
+            json!({ "lastAt": 100, "count": 2, "lastTarget": "a spectre" })
+        );
+    }
+
+    /// One row per mob, newest LAST, and a re-con moves the row rather than keeping its place —
+    /// the one thing that makes this ring not a `JsMap`.
+    #[test]
+    fn a_re_con_moves_the_mobs_one_row_to_the_end_and_bumps_its_count() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"zone","seq":0,"ts":1,"raw":"z","zone":"Permafrost Keep"}"#,
+            r#"{"kind":"consider","seq":1,"ts":10,"raw":"c","mob":"A goblin priest","rare":false,"level":20,"faction":"indifferent","difficulty":"You could probably win this fight."}"#,
+            r#"{"kind":"consider","seq":2,"ts":20,"raw":"c","mob":"Voidling","rare":false,"faction":"indifferent","difficulty":"???"}"#,
+            r#"{"kind":"consider","seq":3,"ts":30,"raw":"c","mob":"a goblin priest","rare":true,"level":21,"faction":"scowls","difficulty":"???"}"#,
+        ]);
+        let rows = state_of(&snaps, "consider");
+        assert_eq!(rows.as_array().expect("rows").len(), 2);
+        // Voidling is now FIRST because the re-con moved the goblin to the end.
+        assert_eq!(rows[0]["id"], "voidling");
+        // …and the row that moved carries the newest con's facts under the LOWERCASE spelling,
+        // which `adoptDisplay` prefers over the sentence-cased first sighting.
+        assert_eq!(rows[1]["mob"], "a goblin priest");
+        assert_eq!(rows[1]["cons"], 2);
+        assert_eq!(rows[1]["level"], 21);
+        assert_eq!(rows[1]["zone"], "Permafrost Keep");
+        // A con with no level states none rather than claiming zero.
+        assert!(rows[0].get("level").is_none(), "{rows}");
+        assert!(rows[0].get("knowledge").is_none(), "{rows}");
+    }
+
+    /// The feed admits NOTHING historical, and its seq is still every event's — the hydration rule,
+    /// and the reason all six goldens record `[]` beside a live seq.
+    #[test]
+    fn the_event_feed_stays_empty_through_a_historical_fold() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"consider","seq":0,"ts":10,"raw":"c","mob":"a rat","rare":false,"faction":"indifferent","difficulty":"???"}"#,
+            r#"{"kind":"loot","seq":7,"ts":20,"raw":"l","item":"Bone Chips","source":"a rat"}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "eventFeed"), json!([]));
+    }
+
+    /// EVERY primary event reaches the offline-gap detector, which is the wiring half of the
+    /// second derived event this cluster brings. The rule it applies is proven in `session.rs`;
+    /// what this pins is that `Fold` feeds it at all, and that the anchor a fold hands it is the
+    /// line about YOU rather than the reconnect preamble's chat noise.
+    #[test]
+    fn the_fold_feeds_every_primary_event_to_the_offline_gap_detector() {
+        let mut fold = Fold::new(registered(ClusterDeps::default()), i64::MAX);
+        for line in [
+            r#"{"kind":"loot","seq":0,"ts":1000,"raw":"l","item":"Bone Chips"}"#,
+            r#"{"kind":"unknown","seq":1,"ts":500000,"raw":"Channels: 1=General1(400)"}"#,
+        ] {
+            fold.on_primary(&Event::from_json(line).expect("object"), false);
+        }
+        let welcome = Event::from_json(
+            r#"{"kind":"sessionStart","seq":2,"ts":900000,"raw":"Welcome to EverQuest Legends!"}"#,
+        )
+        .expect("object");
+        let gap = fold.sessions.observe(&welcome).expect("a gap");
+        assert_eq!(gap.kind(), "offlineGap");
+        assert_eq!(gap.int("fromTs"), Some(1000));
+        assert_eq!(gap.int("toTs"), Some(900000));
+    }
+
+    // ── THE BUFFS MODEL (JOS-476) ─────────────────────────────────────────────────────────────
+    //
+    // These drive hand-written NDJSON through the registry with an EMPTY catalog, which is the TS's
+    // absent `db?`: every DB read answers nothing, so a landing has to state its own duration to
+    // open a row. That is enough to exercise every law below, and it keeps the fixtures readable —
+    // the catalog's own contribution is what the six slices prove.
+
+    /// AN UNANCHORED LANDING PRODUCES NOTHING (ruling 3) — the whole of the attribution gate. The
+    /// same sentence with a cast line in front of it opens a row.
+    #[test]
+    fn a_landing_with_no_cast_line_behind_it_opens_nothing() {
+        let stranger = fold_lines(&[
+            r#"{"kind":"buffApply","seq":0,"ts":1000,"raw":"a","target":"self","spell":"Clarity","illusion":false,"durationMs":60000,"candidates":[{"name":"Clarity","durationMs":60000,"illusion":false}]}"#,
+        ]);
+        assert_eq!(state_of(&stranger, "buffs")["active"], json!([]));
+
+        let mine = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":900,"raw":"c","spell":"Clarity II"}"#,
+            r#"{"kind":"buffApply","seq":1,"ts":1000,"raw":"a","target":"self","spell":"Clarity","illusion":false,"durationMs":60000,"candidates":[{"name":"Clarity","durationMs":60000,"illusion":false}]}"#,
+        ]);
+        let active = &state_of(&mine, "buffs")["active"];
+        assert_eq!(active[0]["spell"], "Clarity");
+        // THE IDENTITY IS THE DB CANDIDATE'S NAME AND THE RANK RIDES BESIDE IT (JOS-238).
+        assert_eq!(active[0]["castName"], "Clarity II");
+        assert_eq!(active[0]["self"], true);
+        assert_eq!(active[0]["startedTs"], 1000);
+        assert_eq!(active[0]["messageDriven"], true);
+        // No sample yet, so the number is the landing's own stated duration and nothing else.
+        assert_eq!(active[0]["n"], 0);
+    }
+
+    /// A LAND→FADE PAIR MINTS ONE DURATION SAMPLE, and the wear-off resolves against the ACTIVE set
+    /// rather than guessing the first candidate — the defect that left self Quickness standing
+    /// forever because `Aanya's Quickening` was never the one that was up.
+    #[test]
+    fn a_clean_cycle_mints_a_sample_and_the_shared_wear_off_finds_the_live_one() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Swift Like the Wind"}"#,
+            r#"{"kind":"buffApply","seq":1,"ts":2000,"raw":"a","target":"self","spell":"Swift Like the Wind","illusion":false,"durationMs":60000,"candidates":[{"name":"Swift Like the Wind","durationMs":60000,"illusion":false}]}"#,
+            r#"{"kind":"buffWearOff","seq":2,"ts":102000,"raw":"w","spell":"Aanya's Quickening","candidates":["Aanya's Quickening","Swift Like the Wind"],"target":"self"}"#,
+        ]);
+        let state = state_of(&snaps, "buffs");
+        assert_eq!(state["active"], json!([]));
+        let row = &state["stats"]["swift like the wind"];
+        assert_eq!(row["n"], 1);
+        assert_eq!(row["maxMs"], 100_000);
+        // No DB floor to beat, so the observation stands alone and says so.
+        assert_eq!(row["estimateMs"], 100_000);
+        assert_eq!(row["estimatorSource"], "observed");
+    }
+
+    /// THE WEAR-OFF IS SYNTHESIZED BACK ONTO THE BUS AS A RESOLVED `buffExpired` (Task #47), and it
+    /// is DRAINED after the primary event — so every module registered before `buffs` sees it, in
+    /// the same order the TS bus delivers it.
+    #[test]
+    fn a_resolved_wear_off_is_handed_back_to_the_bus_as_a_derived_event() {
+        let mut fold = Fold::new(registered(ClusterDeps::default()), i64::MAX);
+        for line in [
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Clarity"}"#,
+            r#"{"kind":"buffApply","seq":1,"ts":2000,"raw":"a","target":"self","spell":"Clarity","illusion":false,"durationMs":60000,"candidates":[{"name":"Clarity","durationMs":60000,"illusion":false}]}"#,
+        ] {
+            fold.on_primary(&Event::from_json(line).expect("object"), false);
+        }
+        let wear_off = Event::from_json(
+            r#"{"kind":"buffWearOff","seq":2,"ts":50000,"raw":"w","spell":"Clarity","candidates":["Clarity"],"target":"self"}"#,
+        )
+        .expect("object");
+        // Dispatch by hand so the queue can be read before `on_primary` drains and clears it.
+        let mut derived = Vec::new();
+        fold.registry.dispatch(&wear_off, false, &mut derived);
+        assert_eq!(derived.len(), 1);
+        assert_eq!(derived[0].kind(), "buffExpired");
+        assert_eq!(derived[0].str("spell"), Some("Clarity"));
+        assert_eq!(derived[0].str("target"), Some("self"));
+        // Stamped with the PRIMARY event's identity, which is what lets it slot into the stream.
+        assert_eq!(derived[0].seq(), 2);
+        assert_eq!(derived[0].ts(), 50000);
+        assert_eq!(derived[0].raw(), "Clarity wore off you.");
+    }
+
+    /// AN OFFLINE GAP PAUSES A BUFF AND NOT A DEBUFF, and it CENSORS the sample either way — the two
+    /// halves of JOS-134, and the reason the offline-gap detector had to come with this cluster.
+    #[test]
+    fn an_absence_rewinds_a_buffs_clock_and_leaves_a_debuffs_alone() {
+        let mut fold = Fold::new(registered(ClusterDeps::default()), i64::MAX);
+        for line in [
+            // The anchor, the landing, and an in-world line to give the detector something to
+            // measure the absence FROM.
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Clarity"}"#,
+            r#"{"kind":"buffApply","seq":1,"ts":2000,"raw":"a","target":"self","spell":"Clarity","illusion":false,"durationMs":600000,"candidates":[{"name":"Clarity","durationMs":600000,"illusion":false}]}"#,
+            // …a login 100 s later, which the detector turns into a gap and the fold drains.
+            r#"{"kind":"sessionStart","seq":2,"ts":102000,"raw":"Welcome to EverQuest Legends!"}"#,
+        ] {
+            fold.on_primary(&Event::from_json(line).expect("object"), false);
+        }
+        let active = &state_of(&fold.registry.snapshots(), "buffs")["active"];
+        // 2000 + (102000 - 2000) = 102000: the clock was rewound by the whole absence, because EQ
+        // freezes a buff with your character.
+        assert_eq!(active[0]["startedTs"], 102_000);
+    }
+
+    /// A CROWD-CONTROL HOLD IS ANCHOR-GATED TOO, and closing it mints into the SAME learner the
+    /// buffs half reads — the JOS-140 unification, which is what the shared core exists for.
+    #[test]
+    fn a_mez_cycle_mints_into_the_shared_learner() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Mesmerization VII"}"#,
+            r#"{"kind":"cc","seq":1,"ts":2000,"raw":"m","mob":"a spiroc banisher","verb":"mesmerized","candidates":[{"name":"Mesmerization","durationMs":24000}]}"#,
+            r#"{"kind":"cc","seq":2,"ts":46000,"raw":"r","mob":"a spiroc banisher","refresh":true,"spell":"Mesmerization"}"#,
+        ]);
+        // The hold closed, so nothing is standing…
+        assert_eq!(state_of(&snaps, "buffTimers")["holds"], json!([]));
+        // …and the 44 s cycle reached the BUFFS module's stats table, under the rank the cast line
+        // named (JOS-411) rather than the rank-less landing sentence's.
+        let row = &state_of(&snaps, "buffs")["stats"]["mesmerization"];
+        assert_eq!(row["spell"], "Mesmerization VII");
+        assert_eq!(row["n"], 1);
+        assert_eq!(row["maxMs"], 44_000);
+    }
+
+    /// A STRANGER'S MEZ FILLS NOBODY'S OVERLAY, and the refusal still moves the revision counter
+    /// when a break line arrives — which is what the goldens' non-zero `seq` on two slices is.
+    #[test]
+    fn an_unanchored_mez_opens_no_hold_and_a_break_still_counts_a_revision() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"cc","seq":0,"ts":2000,"raw":"m","mob":"a spiroc banisher","verb":"mesmerized","candidates":[{"name":"Mesmerization","durationMs":24000}]}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "buffTimers")["holds"], json!([]));
+        assert_eq!(snapshot_seq(&snaps, "buffTimers"), 0);
+
+        let snaps = fold_lines(&[
+            r#"{"kind":"uncharm","seq":0,"ts":2000,"raw":"u","mob":"a spiroc banisher","spell":"Allure"}"#,
+        ]);
+        // An `end` is recorded even when we held nothing: it is a real CC break, and the projection
+        // uses it to retire an active buff the buffs model does not clear.
+        assert_eq!(snapshot_seq(&snaps, "buffTimers"), 1);
+        assert_eq!(
+            state_of(&snaps, "buffTimers")["ends"],
+            json!([{ "key": "a spiroc banisher", "ts": 2000, "spell": "Allure" }])
+        );
+    }
+
+    fn snapshot_seq(snaps: &Value, id: &str) -> i64 {
+        snaps["modules"]
+            .as_array()
+            .expect("modules")
+            .iter()
+            .find(|m| m["id"] == id)
+            .expect("the module")["snapshot"]["seq"]
+            .as_i64()
+            .expect("a seq")
+    }
+
+    // ── resist (JOS-476 cluster 2c) ────────────────────────────────────────────────────────────
+    //
+    // The published surface is two integers, so every law below is stated as a claim about how many
+    // POOLING KEYS the ledger holds and how many creatures they are about — which is exactly what
+    // the golden pins.
+
+    /// A ROW'S TARGET HAS TO BE A CREATURE. A groupmate's landing and your own self-damage are the
+    /// two shapes that put a person's name in a published file, and both are refused; a mob's is
+    /// filed. All three lines are otherwise identical.
+    #[test]
+    fn a_resist_row_is_only_ever_filed_about_a_creature() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"resist","seq":0,"ts":1000,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
+            r#"{"kind":"resist","seq":1,"ts":2000,"raw":"r","caster":"You","target":"Dranix","spell":"Malosi","incoming":false}"#,
+            r#"{"kind":"resist","seq":2,"ts":3000,"raw":"r","caster":"You","target":"You","spell":"Malosi","incoming":false}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 1, "mobs": 1 }));
+    }
+
+    /// YOUR RESISTS ONLY. `You resist <mob>'s <Spell>!` is the incoming form and a different feature
+    /// entirely, so it files nothing at all.
+    #[test]
+    fn an_incoming_resist_is_yours_and_is_never_filed() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"resist","seq":0,"ts":1000,"raw":"r","caster":"a froglok ton knight","target":"You","spell":"Fear","incoming":true}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 0, "mobs": 0 }));
+    }
+
+    /// THE RANK AND THE INVOCATION ARE POOLING TERMS (JOS-387). Three casts of one spell on one mob
+    /// that differ only in the rank the line printed, or in whether overchannel was up, are THREE
+    /// rows — they rolled against different resist adjusts and may not be pooled. The mob count
+    /// stays at one, which is what says the split is about the roll and not about the creature.
+    #[test]
+    fn a_rank_and_an_invocation_each_split_a_resist_row() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"resist","seq":0,"ts":1000,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Shiftless Deeds IV","incoming":false}"#,
+            r#"{"kind":"resist","seq":1,"ts":2000,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Shiftless Deeds VI","incoming":false}"#,
+            r#"{"kind":"invocationChange","seq":2,"ts":3000,"raw":"i","invocation":"overchannel"}"#,
+            r#"{"kind":"castBegin","seq":3,"ts":3100,"raw":"c","spell":"Shiftless Deeds IV"}"#,
+            r#"{"kind":"resist","seq":4,"ts":3200,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Shiftless Deeds IV","incoming":false}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 3, "mobs": 1 }));
+    }
+
+    /// THE WEEK IS IN THE KEY (JOS-397), and it is the one term that is not about `rc`. Two
+    /// identical resists a fortnight apart are two rows, because a row that pooled them would have
+    /// no age to weigh. The instant comes off the LOG's clock, never a wall clock.
+    #[test]
+    fn the_iso_week_splits_a_row_so_every_count_has_an_age() {
+        const WEEK_MS: i64 = 7 * 86_400_000;
+        let later = format!(
+            r#"{{"kind":"resist","seq":1,"ts":{},"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}}"#,
+            1_787_184_000_000i64 + 2 * WEEK_MS
+        );
+        let snaps = fold_lines(&[
+            r#"{"kind":"resist","seq":0,"ts":1787184000000,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
+            &later,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 2, "mobs": 1 }));
+    }
+
+    /// ONE CAST IS ONE ROLL. A nuke prints its damage line FIRST and its landing emote after, and
+    /// the emote is the same roll saying so twice — so the deferred landing is cancelled and the
+    /// pair leaves exactly one row behind. (The `damaged` set on the armed cast is what does it;
+    /// the cancel-forward rule alone never fires, because the game's order is always damage-then-
+    /// emote.)
+    #[test]
+    fn a_damage_line_and_its_own_landing_emote_are_one_observation() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Chaotic Feedback"}"#,
+            r#"{"kind":"damage","seq":1,"ts":2000,"raw":"d","attacker":"You","target":"a kodiak","amount":30,"dtype":"spell","skill":"Chaotic Feedback","crit":false}"#,
+            r#"{"kind":"cc","seq":2,"ts":2000,"raw":"e","mob":"a kodiak","candidates":[{"name":"Chaotic Feedback","durationMs":null}]}"#,
+            // Far enough past the emote that a surviving deferred landing would have been filed.
+            r#"{"kind":"unknown","seq":3,"ts":60000,"raw":"x"}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 1, "mobs": 1 }));
+    }
+
+    /// A CAST THAT NEVER HAPPENED IS NOT A RESIST: a fizzle disarms, so the landing sentence that
+    /// follows has nothing to join to and files nothing.
+    #[test]
+    fn a_fizzled_cast_can_no_longer_claim_a_landing_sentence() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Chaotic Feedback"}"#,
+            r#"{"kind":"castFizzle","seq":1,"ts":1500,"raw":"f","spell":"Chaotic Feedback"}"#,
+            r#"{"kind":"cc","seq":2,"ts":2000,"raw":"e","mob":"a kodiak","candidates":[{"name":"Chaotic Feedback","durationMs":null}]}"#,
+            r#"{"kind":"unknown","seq":3,"ts":60000,"raw":"x"}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 0, "mobs": 0 }));
+    }
+
+    /// A DEBUFF WINDOW IS A POOLING TERM. The same resist before and after a tash lands on the mob
+    /// is two rows, and the window closes on the LOG's clock — eleven minutes later the third
+    /// resist pools back with the first.
+    #[test]
+    fn a_resist_debuff_window_splits_a_row_and_then_closes_on_the_logs_clock() {
+        const DEBUFF_MS: i64 = 11 * 60 * 1000;
+        let after = format!(
+            r#"{{"kind":"resist","seq":4,"ts":{},"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}}"#,
+            2_000 + DEBUFF_MS + 1_000
+        );
+        let snaps = fold_lines(&[
+            r#"{"kind":"resist","seq":0,"ts":1000,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
+            r#"{"kind":"castBegin","seq":1,"ts":1500,"raw":"c","spell":"Tashani"}"#,
+            r#"{"kind":"cc","seq":2,"ts":2000,"raw":"e","mob":"a froglok ton knight","candidates":[{"name":"Tashani","durationMs":null}]}"#,
+            r#"{"kind":"resist","seq":3,"ts":3000,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
+            &after,
+        ]);
+        // Three keys: the bare Malosi row (shared by the first and the last resist), the
+        // tash-debuffed Malosi row, and the Tashani landing's own row.
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 3, "mobs": 1 }));
+    }
+
+    /// A DoT'S FIRST TICK IS THE LANDING and the rest are the same roll — but the ROW is minted
+    /// either way, which is why one cast and three ticks is one row rather than none. A fresh cast
+    /// re-arms the memory, and it still pools into the same key.
+    #[test]
+    fn only_a_dots_first_tick_is_a_landing_and_the_row_is_minted_regardless() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Envenomed Bolt"}"#,
+            r#"{"kind":"damage","seq":1,"ts":2000,"raw":"d","attacker":"You","target":"a kodiak","amount":110,"dtype":"dot","skill":"Envenomed Bolt","crit":false}"#,
+            r#"{"kind":"damage","seq":2,"ts":5000,"raw":"d","attacker":"You","target":"a kodiak","amount":110,"dtype":"dot","skill":"Envenomed Bolt","crit":false}"#,
+            r#"{"kind":"damage","seq":3,"ts":8000,"raw":"d","attacker":"You","target":"a kodiak","amount":110,"dtype":"dot","skill":"Envenomed Bolt","crit":false}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 1, "mobs": 1 }));
+    }
+
+    /// A PROC IS NOT A CAST SPELL, and the log has no field that says so — what it has is the CAST
+    /// LINE, which a proc never prints. So an observation that joins an armed cast carries that
+    /// cast's invocation (here UNKNOWN, because nothing has stated one) and an observation that
+    /// joins none answers `false`, and the two are different keys. Same spell, same mob, same
+    /// week — two rows, because they are two different claims about the roll.
+    #[test]
+    fn an_observation_with_no_cast_behind_it_is_a_proc() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Smiting Strike"}"#,
+            r#"{"kind":"damage","seq":1,"ts":2000,"raw":"d","attacker":"You","target":"a kodiak","amount":30,"dtype":"spell","skill":"Smiting Strike","crit":false}"#,
+            // Past CAST_JOIN_MS, so this one joins nothing and is filed as a proc.
+            r#"{"kind":"damage","seq":2,"ts":20000,"raw":"d","attacker":"You","target":"a kodiak","amount":30,"dtype":"spell","skill":"Smiting Strike","crit":false}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 2, "mobs": 1 }));
+    }
+
+    /// THE MODULE DOES NOT RESET AT AN EPOCH BOUNDARY. What a mob resists is GAME knowledge and a
+    /// rebirth does not unlearn it — so the pre-launch row survives the boundary that empties loot
+    /// and leveling, and the module still reports the seq of the last event it was handed.
+    #[test]
+    fn what_a_mob_resists_outlives_the_launch_boundary() {
+        let mut fold = Fold::new(registered(ClusterDeps::default()), 1000);
+        for line in [
+            r#"{"kind":"resist","seq":0,"ts":500,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
+            r#"{"kind":"loot","seq":1,"ts":1500,"raw":"l","item":"Live Sword"}"#,
+        ] {
+            fold.on_primary(&Event::from_json(line).expect("object"), false);
+        }
+        let snaps = fold.registry.snapshots();
+        assert_eq!(state_of(&snaps, "loot"), json!([]));
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 1, "mobs": 1 }));
+    }
+
+    /// A ZONE LINE IS A DISCONTINUITY: it decides the deferred landing outright rather than waiting
+    /// out the three-second window, and it drops every open debuff. The landing therefore lands, and
+    /// the resist that follows it in the new zone pools with no debuff on the key.
+    #[test]
+    fn a_zone_line_decides_the_deferred_landing_and_drops_the_debuff_windows() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Tashani"}"#,
+            r#"{"kind":"cc","seq":1,"ts":1500,"raw":"e","mob":"a froglok ton knight","candidates":[{"name":"Tashani","durationMs":null}]}"#,
+            // Inside LAND_DEFER_MS of the emote, so only the zone line can decide it.
+            r#"{"kind":"zone","seq":2,"ts":2000,"raw":"z","zone":"Innothule Swamp"}"#,
+            r#"{"kind":"resist","seq":3,"ts":2500,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
+        ]);
+        // The Tashani landing row, plus an un-debuffed Malosi row — the window died with the zone.
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 2, "mobs": 1 }));
+    }
+
+    // ── CLUSTER 2b (JOS-475) ──────────────────────────────────────────────────────────────────
 
     /// A login after a long silence synthesizes an `offlineGap`, and `progression` publishes the
     /// instants it carries — the columns are a record of what the log said, and the absence is a
@@ -759,7 +1264,7 @@ mod tests {
     #[test]
     fn the_level_fact_takes_the_latest_statement_and_who_breaks_the_tie() {
         let mut fold = Fold::new(
-            cluster_2a_2b(ClusterDeps {
+            registered(ClusterDeps {
                 character: Some(json!({ "name": "Primitive", "server": "freeport" })),
                 ..Default::default()
             }),

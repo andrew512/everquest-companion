@@ -8,15 +8,22 @@ add a module and how to prove it.
 ## Where the clusters stand
 
 `fold::WIRING_ORDER` is all twenty modules of `src/main/modules/wiring.ts`, in delivery order. What
-this crate has registered is `cluster_2a_2b`; everything else is named by `Registry::missing()` and
-printed as SKIP on every parity run, green ones included.
+this crate has registered is what `registered()` builds — which is now ALL TWENTY. Anything a build
+does not register is still named by `Registry::missing()` and printed as SKIP on every parity run,
+green ones included, because the report is about what was COMPARED and never about what exists.
 
 | cluster | ticket | modules |
 | --- | --- | --- |
 | 2a | JOS-471 ✅ | `loot` `turnins` `classUnlocks` `kills` `leveling` `outputFiles` `spellSets` `itemTiers` `observedSpellRanks` |
 | 2b | JOS-475 ✅ | `respawn` `progression` `character` `roster` `combo` |
-| 2c | — | `alerts` `buffs` `buffTimers` |
-| 2d | JOS-477 🟡 | `consider` `resist` `eventFeed` + **the combat engine** (`src/combat/`, partial) |
+| 2c | JOS-476 ✅ | `alerts` `buffs` `buffTimers` `consider` `resist` `eventFeed` |
+| — | JOS-477 🟡 | **the combat engine** (`src/combat/`, partial) |
+
+THE TABLE WAS RE-CUT between JOS-471 and JOS-476: what the scaffold called 2c and 2d became one
+ticket of six, because the three modules 2d held turned out to be the two cheapest in the whole
+registry (`eventFeed` admits nothing historical; `consider` is a fifty-row ring) and the one —
+`resist` — whose two published integers need the entire fold to be exact. Splitting the hard one
+away from the hard one bought nothing.
 
 The combat engine is not in `WIRING_ORDER` — it is not a module. It is the bus subscriber that sits
 AFTER all twenty of them (`pipeline.ts:311,326`), and `Fold` carries it in its own `combat` field
@@ -27,10 +34,11 @@ sums/lanes are in, and the VIEW BUILDERS are what is left. Prove it with `--ledg
 by eye.
 
 The constructor takes a `ClusterDeps` struct (JOS-475). Add a FIELD to it and a `register` line at
-your modules' `WIRING_ORDER` positions; do not re-thread the call sites. Rename it again when it
-stops being 2a+2b alone.
+your module's `WIRING_ORDER` position; do not re-thread the call sites. The function itself has been
+renamed twice — `cluster_2a`, then `cluster_2a_2b`, now `registered` — for the same reason each
+time: a registry named after the tickets IN it is a registry a reader has to date.
 
-## Adding a module (the 2b/2c/2d recipe)
+## Adding a module (the recipe every cluster followed)
 
 1. **Read the TS module's whole header first.** Every one of them carries an argument — a measured
    log span, an owner ruling, a quirk that looks like a bug and is not. Port the argument into the
@@ -42,9 +50,9 @@ stops being 2a+2b alone.
      `ev.kind()`.
    - `snapshot()` returns `json!({ "seq": …, "state": … })`.
    - `flush_delta` stays defaulted. Deltas are phase 3; do not build the transport here.
-3. **Register it in `cluster_2a`** (rename the function when it stops being 2a alone) at its
-   `WIRING_ORDER` position. The `registration_follows_the_wiring_order…` test fails if you slot it
-   wrong, and the SKIP line shrinks by exactly the name you added.
+3. **Register it in `registered()`** at its `WIRING_ORDER` position, and add whatever it needs from
+   outside the log as a FIELD on `ClusterDeps`. The `registration_follows_the_wiring_order…` test
+   fails if you slot it wrong, and the SKIP line shrinks by exactly the name you added.
 4. **Reach for the existing ports before writing a helper.** `src/jsfn.rs` holds the shared TS
    functions (`zoneTier`, the item-name pair, `memoKey`, `baseName`, `parseSpellRank`),
    `eqlog::names` holds `idKey`/`spellCanonKey`, and `eqlog::jsstr` holds the JS-vs-Rust divergence
@@ -56,7 +64,7 @@ stops being 2a+2b alone.
 6. **Prove it against the goldens** (below). Green is not "my tests pass"; green is the comparator
    over all six slices.
 
-### The four traps this cluster actually hit
+### The traps the two landed clusters actually hit
 
 - **An absent field is ABSENT, never `null`.** The goldens were recorded through `JSON.stringify`,
   which drops a key whose value is `undefined`. Use `Option<T>` plus
@@ -67,19 +75,29 @@ stops being 2a+2b alone.
   `JsMap` (`src/jsmap.rs`), never a `HashMap`, when `values()` feeds a `Vec`. Object KEY order is
   free (the bar is deep equality); ARRAY order is not.
 - **`camelCase`.** `#[serde(rename_all = "camelCase")]` on every published struct.
-- **Derived events are not in the phase-1 goldens and you may still need them.** `epoch` is
-  synthesized here (`src/epoch.rs`) because nine modules reset on it, and `offlineGap` is
-  (`src/session.rs`) because `progression` publishes every gap's instants verbatim in three columns
-  and `roster` marks members stale across one. **2c owes the LAST one**: `buffs` derives
-  `buffExpired` while folding, and `alerts`/`buffs`/`buffTimers` cannot be proven without it. The
-  producer must be queued into `Fold::derived` and drained through the same dispatch loop, after the
-  primary event — that is `LogBus.emit`.
+- **Derived events are not in the phase-1 goldens and you DO need them.** All three exist now:
+  `epoch` (`src/epoch.rs`, 2a) because nine modules reset on it; `offlineGap` (`src/session.rs`,
+  ported by 2b and 2c independently) because `progression` publishes every gap's instants verbatim
+  in three columns, `roster` marks members stale across one, and `buffs` folds it to PAUSE every
+  beneficial buff by the length of the absence; and `buffExpired` (2c), which `buffs` synthesizes
+  WHILE FOLDING and hands back through `EqModule::take_derived`. All three stamp themselves with the
+  current primary event's `seq`/`ts`, are queued into `Fold::derived`, and are drained through the
+  same dispatch loop after the primary event — which is `LogBus.emit` exactly.
   **CHECK THE GOLDENS BEFORE BELIEVING A CLUSTER DOES NOT NEED ONE.** This bullet said "2c owes the
   other two" until JOS-475, which was true of cluster 2a and false of 2b — the argument for omitting
   a derived event (it stamps itself with the current primary event's `seq`/`ts`, so it can only move
   the `seq` every module carries over unchanged) only holds for modules that do not READ the event.
   Grep the TS module for the kind, then read the golden's own numbers: the six slices carry
   4 / 7 / 6 / 0 / 3 / 2 offline intervals and they are right there in `progression.offlineStart`.
+- **A published `seq` is not always `ev.seq`.** FOUR modules publish a private REVISION counter
+  (JOS-87): `combo`, `character` and `respawn`, each of which has a second input that advances no log
+  seq, and `buffTimers`, whose `onTick` expires holds on an idle log. The goldens catch the last one
+  outright — 0 on three of the six slices, and 6 / 106 / 145 on the others. Read the TS's
+  `snapshot()` before assuming.
+- **A JS `Map`'s iteration order can be published without appearing in the snapshot at all.** The
+  buffs model's `active` map is sorted by `startedTs` before publication — but its ITERATION order
+  decides which duration samples are pushed in which order and which `buffExpired` events leave the
+  module, and both of those reach the golden by another route.
 
 ### Adding to the COMBAT engine (2d), and the order the ledger says to do it in
 
@@ -190,8 +208,8 @@ npm run oracle:rust-fold -- --keep-going \
 ```
 
 It prints PASS per module per slice, the first divergence (dotted path, both values, truncated) for
-each failure, and a SKIP line naming every module not compared — on green runs too, because "nine of
-twenty agreed" and "the fold agrees" are different sentences.
+each failure, and a SKIP line naming every module not compared — on green runs too, because "fifteen
+of twenty agreed" and "the fold agrees" are different sentences.
 
 **Check the harness still bites** after changing it. Two one-line faults are enough: bump
 `KILLS_SHAPE_VERSION` and change `SETTLE_MS`, rebuild, run one slice, and confirm you get
@@ -203,6 +221,14 @@ carries no `group` line and no `level` line, so a roster fault and a character f
 while biting on `current` and `hate-pets`. The 2b run that was accepted: `.state.v` (respawn),
 `.state.recentKills.length` (progression), `.state.intervals[0].slots[0].confidence` (combo),
 `.state.lastSignalTs` (roster) and `.state.level.source` (character), across three slices.
+
+**Aim it at the number your module actually publishes**, and check that it MOVED. JOS-476 ran four
+injections and only two bit: `RECENT_SAMPLE_WINDOW` 5→4 (`FAIL buffs at
+.state.stats.<line>.estimateMs`) and an extra `rev += 1` in `buffTimers`' `end()` (`FAIL buffTimers
+at .seq`). The other two — `WAKE_CENSOR_MS` 1 s→2 s and `CC_END_MEMORY_MS` 60 s→30 s — are INERT on
+all six slices, because nothing in this corpus exercises either constant in a way that reaches a
+published field. An inert injection is a fact about the CORPUS, not a pass, and it is worth writing
+down rather than mistaking for one.
 
 House rules for the whole crate: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D
 warnings`, `cargo test -p fold`, and the Node side's `npm run typecheck && npm run lint && npm test`.

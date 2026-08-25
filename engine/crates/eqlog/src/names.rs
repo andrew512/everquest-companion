@@ -66,6 +66,41 @@ pub fn db_canon_key(name: &str) -> String {
     js_trim(&stripped).to_lowercase()
 }
 
+/// `spellRank` — THE RANK THE KEY THROWS AWAY (JOS-387): `Scorching Arrow IV` -> 4, a name with no
+/// numeral -> 0.
+///
+/// It reads the SAME trailing token `spell_canon_key` strips, off the same raw display name, and it
+/// is deliberately a second function rather than a change to that one: every consumer of the
+/// canonical key — the buffs model's cast/fade pairing, the ledger's pooling, the proc analytics —
+/// depends on a rank-IV and a rank-0 cast being ONE spell, and only the resist model needs to know
+/// that they carry different resist adjusts. So the rank is parsed BEFORE canonising, beside the
+/// strip, and the key is untouched.
+///
+/// CASE-SENSITIVE, because `RANK_TAIL_RE` is: this is `parseCommon.ts`'s regex, not `spellLines.ts`'s
+/// case-insensitive twin (`fold::jsfn::parse_spell_rank`). The two are separate over there too, and
+/// keeping them separate here keeps the difference visible instead of merging it away.
+pub fn spell_rank(spell: &str) -> i64 {
+    let m = match rank_tail().find(js_trim(spell)) {
+        Some(m) => m.as_str(),
+        None => return 0,
+    };
+    // `RANK_VALUES[m[0].trim()] ?? 0` — the closed I–X ladder EQ Legends prints, and the `?? 0` is
+    // unreachable behind a regex that accepts only those ten.
+    match js_trim(m) {
+        "I" => 1,
+        "II" => 2,
+        "III" => 3,
+        "IV" => 4,
+        "V" => 5,
+        "VI" => 6,
+        "VII" => 7,
+        "VIII" => 8,
+        "IX" => 9,
+        "X" => 10,
+        _ => 0,
+    }
+}
+
 /// `cleanMob` — drop a possessive `'s` tail (three apostrophe variants), trim, and answer `None`
 /// for what is left of nothing.
 pub fn clean_mob(s: Option<&str>) -> Option<String> {

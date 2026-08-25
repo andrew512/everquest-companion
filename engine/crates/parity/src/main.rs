@@ -183,6 +183,12 @@ fn snapshots(
         })),
         self_name: None,
         respawn_prefs: fold::modules::respawn::RespawnPrefs::default(),
+        // `wiring.ts` hands the buffs module `spellDb` itself; the fold takes an owned PROJECTION
+        // of `db.byKey` so nothing downstream borrows the parser (`fold::spell_facts`).
+        facts: parser
+            .spell_db()
+            .map(fold::spell_facts::SpellFacts::project)
+            .unwrap_or_default(),
     };
     let started = std::time::Instant::now();
     // The engine is constructed exactly as `foldArm.mts construct()` constructs it: the roster seam
@@ -192,7 +198,7 @@ fn snapshots(
     let mut engine = fold::combat::CombatEngine::new();
     engine.reset();
     engine.set_player_name(character);
-    let mut folder = fold::Fold::new(fold::cluster_2a_2b(deps), launch_ms).with_combat(engine);
+    let mut folder = fold::Fold::new(fold::registered(deps), launch_ms).with_combat(engine);
     // …and `with_combat` resets, so the name is re-injected after it the way every construction
     // path does. `CombatEngine::reset` re-seeds an injected name by itself, so this is the same
     // ordering stated twice rather than two different orderings.
