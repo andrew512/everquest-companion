@@ -270,7 +270,7 @@ test('THE NOTE NAMES EVERY REASON IT SAW, with a count each', async () => {
   // Two different failures inside one window: a refusal and a guess. A note that reported only the
   // last would send a developer after the wrong one.
   const notes: string[] = []
-  let at = 0
+  const at = 0
   let mode: 'error' | 'wrong' = 'error'
   const shim = createReadShim({
     readiness: () => SERVABLE,
