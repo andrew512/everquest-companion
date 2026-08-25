@@ -127,6 +127,22 @@ jobs:
       - name: Test
         run: npm test
 
+      # THE ENGINE THE INSTALLER CARRIES (JOS-473). The `engine` job below builds
+      # DEBUG and tests it; a packaged app ships RELEASE, so the packaging jobs
+      # build their own. It runs HERE as well as in `release` for one reason: the
+      # artifact this job uploads is the installer people actually test, and an
+      # artifact that is structurally different from a release build (no
+      # resources/engine/engined.exe) verifies the wrong thing. A missing binary
+      # is only a WARNING to electron-builder's extraResources, so the failure
+      # would be silent — `npm run build:engine` asserts the binary exists.
+      #
+      # The toolchain is NOT chosen here: engine/rust-toolchain.toml pins it and
+      # rustup honours the file (see the `engine` job for why that pin matters).
+      - name: Build the engine (release)
+        run: |
+          rustup show active-toolchain
+          npm run build:engine
+
       # UNSIGNED on purpose, and NO AZURE_* env: this job verifies + produces a CI
       # artifact, it publishes nothing, so it has no business holding the signing
       # secrets (least privilege — same reasoning as its read-only token). The
@@ -316,9 +332,25 @@ jobs:
           npm version --no-git-tag-version --allow-same-version $ver
           Write-Host "Stamped version from tag: $ver"
 
+      # THE ENGINE THE INSTALLER CARRIES (JOS-473) — the release binary, built
+      # before packaging because electron-builder copies it out of
+      # engine/target/release as an extraResource. See the identical step in the
+      # `build` job for the whole argument; it is duplicated for the same reason
+      # the rest of the prelude is (the two jobs are a security boundary), and it
+      # needs no secret of its own: the SIGNING happens inside the packaging step
+      # below, which already holds the AZURE_* env.
+      - name: Build the engine (release)
+        run: |
+          rustup show active-toolchain
+          npm run build:engine
+
       # --- Build + publish as a DRAFT ----------------------------------------
       # Azure Trusted Signing (inert until the AZURE_* secrets exist) — see the
-      # build job for the secret list.
+      # build job for the secret list. The engine binary is signed by the SAME
+      # hook, on the same run: app-builder-lib routes every `.exe` copied by a
+      # DIRECTORY extraResources matcher through win.signtoolOptions.sign (the
+      # mechanism, and why the matcher must be a directory, is annotated in
+      # electron-builder.yml and pinned by tests/enginePackaging.test.mts).
       - name: Build installer
         shell: pwsh
         env:
