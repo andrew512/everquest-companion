@@ -48,7 +48,8 @@ const EVERY_OP: RequestOp[] = [
   'buffTrust.define',
   'respawn.define',
   'combo.define',
-  'roster.define'
+  'roster.define',
+  'sessionMarks.add'
 ]
 
 test('the registry names every op, and the compile-time pin agrees', () => {
@@ -84,7 +85,11 @@ test('EVERY GUARD IS DISCRIMINATING — no two ops accept each other’s result'
     'buffTrust.define': { applied: true },
     'respawn.define': { applied: true },
     'combo.define': { applied: true, count: 2 },
-    'roster.define': { applied: true, count: 0 }
+    'roster.define': { applied: true, count: 0 },
+    // THE REFUSED SHAPE, not the accepted one (JOS-487). Both are legal, and the refusal is the one
+    // worth putting in the matrix: it is the answer a caller has to branch on, and it is the one an
+    // over-eager guard reading `accepted` as a truthiness test would silently drop.
+    'sessionMarks.add': { accepted: false, status: 'folding' }
   }
   for (const op of EVERY_OP) {
     assert.equal(RESULT_GUARDS[op](shapes[op]), true, `${op} refused its own result`)

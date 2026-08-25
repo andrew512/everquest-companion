@@ -510,6 +510,17 @@ pub fn perf_snapshot(id: i64) -> ClientMessage {
     })
 }
 
+/// One `sessionMarks.add` request, stamped with the instant the caller says the press happened
+/// (JOS-487, boundary verdict 6). The clock is the CALLER's on purpose — see the schema.
+#[must_use]
+pub fn session_mark(id: i64, at: i64) -> ClientMessage {
+    ClientMessage::SessionMarkAddRequest(protocol::generated::SessionMarkAddRequest {
+        id: RequestId(id),
+        op: protocol::generated::SessionMarkAddRequestOp::SessionMarksAdd,
+        params: protocol::generated::SessionMarkAddParams { at },
+    })
+}
+
 /// One `view.subscribe` request over the named source, with the source's own defaults.
 #[must_use]
 pub fn subscribe(id: i64, source: &str) -> ClientMessage {

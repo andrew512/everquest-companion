@@ -35,6 +35,7 @@
 import {
   PROTOCOL_VERSION,
   type ClientMessage,
+  type ConCardMessage,
   type DiffMessage,
   type EngineMessage,
   type Epoch,
@@ -44,6 +45,7 @@ import {
   type FoldProgress,
   type Hello,
   type HelloReply,
+  type ModuleChangedMessage,
   type Reply,
   type ReplyResult,
   type RequestId,
@@ -103,6 +105,30 @@ export interface EngineClient {
    * the honest shape for a sound: an alert nobody was listening for is not an alert to replay.
    */
   onFire(listener: (fire: FireMessage) => void): () => void
+
+  /**
+   * ONE LIVE `/con` PRODUCED A CARD (JOS-487, boundary verdict 2).
+   *
+   * `onFire`'s shape exactly, and for `onFire`'s reasons: connection-wide, no subscription, no
+   * epoch, nothing to replay. A card is a thing that happened, and a listener that missed one has
+   * missed it — which is the honest shape for a card whose whole purpose is the two seconds before
+   * you decide to pull.
+   */
+  onConCard(listener: (card: ConCardMessage) => void): () => void
+
+  /**
+   * A MODULE'S PUBLISHED STATE MOVED — the dirty bit (JOS-487).
+   *
+   * THE PUSH THAT REPLACES A POLL. It carries a name and a cursor and no state at all, so a holder
+   * of a `module.snapshot` compares its own `seq` against this one and refetches only when this one
+   * is ahead. The app-side `useModule` refetch shim rides it; until that lands, this is the seam it
+   * will ride and nothing subscribes.
+   *
+   * IT IS COALESCED ENGINE-SIDE to one per module per serve beat, so a busy tail delivers a
+   * bounded number of these rather than one per event — but a listener must still be idempotent in
+   * the cursor, because "the newest number wins" is the only thing the coalescing promises.
+   */
+  onModuleChanged(listener: (changed: ModuleChangedMessage) => void): () => void
   close(): void
 }
 
@@ -137,6 +163,8 @@ interface ClientState {
   readonly stateListeners: Set<(state: ConnectionState) => void>
   readonly progressListeners: Set<(progress: FoldProgress) => void>
   readonly fireListeners: Set<(fire: FireMessage) => void>
+  readonly conCardListeners: Set<(card: ConCardMessage) => void>
+  readonly moduleChangedListeners: Set<(changed: ModuleChangedMessage) => void>
 }
 
 function setConnectionState(s: ClientState, next: ConnectionState): void {
@@ -452,6 +480,13 @@ function receive(s: ClientState, message: EngineMessage): void {
   // is handed straight to the listeners without passing through `noteEpoch`, which is the one place
   // this client is entitled to drop state.
   else if (message.kind === 'fire') for (const listener of s.fireListeners) listener(message)
+  // A CON CARD IS A FIRE'S TWIN in everything this function cares about: no id, no epoch, nothing
+  // to reconcile. A MODULE CHANGE is one step different — it names state a client may be holding —
+  // but it is still not WINDOW state, so it does not pass through `noteEpoch` either: what a client
+  // does about it is ask `module.snapshot`, and that answer carries its own generation.
+  else if (message.kind === 'conCard') for (const listener of s.conCardListeners) listener(message)
+  else if (message.kind === 'moduleChanged')
+    for (const listener of s.moduleChangedListeners) listener(message)
   else onDiff(s, message)
 }
 
@@ -468,7 +503,9 @@ export function createEngineClient(options: EngineClientOptions): EngineClient {
     subs: new Map(),
     stateListeners: new Set(),
     progressListeners: new Set(),
-    fireListeners: new Set()
+    fireListeners: new Set(),
+    conCardListeners: new Set(),
+    moduleChangedListeners: new Set()
   }
   return {
     get state() {
@@ -499,6 +536,18 @@ export function createEngineClient(options: EngineClientOptions): EngineClient {
       s.fireListeners.add(listener)
       return (): void => {
         s.fireListeners.delete(listener)
+      }
+    },
+    onConCard: (listener): (() => void) => {
+      s.conCardListeners.add(listener)
+      return (): void => {
+        s.conCardListeners.delete(listener)
+      }
+    },
+    onModuleChanged: (listener): (() => void) => {
+      s.moduleChangedListeners.add(listener)
+      return (): void => {
+        s.moduleChangedListeners.delete(listener)
       }
     },
     close: (): void => {
