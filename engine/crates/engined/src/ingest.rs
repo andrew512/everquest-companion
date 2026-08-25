@@ -602,7 +602,6 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
     ) {
         return Ok(Ended::Preempted);
     }
-    serving.say(true);
     // READ BACK THROUGH THE ONE DOOR, deliberately: this diagnostic is the only place the engine
     // states its own coordinate out loud, and it states the world's copy rather than the ingest's
     // local one — so a mark the world failed to record could not print as if it had.
@@ -613,6 +612,11 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
         recorded.checkpoint,
         recorded.log.as_deref().unwrap_or(log).display()
     );
+    // …and beside it, what serving every open window off that fold cost. FORCED rather than left to
+    // the meter's cadence: the first frames of a generation are the measurement anybody debugging a
+    // slow view wants first, and a session quiet enough never to reach the cadence would otherwise
+    // never report the one pass it did make.
+    serving.say(true);
     let mut tail = FileTail::open(log, TailStart::At(landed.checkpoint));
 
     // ---- the tail: live, until something newer takes the world ------------------------------

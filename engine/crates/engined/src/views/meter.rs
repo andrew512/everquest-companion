@@ -146,7 +146,7 @@ fn line(source: &str, stats: &SourceStats) -> String {
     let mean = if stats.timed == 0 {
         String::from("n/a")
     } else {
-        ms(stats.latency_total / u32::try_from(stats.timed).unwrap_or(u32::MAX))
+        took(stats.latency_total / u32::try_from(stats.timed).unwrap_or(u32::MAX))
     };
     format!(
         "views: {source} {frames} frames ({} reset / {} diff), {} rows, {} ops, {} B (widest {} B); \
@@ -157,14 +157,23 @@ fn line(source: &str, stats: &SourceStats) -> String {
         stats.ops,
         stats.bytes,
         stats.widest,
-        ms(stats.latency_worst),
+        took(stats.latency_worst),
         stats.timed,
     )
 }
 
-/// Milliseconds to one decimal — a duration a person reads, not a `Duration`'s debug form.
-fn ms(d: Duration) -> String {
-    format!("{:.1} ms", d.as_secs_f64() * 1000.0)
+/// A duration a person reads, at a precision that does not throw the measurement away.
+///
+/// MICROSECONDS UNDER A MILLISECOND, and that is the whole reason this is not one format string:
+/// cutting a fifty-row window off a fold takes tens of microseconds, and a serve path that reports
+/// `0.0 ms` reads as a measurement nobody took rather than as the good news it is.
+fn took(d: Duration) -> String {
+    let ms = d.as_secs_f64() * 1000.0;
+    if ms < 1.0 {
+        format!("{} us", d.as_micros())
+    } else {
+        format!("{ms:.1} ms")
+    }
 }
 
 #[cfg(test)]
