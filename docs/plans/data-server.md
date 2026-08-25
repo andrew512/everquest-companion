@@ -131,7 +131,7 @@ re-query** (reconnect-after-crash ≡ character switch); **(4)** rows are render
 ```jsonc
 // subscribe — every request is {id, op, params}; the reply restates nothing (the op of the
 // request whose id it names decides the result shape)
-→ {"id":7,"op":"view.subscribe","params":{"source":"loot.ledger","filter":{"session":"current"},
+→ {"id":7,"op":"view.subscribe","params":{"source":"loot.ledger",
    "sort":[["at","desc"]],"window":{"offset":0,"limit":50}}}
 ← {"kind":"reply","id":7,"ok":true,"result":{"subscription":7,"subscribed":true}}
 ← {"kind":"reset","id":7,"epoch":3,"total":1834,"rows":[{"key":"loot:9412","cells":{...}}, ...]}
@@ -241,6 +241,24 @@ From the phase-0/1 wave (JOS-466/467/468/469), added to the ledger:
 - **A rejected token arrives as silence-then-FIN** — a clean close the transport rightly does not
   report as an error. Anything probing "is it up" must watch the close itself or the commonest
   refusal becomes the slowest timeout.
+
+From the connect-and-serve wave (JOS-478/479/480):
+
+- **An unknown filter/sort field is `badParams`, never accept-and-ignore** — serving every row
+  while the client believes it filtered is the one answer that cannot be debugged. Consequence:
+  the subscribe example below carried a `filter` the loot source doesn't serve; corrected to the
+  descriptor a real client sends. A QUERY FIELD is not a RENDER CELL (`at` sorts as an instant,
+  renders as prose) — every new source must declare both sets, and the split deserves a schema
+  home eventually.
+- **Every sort ends in the source's tiebreak** so order is total — EQ stamps to the second, and a
+  shuffled window is diff churn.
+- **Live-mode facts the equivalence oracle cannot see**: the app's wall-clock heartbeat and the
+  mtime-in-fold (`lastPlayed`) surfaced only when the REAL client compared worlds — the two folds
+  agree exactly; the machinery around them differed. Owner sheet items; the probe stays a neutral
+  instrument with exemptions dated and path-pinned in the spec, never in the probe.
+- **Queue time is named as queue time** in serve measurements — a coalescing cadence must never
+  read as compute (ruling 19 discipline, first light: 29 µs fold-to-frame for a 3-row window off
+  a 139,864-event fold).
 
 ## Boundary verdicts (each resolves a census finding)
 
