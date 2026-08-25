@@ -19,9 +19,10 @@
 
 use crate::combat::aggregate::Agg;
 use crate::combat::encounter::{
-    encounter_name, Encounter, ACTIVE_MS, FALLBACK_IDLE_MS, LINGER_MS, PRESENCE_GONE_MS,
-    SLOW_SAMPLE_CAP,
+    encounter_name, Encounter, StanceRaw, ACTIVE_MS, FALLBACK_IDLE_MS, LINGER_MS, PRESENCE_GONE_MS,
+    SLOW_SAMPLE_CAP, TIMELINE_HISTORY_CAP,
 };
+use crate::combat::poisons::is_slow_capable;
 use crate::combat::state::EngineState;
 use serde::Serialize;
 
@@ -81,7 +82,31 @@ pub fn ensure_encounter(st: &mut EngineState, ts: i64) {
     }
     st.seq += 1;
     let id = format!("e{}", st.seq);
-    st.current = Some(Encounter::new(id, st.zone.clone(), ts));
+    let mut enc = Encounter::new(id, st.zone.clone(), ts);
+    // Seed the timeline's pinned rows with whatever stance/invocation is already active at the moment
+    // the fight opens, so a fight inherits the standing modifiers.
+    if let Some(m) = &st.stance {
+        enc.stance_spans.push(StanceRaw {
+            group: "stance",
+            name: m.name.clone(),
+            start: ts,
+            end: None,
+        });
+    }
+    if let Some(m) = &st.invocation {
+        enc.stance_spans.push(StanceRaw {
+            group: "invocation",
+            name: m.name.clone(),
+            start: ts,
+            end: None,
+        });
+    }
+    // FREEZE THE COATS AS THEY STAND AT ENGAGE. "Could this pull have been slowed?" is a question about
+    // THIS instant — reading today's coat when the fight is later rendered would silently re-label
+    // every past fight after a poison swap.
+    enc.coat_at_engage = st.coat_utility.clone();
+    enc.combat_at_engage = st.coat_combat.clone();
+    st.current = Some(enc);
 }
 
 /// Is every engaged HOSTILE instance gone? TWO DIFFERENT STANDARDS, because the evidence is
@@ -166,30 +191,56 @@ pub fn eval_closure(st: &mut EngineState, now: i64) {
 
 /// Freeze the open fight into history. A no-op when nothing is open.
 pub fn finalize_current(st: &mut EngineState) {
-    let Some(enc) = st.current.take() else { return };
+    let Some(mut enc) = st.current.take() else {
+        return;
+    };
+    // Close any open stance/invocation spans at the fight's end — BEFORE the drop rule below, exactly
+    // as the TS orders it, so a dropped shell's spans are closed on the way out too.
+    let last_ts = enc.last_ts;
+    for s in &mut enc.stance_spans {
+        if s.end.is_none() {
+            s.end = Some(last_ts);
+        }
+    }
     // DROP EMPTY ENCOUNTERS: a CC application (or a lone miss) can open an encounter that never
     // accrues any attributed damage — a mez lands and the mob is then killed by someone else — and a
     // 0-damage shell must not pollute the history or the zone-session picker.
     if enc.agg.is_empty() {
         return;
     }
-    let mut enc = enc;
-    // ROLLING TIME-TO-SLOW GOES HERE, and in this fold it is UNREACHABLE rather than skipped. The
-    // qualifying gate is `enc.coatAtEngage && isSlowCapable(coat.poison)` — a pull only counts when
-    // a SLOW-CAPABLE utility coat was already on AT ENGAGE, otherwise "how long to slow" is a
-    // question nobody asked and including it would deflate the denominator with pulls that could
-    // never land one. The blade-coat model is unported (state.rs's header), so `coatAtEngage` is
-    // never set, no pull can qualify, and `slow_samples` stays empty. Writing the branch anyway
-    // would be writing a code path that provably never runs; the consequence is instead COUNTED —
-    // `poison.slow` reads all-zero, which is what five of the six goldens carry verbatim and is a
-    // genuine divergence on the sixth. `SLOW_SAMPLE_CAP` is the ring bound the branch would apply.
-    let _ = SLOW_SAMPLE_CAP;
+    // ROLLING TIME-TO-SLOW. A pull only QUALIFIES when a SLOW-CAPABLE utility coat was already on AT
+    // ENGAGE — otherwise "how long to slow" is a question nobody asked, and including it would deflate
+    // the denominator with pulls that could never land one. A qualifying pull that never slowed is
+    // pushed as `None`: COUNTED as a miss, never averaged in as a zero (law 5).
+    if enc
+        .coat_at_engage
+        .as_ref()
+        .is_some_and(|c| is_slow_capable(&c.poison))
+    {
+        let first = enc.agg.procs.first_slow_ts;
+        st.slow_samples.push(if first > 0 {
+            Some((first - enc.start_ts).max(0))
+        } else {
+            None
+        });
+        if st.slow_samples.len() > SLOW_SAMPLE_CAP {
+            st.slow_samples.remove(0);
+        }
+    }
     st.zone_finalized_ms += (enc.last_ts - enc.start_ts).max(0);
     st.zone_active_ms += enc.active_ms;
     // Compute the immutable summary once, now that the encounter is frozen. A finalized fight's
     // summary never uses `now` (its `active` is always false), so 0 is a safe sentinel.
     enc.summary = Some(enc_summary(&enc, "fight", 0));
     st.history.push(enc);
+    // TIMELINE MEMORY BOUND: keep the event ring only for the most recent `TIMELINE_HISTORY_CAP`
+    // finalized encounters and drop older rings, so the whole-session RSS delta stays flat on a
+    // full-log replay of thousands of fights. The aggregate and the summary are untouched — only the
+    // raw per-event ring is released, and the view says so by returning no timeline for that fight.
+    if st.history.len() > TIMELINE_HISTORY_CAP {
+        let drop_idx = st.history.len() - 1 - TIMELINE_HISTORY_CAP;
+        st.history[drop_idx].events.clear();
+    }
 }
 
 /// The whole-stay row that `snapshot()` appends to `segments` after the fights.

@@ -4,10 +4,9 @@
 //!
 //! `src/main/combat/` is ~33 files and 12,400 lines: a formal state machine over the log stream
 //! (`engine.ts` as the facade over `state.ts` + `ingest.ts`, with routing / rounds / healing /
-//! procDetect / world / charmModel / taxonomy / stateTimeline / mergeSessions beside it). This
-//! module is its port, and it is DELIBERATELY PARTIAL TODAY — see "what is ported" below, and the
-//! ledger `npm run oracle:rust-fold -- --ledger` prints, which measures the gap rather than
-//! describing it.
+//! procDetect / world / charmModel / taxonomy / stateTimeline / mergeSessions beside it). This module
+//! is its port, and as of JOS-477's final landing it is WHOLE for everything the snapshot publishes:
+//! `combat` and `scopes` agree with the golden on every leaf of all six slices.
 //!
 //! ── A SUBMODULE OF `fold`, NOT A CRATE OF ITS OWN, AND THE ARGUMENT FOR IT ─────────────────────
 //!
@@ -31,25 +30,30 @@
 //!
 //! So: one file per TS module under `combat/`, exactly the recipe `modules/` follows.
 //!
-//! ── WHAT IS PORTED, AND WHAT IS NOT ───────────────────────────────────────────────────────────
+//! ── WHAT IS PORTED, AND THE FOUR THINGS THAT DELIBERATELY ARE NOT ─────────────────────────────
 //!
-//! PORTED: the construction (`setRoster` / `reset` / `setPlayerName`, which is what `foldArm.mts`
-//! actually calls), the log-clock snapshot contract, the zone-stay lifecycle (`finalizeZoneSession`
-//! / `resetZoneAccumulators` and both summary projections), the standing-choice pair
-//! (stance/invocation), the roster pull, the rolling time-to-slow rollup's shape, and the
+//! PORTED: the construction, the log-clock snapshot contract, the world model, the whole attribution
+//! ladder, the encounter and zone-stay lifecycles, every accumulator on the `Agg` (damage, healing,
+//! rounds, modifiers, the proc ledger and the minute-window ledger), the active-state timeline, the
+//! blade coats, the cast-less proc detector, all six view builders, the per-fight timeline, and the
 //! PER-SCOPE WALK the acceptance oracle is built on.
 //!
-//! NOT PORTED: the world model (`world.ts` — `nameKey#gen` instance identity, the `(4)` display
-//! labels, the retirement clock), the attribution ladder (`routing.ts` classify, `charmModel.ts`,
-//! `allyCharms.ts`, `otherCombatants.ts`, `petClaims.ts`), the aggregate's per-skill/per-category/
-//! rounds/modifier/proc halves, the encounter lifecycle proper (`ensureEncounter`/`evalClosure`/
-//! `finalizeCurrent`), and the view builders (`segmentViews.ts`, `sourceViews.ts`, `healing.ts`,
-//! `procViews.ts`, `defenseViews.ts`, `roundViews.ts`).
+//! NOT PORTED, and each absence is a PROOF rather than a gap — every one is unreachable under the
+//! construction `foldArm.mts` actually makes, and the goldens agree:
 //!
-//! WHAT AN UNPORTED CASE DOES IS NOTHING, and that is the point. An unrouted damage line moves no
-//! total, opens no encounter and books nothing — so every number this module publishes is a number
-//! it actually folded, and the ledger's per-section counts are a measurement of the gap rather than
-//! noise from a half-written accumulator. NOTHING HERE IS STUBBED WITH A PLAUSIBLE VALUE.
+//!   * THE CLASSIFICATION RING (`st.recent`). Written only while `recording`, which `setLive()` sets
+//!     and the recorder never calls. `recent` is `[]` in all six goldens.
+//!   * THE PET NUDGE. Armed only by `if (!st.hydrating && …)`, and a historical fold never leaves
+//!     hydration, so `view(now)` answers `undefined` in every state it can reach and the key is
+//!     dropped. No golden carries `combat.petNudge`.
+//!   * THE SESSION MARK and its `unsplit()` (`mergeSessions.ts`). A mark is REFUSED while hydrating
+//!     and is stored nowhere, so `closedBy` is `zone` on every zone session in every golden. That
+//!     refusal is what makes replay determinism structural rather than careful.
+//!   * FIGHT SEARCH (`fightSearch.ts`) and the fold PROBE (`foldProbe.ts`). Neither is on the
+//!     snapshot path at all: one answers a search box, the other is the bench's own instrumentation.
+//!
+//! NOTHING HERE IS STUBBED WITH A PLAUSIBLE VALUE, which is what let the ledger measure the gap
+//! honestly while it existed: every number this module published was a number it had actually folded.
 //!
 //! ── CACHE TRANSPARENCY (ruling 18) ────────────────────────────────────────────────────────────
 //!
@@ -62,14 +66,26 @@
 pub mod aggregate;
 pub mod ally;
 pub mod charm;
+pub mod collate;
 pub mod encounter;
+pub mod healing;
 pub mod ingest;
 pub mod lifecycle;
 pub mod others;
+pub mod poisons;
+pub mod procbuffs;
+pub mod procdetect;
+pub mod procrouting;
+pub mod procviews;
+pub mod procwindows;
 pub mod roster;
+pub mod rounds;
 pub mod routing;
 pub mod spellfacts;
 pub mod state;
+pub mod statetimeline;
+pub mod timeline;
+pub mod views;
 pub mod world;
 
 pub use encounter::ZoneSessionClose;
@@ -243,11 +259,12 @@ impl CombatEngine {
             .is_some_and(|e| now - e.last_ts < ACTIVE_MS);
 
         let selected_id = resolve_selected_id(st, opts);
-        // `buildSelected(st, selectedId, now)` — the view builders are the last stage of this port,
-        // so the SELECTION IS UNRESOLVED and the honest answer is null. `selectedId` itself is fully
-        // decided above, which is why it agrees with the golden while `selected` does not: the two
-        // answer different questions and only the second needs `segmentViews.ts`.
-        let selected = Value::Null;
+        let selected = match views::build_selected(st, &selected_id, now) {
+            Some(v) => serde_json::to_value(v).unwrap_or(Value::Null),
+            // NULL, not an empty shell: with no fights at all the selection resolves to nothing, and
+            // the UI shows a quiet "no fights yet".
+            None => Value::Null,
+        };
 
         // `recent` — the classification ring, empty for the whole of a historical fold.
         let _ = opts.show_unparsed;
@@ -260,7 +277,7 @@ impl CombatEngine {
             "inCombat": in_combat,
             "recent": recent,
             "stance": stance_state(st),
-            "poison": { "coat": { "combat": [] }, "slow": slow_rollup(st) },
+            "poison": { "coat": coat_state(st), "slow": slow_rollup(st) },
             "zoneSessions": lifecycle::zone_session_summaries(st),
             "hydrating": st.hydrating,
             "roster": st.roster_snap(roster),
@@ -275,8 +292,14 @@ impl CombatEngine {
         if let Some(target) = current_target(st) {
             out["currentTarget"] = json!(target);
         }
+        // `timeline: opts.timeline ? buildTimeline(...) : undefined` — so the key is ABSENT when the
+        // caller did not ask, and present-and-NULL when it asked and the selection resolved to no
+        // timeline-carrying segment (the zone scope, or a fight whose ring the history cap evicted).
+        // `JSON.stringify` drops the first and keeps the second, and so does this.
         if opts.timeline {
-            // buildTimeline(st, selectedId, now) — unported with the encounter event ring.
+            out["timeline"] = timeline::build_timeline(st, &selected_id, now)
+                .and_then(|t| serde_json::to_value(t).ok())
+                .unwrap_or(Value::Null);
         }
         out
     }
@@ -357,6 +380,19 @@ fn current_target(st: &EngineState) -> Option<Value> {
         "others": e.agg.targets.len().saturating_sub(1),
         "lastTs": e.last_ts,
     }))
+}
+
+/// The live blade-coat pair, copied out so a consumer cannot mutate engine state.
+///
+/// EVERY consumer must render ALL of them. The header pill showed only the UTILITY slot until
+/// 2026-08-04, which meant a rogue running the usual asp + siphoning + stunning with no utility poison
+/// on saw NOTHING at all in the passive readout.
+fn coat_state(st: &EngineState) -> Value {
+    let mut out = json!({ "combat": st.coat_combat });
+    if let Some(u) = &st.coat_utility {
+        out["utility"] = json!(u);
+    }
+    out
 }
 
 fn stance_state(st: &EngineState) -> StanceState {

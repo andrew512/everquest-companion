@@ -33,27 +33,32 @@
 //! and an empty held-clicky set makes `castlessKind` the identity function so not one lane name
 //! moves.
 //!
-//! ── WHAT IS STILL UNPORTED HERE (JOS-477, stated rather than implied) ──────────────────────────
+//! ── THE FIELDS PORTED BY PROOF OF ABSENCE, WHICH IS DIFFERENT FROM BEING SKIPPED ───────────────
 //!
-//! The BLADE COATS (`coatUtility` / `coatCombat` and `procRouting.ts`), the ACTIVE-STATE TIMELINE,
-//! the RECENT-CASTS ledger and the HELD-CLICKY set. All four feed the proc analytics and the view
-//! builders, which are the last stage of this port; the ONE consequence a snapshot can see today is
-//! that no pull qualifies for the rolling time-to-slow sample, so `poison.slow` reads
-//! `{pulls:0,landed:0,noLand:0,window:25}` — which is what five of the six goldens carry and is a
-//! genuine divergence on the sixth. Counted by the ledger, not papered over.
+//! THE CLASSIFICATION RING is not declared at all (fact 2): porting a buffer that provably never
+//! receives a line would be inventing a code path.
 //!
-//! THE PET NUDGE IS PORTED BY PROOF OF ABSENCE, which is different from being skipped. It is armed
-//! only by `if (!st.hydrating && isPetSummonSpell(...))`, and fact 1 says `hydrating` is true for the
-//! whole of every recorded slice — so its arm is never set, `view(now)` answers `undefined` in every
-//! state it can reach, and `JSON.stringify` drops the key. The goldens agree: no slice carries
-//! `combat.petNudge`. A model that provably cannot publish anything is not a gap in the snapshot.
+//! THE PET NUDGE is armed only by `if (!st.hydrating && isPetSummonSpell(...))`, and fact 1 says
+//! `hydrating` is true for the whole of every recorded slice — so its arm is never set, `view(now)`
+//! answers `undefined` in every state it can reach, and `JSON.stringify` drops the key. The goldens
+//! agree: no slice carries `combat.petNudge`. A model that provably cannot publish anything is not a
+//! gap in the snapshot.
+//!
+//! THE COMBO PULL is a field that exists and is never installed (seam 1 above). `coat_class_checked_ts`
+//! is kept and advanced exactly where the TS advances it, because the THROTTLE is observable state even
+//! when the question behind it is never asked; the answer is not, so nothing here consults one.
 
 use crate::combat::aggregate::Agg;
 use crate::combat::ally::AllyCharms;
 use crate::combat::charm::CharmModel;
-use crate::combat::encounter::{Encounter, ZoneSession, ZoneSessionClose, FALLBACK_IDLE_MS};
+use crate::combat::encounter::{
+    CoatSlot, Encounter, MarkerRaw, TimelineRaw, ZoneSession, ZoneSessionClose, FALLBACK_IDLE_MS,
+    MARKER_CAP, TIMELINE_CAP,
+};
 use crate::combat::others::{OtherCombatants, SpecialAttacks};
+use crate::combat::procdetect::RecentCasts;
 use crate::combat::roster::{RosterSnap, RosterSource};
+use crate::combat::statetimeline::StateTimeline;
 use crate::combat::world::{Resolved, WorldModel};
 use eqlog::names::id_key;
 use std::collections::HashSet;
@@ -167,6 +172,39 @@ pub struct EngineState {
     /// samples rather than a running mean — they are COUNTED and never averaged in as zero.
     pub slow_samples: Vec<Option<i64>>,
 
+    /// BLADE COATS. FOUR concurrent, because that is what the game has: `coat_utility` is the ONE
+    /// active utility poison (a new utility coat replaces it) and `coat_combat` holds at most one venom
+    /// per mutually-exclusive LINE — venoms on different lines stack, the two members of a line replace
+    /// each other. Session-scoped exactly like the stance pair: a coat survives zoning and is stripped
+    /// only by `reset()` or by one of the three boundaries `procrouting::clear_coats` owns.
+    ///
+    /// NEVER ASSIGN THESE TWO ANYWHERE BUT `route_coat` / `route_dry` / `clear_coats`: a clear that
+    /// moved the slots without ending the SPANS is the exact defect JOS-305 was filed for, one case at
+    /// a time.
+    pub coat_utility: Option<CoatSlot>,
+    pub coat_combat: Vec<CoatSlot>,
+    /// Log-clock ts of the last combo consultation (0 = never) — the THROTTLE half of the class-swap
+    /// coat clear. Driven entirely by event timestamps, so a replay consults at identical instants.
+    /// This fold installs no combo provider, so the consultation itself never happens; the field is
+    /// kept because the GATE is what decides when it would.
+    pub coat_class_checked_ts: i64,
+    /// THE ACTIVE-STATE TIMELINE — "what was on at time T" as an interval model with evidence on both
+    /// edges. SESSION-level and purely ADDITIVE: written alongside the fields above by the same
+    /// writers, and `Encounter::stance_spans` is deliberately left alone.
+    pub state_timeline: StateTimeline,
+    /// Rank-normalized own-casts, for the cast-less proc detector. Only the PLAYER prints `You begin
+    /// casting`, which is exactly the gate the detector needs.
+    pub recent_casts: RecentCasts,
+    /// WHICH SPELLS THIS CHARACTER OWNS AN INSTANT CLICKY FOR — canonical spell keys from the
+    /// `/outputfile inventory` dump. `foldArm.mts` never calls `setHeldClickies`, so it is EMPTY for the
+    /// whole of every recorded slice and `castless_kind` is the identity function: not one lane name
+    /// moves. That is a documented behaviour of the golden's construction, not a gap.
+    pub held_clickies: HashSet<String>,
+    /// ts of the last `You activate Quick Buff.` (0 = never). That AA re-applies the player's memorized
+    /// buffs and prints only their LANDINGS, so the burst it opens is cast evidence in a different
+    /// shape and the heal side of the proc inference must not read those landings as procs.
+    pub quick_buff_ts: i64,
+
     /// See `RosterFacts`. Refreshed once per ingested event and once per snapshot.
     pub roster: RosterFacts,
 }
@@ -208,7 +246,35 @@ impl EngineState {
             invocation: None,
             specials: SpecialAttacks::new(),
             slow_samples: Vec::new(),
+            coat_utility: None,
+            coat_combat: Vec::new(),
+            coat_class_checked_ts: 0,
+            state_timeline: StateTimeline::new(),
+            recent_casts: RecentCasts::new(),
+            held_clickies: HashSet::new(),
+            quick_buff_ts: 0,
             roster: RosterFacts::default(),
+        }
+    }
+
+    /// Append a point annotation to an encounter's marker ring, drop-oldest at `MARKER_CAP`.
+    /// Draw-only: no count, DPS or attribution ever reads this.
+    pub fn push_marker(enc: &mut Encounter, m: MarkerRaw) {
+        enc.markers.push(m);
+        if enc.markers.len() > MARKER_CAP {
+            enc.markers.remove(0);
+        }
+    }
+
+    /// Append one instant to an encounter's timeline ring, capped drop-oldest at `TIMELINE_CAP`.
+    /// `events_total` counts EVERY push, so a fight that outgrows the cap still knows its true instant
+    /// count and the view can DECLARE the loss instead of reporting the ring length as if it were the
+    /// fight (law 1). The counter is display metadata only.
+    pub fn push_timeline(enc: &mut Encounter, rec: TimelineRaw) {
+        enc.events.push(rec);
+        enc.events_total += 1;
+        if enc.events.len() > TIMELINE_CAP {
+            enc.events.remove(0);
         }
     }
 

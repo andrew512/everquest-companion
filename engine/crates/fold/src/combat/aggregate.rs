@@ -5,23 +5,23 @@
 //! the healing annotations. No engine state, no world model, no time — the state machine that
 //! decides WHICH aggregate a line belongs to is `routing.rs`'s job, not this file's.
 //!
-//! ── WHAT IS PORTED HERE TODAY, AND WHAT IS NOT (JOS-477, honest scope) ─────────────────────────
+//! ── EVERY COUNTER A SEGMENT CARRIES IS HERE (JOS-477 final stage) ──────────────────────────────
 //!
-//! PORTED: `out` / `inc` / `targets` / `enemy_heal` / `inc_heal`, the per-skill and per-category
-//! breakdowns, the accuracy and resist counters, and the two reducers every segment summary and
-//! zone-session summary is built out of.
+//! `out` / `inc` / `targets` / `enemy_heal` / `inc_heal` and the per-skill / per-category breakdowns
+//! are the damage half. Beside them sit the four ledgers that are read ONLY by a view builder and are
+//! therefore folded on INGEST for exactly one reason: the encounter event ring is capped, truncated at
+//! finalize and absent ENTIRELY for a zone session, so anything derived from it later would be
+//! silently wrong precisely where the sample is biggest.
 //!
-//! NOT PORTED: the melee-ROUND grouper (`rounds.ts`), the minute-WINDOW ledger (`procWindows.ts`),
-//! the meter-grade HEALING ledger (`healing.ts`) and the modifier tallies. Every one of those is
-//! read ONLY by a view builder (`roundViews` / `procViews` / `healing`), and the view builders are
-//! the last stage of this port — so a field here that nothing writes and nothing reads would be a
-//! shape claiming a capability the fold does not have. They are ABSENT rather than zero-filled, and
-//! the ledger COUNTS the gap rather than papering over it.
+//!   `heal`    the meter-grade healing + absorption ledger (`healing.rs`).
+//!   `procs`   the proc ledger — Strikes, poison-typed lanes, dispel landings, coats, swing exposure
+//!             per state, and the cast-less spell-proc lanes.
+//!   `windows` the wall-clock-minute ledger the Tier-B counterfactual is computed from.
+//!   `SourceStat::mods` / `rounds` / `round_acc` — the modifier tallies and the two round groupers.
 //!
-//! THE PROC LEDGER IS NOT DECLARED AT ALL. Its one snapshot-visible consumer is the rolling
-//! time-to-slow sample, and that sample's gate is a BLADE COAT at engage — which is unported, so no
-//! pull can qualify and nothing would ever read the field. A `first_slow_ts` nothing writes and
-//! nothing reads would be exactly the shape this header refuses.
+//! NOT ONE OF THEM MOVES A DAMAGE TOTAL. Every field is a COUNT or an INDEX over damage the meter has
+//! already booked — `ModifierTally::total` re-reads the amount `add_to_source` just filed, it does not
+//! accumulate a second copy — which is what keeps the whole superstructure inside law 8's tripwire.
 //!
 //! ── THE ORDER OF `out` IS PUBLISHED, AND SO IS `inc`'s ─────────────────────────────────────────
 //!
@@ -31,7 +31,12 @@
 //! in JS is STABLE, so two targets that absorbed exactly the same damage are named in the order they
 //! were first struck.
 
+use crate::combat::healing::HealAccum;
+use crate::combat::procdetect::{add_spell_proc, SpellProcFold, SpellProcLane};
+use crate::combat::procwindows::WindowAccum;
+use crate::combat::rounds::{RoundAccum, SwingRecord};
 use crate::jsmap::JsMap;
+use std::collections::{HashMap, HashSet};
 
 /// The engine's internal damage record. Sourced from the canonical `damage` event, but with a
 /// non-null attacker — caster-less other-player DoTs carry `attacker: null` and are dropped by the
@@ -119,6 +124,18 @@ impl MissType {
     fn slot(self) -> usize {
         self as usize
     }
+
+    /// The log's own word for the outcome — what a timeline instant's tooltip carries as its `detail`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MissType::Miss => "miss",
+            MissType::Dodge => "dodge",
+            MissType::Parry => "parry",
+            MissType::Riposte => "riposte",
+            MissType::Block => "block",
+            MissType::Absorb => "absorb",
+        }
+    }
 }
 
 /// ONE AVOIDED SWING as the aggregate folds it. `skill` stays `Melee` for every miss — that is the
@@ -183,6 +200,62 @@ pub struct CategoryStat {
     pub by_skill: JsMap<SkillStat>,
 }
 
+/// ONE BASE MODIFIER'S TALLY on a source (a STATED stat). COUNTS, plus the landed line's own amount
+/// re-read into `total`.
+///
+/// The 14 compound forms the log actually prints decompose over 8 BASES (measured, full log: Critical
+/// 31,653 · Riposte 16,841 · Slay Undead 1,980 · Finishing Blow 1,107 · Flurry 241 · Rampage 208 ·
+/// Crippling Blow 9 · Strikethrough 1, plus six compounds). The parser does the decomposition; this
+/// tallies the COMPONENTS.
+///
+/// `total` IS AN INDEX, NOT A SECOND ACCUMULATION: `add_to_source` has already booked the amount into
+/// the source, the category and the lane, and this reads it back out. Avoided swings contribute 0 by
+/// construction — they carry no amount at all — which is what keeps law 8's tripwire intact.
+#[derive(Debug, Clone)]
+pub struct ModifierTally {
+    pub name: String,
+    /// Annotated swings/casts — landed AND avoided.
+    pub count: i64,
+    /// Of those, how many carried no amount (an avoided swing).
+    pub avoided: i64,
+    pub total: i64,
+}
+
+/// The legacy melee-rounds heuristic: `skill_lower` → (`floor(ts/1000)` → hits in that bucket).
+///
+/// THE ONLY state; the hits-per-round histogram is derived from it at view time and deliberately not
+/// cached back — a view build may not write to the aggregate. NESTED rather than keyed on
+/// `<skill>|<second>` because nothing has ever read the key, so the composite string was pure
+/// per-swing allocation on the hottest line in the fold. A `HashMap` is right here where every other
+/// map in this file is a `JsMap`: `finalize_rounds` counts the VALUES and never publishes an order.
+#[derive(Debug, Clone, Default)]
+pub struct RoundsAccum {
+    pub bucket: HashMap<String, HashMap<i64, i64>>,
+}
+
+/// Fold a melee/slay hit into the rounds heuristic: bump the (skill, second) bucket.
+fn accrue_round(r: &mut RoundsAccum, skill: &str, ts: i64) {
+    let seconds = r.bucket.entry(skill.to_lowercase()).or_default();
+    *seconds.entry(ts.div_euclid(1_000)).or_insert(0) += 1;
+}
+
+/// Collapse the in-progress buckets into the hits-per-round histogram. PURE: the buckets are the
+/// source of truth and this only reads them, so calling it at snapshot or finalize is safe, repeatable
+/// and cheap (buckets ≈ #seconds).
+pub fn finalize_rounds(r: &RoundsAccum) -> Vec<i64> {
+    let mut hist: Vec<i64> = Vec::new();
+    for seconds in r.bucket.values() {
+        for &hits in seconds.values() {
+            let idx = (hits - 1).max(0) as usize;
+            if hist.len() <= idx {
+                hist.resize(idx + 1, 0);
+            }
+            hist[idx] += 1;
+        }
+    }
+    hist
+}
+
 #[derive(Debug, Clone)]
 pub struct SourceStat {
     pub name: String,
@@ -199,6 +272,14 @@ pub struct SourceStat {
     pub resists: i64,
     pub by_skill: JsMap<SkillStat>,
     pub by_category: JsMap<CategoryStat>,
+    /// The legacy melee-rounds heuristic.
+    pub rounds: RoundsAccum,
+    /// Base-modifier tallies. Counts (plus the index above) — see `ModifierTally`.
+    pub mods: JsMap<ModifierTally>,
+    /// ATTACK-ROUND STRUCTURE — per (verb, swings-per-round) counters, built by the pure grouper in
+    /// `rounds.rs`. Additive and amount-free: it reads a swing's amount for the fan-out signature and
+    /// stores none of it.
+    pub round_acc: RoundAccum,
 }
 
 pub fn new_source(name: &str, kind: SourceKind) -> SourceStat {
@@ -215,6 +296,9 @@ pub fn new_source(name: &str, kind: SourceKind) -> SourceStat {
         resists: 0,
         by_skill: JsMap::new(),
         by_category: JsMap::new(),
+        rounds: RoundsAccum::default(),
+        mods: JsMap::new(),
+        round_acc: RoundAccum::new(),
     }
 }
 
@@ -225,6 +309,155 @@ pub struct NamedTotal {
     pub amount: i64,
     /// Only `inc_heal` counts; the other two carry 0 and never publish it.
     pub count: i64,
+}
+
+/// A ROGUE-POISON STRIKE lane. Keyed by the DISPLAY name we show, ambiguity included — an emote shared
+/// by two Strikes keeps BOTH in one ` / `-joined label (law 3: the count is exact, the name is not).
+#[derive(Debug, Clone)]
+pub struct StrikeLane {
+    pub name: String,
+    pub count: i64,
+    pub ambiguous: bool,
+}
+
+/// A POISON-TYPED damage lane. The game states the damage TYPE on every typed spell line, so this is a
+/// fact the log printed rather than a name-matched guess. An INDEX over damage already counted.
+#[derive(Debug, Clone)]
+pub struct PoisonLane {
+    pub name: String,
+    pub count: i64,
+    pub total: i64,
+}
+
+/// A DISPEL landing lane. Every one is ambiguous by construction — each message tier is shared by 2–3
+/// spells.
+#[derive(Debug, Clone)]
+pub struct DispelLane {
+    pub name: String,
+    pub count: i64,
+}
+
+/// One coat applied inside a segment, in order.
+#[derive(Debug, Clone)]
+pub struct CoatMark {
+    pub poison: String,
+    pub ts: i64,
+}
+
+/// The per-segment PROC accumulator. Pure counters — every one incremented on ingest from a line the
+/// game actually printed, so a downsampled or truncated timeline can never move a number here.
+#[derive(Debug, Default)]
+pub struct ProcAccum {
+    pub strikes: JsMap<StrikeLane>,
+    /// Weakening-Strike landings — broken out because it is the one we time.
+    pub slow_lands: i64,
+    /// Absolute ts of the FIRST slow landing in this segment (0 = none).
+    pub first_slow_ts: i64,
+    pub poison_damage: JsMap<PoisonLane>,
+    pub dispels: JsMap<DispelLane>,
+    /// YOUR coats applied inside this segment, in order.
+    pub coats: Vec<CoatMark>,
+    pub stance_switches: i64,
+    pub invocation_switches: i64,
+    /// YOUR logged swing attempts in this segment: melee + slay hits, plus your misses. The MECHANICAL
+    /// denominator for a chance-on-hit proc rate, and the only one of the three with no active-time
+    /// ambiguity. Main-hand vs off-hand and double/triple attack are undistinguishable in this log
+    /// (law 6), so this is swings-AS-LOGGED. A COUNT, never an amount.
+    pub swings: i64,
+    /// THE SWING EXPOSURE PER STATE: `<kind>:<key>` → how many of those swings were logged while that
+    /// state was open. The other half of a link — "it never fired without it" is evidence only in
+    /// proportion to how many swings there WERE without it.
+    pub swings_by_state: JsMap<i64>,
+    /// THE ACTIVE-TIME EXPOSURE PER STATE: ms of the meter's own active time that elapsed while a
+    /// state was open. The PPM denominator for any lane whose SOURCE window is known — a poison Strike
+    /// can only fire while its coat is on the blades. Folded from the SAME per-hit delta the window
+    /// ledger receives, so it can no more drift from `activeSec` than that ledger can.
+    pub active_ms_by_state: JsMap<i64>,
+    /// CAST-LESS SPELL lanes, keyed by `spell_canon_key`. The damage they carry is ALREADY inside this
+    /// segment's outgoing total — an INDEX, never a second accumulation.
+    pub spell_procs: JsMap<SpellProcLane>,
+}
+
+impl ProcAccum {
+    /// Count one of YOUR logged swing attempts, against the states open when you made it. Both numbers
+    /// move together on purpose: a total and a per-state split that could be updated independently
+    /// would drift the moment one call site forgot the other.
+    pub fn add_swing(&mut self, active: &HashSet<String>) {
+        self.swings += 1;
+        for key in active {
+            bump_state(&mut self.swings_by_state, key, 1);
+        }
+    }
+
+    /// Charge one hit's active-time delta to every state that was open for it. Called on EVERY folded
+    /// damage line, incoming included, because that is precisely what the meter's own `active_ms`
+    /// counts — the two denominators have to mean the same thing to be comparable.
+    pub fn add_active_ms(&mut self, ms: i64, active: &HashSet<String>) {
+        if ms <= 0 {
+            return;
+        }
+        for key in active {
+            bump_state(&mut self.active_ms_by_state, key, ms);
+        }
+    }
+
+    pub fn add_spell_proc(&mut self, f: &SpellProcFold) {
+        add_spell_proc(&mut self.spell_procs, f);
+    }
+
+    pub fn add_strike(&mut self, name: &str, ambiguous: bool, ts: i64, is_slow: bool) {
+        if !self.strikes.contains_key(name) {
+            self.strikes.insert(
+                name.to_string(),
+                StrikeLane {
+                    name: name.to_string(),
+                    count: 0,
+                    ambiguous,
+                },
+            );
+        }
+        self.strikes.get_mut(name).expect("just inserted").count += 1;
+        if is_slow {
+            self.slow_lands += 1;
+            if self.first_slow_ts == 0 {
+                self.first_slow_ts = ts;
+            }
+        }
+    }
+
+    pub fn add_poison_damage(&mut self, skill: &str, amount: i64) {
+        if !self.poison_damage.contains_key(skill) {
+            self.poison_damage.insert(
+                skill.to_string(),
+                PoisonLane {
+                    name: skill.to_string(),
+                    count: 0,
+                    total: 0,
+                },
+            );
+        }
+        let s = self.poison_damage.get_mut(skill).expect("just inserted");
+        s.count += 1;
+        s.total += amount;
+    }
+
+    pub fn add_dispel(&mut self, label: &str) {
+        if !self.dispels.contains_key(label) {
+            self.dispels.insert(
+                label.to_string(),
+                DispelLane {
+                    name: label.to_string(),
+                    count: 0,
+                },
+            );
+        }
+        self.dispels.get_mut(label).expect("just inserted").count += 1;
+    }
+}
+
+fn bump_state(map: &mut JsMap<i64>, key: &str, by: i64) {
+    let n = map.get(key).copied().unwrap_or(0);
+    map.insert(key.to_string(), n + by);
 }
 
 /// The per-segment aggregate. Keyed by INSTANCE id (or `you` / `pet:<instanceId>` /
@@ -239,6 +472,18 @@ pub struct Agg {
     pub enemy_heal: JsMap<NamedTotal>,
     /// Healing received by You / your pets: healerKey → { name, total, count }.
     pub inc_heal: JsMap<NamedTotal>,
+    /// The meter-grade HEALING + ABSORPTION ledger. On the SAME aggregate as the damage bars, so the
+    /// healing overlays inherit fight / zone-session selection, the finalized freeze and the encounter
+    /// history without any parallel machinery. ADDITIVE: `enemy_heal` / `inc_heal` above are untouched.
+    pub heal: HealAccum,
+    /// PROC LEDGER — Strikes, poison-typed lanes, non-damage spell landings on engaged mobs, and the
+    /// stance/coat bookkeeping. On the `Agg` for the same reason the healing ledger is.
+    pub procs: ProcAccum,
+    /// THE MINUTE-WINDOW LEDGER — the matched-window sample the Tier-B counterfactual is computed
+    /// from. On the `Agg` for the third time and for the third identical reason: a finalized zone
+    /// session inherits it FROZEN, so "how much DPS did X add this session" survives the zone change
+    /// that produced it.
+    pub windows: WindowAccum,
 }
 
 impl Agg {
@@ -388,6 +633,59 @@ fn add_to_source(src: &mut SourceStat, ev: &DamageEvent, ambiguous: bool) {
         s.min = accrue_min(s.min, ev.amount);
     }
     add_to_category(src, ev);
+    add_swing_counters(src, ev);
+}
+
+/// The COUNT-ONLY counters a landed swing feeds: the legacy melee-rounds heuristic, the base modifier
+/// tallies, and the attack-round grouper. Not one of them touches `src.total`, a category total or a
+/// lane total — which is exactly why adding them moved no damage number anywhere in the engine.
+fn add_swing_counters(src: &mut SourceStat, ev: &DamageEvent) {
+    let is_swing = ev.category == "melee" || ev.category == "slay";
+    // Only melee/slay hits cluster into "rounds" (spells and DoTs are single applications).
+    if is_swing {
+        accrue_round(&mut src.rounds, &ev.skill, ev.ts);
+    }
+    tally_modifiers(src, &ev.modifiers, false, ev.amount);
+    // A SWING is a melee/slay line that named its VERB — the join key the round grouper is keyed on.
+    // Spells, DoTs and damage shields name no verb and are not swings.
+    if is_swing {
+        if let Some(verb) = &ev.verb {
+            src.round_acc.add(&SwingRecord {
+                ts: ev.ts,
+                verb,
+                skill: &ev.skill,
+                target: &ev.target,
+                amount: ev.amount,
+                avoided: false,
+                modifiers: &ev.modifiers,
+            });
+        }
+    }
+}
+
+/// Fold the decomposed base modifiers of one line into a source's tallies. COUNTS, plus the landed
+/// line's own amount re-read into `total`. An avoided swing passes 0 and is the only caller that may.
+fn tally_modifiers(src: &mut SourceStat, mods: &[String], avoided: bool, amount: i64) {
+    for name in mods {
+        if !src.mods.contains_key(name) {
+            src.mods.insert(
+                name.clone(),
+                ModifierTally {
+                    name: name.clone(),
+                    count: 0,
+                    avoided: 0,
+                    total: 0,
+                },
+            );
+        }
+        let t = src.mods.get_mut(name).expect("just inserted");
+        t.count += 1;
+        if avoided {
+            t.avoided += 1;
+        } else {
+            t.total += amount;
+        }
+    }
 }
 
 /// Category rollup (drill-down level 2/3): the same skill breakdown, partitioned by taxonomy
@@ -428,6 +726,22 @@ fn add_miss_to_source(src: &mut SourceStat, m: &MissFold) {
     src.misses += 1;
     src.miss[m.mtype.slot()] += 1;
     lane(&mut src.by_skill, &m.skill).misses += 1;
+    // ── ADDITIVE, AMOUNT-FREE. An avoided swing carries no amount, so none of this can move a total;
+    // it is the same first-class-but-damage-free treatment misses already get (law 8). A miss line
+    // names its verb and CAN carry an annotation (`… but miss! (Flurry)`), and 123 of the log's 253
+    // flurry annotations are on miss lines — counting only landed ones would halve the stat.
+    tally_modifiers(src, &m.modifiers, true, 0);
+    if let Some(verb) = &m.verb {
+        src.round_acc.add(&SwingRecord {
+            ts: m.ts,
+            verb,
+            skill: m.lane_skill.as_deref().unwrap_or(&m.skill),
+            target: &m.target,
+            amount: 0,
+            avoided: true,
+            modifiers: &m.modifiers,
+        });
+    }
 }
 
 /// Fold a spell RESIST into a source's stats — the caster-side analogue of a miss. It attaches to
@@ -451,6 +765,11 @@ fn add_resist_to_source(src: &mut SourceStat, spell: &str, category: &str) {
     c.resists += 1;
     lane(&mut c.by_skill, spell).resists += 1;
 }
+
+/// `MISS_KEYS` — the six avoided-swing slots, in the order the breakdown is SERIALIZED in. Spelled as
+/// a list rather than named six times, so a merge or a rate loop iterates it instead of naming five
+/// fields and silently missing the sixth.
+pub const MISS_KEYS: [usize; 6] = [0, 1, 2, 3, 4, 5];
 
 fn lane<'a>(map: &'a mut JsMap<SkillStat>, name: &str) -> &'a mut SkillStat {
     if !map.contains_key(name) {
