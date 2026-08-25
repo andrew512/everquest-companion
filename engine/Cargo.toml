@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = ["crates/protocol", "crates/protocol-codegen"]
+
+# THE ENGINE (JOS-459). Today this workspace holds the protocol contract and nothing else:
+# phase 0's first ticket is the schema as a checked artifact, with no runtime, no socket and no
+# process. The tailer, parser, fold and API server land in later crates beside `protocol`.
+#
+# TWO STANDING RULES FOR EVERYTHING UNDER engine/:
+#   * Nothing here may shell out to powershell.exe, ever, at build time or at run time.
+#     PowerShell binaries are the antivirus trigger this app already spent a release eliminating,
+#     and a Rust process spawning one would put it straight back.
+#   * The engine runs at below-normal process priority (owner ruling: the person at this machine
+#     is playing EverQuest). Nothing in the build may pin a core or spawn unbounded parallelism.
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98"
+license = "FSL-1.1-MIT"
+publish = false
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
