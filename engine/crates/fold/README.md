@@ -106,9 +106,10 @@ into exactly five groups. In dependency order, because each one is a prerequisit
 
 **Two divergences are NOT 2d's to fix**, and both were measured rather than assumed:
 
-- `.roster.seen` / `.roster.lastSignalTs` on the `current` slice ONLY — the other five carry
-  `EMPTY_ROSTER` verbatim, and even `current` has an empty member list. That is cluster **2b**'s
-  `roster` module arriving at `EqModule::as_roster`; nothing in `combat/` can close it.
+- ~~`.roster.seen` / `.roster.lastSignalTs` on the `current` slice ONLY~~ — **CLOSED by JOS-475**.
+  Cluster 2b's `roster` module arrived at `EqModule::as_roster` and answers all three of
+  `RosterSource`'s methods; `current`'s combat ledger went from 21/37 leaves to 23/37 and the class
+  is gone. The other five slices carried `EMPTY_ROSTER` verbatim and still do.
 - `.poison.slow.*` on the `mid-grind` slice ONLY, which needs the encounter lifecycle (group 3) plus
   the blade-coat routing to have run at all.
 

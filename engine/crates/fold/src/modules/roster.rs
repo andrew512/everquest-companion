@@ -375,4 +375,50 @@ impl EqModule for RosterModule {
             }
         })
     }
+
+    /// THE PULL SEAM JOS-477 left open, answered by this module and by no other — one method, no
+    /// downcast, and `None` everywhere else.
+    fn as_roster(&self) -> Option<&dyn crate::combat::RosterSource> {
+        Some(self)
+    }
+}
+
+/// `combat.setRoster(modules.roster)` — the engine does not FOLD a roster, it ASKS this module for
+/// one, during the same delivery and after this module has already advanced for the line. That is
+/// the reason `roster` is registered SECOND (header) and the reason there is exactly ONE membership
+/// ladder in this crate: two spellings of "who is in your group" are two answers.
+///
+/// `combat::RosterMember` is a NARROWER shape than the one this module publishes — key, name,
+/// source, sinceTs — because it rides the COMBAT snapshot, which is a different artifact with a
+/// different consumer. `lastConfirmedTs` and `stale` are the module transport's; the meter does not
+/// draw them. Both are built from the same `log` map in the same order, so the two readings can
+/// disagree about nothing.
+impl crate::combat::RosterSource for RosterModule {
+    fn snap(&self) -> crate::combat::RosterSnap {
+        crate::combat::RosterSnap {
+            members: self
+                .log
+                .values()
+                .map(|m| crate::combat::RosterMember {
+                    key: m.key.clone(),
+                    name: m.name.clone(),
+                    source: m.source.to_string(),
+                    since_ts: m.since_ts,
+                })
+                .collect(),
+            seen: self.seen,
+            last_signal_ts: self.last_signal_ts,
+        }
+    }
+
+    fn members(&self) -> Vec<String> {
+        self.log.keys().map(str::to_string).collect()
+    }
+
+    /// WIDER THAN `members`, and it never shrinks within an epoch: a member who left an hour ago is
+    /// still the person whose row carries that fight's damage, which is what lets a recorded row's
+    /// kind upgrade from `'other'` to `'member'` MONOTONICALLY.
+    fn admitted(&self) -> Vec<String> {
+        self.admitted_keys.keys().map(str::to_string).collect()
+    }
 }

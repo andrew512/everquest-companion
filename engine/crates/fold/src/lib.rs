@@ -234,8 +234,19 @@ impl Fold {
     /// Subscribe the combat engine behind the registry (see the field). Builder-shaped so the
     /// existing `Fold::new` call sites do not move — the parallel-worker fence.
     pub fn with_combat(mut self, engine: combat::CombatEngine) -> Self {
+        // ONLY the engine it just installed. `Fold::new` has already reset the world, and a SECOND
+        // `registry.reset()` is a call no composition root makes — `foldArm.mts construct` resets
+        // the registry once and the engine once.
+        //
+        // MEASURED, JOS-475: it was invisible while every module's `reset()` was idempotent, and it
+        // is not once a module's REVISION COUNTER is published as its `seq`. Cluster 2b has three
+        // (combo, character, respawn — the JOS-87 rule), and the double reset put every one of them
+        // exactly ONE ahead of the golden on all six slices. Resetting only the new field is both
+        // the fix and what the builder was always describing.
         self.combat = Some(engine);
-        self.reset();
+        if let Some(c) = &mut self.combat {
+            c.reset();
+        }
         self
     }
 
