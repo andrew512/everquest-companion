@@ -61,6 +61,8 @@
     "bench:engine-oracle": "node --import tsx tests/bench/engineOracle.mts",
     "oracle:record": "node --import tsx tests/bench/goldenCli.mts record",
     "oracle:check": "node --import tsx tests/bench/goldenCli.mts check",
+    "oracle:rust-parser": "node --import tsx tests/bench/rustParity.mts",
+    "gen:engine-spell-overlay": "tsx scripts/gen-engine-spell-overlay.mts",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
