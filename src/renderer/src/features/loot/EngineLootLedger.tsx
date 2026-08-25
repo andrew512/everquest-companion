@@ -137,7 +137,7 @@ export function EngineLootLedger({
       <LootSourceToggle source={source} setSource={setSource} />
       {view.error !== null && (
         <Alert severity="error" data-testid="loot-engine-error">
-          The engine refused this view: {view.error.code} — {view.error.message}
+          The engine refused this view: {view.error.code} - {view.error.message}
         </Alert>
       )}
       {view.loading && view.error === null && (
