@@ -64,8 +64,25 @@ impl Event {
         self.v.get(key)?.as_i64()
     }
 
+    /// The one genuinely fractional field in the stream — `expGain.pct` (jsstr.rs's header names it
+    /// as such). `as_f64` widens an integral JSON number too, which is what a log printing `(3%)`
+    /// produces and what the TS reads as the same `number` either way.
+    pub fn f64(&self, key: &str) -> Option<f64> {
+        self.v.get(key)?.as_f64()
+    }
+
     pub fn bool(&self, key: &str) -> bool {
         self.v.get(key).and_then(Value::as_bool).unwrap_or(false)
+    }
+
+    /// A string ARRAY field — `selfWho.classes`, and nothing else in the ported set. A missing key,
+    /// a non-array and a non-string element all read as absent, which is what
+    /// `ev.classes.filter(isClassAbbr)` does with them on the other side.
+    pub fn arr_str(&self, key: &str) -> Vec<&str> {
+        match self.v.get(key).and_then(Value::as_array) {
+            Some(list) => list.iter().filter_map(Value::as_str).collect(),
+            None => Vec::new(),
+        }
     }
 }
 

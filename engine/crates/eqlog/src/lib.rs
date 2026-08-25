@@ -58,15 +58,25 @@ pub fn parser_for(character: &str, tz: chrono_tz::Tz) -> Parser {
     )
 }
 
-/// The character a slice was cut from, derived from its FILENAME — `eqlog_<Name>_<server>.<slice>.txt`,
-/// exactly as `tests/bench/goldenOracle.mts characterOf` derives it. Hardcoding the name would let
-/// the corpus and the harness drift apart silently.
+/// `tests/bench/goldenOracle.mts characterOf`'s pattern, spelled ONCE — `eqlog_<Name>_<server>.
+/// <slice>.txt`. Two readers take two groups off it (below); a second copy of the pattern would be
+/// a way for them to disagree about what a log file is called.
+fn log_file_re() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"(?i)^eqlog_(.+?)_([^_]+?)\.[^.]+\.txt$").unwrap())
+}
+
+/// The character a slice was cut from, derived from its FILENAME. Hardcoding the name would let the
+/// corpus and the harness drift apart silently.
 pub fn character_of(file_name: &str) -> Option<String> {
-    use regex::Regex;
-    use std::sync::OnceLock;
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"(?i)^eqlog_(.+?)_([^_]+?)\.[^.]+\.txt$").unwrap());
-    re.captures(file_name).map(|m| m[1].to_string())
+    log_file_re().captures(file_name).map(|m| m[1].to_string())
+}
+
+/// The SERVER out of the same filename. It exists because the character module (JOS-475) publishes
+/// the whole `CharacterRef` — `{ name, server, logPath }` — and the golden recorder derives every
+/// field of it from the filename.
+pub fn server_of(file_name: &str) -> Option<String> {
+    log_file_re().captures(file_name).map(|m| m[2].to_string())
 }
 
 #[cfg(test)]
