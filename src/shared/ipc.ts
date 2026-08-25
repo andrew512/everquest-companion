@@ -949,6 +949,24 @@ export const IPC = {
   // tables are missing (a cluster that predates the A2 migration), NOT that they are empty.
   triageAnalytics: 'triage:analytics',
 
+  // ---- the data server's renderer brokerage (JOS-484, docs/plans/data-server.md ruling 7) ----
+  //
+  // TWO CHANNELS FOR ONE HANDSHAKE, because a MessagePort is TRANSFERRED and never returned: an
+  // `invoke` reply is structured-cloned and a port cannot survive that, so the port travels on the
+  // push below and the invoke only says whether one was sent.
+  //
+  // renderer -> main: open this window's ONE connection to the engine. Arg: a numeric nonce the
+  // renderer minted, echoed on the push so a window that asked twice can tell the answers apart.
+  // Answers `{ok:false, reason}` when no engine is running on this launch, which is every launch
+  // without `EQC_ENGINE=1` — main's whole gate for the feature (src/main/dataServer/engineHost.ts).
+  engineConnect: 'engine:connect',
+  // main -> renderer: the port, with the launch's token beside it. `event.ports[0]` is one end of a
+  // `MessageChannelMain` whose other end main is pumping RAW SOCKET BYTES through — main never
+  // parses a frame (src/main/dataServer/rendererBroker.ts states why that is the whole design).
+  // The token stays in the preload's closure and in the client it serves; it is never persisted,
+  // never put in the DOM, and dies with the renderer.
+  onEnginePort: 'engine:port',
+
   // ---- misc pushes ----
   onLine: 'log:line',
   onCharacter: 'log:character',

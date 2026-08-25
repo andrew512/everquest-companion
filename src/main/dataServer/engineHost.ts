@@ -48,6 +48,9 @@ import { createEngineSupervisor, type EngineSupervisor, type SupervisedChild } f
 // THE APP'S OWN CLIENT (JOS-479, phase 3). It lives behind THIS file's flag and nothing else, which
 // is why it reads no environment variable of its own: one gate, in one place.
 import { installEngineClient, onEngineReady, stopEngineClient } from './engineClientHost'
+// THE RENDERERS' OWN CLIENTS (JOS-484, phase 3), behind THIS file's flag as well. The broker holds
+// no flag of its own either — it simply never learns about a launch, so its IPC handler refuses.
+import { noteEngineLaunch, stopRendererBroker } from './rendererBroker'
 
 /** How long a loopback connect may take before the probe gives up on it. Loopback either answers
  *  immediately or is not listening; this is a bound on the pathological case, not a budget. */
@@ -155,7 +158,15 @@ export function startEngineSupervisor(): void {
     // …and the CLIENT arm (JOS-479): the port and the launch's token, at the one moment a round
     // trip has proven there is something to talk to. `onPid` is about a process and this is about a
     // connection — see the dep's own comment for why they are two callbacks rather than one.
-    onReady: onEngineReady
+    // TWO READERS OF ONE EDGE, and they are told in this order on purpose. The broker's half is
+    // DESTRUCTIVE — every port a renderer is holding names a process that no longer exists — so the
+    // stale connections are taken away before the app's own client starts building a new one and
+    // renderers begin asking for replacements. Neither reader waits on the other; the supervisor
+    // waits on neither.
+    onReady: (info) => {
+      noteEngineLaunch(info)
+      onEngineReady(info)
+    }
   })
   supervisor.start()
 }
@@ -177,6 +188,10 @@ export function stopEngineSupervisor(): void {
   // then a shutdown, rather than being asked to exit while a connection is still open. Idempotent
   // and safe on a launch that never armed a client.
   stopEngineClient()
+  // …and the renderers' connections, for the same courtesy and in the same direction: every client
+  // lets go before the engine is asked to exit. A window that is still up simply finds its channel
+  // closed, which is a state its view already draws.
+  stopRendererBroker()
   supervisor?.stop()
   setEnginePid(null)
 }
