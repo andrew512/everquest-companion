@@ -307,19 +307,24 @@ so a disconnected engine would otherwise print hundreds of lines a second and bu
 developer flipped the flag to read. One sentence per five-second window, naming every reason with
 its count, and the first fallback of a launch prints immediately.
 
-### The known asymmetries (measured 2026-08-25, JOS-489)
+### The asymmetries (measured 2026-08-25, JOS-489) — and there are none left
 
-The module and search surfaces are **fully deep-equal**. The combat snapshot deep-equals across the
-two folds but for three paths, pinned by `tests/e2e/engine-shim.e2e.mts` with their exact paths:
-`.hydrating`, `.currentTarget` and `.segments[0].kind`. They are **one gap, not three**: all three
-are the unported snapshot-time sweep block the cutover ledger names (charm sweep, ally expiry, pet
-nudge, deferred encounter closure), and in the app's own implementation `hydrating` is literally the
-flag that gates it — `if (!this.st.hydrating) { … evalClosure(…) }` in `combat/engine.ts snapshot`.
-So an engine that cannot honestly say `hydrating: false` is exactly an engine that has not ported
-the block, and the other two paths are what the block does: the app's newest encounter is finalized
-(`kind: "fight"`, no `currentTarget`) and the engine's is still open. **JOS-488 closes it**, and the
-spec goes red the day it does. The shim does not rewrite the served fields — a shim that manufactured
-agreement would hide the gap being tracked.
+All three surfaces are **fully deep-equal**, at every path, and `KNOWN_ASYMMETRY` in
+`tests/e2e/engine-shim.e2e.mts` is empty **by fix rather than by omission**.
+
+The measurement is worth keeping. Against the engine as it stood before JOS-488, the combat snapshot
+diverged at exactly three paths — `.hydrating` (engine `true`, app `false`), `.currentTarget` (engine
+still holding the last mob, app absent) and `.segments[0].kind` (engine `"current"`, app `"fight"`).
+They were **one gap, not three**: the snapshot-time sweep block the cutover ledger names (charm
+sweep, ally expiry, pet nudge, deferred encounter closure), unported. In the app's own implementation
+`hydrating` is literally the flag that gates it — `if (!this.st.hydrating) { … evalClosure(…) }` in
+`combat/engine.ts snapshot` — so an engine that could not honestly say `hydrating: false` was exactly
+an engine that had not ported it, and the other two paths were what the block does. JOS-488 ported
+it, this spec went red on all three rows demanding they be deleted, and they were: **the pin contract
+cuts both ways**, which is what makes an empty table a claim rather than a silence.
+
+The shim never rewrote a served field to reach that state, and it should not: a shim that
+manufactured agreement would hide the gap being tracked.
 
 ## Tests
 

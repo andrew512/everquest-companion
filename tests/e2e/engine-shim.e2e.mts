@@ -52,11 +52,14 @@
  * seam supplies is the SECOND arm, which the product deliberately stops exposing the moment the
  * flag is on.
  *
- * ── THE KNOWN ASYMMETRIES, PINNED RATHER THAN EXCUSED ──────────────────────────────────────────
+ * ── THE ASYMMETRIES, PINNED RATHER THAN EXCUSED — AND CURRENTLY NONE ───────────────────────────
  *
  * `KNOWN_ASYMMETRY` below is the same device `engine-parity.e2e.mts` uses and carries the same
  * contract: a row states WHERE the two worlds differ, dated, with the ticket that closes it. A
- * divergence anywhere else is red. Deleting a row is how a fix is claimed.
+ * divergence anywhere else is red — and so is a PINNED path the two worlds have started agreeing
+ * about, which is what makes deleting a row the way a fix is claimed rather than a chore somebody
+ * has to remember. This ticket wrote three rows and then watched JOS-488 land and turn all three
+ * red; the table is empty, by fix, and its comment keeps the measurement.
  *
  * WHY THE FIXTURE MAKES THIS DETERMINISTIC AT ALL. `logFixture.mts` stages a private copy of a
  * committed log and this spec never appends to it, so both worlds read the same finite bytes and
@@ -83,37 +86,35 @@ import type { ElectronApplication, Page } from 'playwright-core'
 const FIXTURE = 'e2e-overlay.log'
 
 /**
- * WHERE THE TWO WORLDS ARE KNOWN TO DIFFER, per surface, with the ticket that closes each. Every
- * other path must deep-equal, and a row is deleted the day its fix lands rather than being allowed
- * to stand — `engine-parity.e2e.mts KNOWN_ASYMMETRY`'s contract exactly.
+ * WHERE THE TWO WORLDS ARE KNOWN TO DIFFER, per surface, with the ticket that closes each. A row is
+ * deleted the day its fix lands rather than being allowed to stand — `engine-parity.e2e.mts
+ * KNOWN_ASYMMETRY`'s contract exactly, and the mechanism has teeth in both directions: a divergence
+ * at an unpinned path is red, and so is a PINNED path the two worlds have started agreeing about.
  *
- * THREE ROWS, ONE CAUSE, ONE TICKET — dated JOS-489 (2026-08-25), closing with JOS-488. All three
- * are the snapshot-time SWEEP BLOCK that the cutover ledger names as the meter surface's one gap:
- * charm sweep, ally expiry, pet nudge and deferred encounter closure, unported to the Rust fold. It
- * is a single block in the app's own implementation (`src/main/combat/engine.ts snapshot`) and —
- * this is what makes the three rows one finding rather than three — `hydrating` is precisely the
- * flag that GATES it there: `if (!this.st.hydrating) { sweepCharm; sweepAlly; petNudge.sweep;
- * evalClosure }`. So an engine that cannot honestly say `hydrating: false` is exactly an engine
- * that has not ported the block, and the other two rows are simply what the block does.
+ * IT IS EMPTY, AND IT IS EMPTY BY FIX RATHER THAN BY OMISSION — which is worth writing down, because
+ * an empty table and a table nobody wrote look identical.
  *
- *   * `.hydrating` — engine `true`, app `false`. The engine answers `true` in every snapshot this
- *     build gives, because a fold that provably never enters the block cannot honestly say
- *     otherwise; clearing the flag means porting those four things, not editing a boolean.
- *   * `.currentTarget` — engine `{name: "Lord Nagafen", …}`, app absent. `evalClosure` closes an
- *     encounter that ended on elapsed time, and `currentTarget()` is read AFTER it, so a fight the
- *     app has just finalized reports no target. The engine's last encounter is still open, so its
- *     target is still in front of you.
- *   * `.segments[0].kind` — engine `"current"`, app `"fight"`. The same closure, seen from the
- *     segment list: one world's newest encounter is the open one and the other's is finalized.
+ * MEASURED ON THIS TICKET (2026-08-25), against the engine as it stood before JOS-488: the combat
+ * snapshot diverged at exactly three paths — `.hydrating` (engine `true`, app `false`),
+ * `.currentTarget` (engine still holding `Lord Nagafen`, app absent) and `.segments[0].kind` (engine
+ * `"current"`, app `"fight"`). They were ONE gap rather than three: the snapshot-time sweep block
+ * the cutover ledger names — charm sweep, ally expiry, pet nudge, deferred encounter closure —
+ * unported to the Rust fold. In the app's own implementation `hydrating` is literally the flag that
+ * gates that block (`if (!this.st.hydrating) { … evalClosure(…) }`, `src/main/combat/engine.ts
+ * snapshot`), so an engine that could not honestly say `hydrating: false` was exactly an engine that
+ * had not ported it, and the other two paths were what the block does — one world's newest encounter
+ * finalized and the other's still open.
  *
- * PINNED RATHER THAN PATCHED IN THE SHIM, on purpose. A shim that rewrote a served field would be
- * manufacturing agreement, which is the opposite of what this instrument is for — and it would hide
- * the very gap the ledger is tracking. Everything else in a fourteen-field combat snapshot, the
- * whole selected view and every segment total included, deep-equals across the two folds.
+ * JOS-488 PORTED THE BLOCK, and this spec then went red on all three rows demanding they be deleted,
+ * which is the pin contract doing its whole job. They are deleted. **The engine's combat snapshot
+ * now deep-equals this process's at every path**, and so do both module snapshots and the fight
+ * search — which is the strongest form this spec's claim can take.
+ *
+ * NOTHING WAS EVER PATCHED IN THE SHIM to reach that state, and nothing should be: a shim that
+ * rewrote a served field would manufacture agreement, which is the opposite of what an instrument is
+ * for, and it would have hidden the very gap the ledger was tracking.
  */
-const KNOWN_ASYMMETRY: Readonly<Record<string, readonly string[]>> = {
-  combat: ['.hydrating', '.currentTarget', '.segments[0].kind']
-}
+const KNOWN_ASYMMETRY: Readonly<Record<string, readonly string[]>> = {}
 
 /** A module id nothing registers, in either world — the staged refusal for claim 4. */
 const NO_SUCH_MODULE = 'jos489-no-such-module'
@@ -387,9 +388,10 @@ async function stepSearch(app: ElectronApplication): Promise<void> {
  * against the seam's ENGINE arm is what turns "the engine can answer" into "the handler took the
  * engine's arm" — the difference between a working data server and a working shim.
  *
- * The pinned paths are excused here too, and for a subtler reason than symmetry: the seam's arms and
- * this call are two round trips a few milliseconds apart, so anything the pins cover can legitimately
- * have moved between them.
+ * It runs through the same `compareArms`, so any pin would apply here too — and for a subtler reason
+ * than symmetry: the seam's arm and this call are two round trips a few milliseconds apart, so
+ * anything a pin covers could legitimately have moved between them. With the table empty the two
+ * must agree exactly, which they do.
  */
 async function stepProductPath(page: Page, app: ElectronApplication): Promise<void> {
   const combatArms = await askSeam<Record<string, unknown>>(app, { kind: 'combat' })
@@ -511,9 +513,9 @@ async function main(): Promise<void> {
   if (failures.length === 0) {
     note('the engine answers module:getSnapshot, combat:snapshot and combat:searchFights, and window.eq cannot tell')
     note(
-      'the pinned asymmetries are three faces of ONE gap — the unported snapshot-time sweep block ' +
-        '(`.hydrating`, `.currentTarget`, `.segments[0].kind`), which is the meter gap the cutover ' +
-        'ledger names and JOS-488 closes'
+      'and it agrees at EVERY path: JOS-489 measured three divergences (`.hydrating`, ' +
+        '`.currentTarget`, `.segments[0].kind` — one gap, the unported snapshot-time sweep block), ' +
+        'JOS-488 ported it, and KNOWN_ASYMMETRY is empty by fix'
     )
   }
   reportRun()
