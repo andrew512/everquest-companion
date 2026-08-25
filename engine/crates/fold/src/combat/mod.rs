@@ -41,16 +41,22 @@
 //! NOT PORTED, and each absence is a PROOF rather than a gap — every one is unreachable under the
 //! construction `foldArm.mts` actually makes, and the goldens agree:
 //!
-//!   * THE CLASSIFICATION RING (`st.recent`). Written only while `recording`, which `setLive()` sets
-//!     and the recorder never calls. `recent` is `[]` in all six goldens.
-//!   * THE PET NUDGE. Armed only by `if (!st.hydrating && …)`, and a historical fold never leaves
-//!     hydration, so `view(now)` answers `undefined` in every state it can reach and the key is
-//!     dropped. No golden carries `combat.petNudge`.
+//!   * THE CLASSIFICATION RING (`st.recent`). Written only while `recording`, which `set_live()`
+//!     sets and the recorder never calls. `recent` is `[]` in all six goldens. **AND SINCE JOS-488
+//!     `set_live()` HAS A CALLER**, so this one is a proof for the ORACLE and a NAMED GAP for a live
+//!     engine: a live meter here publishes `recent: []` where the app publishes classified lines. It
+//!     is the only member of this list that changed status, it is stated rather than quietly
+//!     inherited, and nothing on the meter's own rows depends on it.
 //!   * THE SESSION MARK and its `unsplit()` (`mergeSessions.ts`). A mark is REFUSED while hydrating
-//!     and is stored nowhere, so `closedBy` is `zone` on every zone session in every golden. That
-//!     refusal is what makes replay determinism structural rather than careful.
+//!     and is stored nowhere, so `closedBy` is `zone` on every zone session in every golden. Going
+//!     live does not reach it: no op, no command and no caller exists for one in this engine.
 //!   * FIGHT SEARCH (`fightSearch.ts`) and the fold PROBE (`foldProbe.ts`). Neither is on the
 //!     snapshot path at all: one answers a search box, the other is the bench's own instrumentation.
+//!
+//! THE PET NUDGE USED TO BE ON THAT LIST AND IS NOW REAL CODE (`petnudge.rs`, JOS-488). Its absence
+//! from the goldens is unchanged and is now proven by the GATE — armed only by `if !hydrating &&
+//! is_pet_summon_spell(…)` — rather than by the model not existing. That is the difference the
+//! cutover ticket was for: the same absence, stated by the thing that causes it.
 //!
 //! NOTHING HERE IS STUBBED WITH A PLAUSIBLE VALUE, which is what let the ledger measure the gap
 //! honestly while it existed: every number this module published was a number it had actually folded.
@@ -62,6 +68,14 @@
 //! recording convenience: the hydrating gate, the deferred encounter closure, the charm sweep and
 //! the ally-bind expiry all evaluate against it, so a fold that read the host clock would answer a
 //! different question every day it ran.
+//!
+//! **AND THE DETERMINISM IS THE HYDRATING GATE'S, NOT THE SNAPSHOT'S PURITY** (JOS-488). A live
+//! snapshot AGES THE MODEL — that is what the four sweeps are — so `snapshot()` is a mutating read
+//! over there and is one here too. Ruling 18 law 1 is untouched, and it is untouched structurally:
+//! while `hydrating` the sweep block is not entered at all, so a mid-fold answer touches nothing and
+//! re-asking it at the same `seq` gives the same object. See [`CombatEngine::snapshot`] for why the
+//! mutation lives behind a `RefCell` instead of a `&mut self` that would have repainted the engine's
+//! whole reader seam.
 
 pub mod aggregate;
 pub mod ally;
@@ -72,6 +86,7 @@ pub mod healing;
 pub mod ingest;
 pub mod lifecycle;
 pub mod others;
+pub mod petnudge;
 pub mod poisons;
 pub mod procbuffs;
 pub mod procdetect;
@@ -96,6 +111,7 @@ use encounter::{ACTIVE_MS, SLOW_SAMPLE_CAP};
 use serde::Serialize;
 use serde_json::{json, Value};
 use state::EngineState;
+use std::cell::RefCell;
 
 /// `shared/combat.ts SnapshotOpts`. The golden's full-fat call is
 /// `{ maxSegments: 100_000, timeline: true, showUnparsed: true }` and the per-scope walk's is
@@ -176,7 +192,30 @@ struct StanceState {
 
 /// THE PUBLIC FACE: one engine owning one `EngineState`, plus snapshot assembly.
 pub struct CombatEngine {
-    st: EngineState,
+    /// ── WHY THE STATE IS BEHIND A `RefCell` (JOS-488) ─────────────────────────────────────────
+    ///
+    /// `engine.ts snapshot(now)` IS A MUTATING READ: when the fold is live it sweeps the charm binds,
+    /// the ally binds and the pet nudge, and it evaluates deferred encounter closure — at `now`,
+    /// before it serializes anything. That is not an implementation detail to be optimized away.
+    /// The closure it evaluates FINALIZES the open fight, so the next event, the next poll and the
+    /// next view frame all have to see it; computing it into a throwaway copy would leave the engine
+    /// holding a fight the answer said was over, and cloning an uncapped `history` ten times a second
+    /// to avoid saying so is not a cost this pays.
+    ///
+    /// THE ALTERNATIVE WAS TO REPAINT THE READER SEAM `&mut`, and it reaches further than it looks:
+    /// `EventSink::combat_snapshot` is `&self` because `EventSink::source_rows` is, and that one is
+    /// held by the view layer's `Rows` trait behind a `&dyn` the diff protocol's serve pass owns. One
+    /// mutating answer would have turned four signatures in three files `&mut` — for a mutation that
+    /// belongs to the engine and to nothing else, on a thread the sink provably never leaves
+    /// (`EventSink` is deliberately not `Send`, and `Fold` already holds the buffs core in an
+    /// `Rc<RefCell<…>>` for exactly this reason).
+    ///
+    /// SO THE CELL IS THE HONEST SHAPE: the engine ages ITSELF while answering, the callers keep
+    /// saying what they mean, and the borrow is taken and dropped inside one method. It can never be
+    /// held across a call into anything that could re-enter — `snapshot()` and `fight_summaries()`
+    /// are the only borrowers, neither calls the other, and `walk_scopes` finishes each answer before
+    /// asking for the next.
+    st: RefCell<EngineState>,
     /// Whose log this is, held so `reset()` can re-inject it the way every construction path does
     /// (`reset()` then `setPlayerName`).
     player_name: Option<String>,
@@ -191,7 +230,7 @@ impl Default for CombatEngine {
 impl CombatEngine {
     pub fn new() -> Self {
         CombatEngine {
-            st: EngineState::new(),
+            st: RefCell::new(EngineState::new()),
             player_name: None,
         }
     }
@@ -202,49 +241,114 @@ impl CombatEngine {
     /// `eqlog::character_of`.
     pub fn set_player_name(&mut self, name: &str) {
         self.player_name = Some(name.to_string());
-        self.st.set_player_name(name);
+        self.st.get_mut().set_player_name(name);
     }
 
     pub fn reset(&mut self) {
-        self.st.reset();
+        self.st.get_mut().reset();
         if let Some(name) = self.player_name.clone() {
-            self.st.set_player_name(&name);
+            self.st.get_mut().set_player_name(&name);
         }
     }
 
-    /// Fold one canonical event. `live` drives the classification ring, which a historical fold
-    /// never writes (`state.rs` fact 2) — so it is accepted, named, and has nothing to gate here.
+    /// THE SCAN HAS HANDED OVER TO THE TAIL — `engine.ts setLive()`, and the one call that turns a
+    /// replay into a present moment.
+    ///
+    /// `session.ts` makes it at the end of the historical scan, BEFORE the tailer is started and
+    /// before the heartbeat's first `registry.tick(Date.now())`; `engined::foldsink` makes it in the
+    /// same place, on the go-live beat. From here on `hydrating` is false, so every snapshot runs the
+    /// four sweeps at the instant it was asked for — see [`CombatEngine::snapshot`].
+    ///
+    /// A HISTORICAL FOLD NEVER CALLS IT, and that is what keeps the equivalence oracle whole: the
+    /// parity harness and the golden recorder both fold and ask, and neither has a tail to hand over
+    /// to. The sweeps are not skipped there by a flag somebody remembered to set — they are
+    /// unreachable, because nothing in that path can reach this method.
+    pub fn set_live(&mut self) {
+        self.st.get_mut().set_live();
+    }
+
+    /// Is this engine still replaying? The flag the snapshot publishes, for a caller that needs it
+    /// without serializing a whole meter.
+    #[must_use]
+    pub fn hydrating(&self) -> bool {
+        self.st.borrow().hydrating
+    }
+
+    /// Fold one canonical event.
+    ///
+    /// `live` IS THE BELT-AND-BRACES HALF OF GOING LIVE, and it is `ingestOne`'s own first two lines:
+    /// a LIVE event is by definition an event the tail delivered, so a world that somehow folded one
+    /// without having been told it was live is live anyway. `set_live()` is the ordinary path and
+    /// this is the one that cannot be forgotten. (It also matters WITHIN this event: the pet-summon
+    /// nudge is gated on `!hydrating`, so a live `You begin casting` in the very first tail delivery
+    /// must find the flag already cleared.)
+    ///
+    /// `recording` is set with it and drives the classification ring, which is not ported — the gap
+    /// the module header names rather than a flag with nothing behind it.
     ///
     /// The ROSTER is refreshed first and once, which `state.rs RosterFacts` argues is exactly the
     /// per-decision live pull rather than an approximation of it: the roster module is registered
     /// before the engine, so it has already advanced for this line, and nothing on this dispatch
     /// path can write it.
-    pub fn on_event(&mut self, ev: &Event, _live: bool, roster: Option<&dyn RosterSource>) {
-        self.st.refresh_roster(roster);
-        ingest::ingest_event(&mut self.st, ev);
+    pub fn on_event(&mut self, ev: &Event, live: bool, roster: Option<&dyn RosterSource>) {
+        let st = self.st.get_mut();
+        if live {
+            st.set_live();
+        }
+        st.refresh_roster(roster);
+        ingest::ingest_event(st, ev);
     }
 
-    /// The snapshot, at the log's own instant.
+    /// The snapshot, at the instant it is asked for — the log's own while replaying, the wall clock
+    /// once the tail is running, and the caller's to choose either way.
     ///
-    /// `now` IS NEVER A WALL CLOCK. Encounters can close purely from elapsed time, so a snapshot
-    /// may be the first observation after that threshold and the deferred closure is evaluated
-    /// here — …BUT NOT WHILE THE HISTORICAL FOLD IS STILL RUNNING. A REPLAY IS NOT A MOMENT IN
-    /// TIME: every line in a months-old log is weeks behind the host clock, and a poll landing
-    /// between two replay slices used to finalize whatever fight was open and hand the rest of it
-    /// to a fresh encounter — MEASURED, one 53,577-damage fight splitting into 43,504 + 10,073
-    /// under load. `hydrating` is exactly the right question, it is true for the whole of a
-    /// recorded slice, and the sweep block below is therefore never entered by this fold.
+    /// ── THE FOUR SWEEPS, AND THE ONE FLAG THAT DECIDES WHETHER THEY RUN ───────────────────────
+    ///
+    /// Encounters can close purely from elapsed time (death-linger / fallback), an uncorroborated
+    /// charm bind expires on the same wall clock, an ally bind cannot outlive its own spell, and the
+    /// pet nudge is a pure display timer. A snapshot may be the FIRST OBSERVATION past any of those
+    /// deadlines — the log can go quiet for a minute at a time and a screen must not — so this is
+    /// the second of the two places each of them is evaluated, the other being every ingested event.
+    ///
+    /// …BUT NOT WHILE THE HISTORICAL FOLD IS STILL RUNNING. A REPLAY IS NOT A MOMENT IN TIME: every
+    /// line in a months-old log is weeks behind the host clock, and a poll landing between two replay
+    /// slices used to finalize whatever fight was open and hand the rest of it to a fresh encounter —
+    /// MEASURED app-side, one 53,577-damage fight splitting into 43,504 + 10,073 under load (JOS-208
+    /// phase 4). `hydrating` is exactly the right question and it is the whole gate: true from
+    /// `reset()` until `set_live()`, true for the whole of every recorded slice, and true for every
+    /// answer the equivalence oracle has ever compared. Closure from the LOG's own clock is untouched
+    /// either way — `ingest_event` evaluates it per event, so a fight that really ended still ends,
+    /// at the instant the log says.
+    ///
+    /// THE ORDER IS THE TS'S, and it is not arbitrary: charm, then ally, then the nudge, then
+    /// closure. The charm sweep UNCHARMS through the world model, which is evidence the closure test
+    /// then reads (`hostile_presence` excludes a live pet), so evaluating closure first would ask
+    /// about a world one sweep out of date.
+    ///
+    /// `&self` AND A MUTATION BEHIND IT — see the `st` field for the whole argument. The short
+    /// version: the sweeps ARE the answer, they belong to the engine, and while hydrating nothing
+    /// here writes anything at all.
     pub fn snapshot(
         &self,
         now: i64,
         opts: &SnapshotOpts,
         roster: Option<&dyn RosterSource>,
     ) -> Value {
-        let st = &self.st;
-        if !st.hydrating {
-            // sweepCharm(now) · sweepAlly(now) · petNudge.sweep(now) · evalClosure(st, now).
-            // Unreachable in a historical fold, and unported with the models they sweep.
+        let mut guard = self.st.borrow_mut();
+        if !guard.hydrating {
+            let st = &mut *guard;
+            st.sweep_charm(now);
+            // …and the ally binds on the same clock and for the same reason (JOS-250): a charm cannot
+            // outlive its own spell, and the deadline must be observed by whichever of the two readers
+            // reaches it first.
+            st.sweep_ally(now);
+            // …and the pet nudge (JOS-258), which is a pure display timer: the log can go quiet for a
+            // minute at a time and a sentence on the screen must still come off it when it said it would.
+            st.pet_nudge.sweep(now);
+            lifecycle::eval_closure(st, now);
         }
+        // Read-only from here down, and the borrow is released with this function.
+        let st: &EngineState = &guard;
 
         // The finalized fight summaries, newest-first and capped, then the whole-stay row the
         // caller appends. The current encounter is always included regardless of the cap.
@@ -301,6 +405,13 @@ impl CombatEngine {
                 .and_then(|t| serde_json::to_value(t).ok())
                 .unwrap_or(Value::Null);
         }
+        // THE PET NUDGE (JOS-258) — ABSENT in every state but the one, which is what keeps the "no
+        // persistent banner" promise structural. It reads the SAME `now` the sweep above just used,
+        // so a nudge can never survive the poll that expired it, and a historical fold cannot arm one
+        // at all: no golden carries this key and none may start to.
+        if let Some(nudge) = st.pet_nudge.view(now) {
+            out["petNudge"] = serde_json::to_value(nudge).unwrap_or(Value::Null);
+        }
         out
     }
 
@@ -317,7 +428,7 @@ impl CombatEngine {
     /// READ-ONLY, like every other reader here: no closure evaluation, no memoization, nothing
     /// mutated. Typing in a search box must never be able to finalize a fight.
     pub fn fight_summaries(&self, now: i64) -> Vec<Value> {
-        lifecycle::collect_segments(&self.st, now, usize::MAX)
+        lifecycle::collect_segments(&self.st.borrow(), now, usize::MAX)
             .into_iter()
             .filter_map(|s| serde_json::to_value(s).ok())
             .collect()
@@ -477,6 +588,21 @@ mod tests {
         e
     }
 
+    /// The same fold, then the handover the tail makes — `engined::foldsink`'s go-live beat, and
+    /// `session.ts`'s `combat.setLive()` before it.
+    fn fold_then_go_live(lines: &[&str]) -> CombatEngine {
+        let mut e = fold(lines);
+        e.set_live();
+        e
+    }
+
+    /// One outgoing hit, as the parser emits it.
+    fn hit(seq: i64, ts: i64, amount: i64) -> String {
+        format!(
+            r#"{{"kind":"damage","seq":{seq},"ts":{ts},"raw":"d","attacker":"You","target":"a kodiak","amount":{amount},"dtype":"spell","skill":"Smiting Strike","crit":false}}"#
+        )
+    }
+
     /// A historical fold never leaves hydration, and the whole snapshot-time sweep block hangs off
     /// that one flag — `state.rs` fact 1, which every one of the six goldens agrees with.
     #[test]
@@ -485,6 +611,176 @@ mod tests {
         let snap = e.snapshot(10, &SnapshotOpts::full(), None);
         assert_eq!(snap["hydrating"], json!(true));
         assert_eq!(snap["recent"], json!([]));
+    }
+
+    /// …AND THE HANDOVER IS THE ONLY THING THAT CHANGES THAT (JOS-488). Before the go-live call the
+    /// answer is `hydrating: true`; after it, `false`. Nothing else in this engine writes the flag
+    /// except a LIVE event, which is the belt-and-braces half of the same handover.
+    #[test]
+    fn hydrating_is_true_until_the_handover_and_false_after_it() {
+        let lines = [r#"{"kind":"zone","seq":0,"ts":10,"raw":"z","zone":"Najena"}"#];
+        let mut e = fold(&lines);
+        assert!(
+            e.hydrating(),
+            "a fold that has not handed over is replaying"
+        );
+        assert_eq!(
+            e.snapshot(10, &SnapshotOpts::full(), None)["hydrating"],
+            json!(true)
+        );
+
+        e.set_live();
+        assert!(!e.hydrating());
+        assert_eq!(
+            e.snapshot(10, &SnapshotOpts::full(), None)["hydrating"],
+            json!(false)
+        );
+
+        // …and the fallback path, with no `set_live()` at all: one event the tail delivered says the
+        // same thing, and says it before the rest of that event is folded.
+        let mut e = fold(&lines);
+        let ev = Event::from_json(&hit(1, 1_000, 10)).expect("a JSON object");
+        e.on_event(&ev, true, None);
+        assert!(!e.hydrating(), "a live event is a live world");
+    }
+
+    /// A LIVE FIGHT CLOSES ON ELAPSED TIME, AT THE SNAPSHOT — the death-linger arm of
+    /// `eval_closure`, reached by a poll rather than by a line, which is the whole reason the sweep
+    /// block exists. The mob has not been seen for `PRESENCE_GONE_MS` and the linger has elapsed, so
+    /// the fight is over and the meter says so without waiting for the log to speak again.
+    #[test]
+    fn a_live_snapshot_closes_a_fight_the_log_stopped_talking_about() {
+        let e = fold_then_go_live(&[
+            r#"{"kind":"zone","seq":0,"ts":0,"raw":"z","zone":"Najena"}"#,
+            &hit(1, 1_000, 500),
+        ]);
+        let now = 1_000 + encounter::PRESENCE_GONE_MS;
+
+        let snap = e.snapshot(now, &SnapshotOpts::full(), None);
+        assert_eq!(
+            snap["segments"][0]["kind"],
+            json!("fight"),
+            "the open fight was finalized by the poll: {snap}"
+        );
+        assert_eq!(snap["inCombat"], json!(false));
+        // FINALIZED AT THE FIGHT'S OWN CLOCK, never at `now` — the closure is deferred, the fight is
+        // not. A fight stamped at the eval moment would have grown by the twenty seconds of silence
+        // that closed it; this one is still the one-second floor its single hit earns.
+        assert_eq!(snap["segments"][0]["startTs"], json!(1_000));
+        assert_eq!(snap["segments"][0]["durationSec"], json!(1.0));
+        assert_eq!(snap["segments"][0]["active"], json!(false));
+        assert_eq!(snap["segments"][0]["total"], json!(500));
+        assert!(
+            snap.get("currentTarget").is_none(),
+            "a fight that just closed reports no target"
+        );
+    }
+
+    /// …AND A MID-FOLD SNAPSHOT NEVER DOES ANY OF THAT — the JOS-208 pin, and the reason the gate is
+    /// `hydrating` rather than a policy somebody remembers to apply.
+    ///
+    /// The same two lines, the same instant, and a `now` far past every deadline: the fight stays
+    /// OPEN, and the hit that arrives afterwards lands in it. A replay whose fight had been
+    /// finalized by a poll would hand the rest of that fight to a fresh encounter — MEASURED, one
+    /// 53,577-damage fight splitting into 43,504 + 10,073 under load.
+    #[test]
+    fn a_mid_fold_snapshot_sweeps_nothing_and_cannot_split_a_fight() {
+        let mut e = fold(&[
+            r#"{"kind":"zone","seq":0,"ts":0,"raw":"z","zone":"Najena"}"#,
+            &hit(1, 1_000, 43_504),
+        ]);
+        // A POLL FROM A DIFFERENT WORLD: the host clock, weeks past every timestamp in the log.
+        let snap = e.snapshot(1_800_000_000_000, &SnapshotOpts::full(), None);
+        assert_eq!(snap["segments"][0]["kind"], json!("current"));
+
+        let ev = Event::from_json(&hit(2, 2_000, 10_073)).expect("a JSON object");
+        e.on_event(&ev, false, None);
+        let after = e.snapshot(2_000, &SnapshotOpts::full(), None);
+        assert_eq!(
+            after["segments"][0]["total"],
+            json!(53_577),
+            "the poll split the fight: {after}"
+        );
+        assert_eq!(
+            after["segments"]
+                .as_array()
+                .expect("segments")
+                .iter()
+                .filter(|s| s["kind"] != json!("zone"))
+                .count(),
+            1,
+            "one fight, not two"
+        );
+    }
+
+    /// AN UNCORROBORATED CHARM BIND EXPIRES AT THE SNAPSHOT, on the same clock and for the same
+    /// reason: the deadline belongs to whichever of the two readers reaches it first, and between
+    /// two log lines that reader is the poll.
+    #[test]
+    fn a_live_snapshot_sweeps_a_charm_bind_whose_window_closed() {
+        let lines = [
+            r#"{"kind":"castBegin","seq":0,"ts":0,"raw":"c","spell":"Charm"}"#,
+            r#"{"kind":"charm","seq":1,"ts":1000,"raw":"c","mob":"a rock golem"}"#,
+        ];
+        let horizon = 1_000 + crate::combat::spellfacts::provisional_window_ms("Charm");
+
+        let e = fold_then_go_live(&lines);
+        assert!(
+            e.st.borrow().pet_names.contains("a rock golem"),
+            "the broadcast resolved our own cast, so it bound"
+        );
+        e.snapshot(horizon - 1, &SnapshotOpts::full(), None);
+        assert!(
+            e.st.borrow().pet_names.contains("a rock golem"),
+            "one ms early is early"
+        );
+        e.snapshot(horizon, &SnapshotOpts::full(), None);
+        assert!(
+            !e.st.borrow().pet_names.contains("a rock golem"),
+            "the corroboration window closed and the bind is gone"
+        );
+
+        // …and the replay is untouched, however late the poll: a bind demoted by the host clock
+        // mid-scan would attribute a charmed mob's damage differently on a busy machine.
+        let e = fold(&lines);
+        e.snapshot(horizon + 1_000_000, &SnapshotOpts::full(), None);
+        assert!(e.st.borrow().pet_names.contains("a rock golem"));
+    }
+
+    /// THE PET NUDGE IS A LIVE-ONLY MODEL, and this is the gate rather than the model: the same two
+    /// lines arm nothing while replaying and raise a nudge once the tail is running.
+    #[test]
+    fn the_pet_nudge_arms_only_once_the_tail_is_running() {
+        let summon =
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Kintaz's Animation"}"#;
+
+        let mut e = fold(&[]);
+        e.set_live();
+        let ev = Event::from_json(summon).expect("a JSON object");
+        e.on_event(&ev, false, None);
+        let shown = 1_000 + petnudge::NUDGE_GRACE_MS;
+        assert_eq!(
+            e.snapshot(shown, &SnapshotOpts::full(), None)["petNudge"],
+            json!({ "summonedTs": 1_000, "expiresTs": 1_000 + petnudge::NUDGE_GRACE_MS + petnudge::NUDGE_SHOW_MS })
+        );
+        // ABSENT, never null, in every state but the one — inside the grace, and past the timeout.
+        assert!(e
+            .snapshot(1_000, &SnapshotOpts::full(), None)
+            .get("petNudge")
+            .is_none());
+        let gone = 1_000 + petnudge::NUDGE_GRACE_MS + petnudge::NUDGE_SHOW_MS;
+        assert!(e
+            .snapshot(gone, &SnapshotOpts::full(), None)
+            .get("petNudge")
+            .is_none());
+
+        // A HISTORICAL FOLD ARMS NOTHING, which is why no golden carries the key: the arm is gated on
+        // `!hydrating` at the cast, so the model has nothing to publish however it is asked.
+        let e = fold(&[summon]);
+        assert!(e
+            .snapshot(shown, &SnapshotOpts::full(), None)
+            .get("petNudge")
+            .is_none());
     }
 
     /// `zone` is ABSENT — never null — until the first `You have entered X.` line, because a
