@@ -405,6 +405,23 @@ test('THE SCHEMA HAS TEETH — the shapes it forbids are actually refused', () =
   }
 })
 
+test('THE FOLD PERCENT IS FRACTIONAL, and comes back as the same text in both languages', () => {
+  // `pct` is a float by owner ruling: the engine emits what it measured and the renderer rounds for
+  // display. That makes the WORKED EXAMPLE's value load-bearing — Rust writes a whole f64 as `62.0`,
+  // so a fixture carrying `62` would stop being byte-verbatim across the two languages the moment
+  // the Rust side re-serialized it. 62.4 round-trips identically in both, and both sides pin it:
+  // this assertion, and `rule_three_...` in engine/crates/protocol/tests/fixtures.rs.
+  const switchMoment = fixtures.find((f) => f.name === '04-character-switch.json')
+  assert.ok(switchMoment)
+  const bump = switchMoment.messages[0].message as EngineMessage
+  assert.equal(bump.kind, 'epoch')
+  const progress = bump.progress
+  assert.ok(progress)
+  assert.equal(progress.pct, 62.4)
+  assert.equal(Number.isInteger(progress.pct), false, 'a whole value would not prove anything')
+  assert.match(JSON.stringify(progress), /"pct":62\.4/)
+})
+
 test('the fixture token is the shape the app mints, and is nobody’s secret', () => {
   const handshake = fixtures.find((f) => f.name === '05-handshake.json')
   assert.ok(handshake)

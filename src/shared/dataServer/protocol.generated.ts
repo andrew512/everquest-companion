@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:73ec3928a198f8c69994d9fd62dafb65d92f91677774447c6ba988982dcded45
+// schema-digest: sha256:2ebec8b610d4d05c702b55585f8d4c695680cf01ce6be4bce2f747a0a17b9654
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -302,7 +302,7 @@ export interface EpochMessage {
  */
 export interface FoldProgress {
   /**
-   * 0 to 100, WHOLE. A loading bar has no use for a fractional percent, and an integer is the one numeric shape that survives a JSON round trip unchanged in every language - a float 62 comes back as 62.0.
+   * How far the fold has got, 0 to 100, FRACTIONAL. The engine emits the number it actually measured and does not pre-round it: rounding is a display decision and belongs to whoever is drawing the bar. That is not in tension with the renderer-never-munges rule - that rule is about DOMAIN data (no client-side filtering, sorting or aggregation of the world), and formatting a progress readout for the pixel it lands on is not domain work. A NOTE FOR WORKED EXAMPLES: Rust serializes an f64 whole value as X.0, so a fixture carrying `62` would come back `62.0` and stop being byte-verbatim across the two languages. Examples therefore use a genuinely fractional value (62.4), which round-trips identically in both.
    */
   pct: number
   events: number

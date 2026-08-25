@@ -255,8 +255,25 @@ fn rule_three_an_epoch_bump_is_connection_wide_and_the_reset_follows_it() {
     assert_eq!(*bump.epoch, 4);
     assert!(matches!(bump.reason, EpochReason::Attach));
     let progress = bump.progress.expect("an attach reports its fold progress");
-    assert_eq!(progress.pct, 62, "a whole percent, not 62.0");
+    // EXACT equality on an f64 is right here, and only here: this is the same decimal literal
+    // parsed by the same routine that produced the fixture, so both sides land on the identical
+    // nearest-f64. It is the byte-verbatim claim, restated at the field level - if it ever needed
+    // an epsilon, the round-trip assertion above would already have failed.
+    assert_eq!(
+        progress.pct, 62.4,
+        "the fold percent, fractional and unrounded"
+    );
     assert_eq!(progress.events, 1_571_003);
+
+    // …AND IT GOES BACK OUT AS THE SAME TEXT. This is the whole reason the worked example uses a
+    // fractional value: `pct` is an f64, and Rust writes a whole f64 as `62.0`, which would not be
+    // the `62` the plan doc prints. Pinned rather than assumed, because the claim the fixtures make
+    // is byte-verbatim across two languages and this is the one field where the two could differ.
+    let text = serde_json::to_string(&progress).expect("progress serializes");
+    assert!(
+        text.contains("\"pct\":62.4"),
+        "the fold percent did not come back as 62.4: {text}"
+    );
 
     let EngineMessage::ResetMessage(reset) = reset else {
         panic!("expected a reset")
