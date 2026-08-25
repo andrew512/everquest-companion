@@ -301,6 +301,7 @@ pub fn registered(known_spell: HashSet<String>) -> Registry {
     ));
     r.register(Box::new(modules::alerts::AlertsModule::new()));
     r.register(Box::new(modules::consider::ConsiderModule::new()));
+    r.register(Box::new(modules::resist::ResistModule::new()));
     r.register(Box::new(modules::event_feed::EventFeedModule::new()));
     r
 }
@@ -660,5 +661,182 @@ mod tests {
         assert_eq!(gap.kind(), "offlineGap");
         assert_eq!(gap.int("fromTs"), Some(1000));
         assert_eq!(gap.int("toTs"), Some(900000));
+    }
+
+    // ── resist (JOS-476 cluster 2c) ────────────────────────────────────────────────────────────
+    //
+    // The published surface is two integers, so every law below is stated as a claim about how many
+    // POOLING KEYS the ledger holds and how many creatures they are about — which is exactly what
+    // the golden pins.
+
+    /// A ROW'S TARGET HAS TO BE A CREATURE. A groupmate's landing and your own self-damage are the
+    /// two shapes that put a person's name in a published file, and both are refused; a mob's is
+    /// filed. All three lines are otherwise identical.
+    #[test]
+    fn a_resist_row_is_only_ever_filed_about_a_creature() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"resist","seq":0,"ts":1000,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
+            r#"{"kind":"resist","seq":1,"ts":2000,"raw":"r","caster":"You","target":"Dranix","spell":"Malosi","incoming":false}"#,
+            r#"{"kind":"resist","seq":2,"ts":3000,"raw":"r","caster":"You","target":"You","spell":"Malosi","incoming":false}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 1, "mobs": 1 }));
+    }
+
+    /// YOUR RESISTS ONLY. `You resist <mob>'s <Spell>!` is the incoming form and a different feature
+    /// entirely, so it files nothing at all.
+    #[test]
+    fn an_incoming_resist_is_yours_and_is_never_filed() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"resist","seq":0,"ts":1000,"raw":"r","caster":"a froglok ton knight","target":"You","spell":"Fear","incoming":true}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 0, "mobs": 0 }));
+    }
+
+    /// THE RANK AND THE INVOCATION ARE POOLING TERMS (JOS-387). Three casts of one spell on one mob
+    /// that differ only in the rank the line printed, or in whether overchannel was up, are THREE
+    /// rows — they rolled against different resist adjusts and may not be pooled. The mob count
+    /// stays at one, which is what says the split is about the roll and not about the creature.
+    #[test]
+    fn a_rank_and_an_invocation_each_split_a_resist_row() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"resist","seq":0,"ts":1000,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Shiftless Deeds IV","incoming":false}"#,
+            r#"{"kind":"resist","seq":1,"ts":2000,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Shiftless Deeds VI","incoming":false}"#,
+            r#"{"kind":"invocationChange","seq":2,"ts":3000,"raw":"i","invocation":"overchannel"}"#,
+            r#"{"kind":"castBegin","seq":3,"ts":3100,"raw":"c","spell":"Shiftless Deeds IV"}"#,
+            r#"{"kind":"resist","seq":4,"ts":3200,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Shiftless Deeds IV","incoming":false}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 3, "mobs": 1 }));
+    }
+
+    /// THE WEEK IS IN THE KEY (JOS-397), and it is the one term that is not about `rc`. Two
+    /// identical resists a fortnight apart are two rows, because a row that pooled them would have
+    /// no age to weigh. The instant comes off the LOG's clock, never a wall clock.
+    #[test]
+    fn the_iso_week_splits_a_row_so_every_count_has_an_age() {
+        const WEEK_MS: i64 = 7 * 86_400_000;
+        let later = format!(
+            r#"{{"kind":"resist","seq":1,"ts":{},"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}}"#,
+            1_787_184_000_000i64 + 2 * WEEK_MS
+        );
+        let snaps = fold_lines(&[
+            r#"{"kind":"resist","seq":0,"ts":1787184000000,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
+            &later,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 2, "mobs": 1 }));
+    }
+
+    /// ONE CAST IS ONE ROLL. A nuke prints its damage line FIRST and its landing emote after, and
+    /// the emote is the same roll saying so twice — so the deferred landing is cancelled and the
+    /// pair leaves exactly one row behind. (The `damaged` set on the armed cast is what does it;
+    /// the cancel-forward rule alone never fires, because the game's order is always damage-then-
+    /// emote.)
+    #[test]
+    fn a_damage_line_and_its_own_landing_emote_are_one_observation() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Chaotic Feedback"}"#,
+            r#"{"kind":"damage","seq":1,"ts":2000,"raw":"d","attacker":"You","target":"a kodiak","amount":30,"dtype":"spell","skill":"Chaotic Feedback","crit":false}"#,
+            r#"{"kind":"cc","seq":2,"ts":2000,"raw":"e","mob":"a kodiak","candidates":[{"name":"Chaotic Feedback","durationMs":null}]}"#,
+            // Far enough past the emote that a surviving deferred landing would have been filed.
+            r#"{"kind":"unknown","seq":3,"ts":60000,"raw":"x"}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 1, "mobs": 1 }));
+    }
+
+    /// A CAST THAT NEVER HAPPENED IS NOT A RESIST: a fizzle disarms, so the landing sentence that
+    /// follows has nothing to join to and files nothing.
+    #[test]
+    fn a_fizzled_cast_can_no_longer_claim_a_landing_sentence() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Chaotic Feedback"}"#,
+            r#"{"kind":"castFizzle","seq":1,"ts":1500,"raw":"f","spell":"Chaotic Feedback"}"#,
+            r#"{"kind":"cc","seq":2,"ts":2000,"raw":"e","mob":"a kodiak","candidates":[{"name":"Chaotic Feedback","durationMs":null}]}"#,
+            r#"{"kind":"unknown","seq":3,"ts":60000,"raw":"x"}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 0, "mobs": 0 }));
+    }
+
+    /// A DEBUFF WINDOW IS A POOLING TERM. The same resist before and after a tash lands on the mob
+    /// is two rows, and the window closes on the LOG's clock — eleven minutes later the third
+    /// resist pools back with the first.
+    #[test]
+    fn a_resist_debuff_window_splits_a_row_and_then_closes_on_the_logs_clock() {
+        const DEBUFF_MS: i64 = 11 * 60 * 1000;
+        let after = format!(
+            r#"{{"kind":"resist","seq":4,"ts":{},"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}}"#,
+            2_000 + DEBUFF_MS + 1_000
+        );
+        let snaps = fold_lines(&[
+            r#"{"kind":"resist","seq":0,"ts":1000,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
+            r#"{"kind":"castBegin","seq":1,"ts":1500,"raw":"c","spell":"Tashani"}"#,
+            r#"{"kind":"cc","seq":2,"ts":2000,"raw":"e","mob":"a froglok ton knight","candidates":[{"name":"Tashani","durationMs":null}]}"#,
+            r#"{"kind":"resist","seq":3,"ts":3000,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
+            &after,
+        ]);
+        // Three keys: the bare Malosi row (shared by the first and the last resist), the
+        // tash-debuffed Malosi row, and the Tashani landing's own row.
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 3, "mobs": 1 }));
+    }
+
+    /// A DoT'S FIRST TICK IS THE LANDING and the rest are the same roll — but the ROW is minted
+    /// either way, which is why one cast and three ticks is one row rather than none. A fresh cast
+    /// re-arms the memory, and it still pools into the same key.
+    #[test]
+    fn only_a_dots_first_tick_is_a_landing_and_the_row_is_minted_regardless() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Envenomed Bolt"}"#,
+            r#"{"kind":"damage","seq":1,"ts":2000,"raw":"d","attacker":"You","target":"a kodiak","amount":110,"dtype":"dot","skill":"Envenomed Bolt","crit":false}"#,
+            r#"{"kind":"damage","seq":2,"ts":5000,"raw":"d","attacker":"You","target":"a kodiak","amount":110,"dtype":"dot","skill":"Envenomed Bolt","crit":false}"#,
+            r#"{"kind":"damage","seq":3,"ts":8000,"raw":"d","attacker":"You","target":"a kodiak","amount":110,"dtype":"dot","skill":"Envenomed Bolt","crit":false}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 1, "mobs": 1 }));
+    }
+
+    /// A PROC IS NOT A CAST SPELL, and the log has no field that says so — what it has is the CAST
+    /// LINE, which a proc never prints. So an observation that joins an armed cast carries that
+    /// cast's invocation (here UNKNOWN, because nothing has stated one) and an observation that
+    /// joins none answers `false`, and the two are different keys. Same spell, same mob, same
+    /// week — two rows, because they are two different claims about the roll.
+    #[test]
+    fn an_observation_with_no_cast_behind_it_is_a_proc() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Smiting Strike"}"#,
+            r#"{"kind":"damage","seq":1,"ts":2000,"raw":"d","attacker":"You","target":"a kodiak","amount":30,"dtype":"spell","skill":"Smiting Strike","crit":false}"#,
+            // Past CAST_JOIN_MS, so this one joins nothing and is filed as a proc.
+            r#"{"kind":"damage","seq":2,"ts":20000,"raw":"d","attacker":"You","target":"a kodiak","amount":30,"dtype":"spell","skill":"Smiting Strike","crit":false}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 2, "mobs": 1 }));
+    }
+
+    /// THE MODULE DOES NOT RESET AT AN EPOCH BOUNDARY. What a mob resists is GAME knowledge and a
+    /// rebirth does not unlearn it — so the pre-launch row survives the boundary that empties loot
+    /// and leveling, and the module still reports the seq of the last event it was handed.
+    #[test]
+    fn what_a_mob_resists_outlives_the_launch_boundary() {
+        let mut fold = Fold::new(registered(HashSet::new()), 1000);
+        for line in [
+            r#"{"kind":"resist","seq":0,"ts":500,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
+            r#"{"kind":"loot","seq":1,"ts":1500,"raw":"l","item":"Live Sword"}"#,
+        ] {
+            fold.on_primary(&Event::from_json(line).expect("object"), false);
+        }
+        let snaps = fold.registry.snapshots();
+        assert_eq!(state_of(&snaps, "loot"), json!([]));
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 1, "mobs": 1 }));
+    }
+
+    /// A ZONE LINE IS A DISCONTINUITY: it decides the deferred landing outright rather than waiting
+    /// out the three-second window, and it drops every open debuff. The landing therefore lands, and
+    /// the resist that follows it in the new zone pools with no debuff on the key.
+    #[test]
+    fn a_zone_line_decides_the_deferred_landing_and_drops_the_debuff_windows() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Tashani"}"#,
+            r#"{"kind":"cc","seq":1,"ts":1500,"raw":"e","mob":"a froglok ton knight","candidates":[{"name":"Tashani","durationMs":null}]}"#,
+            // Inside LAND_DEFER_MS of the emote, so only the zone line can decide it.
+            r#"{"kind":"zone","seq":2,"ts":2000,"raw":"z","zone":"Innothule Swamp"}"#,
+            r#"{"kind":"resist","seq":3,"ts":2500,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
+        ]);
+        // The Tashani landing row, plus an un-debuffed Malosi row — the window died with the zone.
+        assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 2, "mobs": 1 }));
     }
 }
