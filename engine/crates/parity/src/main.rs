@@ -130,7 +130,7 @@ fn snapshots(parser: &eqlog::Parser, bytes: &[u8], tz: eqlog::Tz, character: &st
     let clock = eqlog::Clock::new(tz);
     let launch_ms = fold::epoch::launch_ms(&clock);
     let started = std::time::Instant::now();
-    let mut folder = fold::Fold::new(fold::cluster_2a(known), launch_ms);
+    let mut folder = fold::Fold::new(fold::registered(known), launch_ms);
     folder.fold_bytes(parser, bytes);
     let ms = started.elapsed().as_millis();
     let mut out = folder.registry.snapshots();

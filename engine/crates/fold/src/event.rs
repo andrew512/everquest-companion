@@ -67,6 +67,25 @@ impl Event {
     pub fn bool(&self, key: &str) -> bool {
         self.v.get(key).and_then(Value::as_bool).unwrap_or(false)
     }
+
+    /// The raw value behind a key, for the few fields that are neither a string nor a number:
+    /// `buffApply.candidates` and `cc.candidates` are ARRAYS of `{ name, durationMs }` and the
+    /// modules that read them (2c) walk the array. Everything else goes through the scalar
+    /// accessors above, which is why this one is deliberately last rather than first.
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        match self.v.get(key) {
+            None | Some(Value::Null) => None,
+            some => some,
+        }
+    }
+
+    /// `ev.<key> == null` in the TS sense — the key is absent OR explicitly null. Several 2c
+    /// modules branch on the DIFFERENCE between an absent optional and a present one whose value
+    /// is falsy (`buffFade.target` absent means SELF; `''` would mean an unnamed entity), so the
+    /// question has to be askable without reading the value.
+    pub fn has(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
 }
 
 #[cfg(test)]
