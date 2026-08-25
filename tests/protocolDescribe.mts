@@ -33,6 +33,15 @@ export function describeEngine(message: EngineMessage): string {
     // there is no generation it could belong to.
     case 'knowledgeMiss':
       return `knowledgeMiss ${message.domain}/${message.name}`
+    // A CON CARD IS A FIRE'S TWIN on this axis — no id, no epoch — and its chips are always five,
+    // which is worth saying out loud here because "all five axes, always" is a contract rather than
+    // a coincidence of the fixture.
+    case 'conCard':
+      return `conCard ${message.name} L${String(message.level ?? 0)} chips=${String(message.chips.length)} spellData=${String(message.spellData)}`
+    // A NAME AND A CURSOR. If this description ever needs a third field, the frame has grown state
+    // it was designed not to carry.
+    case 'moduleChanged':
+      return `moduleChanged ${message.module}@${String(message.seq)}`
     default: {
       const unreachable: never = message
       throw new Error(`unhandled engine message ${JSON.stringify(unreachable)}`)
@@ -164,6 +173,8 @@ function describeCore(message: Exclude<ClientMessage, DefineMessage | CombatMess
       return `subscribe#${String(message.id)} ${message.params.source}`
     case 'view.unsubscribe':
       return `unsubscribe#${String(message.id)} of ${String(message.params.subscription)}`
+    case 'sessionMarks.add':
+      return `mark#${String(message.id)} at ${String(message.params.at)}`
     default: {
       const unreachable: never = message
       throw new Error(`unhandled client message ${JSON.stringify(unreachable)}`)

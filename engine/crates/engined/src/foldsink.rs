@@ -393,9 +393,32 @@ impl EventSink for FoldSink {
     /// it. That is the same distinction `module.snapshot` draws between `notFound` and
     /// `unavailable`, one level down.
     fn source_rows(&self, source: &'static views::SourceDef) -> Option<Vec<views::SourceRow>> {
+        let registry = &self.fold.registry;
         match source.id {
             id if id == views::loot::LEDGER.id => {
-                Some(views::loot::rows(self.fold.registry.loot()?, &self.clock))
+                Some(views::loot::rows(registry.loot()?, &self.clock))
+            }
+            id if id == views::buffs::ACTIVE.id => Some(views::buffs::rows(registry.buffs()?)),
+            // TWO MODULES, ONE SOURCE, and the `?` on either is what makes that honest: the timer
+            // projection is a fold over `buffs.active` AND `buffTimers.holds`, so a registry
+            // carrying one of them cannot serve half a window — it serves none, and the view layer
+            // answers the empty one.
+            id if id == views::timers::ROWS.id => Some(views::timers::rows(
+                registry.buffs()?,
+                registry.buff_timers()?,
+            )),
+            id if id == views::respawn::WATCHES.id => {
+                Some(views::respawn::rows(registry.respawn()?))
+            }
+            id if id == views::kills::RECENT.id => {
+                Some(views::kills::rows(registry.progression()?))
+            }
+            id if id == views::progression::RECENT.id => Some(views::progression::rows(
+                registry.progression()?,
+                &self.clock,
+            )),
+            id if id == views::event_feed::RECENT.id => {
+                Some(views::event_feed::rows(registry.event_feed()?))
             }
             // THE METER'S ROWS COME OUT OF THE SNAPSHOT'S OWN `selected`, at the cheapest options
             // that produce one: no finalized-fight list, no timeline, no unparsed ring. A level-1
@@ -423,6 +446,27 @@ impl EventSink for FoldSink {
     /// The alert fires the registry made while folding the last drain, converted from the FOLD's
     /// shape into the INGEST's at this seam — which is the whole reason both types exist. Neither
     /// `ingest.rs` nor `world.rs` ever learns what an alert is.
+    /// THE CON CARDS (JOS-487, boundary verdict 2). The live `/con`s the consider module saw while
+    /// folding the last drain, each RESOLVED into the card the overlay draws — `crate::concard`
+    /// owns what that means and this is the one line that joins the two.
+    ///
+    /// A LINE THAT NAMES NOTHING IS DROPPED HERE rather than sent as an empty card, which is
+    /// `noteConsider`'s own first guard: a creature name that folds to no key has no queue identity.
+    fn take_con_cards(&mut self) -> Vec<protocol::generated::ConCardMessage> {
+        self.fold
+            .registry
+            .take_cons()
+            .iter()
+            .filter_map(crate::concard::card)
+            .collect()
+    }
+
+    /// THE MODULE DIRTY BITS (JOS-487) — every registered module's published cursor, straight off
+    /// the registry and without building a single module's state. See `EqModule::published_seq`.
+    fn module_seqs(&self) -> Vec<(&'static str, i64)> {
+        self.fold.registry.published_seqs()
+    }
+
     fn take_fires(&mut self) -> Vec<crate::ingest::Fire> {
         self.fold
             .registry
@@ -503,9 +547,35 @@ impl EventSink for FoldSink {
         fold::knowledge::Knowledge::take_misses(&*self.knowledge)
     }
 
+    /// THE CHANGE SIGNAL PER SOURCE. Cheap by contract — a counter read, never a serialization.
+    ///
+    /// THREE OF THESE ARE COARSE AND THE COARSENESS IS STATED AT THE MODULE. `loot`, `respawn` and
+    /// `buffTimers` keep real revision counters that move only when their state could have; `buffs`,
+    /// `progression` and `eventFeed` do not, so they report the fold's own `seq`, which moves on
+    /// every event. That NEVER MISSES A CHANGE — the property correctness needs — and it over-reports,
+    /// which costs a re-cut per serve beat on a busy tail over row sets of tens. Named rather than
+    /// hidden; the fix is the counters, not a cache (ruling 5).
+    ///
+    /// `timers.rows` TAKES THE MAX OF ITS TWO INPUTS, which is the only honest answer for a source
+    /// folded from two modules: either moving could move the window, so a signal that watched one
+    /// of them would let a stale window stand.
     fn source_revision(&self, source: &'static views::SourceDef) -> Option<u64> {
+        let registry = &self.fold.registry;
+        let signal = |seq: i64| u64::try_from(seq).unwrap_or(0);
         match source.id {
-            id if id == views::loot::LEDGER.id => Some(self.fold.registry.loot()?.revision()),
+            id if id == views::loot::LEDGER.id => Some(registry.loot()?.revision()),
+            id if id == views::buffs::ACTIVE.id => Some(signal(registry.buffs()?.revision())),
+            id if id == views::timers::ROWS.id => Some(
+                signal(registry.buffs()?.revision())
+                    .max(signal(registry.buff_timers()?.revision())),
+            ),
+            id if id == views::respawn::WATCHES.id => Some(signal(registry.respawn()?.revision())),
+            id if id == views::kills::RECENT.id || id == views::progression::RECENT.id => {
+                Some(signal(registry.progression()?.revision()))
+            }
+            id if id == views::event_feed::RECENT.id => {
+                Some(signal(registry.event_feed()?.revision()))
+            }
             // NO COUNTER TO READ, AND THAT IS HONEST RATHER THAN A GAP. The `loot` module publishes
             // a revision because it can say exactly when it changed; the combat engine cannot —
             // every damage, miss, resist, heal, charm and zone line moves some row of the meter, so

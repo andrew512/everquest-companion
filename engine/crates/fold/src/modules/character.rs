@@ -154,6 +154,12 @@ impl EqModule for CharacterModule {
         }
     }
 
+    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
+    /// state to read it. See `EqModule::published_seq`.
+    fn published_seq(&self) -> Option<i64> {
+        Some(self.rev)
+    }
+
     fn snapshot(&self) -> Value {
         // `character` publishes NULL when absent (the TS field is `CharacterRef | null`), while
         // `zone`/`level` are `undefined` and are DROPPED by `JSON.stringify`. Three fields, two

@@ -49,11 +49,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use protocol::generated::{
-    AttachResult, DiffMessage, DiffMessageKind, EngineMessage, Epoch, EpochMessage,
+    AttachResult, ConCardMessage, DiffMessage, DiffMessageKind, EngineMessage, Epoch, EpochMessage,
     EpochMessageKind, EpochReason, FireMessage, FireMessageKind, FoldProgress, HealthResult,
     HealthResultStatus, KnowledgeMissMessage, KnowledgeMissMessageKind, KnowledgePushDomain,
-    LogMark, PerfIngest, PerfServeSource, PerfSnapshotResult, PerfSnapshotResultStatus, RequestId,
-    ResetMessage, ResetMessageKind, Row,
+    LogMark, ModuleChangedMessage, ModuleChangedMessageKind, PerfIngest, PerfServeSource,
+    PerfSnapshotResult, PerfSnapshotResultStatus, RequestId, ResetMessage, ResetMessageKind, Row,
 };
 
 use crate::ingest::{self, Starter};
@@ -913,6 +913,80 @@ impl World {
         true
     }
 
+    /// A LIVE `/con` PRODUCED A CARD (boundary verdict 2) — announce it to every connection.
+    ///
+    /// A `report_*` like [`World::report_fire`] in every respect, including the two that make it
+    /// unusual: ownership is re-asked inside the lock, so a preempted fold that parsed a con line on
+    /// its way out draws nothing; and it CHANGES NO WORLD STATE, because a card is a thing that
+    /// happened rather than a thing to reconcile. Connection-wide, no `id`, no `epoch` — the frame
+    /// carries no generation because there is nothing to drop and nothing to re-request.
+    pub fn report_con_card(&self, generation: u64, card: &ConCardMessage) -> bool {
+        let mut state = self.lock();
+        if !self.owns(generation) {
+            return false;
+        }
+        broadcast(&mut state, &EngineMessage::ConCardMessage(card.clone()));
+        true
+    }
+
+    /// MODULES MOVED — announce the dirty bits (JOS-487).
+    ///
+    /// ONE FRAME PER MODULE, and the caller has already decided which: the ingest holds the last
+    /// cursor it announced per module and hands over only the ones that moved since (see
+    /// `ingest::Serving::changed_modules`). The COALESCING therefore happens where the beat is,
+    /// which is the only place that knows what a beat is.
+    ///
+    /// THEY GO OUT UNDER ONE LOCK, in the order given, so a connection cannot observe module B's new
+    /// cursor before module A's when the same fold moved both.
+    pub fn report_modules_changed(&self, generation: u64, changed: &[(&'static str, i64)]) -> bool {
+        let mut state = self.lock();
+        if !self.owns(generation) {
+            return false;
+        }
+        for (module, seq) in changed {
+            let frame = EngineMessage::ModuleChangedMessage(ModuleChangedMessage {
+                kind: ModuleChangedMessageKind::ModuleChanged,
+                module: (*module).to_owned(),
+                seq: *seq,
+            });
+            broadcast(&mut state, &frame);
+        }
+        true
+    }
+
+    /// TAKE A SESSION MARK, OR REFUSE IT (boundary verdict 6) — `sessionMarks.add`.
+    ///
+    /// THE MARK IS STORED NOWHERE, and that absence is the feature. A mark is a user action; it is
+    /// ephemeral app-side (`main/sessionMarks.ts` keeps a module-scope array that is empty at every
+    /// launch) and it is ephemeral here, which is half of the replay-determinism story — a relaunch
+    /// replays the log into the records the log alone describes. The other half is the refusal.
+    ///
+    /// REFUSED UNLESS THE WORLD IS LIVE, and that is the honest engine-side spelling of
+    /// `combat/engine.ts sessionMark`'s `if (st.hydrating) return false`. Over there `hydrating` is
+    /// true for the whole of a historical fold and is cleared by the first live tail event; over
+    /// here that same boundary IS the status — `starting`, `attaching` and `folding` are the fold
+    /// running, `live` is the tail owning the file, and `idle` is no fold at all. A mark cannot
+    /// enter a replaying fold, so the JOS-208 replay-versus-live divergence class has no way to
+    /// recur here either.
+    ///
+    /// WHAT AN ACCEPTED MARK DOES TO THE WORLD, TODAY, IS NOTHING — and that is a NAMED GAP rather
+    /// than a shrug. The mark's effect is a COMBAT-ENGINE act (close the open fight, freeze the
+    /// running stay into history tagged `closedBy: 'mark'`, mint fresh accumulators) and this
+    /// crate's sink does not register the combat engine at all: `Fold::with_combat` is the combat
+    /// surface's own ticket. So what exists now is the command, the law, and the reply a client
+    /// branches on — the half that decides WHETHER, without the half that DOES. The instant the
+    /// engine is registered, this method grows one call and nothing else here moves.
+    ///
+    /// IT RETURNS THE STATUS IT DECIDED UNDER, read in the SAME critical section as the decision.
+    /// A client that asked `session.health` afterwards would be racing a fold that may have gone
+    /// live in between, and a refusal explained by a state that no longer holds is worse than one
+    /// with no explanation at all.
+    pub fn session_mark(&self, _at: i64) -> (bool, HealthResultStatus) {
+        let state = self.lock();
+        let status = state.status;
+        (matches!(status, HealthResultStatus::Live), status)
+    }
+
     /// THE PROCESS'S CORPUS, for the ops that read it directly — `knowledge.item`, `knowledge.spell`
     /// and `knowledge.search` name nothing a fold owns, so they are answered without one.
     #[must_use]
@@ -1423,7 +1497,6 @@ mod tests {
             sort: Vec::new(),
             window: None,
         })
-        .ok()
         .expect("loot.ledger is registered")
     }
 

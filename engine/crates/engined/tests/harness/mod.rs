@@ -510,6 +510,17 @@ pub fn perf_snapshot(id: i64) -> ClientMessage {
     })
 }
 
+/// One `sessionMarks.add` request, stamped with the instant the caller says the press happened
+/// (JOS-487, boundary verdict 6). The clock is the CALLER's on purpose — see the schema.
+#[must_use]
+pub fn session_mark(id: i64, at: i64) -> ClientMessage {
+    ClientMessage::SessionMarkAddRequest(protocol::generated::SessionMarkAddRequest {
+        id: RequestId(id),
+        op: protocol::generated::SessionMarkAddRequestOp::SessionMarksAdd,
+        params: protocol::generated::SessionMarkAddParams { at },
+    })
+}
+
 /// One `combat.snapshot` request (JOS-485). `opts` absent is the ordinary call — the app's own
 /// `combat.snapshot(Date.now(), opts ?? {})`, with the instant left to the engine.
 #[must_use]

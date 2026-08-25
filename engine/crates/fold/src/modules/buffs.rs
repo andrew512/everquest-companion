@@ -71,6 +71,7 @@ use crate::modules::buffs_shapes::{
     spell_key, EMOTE_MIN_OBSERVATIONS, EMOTE_WINDOW_MS, PERMANENT_ILLUSION, QUICK_BUFF, SELF_KEY,
 };
 use crate::modules::buffs_stats::SpellStats;
+use crate::modules::buffs_view::ActiveBuff;
 use crate::spell_facts::SpellFacts;
 use crate::EqModule;
 use eqlog::names::id_key;
@@ -458,9 +459,54 @@ impl BuffsModule {
         self.pets.broken_charm_key.as_deref() == Some(key)
     }
 
+    /// THE ACTIVE-BUFF PULL SEAM (JOS-487) — every live instance, oldest first, typed.
+    ///
+    /// The half of the timer-row projection that lives in this module, and the same seam
+    /// `build_state` reads so the bars and the Buffs tab can never disagree about what is running.
+    /// The ORDER is `started_ts` because that is the order `build_state` publishes them in, and the
+    /// projection's own sort runs on top of it — a stable sort over a stable input is what makes
+    /// two rows that compare equal keep one order between two serve passes.
+    #[must_use]
+    pub fn active_buffs(&self) -> Vec<ActiveBuff> {
+        self.active_instances()
+            .into_iter()
+            .map(|(_, b)| b)
+            .collect()
+    }
+
+    /// The same, WITH THE INSTANCE KEY each was filed under — `<spellKey>|<entityKey>`.
+    ///
+    /// THE KEY IS THE MODEL'S OWN IDENTITY and that is why it is handed out rather than rebuilt:
+    /// a view needs a stable row key across two serve passes, and deriving one from the projected
+    /// fields would be a second identity for a thing that already has one — two answers waiting to
+    /// disagree the first time a spell resolves to a different display name.
+    #[must_use]
+    pub fn active_instances(&self) -> Vec<(String, ActiveBuff)> {
+        let mut active: Vec<(String, ActiveBuff)> = self
+            .inst
+            .active
+            .iter()
+            .map(|(k, v)| (k.to_owned(), v.clone()))
+            .collect();
+        active.sort_by_key(|(_, a)| a.started_ts);
+        active
+    }
+
+    /// THE CHANGE SIGNAL, and it is honest about being COARSE. This module has no revision counter:
+    /// its state is mutated through a shared instance core with a dozen write paths, and threading a
+    /// counter through all of them is a change to the buff system the owner has paused. So it
+    /// reports the fold's own `seq`, which moves on EVERY event — it can never miss a change (the
+    /// property the view layer's correctness needs) and it over-reports (the property that costs).
+    /// What that costs is one re-cut of the buff and timer windows per serve beat on a busy tail,
+    /// over a row set of tens; it is named here rather than hidden, and the honest fix is the
+    /// counter, not a cache.
+    #[must_use]
+    pub fn revision(&self) -> i64 {
+        self.seq
+    }
+
     fn build_state(&self, stats: &SpellStats) -> Value {
-        let mut active: Vec<_> = self.inst.active.values().cloned().collect();
-        active.sort_by_key(|a| a.started_ts);
+        let active = self.active_buffs();
         json!({
             "active": active,
             "stats": stats.build_stats(),
@@ -667,6 +713,12 @@ impl EqModule for BuffsModule {
         self.flush_expiries(self.cur_seq, self.cur_ts);
     }
 
+    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
+    /// state to read it. See `EqModule::published_seq`.
+    fn published_seq(&self) -> Option<i64> {
+        Some(self.seq)
+    }
+
     fn snapshot(&self) -> Value {
         let core = self.core.borrow();
         json!({ "seq": self.seq, "state": self.build_state(&core.stats) })
@@ -677,6 +729,11 @@ impl EqModule for BuffsModule {
     }
 
     fn as_defines(&mut self) -> Option<&mut dyn crate::Defines> {
+        Some(self)
+    }
+
+    /// THE VIEW PULL SEAM (JOS-487). See `EqModule::as_buffs`.
+    fn as_buffs(&self) -> Option<&BuffsModule> {
         Some(self)
     }
 }

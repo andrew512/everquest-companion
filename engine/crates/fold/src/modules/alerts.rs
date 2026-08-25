@@ -212,6 +212,12 @@ impl EqModule for AlertsModule {
         self.pending.append(&mut self.rules.fire(ev));
     }
 
+    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
+    /// state to read it. See `EqModule::published_seq`.
+    fn published_seq(&self) -> Option<i64> {
+        Some(self.seq)
+    }
+
     fn snapshot(&self) -> Value {
         let mut state = json!({
             // The user's alert definitions, which arrive from the settings store (`alerts.define`)

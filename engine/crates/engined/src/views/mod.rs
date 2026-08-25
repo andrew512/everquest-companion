@@ -30,6 +30,39 @@
 //! up separately. A source may publish a field with no cell (`seq`, below) and a cell with no
 //! field; neither is an accident.
 //!
+//! ## WHERE RULING 4 STOPS — NUMBERS, NOT SENTENCES (JOS-487)
+//!
+//! `loot.ledger` renders its instant as `"Aug 19, 04:21 PM"` because that is what the pixel says,
+//! and six sources later that is still the rule — with two named exceptions that are the same
+//! exception read twice, and both of them are the APP's own decision rather than a relaxation of
+//! the owner's.
+//!
+//! **A value read against NOW is served as the instant, not as the phrasing.** A timer bar's
+//! remaining time changes every frame; serving it as text would mean a diff per visible row per
+//! serve beat and it would still be stale between two frames, so the renderer would recompute it
+//! anyway. What crosses is `startedTs`, `durationMs` and `mode` — the three numbers the reading is a
+//! pure function of. This is the same allowance `FoldProgress.pct` already has ("rounding is a
+//! display decision and belongs to whoever is drawing the bar"), and it takes nothing from ruling 4,
+//! which is about the renderer never FILTERING, SORTING or AGGREGATING the world — all three of
+//! which happen in this file.
+//!
+//! **A value whose wording is a SHARED derivation is served as its numbers.** The buff row's
+//! `~4m 30s`, the resist chip's `R 126 (110-144)`, the respawn row's provenance line: each is built
+//! by one function that the tab, the overlay and the hover card all read, so a wire carrying the
+//! finished string would be a second copy of a vocabulary that must not drift. `shared/conCard.ts`
+//! already made exactly this call for a payload that fetches nothing ("IT CARRIES NUMBERS, NOT
+//! SENTENCES"), and the engine keeps it rather than inventing a competing wording.
+//!
+//! Everything else is rendered here: a date, a name, a count, a decomposed bitfield
+//! (`kills.recent`'s three experience flags), a routing answer (`timers.rows`' `surface`), a
+//! comparison already made (`respawn.watches`' `overridden`).
+//!
+//! **AND A CELL IS A SCALAR.** `Cell` is string, number, boolean or null, so a list or an object is
+//! not one: a row's candidate spells become its joined `name` plus an `ambiguous` flag, a feed
+//! entry's `reward` block becomes prefixed cells, and `respawn.watches` drops the gap array with the
+//! reason stated in its own header. Nothing is stringified into a cell for a client to parse back
+//! out — that would be the munging the ruling forbids, wearing a scalar's clothes.
+//!
 //! ## THE SORT IS TOTAL, ALWAYS
 //!
 //! EQ log timestamps are SECOND-resolution, so a corpse that yields three items writes three lines
@@ -47,10 +80,16 @@
 //! What that costs in practice is not a guess: [`meter`] measures it and the ingest prints it
 //! (owner ruling 19).
 
+pub mod buffs;
 pub mod combat;
 pub mod diff;
+pub mod event_feed;
+pub mod kills;
 pub mod loot;
 pub mod meter;
+pub mod progression;
+pub mod respawn;
+pub mod timers;
 
 use std::time::Duration;
 
@@ -202,19 +241,30 @@ pub struct SourceDef {
 /// rather than a gap a reader infers — an unknown source is `notFound`, which is only answerable
 /// because there is a list to be absent from.
 ///
-/// THE TWO ARE DIFFERENT KINDS OF SOURCE and that is worth knowing before reading either.
-/// `loot.ledger` APPENDS: a row, once written, never changes, so a live window over it produces
-/// inserts and drops and never an `update`. `combat.live` EDITS: the same six keys sit in the
-/// window for a whole fight while their numbers move, which is what makes it the source that
+/// THEY ARE TWO DIFFERENT KINDS OF SOURCE and that is worth knowing before reading any of them.
+/// `loot.ledger`, `kills.recent`, `progression.recent` and `eventFeed.recent` APPEND: a row, once
+/// written, never changes, so a live window over one produces inserts and drops and never an
+/// `update`. `combat.live`, `timers.rows`, `buffs.active` and `respawn.watches` EDIT: the same keys
+/// sit in the window while their numbers move, which is what makes `combat.live` the source that
 /// exercises the diff protocol's third op against a real fold (JOS-485).
 ///
-/// `eventFeed.recent` IS DELIBERATELY NOT HERE, and it is named rather than forgotten. The fold's
-/// event feed admits NOTHING that did not arrive live through an injected item probe, an injected
-/// consider table, or an out-of-band alert push — none of which this engine carries yet
-/// (`fold/src/modules/event_feed.rs` argues all four sources). Its ring is therefore empty in
-/// every fold this build can perform, so a view over it could only ever serve an empty window and
-/// no test could tell a working one from a broken one. It arrives with the sources that feed it.
-pub const SOURCES: &[SourceDef] = &[loot::LEDGER, combat::LIVE];
+/// `eventFeed.recent` USED TO BE ABSENT FROM THIS LIST WITH AN ARGUMENT ATTACHED — its ring could
+/// only ever be empty, so "no test could tell a working one from a broken one". JOS-487 registered
+/// it having answered the objection rather than dropped it: the projection is a pure function of a
+/// ring and `views::event_feed` pins every cell against a hand-built one, so a broken cell fails a
+/// test whether or not a fold can produce the entry it mangled. And JOS-486 took the first clause
+/// away as well — the loot source's item probe is a real in-process lookup now, so a live loot line
+/// puts a row in that ring.
+pub const SOURCES: &[SourceDef] = &[
+    loot::LEDGER,
+    combat::LIVE,
+    buffs::ACTIVE,
+    timers::ROWS,
+    respawn::WATCHES,
+    kills::RECENT,
+    progression::RECENT,
+    event_feed::RECENT,
+];
 
 /// The source by that name, or `None`.
 #[must_use]
@@ -240,6 +290,7 @@ pub struct View {
 }
 
 /// Why a descriptor was refused, in the protocol's own terms.
+#[derive(Debug)]
 pub struct ViewError {
     /// The code the client branches on.
     pub code: ErrorCode,
@@ -477,14 +528,17 @@ mod tests {
 
     #[test]
     fn an_unregistered_source_is_not_found_and_the_answer_names_what_is_served() {
-        // `eventFeed.recent` is the source this build names and does not serve (see `SOURCES`), so
-        // it is the honest stand-in here — `combat.live` used to be, and it is registered now.
-        let error = validate(&descriptor("eventFeed.recent"))
+        // THE STAND-IN KEEPS MOVING, WHICH IS THE REGISTRY WORKING. `combat.live` was this test's
+        // unserved source until JOS-485 served it; `eventFeed.recent` was until JOS-487 did. What is
+        // left is `combat.encounters` — named in the cutover ledger, arriving with the drill-down —
+        // and the day that is served this line moves again rather than the assertion weakening.
+        let error = validate(&descriptor("combat.encounters"))
             .err()
             .expect("a refusal");
         assert!(matches!(error.code, ErrorCode::NotFound));
         assert!(error.message.contains("loot.ledger"), "{}", error.message);
         assert!(error.message.contains("combat.live"), "{}", error.message);
+        assert!(error.message.contains("timers.rows"), "{}", error.message);
         // …and `loot` — the MODULE id — is not a source either. The two vocabularies are separate
         // on purpose, and confusing them has to be told rather than guessed at.
         assert!(matches!(
@@ -495,7 +549,7 @@ mod tests {
 
     #[test]
     fn a_descriptor_with_nothing_in_it_takes_the_sources_own_order_and_window() {
-        let view = validate(&descriptor("loot.ledger")).ok().expect("a view");
+        let view = validate(&descriptor("loot.ledger")).expect("a view");
         let expected = source("loot.ledger").expect("the source");
         assert_eq!(view.offset, 0);
         assert_eq!(view.limit, usize::try_from(expected.default_limit).unwrap());
@@ -508,7 +562,7 @@ mod tests {
     fn a_stated_sort_keeps_its_own_terms_and_still_ends_in_the_tiebreak() {
         let mut d = descriptor("loot.ledger");
         d.sort = vec![term("item", "asc")];
-        let view = validate(&d).ok().expect("a view");
+        let view = validate(&d).expect("a view");
         assert_eq!(view.sort[0], ("item", Order::Asc));
         assert_eq!(view.sort.last(), Some(&("seq", Order::Asc)));
     }
@@ -580,7 +634,7 @@ mod tests {
 
         // Newest first, with the tiebreak resolving the two rows that share an instant — the
         // LATER-folded one wins, which is the reverse the flat ledger draws.
-        let view = validate(&descriptor("loot.ledger")).ok().expect("a view");
+        let view = validate(&descriptor("loot.ledger")).expect("a view");
         let (window, total) = cut(&view, &rows);
         assert_eq!(keys(&window), ["loot:3", "loot:2", "loot:1", "loot:0"]);
         assert_eq!(total, 4);
@@ -592,7 +646,7 @@ mod tests {
             "zone".to_owned(),
             Cell::text("Nagafen's Lair"),
         )])));
-        let view = validate(&d).ok().expect("a view");
+        let view = validate(&d).expect("a view");
         let (window, total) = cut(&view, &rows);
         assert_eq!(keys(&window), ["loot:2", "loot:1"]);
         assert_eq!(total, 2);
@@ -603,7 +657,7 @@ mod tests {
             offset: 1,
             limit: 2,
         });
-        let view = validate(&d).ok().expect("a view");
+        let view = validate(&d).expect("a view");
         let (window, total) = cut(&view, &rows);
         assert_eq!(keys(&window), ["loot:2", "loot:1"]);
         assert_eq!(total, 4, "total ignores the window");
@@ -617,7 +671,7 @@ mod tests {
         ];
         let mut d = descriptor("loot.ledger");
         d.sort = vec![term("zone", "asc")];
-        let view = validate(&d).ok().expect("a view");
+        let view = validate(&d).expect("a view");
         assert_eq!(keys(&cut(&view, &rows).0), ["loot:1", "loot:0"]);
 
         // …and an explicit null filters FOR the rows that have none.
@@ -626,7 +680,7 @@ mod tests {
             "zone".to_owned(),
             Cell::null(),
         )])));
-        let view = validate(&d).ok().expect("a view");
+        let view = validate(&d).expect("a view");
         assert_eq!(keys(&cut(&view, &rows).0), ["loot:1"]);
     }
 }

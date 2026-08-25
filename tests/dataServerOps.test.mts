@@ -49,6 +49,7 @@ const EVERY_OP: RequestOp[] = [
   'respawn.define',
   'combo.define',
   'roster.define',
+  'sessionMarks.add',
   'combat.snapshot',
   'combat.searchFights',
   'knowledge.item',
@@ -92,6 +93,10 @@ test('EVERY GUARD IS DISCRIMINATING — no two ops accept each other’s result'
     'respawn.define': { applied: true },
     'combo.define': { applied: true, count: 2 },
     'roster.define': { applied: true, count: 0 },
+    // THE REFUSED SHAPE, not the accepted one (JOS-487). Both are legal, and the refusal is the one
+    // worth putting in the matrix: it is the answer a caller has to branch on, and it is the one an
+    // over-eager guard reading `accepted` as a truthiness test would silently drop.
+    'sessionMarks.add': { accepted: false, status: 'folding' },
     // THE COMBAT SURFACE (JOS-485). The snapshot's `now` is deliberately present in this shape and
     // deliberately NOT what the guard reads — the same trap `perf.snapshot`'s `status` sprang — and
     // the search result carries an EMPTY `hits` beside a non-zero `corpus`, because that is the

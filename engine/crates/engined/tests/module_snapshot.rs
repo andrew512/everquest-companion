@@ -180,9 +180,15 @@ fn ask(client: &mut Client, id: i64, module: &str) -> Answer {
 /// nothing else.
 ///
 /// A REPLY THIS HELPER IS NOT WAITING FOR IS FINE — the attach's own reply arrives whenever the
-/// engine gets to it, and correlation by id is the protocol's whole answer to that. Progress frames
-/// and the landing reset are connection-wide and arrive on their own schedule, which is exactly what
-/// lets these helpers be called mid-fold. A HELLO or a DIFF here would be a real surprise.
+/// engine gets to it, and correlation by id is the protocol's whole answer to that. Progress frames,
+/// the landing reset and — since JOS-487 — the module dirty bits are connection-wide and arrive on
+/// their own schedule, which is exactly what lets these helpers be called mid-fold. A HELLO or a DIFF
+/// here would be a real surprise.
+///
+/// THE DIRTY BIT IS THE MOST AT-HOME OF THEM IN THIS FILE, and it is worth saying why it is skipped
+/// rather than asserted: it is the push that tells a client the very state these tests are PULLING,
+/// so a suite about `module.snapshot` will see one of these for every module it asks about. What it
+/// says is proven in `module_changed.rs`; here it is traffic.
 fn skip(message: &EngineMessage) {
     assert!(
         matches!(
@@ -191,6 +197,7 @@ fn skip(message: &EngineMessage) {
                 | EngineMessage::ErrorReply(_)
                 | EngineMessage::EpochMessage(_)
                 | EngineMessage::ResetMessage(_)
+                | EngineMessage::ModuleChangedMessage(_)
         ),
         "nothing else belongs on this stream: {message:?}"
     );
