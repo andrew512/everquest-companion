@@ -259,15 +259,21 @@ async function openConnection(mine: number, info: ReadyEngine, client: EngineCli
   // THE CURSORS (JOS-493) — the engine saying a module's published state moved, forwarded to every
   // window that folds one. Two guards, and each answers a different question:
   //
-  //   * `gen !== mine` — the frame belongs to a world somebody has since replaced. Same rule every
-  //     `await` in this file is followed by, applied to a callback that outlives its turn.
+  //   * IS THIS STILL THE CONNECTION THIS APP IS USING. A subscription is CONNECTION-scoped, not
+  //     turn-scoped, and that distinction cost a whole e2e round to learn: the first draft asked
+  //     `gen !== mine` — the rule every `await` in this file is followed by — and `gen` advances on
+  //     every WORLD REBUILD (`onWorldRebuilt`), which happens the moment this process's own fold
+  //     lands. So the listener went permanently silent one second into every launch and the live
+  //     fold stopped reaching every renderer. MEASURED: a loot line played into the log never
+  //     reached the ledger, and a watched respawn never drew a clock. Identity is the right
+  //     question, and `live` is where the answer is.
   //   * `engineServeReadiness().ok` — the READ path is not taking this engine's answers right now
   //     (still folding, on another log, connection not ready). A window's held snapshot therefore
   //     came from THIS PROCESS's fold, and handing it a cursor from the other world is the very
-  //     mixing this ticket exists to end. The two questions are asked in the one place that owns
-  //     each, rather than guessed at here.
+  //     mixing this ticket exists to end. That is the question a turn number was reaching for, and
+  //     it is asked here of the one function that owns it.
   client.onModuleChanged((changed) => {
-    if (gen !== mine) return
+    if (live?.client !== client) return
     if (!engineServeReadiness().ok) return
     pushModuleChanged(changed.module, changed.seq)
   })

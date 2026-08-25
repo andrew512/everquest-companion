@@ -180,11 +180,17 @@ test('nothing is pushed when this launch was not asked to serve', () => {
   }
 })
 
-test('a cursor from a superseded turn, or from an engine that is not serving reads, is not forwarded', () => {
+test('a cursor from a replaced connection, or from an engine that is not serving reads, is not forwarded', () => {
   const host = code('../src/main/dataServer/engineClientHost.ts')
   const listener = /client\.onModuleChanged\(\(changed\) => \{([\s\S]*?)\n {2}\}\)/.exec(host)
   assert.ok(listener, 'the engine client no longer forwards moduleChanged')
-  assert.match(listener[1], /if \(gen !== mine\) return/, 'a frame from a replaced world is forwarded')
+  // A SUBSCRIPTION IS CONNECTION-SCOPED, NOT TURN-SCOPED, and this pin is the scar: the first draft
+  // guarded with `gen !== mine`, the rule every `await` in that file is followed by. `gen` advances
+  // on every world rebuild, so the listener went permanently silent the moment this process's own
+  // fold landed — a loot line played into the log never reached the ledger and a watched respawn
+  // never drew a clock. Identity, not generation.
+  assert.match(listener[1], /if \(live\?\.client !== client\) return/, 'the listener is turn-scoped again')
+  assert.doesNotMatch(listener[1], /gen !== mine/, 'the generation guard came back — see above')
   assert.match(
     listener[1],
     /if \(!engineServeReadiness\(\)\.ok\) return/,
