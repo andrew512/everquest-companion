@@ -13,12 +13,12 @@
 //! argument `protocol::transport::memory` makes one layer down.
 
 use protocol::generated::{
-    AlertsDefineRequestOp, BuffTrustDefineRequestOp, ClientMessage, ComboDefineRequestOp, DefineAck,
-    EchoRequestOp, EchoResult, EngineMessage, ErrorCode, ErrorReply, ErrorReplyKind, HelloOp,
-    ModuleSnapshotRequestOp, ModuleSnapshotResult, ProtocolError, Reply, ReplyKind, ReplyResult,
-    RequestId, ResetMessage, ResetMessageKind, RespawnDefineRequestOp, RosterDefineRequestOp,
-    SessionAttachRequestOp, SessionHealthRequestOp, SessionProgressRequestOp, SubscribeAck,
-    ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
+    AlertsDefineRequestOp, BuffTrustDefineRequestOp, ClientMessage, ComboDefineRequestOp,
+    DefineAck, EchoRequestOp, EchoResult, EngineMessage, ErrorCode, ErrorReply, ErrorReplyKind,
+    HelloOp, ModuleSnapshotRequestOp, ModuleSnapshotResult, ProtocolError, Reply, ReplyKind,
+    ReplyResult, RequestId, ResetMessage, ResetMessageKind, RespawnDefineRequestOp,
+    RosterDefineRequestOp, SessionAttachRequestOp, SessionHealthRequestOp,
+    SessionProgressRequestOp, SubscribeAck, ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
 };
 
 use crate::world::{ListenerId, SnapshotAnswer, World};

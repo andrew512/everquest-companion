@@ -50,7 +50,14 @@ never the process.
 | `session.progress` | `SubscribeAck` | Acknowledges the connection-wide progress channel. Its frames are `EpochMessage { reason: "progress", progress: { pct, events } }` — the schema says progress is not a fourth stream kind, it is this. Connection-wide, so an attach on *another* connection is heard here too. |
 | `view.subscribe` | `SubscribeAck`, then a `reset`, then diffs | **The heart of the protocol** (JOS-480). The descriptor is validated against the SOURCE REGISTRY — an unknown source is `notFound`, a term over a field the source does not carry is `badParams` — then acknowledged, then opened with a reset. The opening reset is EMPTY even over a live fold, because the rows live on the ingest thread; the fold answers with the full window at its next boundary. See "Views". |
 | `view.unsubscribe` | `SubscribeAck { subscribed: false }` | `notFound` for a subscription this connection does not hold. Subscriptions are keyed by (connection, id), so one client can never close another's stream. |
+| `alerts.define` · `buffTrust.define` · `respawn.define` · `combo.define` · `roster.define` | `DefineAck` | **APP KNOWLEDGE IN** (JOS-482, boundary verdict 3). Each is an idempotent FULL-SET REPLACE of one family. The world records the push and hands it to the live fold, so `applied: true` means the RUNNING fold has the set — not that a queue took it. A push made before any attach is HELD and applied at the next attach's construction. `count` is the entries taken for a list payload and absent for the two families that push one object. See "Defines and fires". |
 | anything else | `ErrorReply { unknownOp }` | The connection survives — a refused request is not a broken conversation. |
+
+And one message the engine sends that answers no request at all:
+
+| Frame | When | Notes |
+| --- | --- | --- |
+| `FireMessage` | an alert matched a LIVE event | **ALERT FIRES OUT** (owner ruling 22). Connection-wide, so it carries no `id` — the epoch-message precedent. It carries no `epoch` either, and that is the difference from an epoch message rather than an oversight: every other stream frame describes WINDOW STATE a client reconciles across a generation, while a fire is a thing that happened once. Fully resolved server-side: `sound` is the `<packId>/<soundId>` key the app plays. |
 
 A known op with unreadable params is `badParams`. A frame that is not a message at all, or one with
 no `id` to correlate a refusal with, **closes the connection** — the schema's own rule is that a
@@ -221,14 +228,15 @@ thread, and exactly what `Send` refuses). The single-threadedness is stated by t
 promised by a comment.
 
 `src/foldsink.rs`'s header argues every `ClusterDeps` field. Five are committed data read off the
-catalog; three are **app knowledge and empty on purpose** — `self_name`, `respawn_prefs`, and the
-app-supplied halves of alerts / buff trust / combo corrections / roster edits. Those arrive as
-`*.define` commands when the app connects (boundary verdict 3: the engine never reads a settings
-file). Until then the engine is constructed exactly as `tests/bench/foldArm.mts construct()` builds
-the bench world, which is not a shortcut: that is the world the six-slice equivalence oracle recorded
-its goldens under, so an engine matching anything else would be provably right about a world nobody
-has measured. The `character` ref is the one exception and is *not* pushed — `{name, server,
-logPath}` comes off the log's own file name, the same fact the parser derives its character from.
+catalog; the rest are **app knowledge, and empty AT CONSTRUCTION** — and since JOS-482 that is a
+timing rather than a gap: the `*.define` commands land immediately after this factory returns, from
+the world's held set, before the first byte is folded (see "Defines and fires"). So a world the app
+has spoken to differs from the bench world by exactly those five pushes and by nothing else, which
+is what keeps the six-slice oracle looking at the world it recorded its goldens under. `self_name`
+is the one that has NOT moved: `roster.setSelfName` is `session.ts`'s line and is not one of the
+five families the cutover ledger names, so it stays `None` here exactly as the bench leaves it. The
+`character` ref is not app knowledge at all — `{name, server, logPath}` comes off the log's own file
+name, the same fact the parser derives its character from.
 
 **The construction clock is the attach instant, and that is production-faithful.** `respawn` seeds
 an ordering clock from `WorldOpts.constructionNowMs`; the golden recorder pins it to the slice's last
@@ -318,6 +326,202 @@ frame reached the outbox — and diff sizes per subscription, in ops and in the 
 bytes. A stderr line at a 10 s cadence, forced once when the fold lands. The `perf.budgets` surface is
 a later ticket; what exists now is the measurement, so that surface has numbers to serve rather than a
 place to put numbers nobody took.
+
+## Defines and fires
+
+The two directions JOS-482 opens, and they are the same boundary read twice. **App knowledge flows
+in**: the five preferences the fold used to read out of the settings store — alert definitions, the
+buff-trust allowlist, the respawn watch list, class-combo corrections and group-roster edits — are
+pushed as `*.define` commands, and the engine never reads a settings file (boundary verdict 3; the
+store stays persistence truth app-side). **Alert fires flow out**: the engine evaluates those
+definitions against LIVE events and says so on the stream (owner ruling 22), which reduces the
+app-side alert system to receive-fire-make-sound.
+
+**A DEFINE IS AN IDEMPOTENT FULL-SET REPLACE.** The payload is the whole of what that family knows,
+never a delta, and the world keeps ONE entry per family — so pushing A and then B leaves exactly
+what pushing B alone would have left, an order of arrival cannot matter, a crash-respawn is a replay
+of the latest push, and the input stays hash-friendly for ruling 18's eventual cache key.
+
+**THE HELD SET IS APPLIED AT CONSTRUCTION, and that timing is the whole of why it is held.** The app
+pushes all five the moment it connects and attaches afterwards, so the common case is a define made
+at a world with no fold at all. `World::define` records it under the lock; `ingest::run` reads
+`World::held_defines()` and applies every one to the freshly built sink BEFORE the first byte is
+folded. All five change what a fold PRODUCES, so a world that took them after the historical scan
+would have folded the log under one set of rules and served it under another — and `respawn`'s watch
+list is the sharpest case, because it is the ONLY admission rule that puts a mob on a clock.
+
+**A DEFINE ARRIVING MID-FOLD IS ANSWERED MID-FOLD**, through a channel serviced at the boundaries
+the ingest already reaches (`ingest::DefineAsk`, the shape `SnapshotAsk` is with one direction
+reversed). The writer posts and WAITS, which is what makes `applied: true` a statement that the live
+fold has the set rather than a receipt for a queue: a client can push a rule and immediately reason
+about the world it made. The wait is bounded by the same patience a snapshot has, and the world's own
+record is already written by then — so a timeout costs the current generation's copy and nothing
+more, because the next attach still applies it.
+
+**THE MODULES ANSWER THROUGH ONE SEAM.** `fold::Defines` is one trait with one method, reached
+through one defaulted `EqModule` method — exactly the shape `as_roster` and `as_loot` are, with the
+mutability a define is. Five families, five implementations, and the family a module claims is the
+op's own prefix so the wire name and the claim are one string. What each does with the push is its
+TS twin's setter, argued at the implementation: `alerts.setDefs`, `buffs.setTrust` (which lands on
+the SHARED cast anchors, so the buff bar and the crowd-control bar cannot end up with two ideas of
+whose spell landed), `respawn.setPrefs` (which bumps the revision that IS its published seq — JOS-87,
+because a watch advances no log seq), `combo.setCorrection` and `roster.setEdit`.
+
+**FIRES GO OUT IMMEDIATELY, NOT AT THE VIEW CADENCE.** Everything else the tail loop publishes is
+STATE, which coalesces by definition — the newest window is the whole answer. A fire is not state:
+two charm breaks are two sounds, and folding them would silence one. So every fire a drain produced
+is broadcast in the order the fold made them, and the ~10 Hz cadence never touches them.
+
+**WHAT THE EVALUATOR PORTS, AND WHAT IT DELIBERATELY DOES NOT.** `fold::modules::alerts_rules`
+carries the half that decides whether a line makes a sound: `event` triggers with their `where`
+matchers, `raw` triggers, the `any`/`all` composites, the `enabled` flag, the per-alert and
+per-TARGET cooldown clocks, the JOS-259/276 rank fold on every key that names a spell, and the
+JOS-84 candidate widening. It does NOT carry the JOS-216 early-warning offset — a def with one is
+compiled OUT rather than fired at the wrong instant, because a missing sound is a gap somebody can
+read in a comment and a sound made a minute early is a wrong answer wearing a right answer's
+clothes — nor `app` triggers (renderer-evaluated over there too), nor capture groups and the
+`{target}` token, which decide what a firing SAYS and arrive when speech has a home on the wire.
+One honest divergence is written down in that file's header: an alert's `/regex/` was authored
+against JavaScript's engine, and a pattern Rust's cannot compile degrades exactly as the TS handles
+a pattern V8 cannot — but the set of patterns that fall into it is bigger on this side.
+
+**THE APP LOGS FIRES AND DOES NOT PLAY THEM YET**, and that is this ticket's decision rather than an
+oversight: the app's own `AlertsModule` is still firing, and a second sound would not merely annoy —
+it would corrupt the owner's hands-on regression evidence, which is what this program is being judged
+on. `engineClientHost.ts noteFire` writes one dev-log line per fire and counts them. The audio
+cutover is the alerts-surface ticket, which deletes the app-side evaluator in the same change that
+gives that line a speaker, so the two can never both be live.
+
+## Watching app knowledge land, and an alert fire, by hand
+
+A **real session**, same shape as the ones below: a release build, twenty copies of the committed
+fixture, plus a zone line and — deliberately — **a loot line IN HISTORY that the pushed rule
+matches**. That last one is the point: a fold that fired on replay would say so before the tail ever
+ran, so the silence through the scan is an assertion rather than an absence nobody arranged.
+
+```js
+// scratch/drive482.mjs — node scratch/drive482.mjs <repo root> [repeats]
+// (staging, spawn and frame printing are drive.mjs's, verbatim; the tail and `talk` differ)
+fs.appendFileSync(log, [
+  "[Wed Aug 19 16:00:00 2026] You have entered Nagafen's Lair.",
+  '[Wed Aug 19 16:14:07 2026] You have looted a Cloak of Flames from a fire giant warlord corpse.',
+  ''
+].join('\n'))
+
+// THE DEF, exactly as the settings store holds one — extras and all.
+const DEF = {
+  id: 'a1',
+  name: 'Cloak of Flames',
+  enabled: true,
+  sound: { packId: 'classic', soundId: 'bell' },
+  trigger: { type: 'event', kind: 'loot', where: { item: 'Cloak of Flames' } },
+  volume: 0.8,
+  audio: 'sound',
+  note: 'authored by hand for the JOS-482 transcript'
+}
+
+function talk(port) {
+  const s = net.connect({ host: '127.0.0.1', port })
+  let buf = ''
+  let appended = false
+  const send = (o) => { console.log('-> ' + JSON.stringify(o)); s.write(JSON.stringify(o) + '\n') }
+  s.on('connect', () => {
+    send({ op: 'hello', token: TOKEN, protocolVersion: 1 })
+    // ALL FIVE, BEFORE THE ATTACH — which is what engineClientHost does on connect.
+    send({ id: 1, op: 'alerts.define', params: { defs: [DEF] } })
+    send({ id: 2, op: 'buffTrust.define', params: { trust: { externals: ['Dranix'] } } })
+    send({ id: 3, op: 'respawn.define', params: { prefs: { watches: [{ key: 'a fire giant warlord', display: 'a fire giant warlord', customSec: 1080 }] } } })
+    send({ id: 4, op: 'combo.define', params: { corrections: [{ startTs: 1787180400000, endTs: null, classes: ['ENC', 'ROG'], setAt: 1787181000000 }] } })
+    send({ id: 5, op: 'roster.define', params: { edits: [{ key: 'rowel', name: 'Rowel', action: 'add', setAt: 1787181000000 }] } })
+    send({ id: 6, op: 'session.attach', params: { logPath: log } })
+  })
+  s.on('data', (d) => {
+    buf += d.toString()
+    const parts = buf.split('\n'); buf = parts.pop()
+    for (const line of parts.filter(Boolean)) {
+      console.log('<- ' + (line.length > 260 ? line.slice(0, 260) + ' …' : line))
+      const msg = JSON.parse(line)
+      if (!appended && msg.kind === 'epoch' && msg.reason === 'progress' && msg.progress.pct === 100) {
+        appended = true
+        setTimeout(() => {
+          send({ id: 7, op: 'module.snapshot', params: { module: 'alerts' } })
+          console.log('# the game writes a line the rule matches')
+          fs.appendFileSync(log, '[Wed Aug 19 16:16:44 2026] You have looted a Cloak of Flames from a fire giant warlord corpse.\n')
+        }, 300)
+      }
+      if (msg.kind === 'fire') {
+        setTimeout(() => {
+          send({ id: 8, op: 'module.snapshot', params: { module: 'respawn' } })
+          setTimeout(() => { s.end(); engine.stdin.end(); fs.rmSync(dir, { recursive: true }) }, 400)
+        }, 200)
+      }
+    }
+  })
+}
+```
+
+**The only edit to the frames below is the `…`**: the `alerts` snapshot is cut at column 260,
+because a module's state is as long as the module says it is and this is a README. Every other byte
+is what came off the socket.
+
+```console
+$ cargo build --release -p engined
+$ node scratch/drive482.mjs C:/Users/jmoye/everquest-companion 20
+# staged C:\Users\…\Temp\engined-482-E3FlHx\eqlog_Primitive_freeport.txt (9185395 bytes)
+EQC-ENGINE PORT=64051 PROTOCOL=1
+-> {"op":"hello","token":"0f7d…7089","protocolVersion":1}
+-> {"id":1,"op":"alerts.define","params":{"defs":[{"id":"a1","name":"Cloak of Flames","enabled":true,"sound":{"packId":"classic","soundId":"bell"},"trigger":{"type":"event","kind":"loot","where":{"item":"Cloak of Flames"}},"volume":0.8,"audio":"sound","note":"authored by hand for the JOS-482 transcript"}]}}
+-> {"id":2,"op":"buffTrust.define","params":{"trust":{"externals":["Dranix"]}}}
+-> {"id":3,"op":"respawn.define","params":{"prefs":{"watches":[{"key":"a fire giant warlord","display":"a fire giant warlord","customSec":1080}]}}}
+-> {"id":4,"op":"combo.define","params":{"corrections":[{"startTs":1787180400000,"endTs":null,"classes":["ENC","ROG"],"setAt":1787181000000}]}}
+-> {"id":5,"op":"roster.define","params":{"edits":[{"key":"rowel","name":"Rowel","action":"add","setAt":1787181000000}]}}
+-> {"id":6,"op":"session.attach","params":{"logPath":"C:\\Users\\…\\eqlog_Primitive_freeport.txt"}}
+<- {"engineVersion":"0.1.0","kind":"hello","ok":true,"protocolVersion":1}
+<- {"id":1,"kind":"reply","ok":true,"result":{"applied":true,"count":1}}
+<- {"id":2,"kind":"reply","ok":true,"result":{"applied":true}}
+<- {"id":3,"kind":"reply","ok":true,"result":{"applied":true}}
+<- {"id":4,"kind":"reply","ok":true,"result":{"applied":true,"count":1}}
+<- {"id":5,"kind":"reply","ok":true,"result":{"applied":true,"count":1}}
+<- {"epoch":2,"kind":"epoch","reason":"attach"}
+<- {"id":6,"kind":"reply","ok":true,"result":{"accepted":true,"epoch":2}}
+[eqc-engine] ingest: spell db ready in 398 ms
+<- {"epoch":2,"kind":"epoch","progress":{"events":15932,"pct":11.415208600174516},"reason":"progress"}
+<- {"epoch":2,"kind":"epoch","progress":{"events":79788,"pct":57.078296578426944},"reason":"progress"}
+[eqc-engine] fold landed: 139862 events, mark 9185395 of C:\Users\…\eqlog_Primitive_freeport.txt, now live
+<- {"epoch":2,"kind":"epoch","progress":{"events":139862,"pct":100.0},"reason":"progress"}
+<- {"epoch":2,"kind":"epoch","progress":{"events":139862,"pct":100.0},"reason":"progress"}
+-> {"id":7,"op":"module.snapshot","params":{"module":"alerts"}}
+# the game writes a line the rule matches
+<- {"id":7,"kind":"reply","ok":true,"result":{"module":"alerts","seq":139861,"state":{"defs":[{"audio":"sound","enabled":true,"id":"a1","name":"Cloak of Flames","note":"authored by hand for the JOS-482 transcript","sound":{"packId":"classic","soundId":"bell"},"tr …
+<- {"epoch":2,"kind":"epoch","progress":{"events":139863,"pct":100.0},"reason":"progress"}
+<- {"at":1787181404000,"kind":"fire","message":"[Wed Aug 19 16:16:44 2026] You have looted a Cloak of Flames from a fire giant warlord corpse.","rule":"Cloak of Flames","sound":"classic/bell"}
+-> {"id":8,"op":"module.snapshot","params":{"module":"respawn"}}
+<- {"id":8,"kind":"reply","ok":true,"result":{"module":"respawn","seq":4,"state":{"prefs":{"watches":[{"customSec":1080,"display":"a fire giant warlord","key":"a fire giant warlord"}]},"recent":[],"rows":[],"v":4,"zone":"Nagafen's Lair"}}}
+```
+
+Seven things in that transcript are this ticket:
+
+1. **Five pushes, five acks, before a byte is folded.** The world had no ingest when any of them
+   arrived; every one is HELD and applied when the attach builds its fold.
+2. **`count` is present exactly where there is something to count.** `alerts`, `combo` and `roster`
+   push lists and answer `1`; `buffTrust` and `respawn` push one object each and answer without it —
+   absent because the payload is not a list, never because nothing was taken.
+3. **The definition came back with its extras intact.** `audio`, `note` and `volume` are fields no
+   evaluator reads, and they are in the module's published `defs` because that list is the STORE's
+   contract. A typed wire shape would have dropped them and rewritten the user's alert in transit.
+4. **The historical scan matched the rule and said NOTHING.** The staged log carries the very same
+   loot line at 16:14:07; 139,862 events folded past it in silence, because firing is live-only by
+   the boundary law — "replay must never make a sound", enforced where the TypeScript enforces it.
+5. **The appended line fired once, immediately.** No cadence, no coalescing: the frame is on the
+   wire in the same turn of the tail loop that folded the event.
+6. **The fire is fully resolved.** `"sound":"classic/bell"` is the key the renderer's sound cache is
+   already keyed by, `"rule"` is the label the user gave the alert, `"at"` is the LOG's clock
+   (16:16:44 in the log's own zone), and `"message"` is the line that matched. Nothing in it is a
+   reference the app would have to look a definition back up for — and it carries neither an `id`
+   nor an `epoch`, because it belongs to no subscription and there is no state to reconcile.
+7. **The respawn watch is on the wire too**, as that module's own published `prefs` — which is the
+   app-visible proof a push reached a module that had no other way to say so, and `seq: 4` is the
+   revision it bumped rather than a log seq (JOS-87).
 
 ## Watching a view serve, by hand
 
@@ -811,6 +1015,23 @@ so a live window over it produces inserts and drops. The op is proven exhaustive
 newest-wins within a batch — against the ported client applier, with every case asserting that the
 client would refuse nothing.
 
+**And the defines are proven over the socket** (`tests/defines.rs`), against a real fold: a push made
+BEFORE any attach is held and the fold is built holding it; a full-set replace forgets the previous
+set completely and the empty set is a set (the ack counts zero, which is how a user who deleted their
+last alert can tell it worked); a push made while the tail is LIVE reaches the fold that is running,
+so the very next matching line sounds; and a def whose match is already in the staged log's HISTORY
+fires nothing through the scan and fires exactly once when the line is appended — with `rule`,
+`sound`, `message` and the log's own `at` asserted on the frame.
+
+**The per-family effects are proven where the event can be handed over exactly** (`fold`'s own
+suite, one worked example per family). Two of the five are read off module state a socket can also
+see — `alerts`' published `defs` and `respawn`'s `prefs` — and the other three are behavioural:
+a combo correction locks the span it names and labels it `user`; a roster edit adds a name the log
+never named at the top provenance rung and removes one it did; and buff trust admits an external
+caster's anchor, with the SAME two lines opening nothing under the shipped default. That last one is
+the reason the split exists: proving it over a socket would rest the claim on which spells share an
+emote in the committed catalog, which is a fact about the corpus rather than about the push.
+
 ## Reading order
 
 * `src/main.rs` — the spawn contract, stated in full, and the accept loop.
@@ -829,6 +1050,9 @@ client would refuse nothing.
   FIELD is not a CELL. `views/diff.rs` is the engine half of the client's `applyDiff` and is written
   against it; `views/loot.rs` argues every cell of the first product source against the renderer that
   draws it; `views/meter.rs` is ruling 19's measurement.
+* `src/foldsink.rs`'s `define`/`take_fires` and `fold`'s `Defines` trait — **app knowledge in,
+  alert fires out.** The seam is one trait method each way; the alert matcher itself is
+  `fold::modules::alerts_rules`, whose header names what it ports and what it deliberately does not.
 * `src/ops.rs` — the op table, and the argument for why the inbound type is `serde_json::Value`
   rather than `ClientMessage`.
 * `src/conn.rs` — one connection from hello to close, and the two-thread/one-outbox shape.

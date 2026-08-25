@@ -39,7 +39,8 @@ use std::time::Instant;
 const ZONE: &str = "[Wed Aug 19 16:00:00 2026] You have entered Nagafen's Lair.\n";
 
 /// A death the respawn module counts, and a loot line an alert can be written against.
-const A_DEATH: &str = "[Wed Aug 19 16:05:00 2026] a fire giant warlord has been slain by Primitive!\n";
+const A_DEATH: &str =
+    "[Wed Aug 19 16:05:00 2026] a fire giant warlord has been slain by Primitive!\n";
 const A_LOOT: &str =
     "[Wed Aug 19 16:14:07 2026] You have looted a Cloak of Flames from a fire giant warlord corpse.\n";
 
@@ -236,7 +237,8 @@ fn a_define_pushed_before_an_attach_is_held_and_applied_at_construction() {
 
     let state = conn.state(3, "alerts");
     assert_eq!(
-        state["defs"], json!(defs),
+        state["defs"],
+        json!(defs),
         "the fold was built holding the set the app pushed before it existed"
     );
 }
@@ -297,7 +299,10 @@ fn each_family_changes_the_module_the_typescript_seam_changes() {
     conn.send(&buff_trust_define(2, &["Dranix"]));
     assert_eq!(ack_count(&conn.reply(2)), None, "one object, no count");
 
-    conn.send(&respawn_define(3, &[("a fire giant warlord", "a fire giant warlord")]));
+    conn.send(&respawn_define(
+        3,
+        &[("a fire giant warlord", "a fire giant warlord")],
+    ));
     assert_eq!(ack_count(&conn.reply(3)), None);
 
     // A correction over the whole session, naming an enchanter loadout. `startTs` is after the
@@ -333,7 +338,9 @@ fn each_family_changes_the_module_the_typescript_seam_changes() {
     );
     let recent = respawn["recent"].as_array().expect("a recent list");
     assert!(
-        recent.iter().any(|c| c["key"] == "a fire giant warlord" && c["watched"] == true),
+        recent
+            .iter()
+            .any(|c| c["key"] == "a fire giant warlord" && c["watched"] == true),
         "the watch admits the mob the log already killed: {respawn}"
     );
 
@@ -341,7 +348,9 @@ fn each_family_changes_the_module_the_typescript_seam_changes() {
     let roster = conn.state(12, "roster");
     let members = roster["members"].as_array().expect("members");
     assert!(
-        members.iter().any(|m| m["key"] == "rowel" && m["source"] == "user"),
+        members
+            .iter()
+            .any(|m| m["key"] == "rowel" && m["source"] == "user"),
         "the user's add is a member: {roster}"
     );
     assert!(
@@ -420,7 +429,8 @@ fn an_alert_fires_on_a_live_line_and_never_on_the_historical_scan() {
         "the KEY the app plays, joined server-side — the app never re-reads the def"
     );
     assert_eq!(
-        fire.message, A_LATER_LOOT.trim_end(),
+        fire.message,
+        A_LATER_LOOT.trim_end(),
         "the text that matched is the log line itself"
     );
     assert!(

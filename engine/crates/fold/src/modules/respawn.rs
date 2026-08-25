@@ -206,7 +206,12 @@ impl RespawnPrefs {
         let obj = payload.as_object()?;
         let mut watches: Vec<RespawnWatchPref> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for w in obj.get("watches").and_then(Value::as_array).into_iter().flatten() {
+        for w in obj
+            .get("watches")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let key: String = w
                 .get("key")
                 .and_then(Value::as_str)
@@ -235,7 +240,11 @@ impl RespawnPrefs {
                 .map(|s| s as i64)
                 .filter(|s| (MIN_SEC..=MAX_SEC).contains(s));
             watches.push(RespawnWatchPref {
-                display: if display.is_empty() { key.clone() } else { display },
+                display: if display.is_empty() {
+                    key.clone()
+                } else {
+                    display
+                },
                 key,
                 custom_sec,
             });

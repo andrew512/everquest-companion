@@ -631,15 +631,17 @@ pub fn roster_define(id: i64, edits: &[(&str, &str, &str, i64)]) -> ClientMessag
         params: protocol::generated::RosterDefineParams {
             edits: edits
                 .iter()
-                .map(|(key, name, action, set_at)| protocol::generated::RosterEdit {
-                    key: (*key).to_owned(),
-                    name: (*name).to_owned(),
-                    action: match *action {
-                        "add" => protocol::generated::RosterEditAction::Add,
-                        _ => protocol::generated::RosterEditAction::Remove,
+                .map(
+                    |(key, name, action, set_at)| protocol::generated::RosterEdit {
+                        key: (*key).to_owned(),
+                        name: (*name).to_owned(),
+                        action: match *action {
+                            "add" => protocol::generated::RosterEditAction::Add,
+                            _ => protocol::generated::RosterEditAction::Remove,
+                        },
+                        set_at: *set_at,
                     },
-                    set_at: *set_at,
-                })
+                )
                 .collect(),
         },
     })

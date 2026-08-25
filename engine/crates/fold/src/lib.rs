@@ -1414,7 +1414,10 @@ mod tests {
             &LINES,
         );
         let respawn = state_of(&snaps, "respawn");
-        assert_eq!(respawn["prefs"]["watches"][0]["customSec"], 300, "{respawn}");
+        assert_eq!(
+            respawn["prefs"]["watches"][0]["customSec"], 300,
+            "{respawn}"
+        );
         assert_eq!(respawn["rows"][0]["key"], "a ghoul", "{respawn}");
         assert_eq!(
             respawn["rows"][0]["customMs"], 300_000,
@@ -1439,7 +1442,10 @@ mod tests {
         let watches = state_of(&snaps, "respawn")["prefs"]["watches"].clone();
         assert_eq!(watches.as_array().map(Vec::len), Some(2), "{watches}");
         assert_eq!(watches[0]["key"], "a ghoul", "trimmed and case-folded");
-        assert_eq!(watches[0]["display"], "a ghoul", "an empty display is the key");
+        assert_eq!(
+            watches[0]["display"], "a ghoul",
+            "an empty display is the key"
+        );
         assert!(
             watches[1].get("customSec").is_none(),
             "an out-of-range number is ABSENT, never zero: {watches}"
@@ -1504,9 +1510,8 @@ mod tests {
     /// removal is not undone by anything the log says afterwards.
     #[test]
     fn pushed_roster_edits_add_and_remove_over_the_logs_own_roster() {
-        const LINES: [&str; 1] = [
-            r#"{"kind":"group","seq":0,"ts":2000,"raw":"g","change":"join","name":"Dranix"}"#,
-        ];
+        const LINES: [&str; 1] =
+            [r#"{"kind":"group","seq":0,"ts":2000,"raw":"g","change":"join","name":"Dranix"}"#];
         let snaps = folded_with(
             "roster",
             json!([

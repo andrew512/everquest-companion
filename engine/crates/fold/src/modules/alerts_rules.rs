@@ -114,7 +114,10 @@ struct Field {
 
 /// A single PRIMITIVE condition, prepared for fast evaluation.
 enum Condition {
-    Event { kind: String, fields: Vec<Field> },
+    Event {
+        kind: String,
+        fields: Vec<Field>,
+    },
     Raw(Box<Regex>),
     /// An `app` primitive: renderer-evaluated, so it never matches here. `compileCondition`'s empty
     /// return, spelled as a variant so the reader does not have to infer it from an absence.
@@ -233,7 +236,8 @@ fn compile_field(key: &str, spec: &str, kind: &str) -> Field {
 
 /// The body of a `/…/` spec, or `None` for a literal.
 fn pattern_body(spec: &str) -> Option<&str> {
-    (spec.len() >= 2 && spec.starts_with('/') && spec.ends_with('/')).then(|| &spec[1..spec.len() - 1])
+    (spec.len() >= 2 && spec.starts_with('/') && spec.ends_with('/'))
+        .then(|| &spec[1..spec.len() - 1])
 }
 
 /// Every alert regex is case-insensitive and carries no `g` flag, so a match is stateless.
@@ -294,9 +298,7 @@ fn compile_condition(t: &Value) -> Condition {
                 .and_then(Value::as_object)
                 .map(|w| {
                     w.iter()
-                        .filter_map(|(key, spec)| {
-                            Some(compile_field(key, spec.as_str()?, &kind))
-                        })
+                        .filter_map(|(key, spec)| Some(compile_field(key, spec.as_str()?, &kind)))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -350,8 +352,14 @@ impl Rule {
                 .to_owned(),
             sound: format!(
                 "{}/{}",
-                sound.get("packId").and_then(Value::as_str).unwrap_or_default(),
-                sound.get("soundId").and_then(Value::as_str).unwrap_or_default()
+                sound
+                    .get("packId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                sound
+                    .get("soundId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
             ),
             cooldown_ms: def
                 .get("cooldownMs")
@@ -617,14 +625,18 @@ mod tests {
         let mut rules = set(vec![def(
             json!({"type":"event","kind":"death","where":{"name":"a fire giant"}}),
         )]);
+        assert!(
+            rules
+                .fire(&ev(
+                    r#"{"kind":"death","seq":1,"ts":1,"raw":"d","name":"A Fire Giant"}"#
+                ))
+                .len()
+                == 1
+        );
         assert!(rules
             .fire(&ev(
-                r#"{"kind":"death","seq":1,"ts":1,"raw":"d","name":"A Fire Giant"}"#
+                r#"{"kind":"death","seq":2,"ts":9000,"raw":"d","name":"a rat"}"#
             ))
-            .len()
-            == 1);
-        assert!(rules
-            .fire(&ev(r#"{"kind":"death","seq":2,"ts":9000,"raw":"d","name":"a rat"}"#))
             .is_empty());
         assert!(rules
             .fire(&ev(r#"{"kind":"death","seq":3,"ts":18000,"raw":"d"}"#))
@@ -690,7 +702,9 @@ mod tests {
 
     #[test]
     fn a_raw_trigger_reads_the_line_and_a_composite_reads_one_event() {
-        let mut raw = set(vec![def(json!({"type":"raw","regex":"you have been slain"}))]);
+        let mut raw = set(vec![def(
+            json!({"type":"raw","regex":"you have been slain"}),
+        )]);
         assert_eq!(
             raw.fire(&ev(
                 r#"{"kind":"unknown","seq":1,"ts":1,"raw":"You have been slain by a rat!"}"#
@@ -745,7 +759,9 @@ mod tests {
     #[test]
     fn a_fire_is_recorded_in_the_alerts_own_ring() {
         let mut rules = set(vec![def(json!({"type":"event","kind":"uncharm"}))]);
-        rules.fire(&ev(r#"{"kind":"uncharm","seq":1,"ts":1000,"raw":"broke!"}"#));
+        rules.fire(&ev(
+            r#"{"kind":"uncharm","seq":1,"ts":1000,"raw":"broke!"}"#,
+        ));
         assert_eq!(
             rules.history(),
             json!({ "a1": [{ "ts": 1000, "matchedText": "broke!" }] })
@@ -785,7 +801,9 @@ mod tests {
             json!({"type":"event","kind":"death","where":{"name":"/(?<=a )rat/"}}),
         )]);
         assert!(field
-            .fire(&ev(r#"{"kind":"death","seq":1,"ts":1,"raw":"d","name":"a rat"}"#))
+            .fire(&ev(
+                r#"{"kind":"death","seq":1,"ts":1,"raw":"d","name":"a rat"}"#
+            ))
             .is_empty());
         // …and a `raw` trigger compiles to a pattern nothing can satisfy.
         let mut raw = set(vec![def(json!({"type":"raw","regex":"(?<=a )rat"}))]);
