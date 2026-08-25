@@ -8,36 +8,17 @@
 // kind a `node:test` process can load at all (the wired half imports `pipeline.ts`, which imports
 // Electron). Three functions, no state, no clock, no I/O.
 
-import { normalizeEarlyWarnSec } from '../../shared/earlyWarning'
 import type { FireMessage } from '../../shared/dataServer/protocol.generated'
 import type { AlertDef, FiredAlert } from '../../shared/types'
 
 /**
- * THE GATE — the first def whose fire the ENGINE would swallow, or null when there is none.
+ * Whether the cutover arms, and the ONE line the dev log gets either way.
  *
- * A def carrying `earlyWarnSec` does not sound when its trigger matches: the match ARMS a warning
- * that speaks N seconds before a timer row's estimated end (JOS-216), which needs the wall-clock
- * heartbeat and the buffs/buffTimers projection. The engine has neither, so it COMPILES SUCH A DEF
- * OUT (`fold/src/modules/alerts_rules.rs Rule::compile`) rather than firing it at the wrong
- * instant. Arming the cutover over one would therefore trade a correctly-delayed sound for NO
- * SOUND AT ALL, silently — so the flag refuses instead.
- *
- * IT ASKS `normalizeEarlyWarnSec`, THE APP'S OWN NORMALIZER, rather than testing for the key. A
- * value this app would not act on (a zero, a NaN, a string — `ipc/alerts.ts sanitizeEarlyWarn`
- * deletes those on save, but a def imported from a stranger's share bundle has not been through
- * that door) arms nothing here either, so refusing on it would be a false alarm no edit could
- * clear. Anything the app WOULD act on refuses, and that deliberately includes the out-of-range
- * number the app clamps into range while the engine's own reader treats it as absent — the
- * conservative direction on the one input where the two normalizers disagree.
- *
- * FIRST MATCH, NOT ALL OF THEM: one name is what makes the line actionable, and a list would
- * invite reading it as a report rather than as a stop.
+ * IT IS STILL A VERDICT AND NOT A BOOLEAN, AFTER THE GATE STOPPED REFUSING ANYTHING (JOS-492 — see
+ * `armVerdict`). The shape survives because the LINE is the reason it existed: a silent evaluator
+ * with nothing in the log explaining itself is a state a developer cannot tell apart from a flag
+ * nobody set, and that was true before there was a refusal to explain and is true after.
  */
-export function earlyWarnBlocker(defs: readonly AlertDef[]): AlertDef | null {
-  return defs.find((d) => normalizeEarlyWarnSec(d.earlyWarnSec) !== undefined) ?? null
-}
-
-/** Whether the cutover arms, and the ONE line the dev log gets either way. */
 export interface ArmVerdict {
   readonly arm: boolean
   /** Present tense, no prefix — `alertsAudio.ts` adds the app's own tag. Never empty: a refusal
@@ -46,23 +27,46 @@ export interface ArmVerdict {
 }
 
 /**
- * ARM, OR REFUSE AND NAME THE DEF.
+ * ARM. UNCONDITIONALLY, SINCE JOS-492 — AND THE DELETED REFUSAL IS WHY THIS COMMENT IS LONG.
  *
- * The whole decision is here — including the SENTENCE — because "it refuses with one honest line
- * naming the def" is the acceptance bar, and a bar written in a `logInfo` call inside a wired file
- * is a bar no test can hold. The caller's job reduces to printing this and throwing the switch.
+ * ── WHAT THIS GATE WAS FOR ─────────────────────────────────────────────────────────────────────
+ *
+ * A def carrying `earlyWarnSec` does not sound when its trigger matches: the match ARMS a warning
+ * that speaks N seconds before a timer row's estimated end (JOS-216). That needs a wall-clock
+ * heartbeat AND the buffs/buffTimers projection, and JOS-482's engine had neither — so it COMPILED
+ * SUCH A DEF OUT rather than firing it at the wrong instant, which was the right call (a sound made
+ * a minute early is a wrong answer wearing a right answer's clothes). But it meant that arming the
+ * cutover over such a def traded a correctly-delayed sound for NO SOUND AT ALL, silently. So this
+ * function refused, and named the def it refused over.
+ *
+ * ── WHY IT NO LONGER REFUSES ───────────────────────────────────────────────────────────────────
+ *
+ * Both missing halves landed and the engine now honours the offset end to end
+ * (`fold/src/modules/alerts_early.rs`): a landing arms against the timer projection, a break-family
+ * def arms from the row appearing (JOS-235), the heartbeat delivers, and the fire that comes out is
+ * the same fire this process would have made. The engine reads the offset through the APP'S OWN
+ * NORMALIZER (`normalizeEarlyWarnSec`, ported bound for bound), so the one input where the two used
+ * to disagree — the out-of-range number the app clamps and the engine used to read as absent —
+ * now gives one answer on both sides. There is no def left that the engine "would swallow", and a
+ * gate refusing over an emptied category is a gate that only ever produces false alarms.
+ *
+ * ── AND WHY THERE IS NO REPLACEMENT BLOCKER ────────────────────────────────────────────────────
+ *
+ * The honest test for a blocker is "a def the ENGINE genuinely cannot honour", and the list of those
+ * is now EMPTY — deliberately, and it is worth saying what is NOT on it. An `app` trigger
+ * (bossDefeat / questComplete) compiles to a condition that never matches engine-side, exactly as it
+ * does here: those are renderer-evaluated on BOTH sides, so the engine swallows nothing. A `/regex/`
+ * this build cannot compile degrades identically on both sides (JOS-491 measured the owner's real
+ * def set: zero incompatible patterns). What a fire frame cannot CARRY — the JOS-103 captures, the
+ * JOS-353 `{target}` token, the JOS-84 resolved spell name, the JOS-378 `dueAt` — costs a firing
+ * some of its WORDS and never its existence, which `fireToFiring` states below and which was never
+ * this gate's subject.
+ *
+ * A LIST WITH ONE ENTRY WOULD HAVE BEEN KEPT. It has none, so keeping the machinery would mean
+ * keeping a predicate nobody can ever make true, and a dead gate is worse than no gate: the next
+ * reader has to prove it is dead before they can trust anything downstream of it.
  */
-export function armVerdict(defs: readonly AlertDef[]): ArmVerdict {
-  const blocker = earlyWarnBlocker(defs)
-  if (blocker !== null) {
-    return {
-      arm: false,
-      line:
-        'data-server alerts: EQC_ENGINE_ALERTS refuses to arm — ' +
-        `"${blocker.name}" (${blocker.id}) carries earlyWarnSec=${String(blocker.earlyWarnSec)}, ` +
-        'and the engine compiles early-warning defs out; the app keeps making its own sounds'
-    }
-  }
+export function armVerdict(_defs: readonly AlertDef[]): ArmVerdict {
   return {
     arm: true,
     line: 'data-server alerts: the ENGINE now plays alert audio; this process’s evaluator is silent'

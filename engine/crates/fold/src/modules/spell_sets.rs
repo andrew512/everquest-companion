@@ -196,7 +196,7 @@ impl EqModule for SpellSetsModule {
     }
 
     /// The wall-clock half of the settle rule. Never called on a historical fold.
-    fn on_tick(&mut self, now_ms: i64) {
+    fn on_tick(&mut self, now_ms: i64, _rows: &[crate::modules::buff_timer_rows::BuffTimerRow]) {
         self.settle_if_idle(now_ms);
     }
 

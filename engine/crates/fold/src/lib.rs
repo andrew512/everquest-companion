@@ -83,7 +83,20 @@ pub trait EqModule {
     /// a defect waiting for the first module that uses it. QUEUED rather than drained is what the
     /// TS does: `bus.emitDerived` pushes onto a queue only `emit` drains, so anything a heartbeat
     /// synthesized reaches the other modules with the NEXT primary event.
-    fn on_tick(&mut self, _now_ms: i64) {}
+    ///
+    /// `timer_rows` IS THE `setTimerRows` SEAM (JOS-492), and it is a PARAMETER here because it
+    /// cannot be a handle. Over there `wiring.ts` injects a lazy pull into the ALERTS module —
+    /// `() => buildTimerRows(buffs.snapshot().state, buffTimers.snapshot().state)` — reaching across
+    /// two modules registered after it. A module here cannot hold a mutable-world handle on two
+    /// modules the registry is iterating, so [`Registry::tick`] builds the projection ONCE, before
+    /// the loop, and hands it to everybody. Nineteen modules ignore it.
+    ///
+    /// THE INSTANT IS THE ONE THE LAZY PULL WOULD HAVE READ AT: the alerts module is registered
+    /// BEFORE buffs and buffTimers, so its heartbeat runs before theirs and the rows it pulls are the
+    /// ones the beat started with — the hygiene sweep has not run yet. Building them before the loop
+    /// reproduces that exactly, and it does so for every reader rather than for the one that happens
+    /// to be first.
+    fn on_tick(&mut self, _now_ms: i64, _timer_rows: &[modules::buff_timer_rows::BuffTimerRow]) {}
 
     /// Full current state for hydration, plus the last seq folded in: `{ "seq": n, "state": … }`.
     fn snapshot(&self) -> Value;
@@ -376,13 +389,36 @@ impl Registry {
     /// is `fold_bytes`, which does not call this at all, so the guard has nothing to guard. The
     /// caller drives the clock and the caller is the live tail.
     pub fn tick(&mut self, now_ms: i64, derived: &mut Vec<Event>) {
+        // THE TIMER PROJECTION, BUILT ONCE AND BEFORE THE LOOP (JOS-492) — see
+        // [`EqModule::on_tick`] for why it is a parameter rather than a handle, and for why this
+        // instant is the one the TS's lazy pull would have read at.
+        let rows = self.timer_rows();
         for m in &mut self.mods {
-            m.on_tick(now_ms);
+            m.on_tick(now_ms, &rows);
             let mut out = m.take_derived();
             if !out.is_empty() {
                 derived.append(&mut out);
             }
         }
+    }
+
+    /// THE TIMER-ROW PROJECTION over whatever this build registered — `buildTimerRows(buffs,
+    /// buffTimers)`, the same one `engined`'s `timers.rows` source cuts windows out of.
+    ///
+    /// EMPTY WHEN EITHER HALF IS ABSENT, which is the honest answer rather than a partial one: a
+    /// projection built from buffs alone would state ends for the beneficial half and silently know
+    /// nothing about the crowd-control half, and an early warning measured against it would be right
+    /// about mez and wrong about slow. Every production construction registers both.
+    #[must_use]
+    pub fn timer_rows(&self) -> Vec<modules::buff_timer_rows::BuffTimerRow> {
+        let (Some(buffs), Some(timers)) = (self.buffs(), self.buff_timers()) else {
+            return Vec::new();
+        };
+        modules::buff_timer_rows::build_timer_rows(
+            &buffs.active_buffs(),
+            &timers.holds(),
+            timers.ends(),
+        )
     }
 
     pub fn ids(&self) -> Vec<&'static str> {
@@ -2027,7 +2063,11 @@ mod tests {
             }
             fn reset(&mut self) {}
             fn on_event(&mut self, _ev: &Event, _live: bool) {}
-            fn on_tick(&mut self, now_ms: i64) {
+            fn on_tick(
+                &mut self,
+                now_ms: i64,
+                _rows: &[crate::modules::buff_timer_rows::BuffTimerRow],
+            ) {
                 let _ = now_ms;
             }
             fn snapshot(&self) -> Value {

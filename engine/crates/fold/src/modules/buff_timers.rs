@@ -1017,7 +1017,7 @@ impl EqModule for BuffTimersModule {
 
     /// The wall-clock heartbeat: a hold expires while the log is idle, which is exactly when a player
     /// is staring at the bar waiting for it. Never called on a historical fold.
-    fn on_tick(&mut self, now_ms: i64) {
+    fn on_tick(&mut self, now_ms: i64, _rows: &[crate::modules::buff_timer_rows::BuffTimerRow]) {
         self.sweep(now_ms);
     }
 

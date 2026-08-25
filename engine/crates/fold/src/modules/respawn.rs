@@ -775,7 +775,7 @@ impl EqModule for RespawnModule {
     /// ON A HISTORICAL FOLD THIS IS NEVER CALLED and the clock stays the pinned construction
     /// instant, which is what keeps the six goldens re-checking tomorrow (see the header). A LIVE
     /// world gets today's reading once a second, exactly as the app's does.
-    fn on_tick(&mut self, now_ms: i64) {
+    fn on_tick(&mut self, now_ms: i64, _rows: &[crate::modules::buff_timer_rows::BuffTimerRow]) {
         self.now_ms = now_ms;
     }
 

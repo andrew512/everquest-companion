@@ -928,7 +928,7 @@ impl EqModule for ResistModule {
     /// a settle is not an event. What it can change is the ledger's row and mob COUNTS, which is
     /// the published state — a deferred landing filed by the passage of time is a row the app would
     /// already be showing.
-    fn on_tick(&mut self, now_ms: i64) {
+    fn on_tick(&mut self, now_ms: i64, _rows: &[crate::modules::buff_timer_rows::BuffTimerRow]) {
         let Self {
             ledger,
             fold,
