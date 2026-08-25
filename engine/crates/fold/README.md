@@ -17,7 +17,10 @@ green ones included, because the report is about what was COMPARED and never abo
 | 2a | JOS-471 ✅ | `loot` `turnins` `classUnlocks` `kills` `leveling` `outputFiles` `spellSets` `itemTiers` `observedSpellRanks` |
 | 2b | JOS-475 ✅ | `respawn` `progression` `character` `roster` `combo` |
 | 2c | JOS-476 ✅ | `alerts` `buffs` `buffTimers` `consider` `resist` `eventFeed` |
-| — | JOS-477 🟡 | **the combat engine** (`src/combat/`, partial) |
+| — | JOS-477 ✅ | **the combat engine** (`src/combat/`, whole) |
+
+**PHASE 2 IS COMPLETE.** The DEFAULT `npm run oracle:rust-fold` is green: twenty modules plus the two
+COMBAT sections, on all six slices, with no SKIP line anywhere.
 
 THE TABLE WAS RE-CUT between JOS-471 and JOS-476: what the scaffold called 2c and 2d became one
 ticket of six, because the three modules 2d held turned out to be the two cheapest in the whole
@@ -28,10 +31,9 @@ away from the hard one bought nothing.
 The combat engine is not in `WIRING_ORDER` — it is not a module. It is the bus subscriber that sits
 AFTER all twenty of them (`pipeline.ts:311,326`), and `Fold` carries it in its own `combat` field
 for exactly that reason; `src/combat/mod.rs`'s header carries the submodule-vs-crate argument. Its
-port is **deliberately partial** and the header says which half is which — as of JOS-477's second
-landing the world model, the whole attribution ladder, the encounter lifecycle and the aggregate's
-sums/lanes are in, and the VIEW BUILDERS are what is left. Prove it with `--ledger` (below), never
-by eye.
+port is now WHOLE for everything the snapshot publishes, and its header lists the four things that
+are absent — the classification ring, the pet nudge, the session mark and fight search — each of
+which is UNREACHABLE under the construction the recorder makes rather than a piece left undone.
 
 The constructor takes a `ClusterDeps` struct (JOS-475). Add a FIELD to it and a `register` line at
 your module's `WIRING_ORDER` position; do not re-thread the call sites. The function itself has been
@@ -99,74 +101,49 @@ time: a registry named after the tickets IN it is a registry a reader has to dat
   decides which duration samples are pushed in which order and which `buffExpired` events leave the
   module, and both of those reach the golden by another route.
 
-### Adding to the COMBAT engine (2d), and the order the ledger says to do it in
+### The COMBAT engine (2d) — what it is, and the four traps its port actually hit
 
 The engine is not a module and does not follow the recipe above — it is `src/combat/`, one file per
-`src/main/combat/*.ts`, subscribed behind the registry. What it owes is stated by measurement rather
-than by opinion: run `--ledger` over all six slices and the classes it prints ARE the worklist.
+`src/main/combat/*.ts`, subscribed behind the registry. What it owed was stated by measurement
+rather than by opinion: `--ledger` over all six slices, and the classes it printed WERE the worklist.
+That worklist is now empty, and the ledger reads 100% on both sections of every slice. The regression
+surface a later shift must not break is therefore the WHOLE of `combat` and `scopes`.
 
-JOS-477 opened with the `combat` section agreeing on **48–60% of leaves** per slice, and the
-divergences falling into five groups. GROUPS 1–3 HAVE LANDED and the ledger now reads:
+The order was argued at the outset and it held: `world.ts` (instance identity) → the attribution
+ladder → the encounter lifecycle → the aggregate's accumulators → the view builders. Each stage
+unblocked the next, and the last one landed everything that reads a counter without writing one:
+`segmentViews` / `sourceViews` / `defenseViews` / `roundViews` / `healing` / `procViews`, plus the
+four ingest-side ledgers they read (`rounds.rs`, `healing.rs`, `procdetect.rs`, `procwindows.rs`),
+the active-state timeline, the blade coats and the per-fight timeline.
 
-| slice | `combat` leaves | `scopes` leaves |
-| --- | --- | --- |
-| early-leveling | 4202 / 4204 (100.0%) | 720 / 1080 (66.7%) |
-| mid-grind | 9750 / 9759 (99.9%) | 1638 / 2457 (66.7%) |
-| sky-era | 6525 / 6527 (100.0%) | 1100 / 1650 (66.7%) |
-| patch-week | 1149 / 1151 (99.8%) | 204 / 306 (66.7%) |
-| hate-pets | 2648 / 2650 (99.9%) | 444 / 666 (66.7%) |
-| current | 7821 / 7823 (100.0%) | 1316 / 1974 (66.7%) |
+**THE FOUR TRAPS, because each one cost a debugging pass and each will recur:**
 
-So the worklist below is the same five groups with the first three struck out — the order was
-argued and it held:
+1. **A "PURE READ" THAT MUTATES.** `st.defenderLabel(...)` looks like serialization — its result goes
+   to the timeline instant and the processing line — but it resolves through the world model, and
+   `resolve()` retires stale instances and ADOPTS the sighting's casing as the instance display.
+   `bumpTarget` freezes the label it is handed (first write wins), so skipping the call left
+   25/71/2/1/53 FIGHT NAMES per slice sentence-capitalized. Before deciding a call is view-only,
+   check what it MUTATES on the way to its return.
+2. **AN `onRetire` CLOSURE RUST WILL NOT TAKE.** Retirement is ANNOUNCED on a queue that
+   `EngineState` drains at every call site that can retire. Add a world call and you must drain after
+   it, or a mez'd mob aged out by staleness goes on vetoing the death-close.
+3. **TWO EVENTS THAT SPELL ONE FIELD DIFFERENTLY.** `buffApply.candidates` is an array of OBJECTS
+   (the buffs module needs the duration); `buffWearOff.candidates` is an array of STRINGS. Reading
+   the wrong accessor answers an EMPTY LIST rather than failing, so the wear-off gate simply never
+   fired — and every tracked buff span stayed open to be superseded or censored later instead of
+   ending `observed` where the game printed an end. It surfaced 234 span-edge divergences away, in
+   `procs.states[].endTs`. When a curated gate produces nothing, check the SHAPE of what you handed
+   it before you doubt the gate.
+4. **`localeCompare` IS NOT ONE COMPARATOR.** `modules::buff_landing::compare_names` ignores spaces
+   and punctuation, which is right for the spell names it ranks and WRONG for mob names: CLDR root
+   is `alternate = non-ignorable`, so a SPACE outranks a letter and `a willowisp` sorts before
+   `Asaka L`Rei`. `combat::collate` is the second spelling, and its header carries the measurement
+   and the argument for why the first one was not changed instead.
 
-1. ~~**`world.ts` — instance identity.**~~ **LANDED** (`world.rs`). One caution for anyone touching
-   it: the TS installs an `onRetire` CLOSURE from `EngineState`, which Rust will not take, so
-   retirement is ANNOUNCED on a queue that `EngineState` drains at every call site that can retire.
-   Add a world call and you must drain after it, or a mez'd mob aged out by staleness goes on
-   vetoing the death-close.
-2. ~~**The attribution ladder**~~ **LANDED WHOLE** (`charm.rs`, `ally.rs`, `others.rs`, `routing.rs`,
-   `spellfacts.rs`) — `classify` still pure, and the two doors an `'ignore'` verdict is offered to
-   still aggregate-only.
-3. ~~**The encounter lifecycle**~~ **LANDED** (`lifecycle.rs`). `.segments.length` and `.selectedId`
-   agree on all six.
-4. **The aggregate's other half** — what is left of it is the ROUND grouper (`rounds.ts`), the
-   minute-WINDOW ledger (`procWindows.ts`), the modifier tallies and the meter-grade HEALING
-   accumulator (`healing.ts`). `aggregate.rs` now carries the per-skill and per-category
-   breakdowns, the accuracy and resist counters and the target/heal ledgers; the four above are
-   read ONLY by a view builder, so they land WITH group 5 rather than before it.
-5. **The view builders** — `segmentViews.ts`, `sourceViews.ts`, `healing.ts`, `procViews.ts`,
-   `defenseViews.ts`, `roundViews.ts`, and behind them `procDetect.ts` / `procRouting.ts` /
-   `stateTimeline.ts` / `coatClass.ts`. These are `.combat.selected`, `.combat.timeline` and the
-   whole of `scopes` — ~92% of the section's byte weight, and now the whole of what is red.
-
-**THE THREE CLASSES THAT REMAIN, and nothing else is red on any slice:**
-
-- `.selected` — one per slice, plus every `scopes[].selected`. Group 5.
-- `.timeline` — one per slice. Group 5 (`buildTimeline` plus the per-encounter event ring, which
-  `routing.rs` does not push today).
-- `.poison.slow.*` on `mid-grind` ALONE — seven fields. The BLADE COATS (`procRouting.ts routeCoat`
-  / `routeDry`, `shared/poisons.isSlowCapable`) plus the proc ledger's `firstSlowTs`. The gate is
-  `enc.coatAtEngage && isSlowCapable(...)`, so with no coat model no pull can qualify;
-  `lifecycle.rs finalize_current` states that at the site the sample would be pushed rather than
-  writing a branch that provably never runs.
-
-**One divergence was NOT 2d's to fix and is now closed:** ~~`.roster.seen` / `.roster.lastSignalTs`
-on the `current` slice~~ — **CLOSED by JOS-475**. Cluster 2b's `roster` module arrived at
-`EqModule::as_roster` and answers all three of `RosterSource`'s methods.
-
-The regression surface a later shift must not break is now most of the section: `zone`, `stance`,
-`hydrating`, `recent`, `inCombat`, `poison.coat`, `roster`, `selectedId`, `currentTarget`, every
-field of `segments[]` and every field of `zoneSessions[]`, on all six slices.
-
-**THE TRAP THIS STAGE ACTUALLY HIT**, because it will catch the view-builder shift too: a function
-whose RETURN VALUE feeds only an unported view can still be load-bearing for a ported number.
-`st.defenderLabel(...)` looked like pure serialization — its result goes to the timeline instant and
-the processing line — but it resolves through the world model, and `resolve()` retires stale
-instances and ADOPTS the sighting's casing as the instance display. `bumpTarget` freezes the label it
-is handed (first write wins), so skipping the call left 25/71/2/1/53 FIGHT NAMES per slice
-sentence-capitalized (`A Teir\`Dal ranger (9) +1` for `a Teir\`Dal ranger (9) +1`). Before deciding a
-call is view-only, check what it MUTATES on the way to its return.
+**AND ONE ABSENCE THAT IS A PROOF, NOT A GAP.** Four TS files are deliberately unported — the
+classification ring, the pet nudge, the session mark (`mergeSessions.ts`) and `fightSearch.ts` — and
+each is UNREACHABLE under the construction `foldArm.mts` makes rather than a piece left undone.
+`combat/mod.rs`'s header states each one with the golden field that agrees.
 
 ### Two rules that are not style
 

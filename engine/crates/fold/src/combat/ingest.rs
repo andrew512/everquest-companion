@@ -16,32 +16,43 @@
 //! The families are disjoint on `kind`, so the chain is exactly the old switch: each tries its own
 //! cases and reports whether it consumed the event.
 //!
-//! ── WHAT IS NOT PORTED HERE, AND WHAT EACH ABSENCE COSTS ──────────────────────────────────────
+//! ── THE PROC ANALYTICS ARE FOLDED HERE, AND THEY MUST BE ──────────────────────────────────────
 //!
-//! `ingest_modifier` is the BLADE-COAT and PROC-ANNOTATION family, and every one of its cases is
-//! unported except the one that binds a pet (`buffApply` → `bind_pet_buff_landing`). What it costs
-//! is stated rather than implied: no coat is ever on at engage, so no pull qualifies for the rolling
-//! time-to-slow sample and `poison.slow` reads all-zero — which is what five of the six goldens carry
-//! and is a genuine divergence on the sixth.
+//! Everything the analytics need is a COUNT or an INDEX over damage the meter already counted, and
+//! every one of them is folded on INGEST rather than derived later. That is not an optimisation: the
+//! encounter event ring is capped, truncated at finalize and absent ENTIRELY for a zone session, so
+//! "what was on when this fired" and "how many swings happened while it was on" are knowable ONLY
+//! now. Nothing below calls an `add_*` that moves a damage total, so every total stays byte-identical
+//! (law 8's tripwire).
 //!
-//! THE CAST-LESS PROC LANE SPLIT (JOS-167) IS ALSO ABSENT. `damageOrigin` decides, BEFORE a line is
-//! routed, whether one of your spell effects had a cast behind it, and renames the meter LANE when
-//! it did not. It moves no total and engages nothing — it changes what a row is CALLED — so the
-//! segments and zone sessions this fold publishes today are unaffected, and it becomes load-bearing
-//! at the view-builder stage where per-lane rows are serialized. `recentCasts` is its ledger and is
-//! unported with it.
+//! ── TWO SEAMS THE GOLDEN'S CONSTRUCTION LEAVES UNWIRED, AND WHAT EACH ABSENCE MEANS ───────────
 //!
-//! `healUnstated` and `mitigation` reach ONLY the meter-grade healing ledger, which is unported —
-//! and neither ever opens, joins or extends an encounter or moves the damage timeline (world-model
-//! law 8), so consuming them as no-ops is exactly what the TS does minus one accumulator.
+//! `foldArm.mts construct()` calls `setRoster`, `reset()` and `setPlayerName` — and NOT `setCombo`,
+//! `setDerivedEmitter` or `setHeldClickies`. Each absence is a DOCUMENTED BEHAVIOUR rather than a gap:
+//!
+//!   * NO COMBO PROVIDER ⇒ `sweepCoatClass` consults a model that answers nothing, so the class-swap
+//!     coat clear never fires. The gate itself is what the TS file is about, and with no provider the
+//!     TS takes exactly the same early return this fold does — so the sweep is stated here and does
+//!     nothing, which is what it does over there too.
+//!   * NO HELD-CLICKY SET ⇒ `castless_kind` is the identity function and not one lane name moves. A
+//!     `· click` lane cannot occur in any of the six slices, and the goldens agree.
 
 use crate::combat::aggregate::{DamageEvent, MissType};
 use crate::combat::ally::{AllyCastLine, AllyLeaderLine};
 use crate::combat::charm::CharmVerdict;
 use crate::combat::encounter::{ZoneSessionClose, CC_HOLD_MS};
 use crate::combat::lifecycle::{ensure_encounter, eval_closure, finalize_current};
-use crate::combat::routing::{self, HealLine, MissLine, ResistLine};
-use crate::combat::state::{EngineState, Modifier};
+use crate::combat::procdetect::{
+    castless_kind, is_castless_heal, lane_name_for, proc_eligible_damage, HealProcInput, ProcSide,
+    SpellOrigin, SpellProcFold, QUICK_BUFF_AA,
+};
+use crate::combat::procrouting::{
+    apply_stance, clear_coats, route_coat, route_dispel_landing, route_dry, route_proc,
+    route_proc_buff_apply, route_proc_buff_wear_off, route_self_landing_proc, CoatLine, ProcLine,
+};
+use crate::combat::procwindows::WindowFold;
+use crate::combat::routing::{self, Attribution, HealLine, MissLine, MitigationLine, ResistLine};
+use crate::combat::state::EngineState;
 use crate::event::Event;
 use eqlog::names::id_key;
 
@@ -54,9 +65,10 @@ pub fn ingest_event(st: &mut EngineState, ev: &Event) {
     // The ally binds age out on the same log clock: a charm cannot outlive its own spell, so the
     // hold is a certainty rather than a heuristic and needs no evidence to fire.
     st.sweep_ally(ev.ts());
-    // …and `sweepCoatClass` goes here, which is unported with the coats. Deliberately NOT in the
-    // snapshot beside the two above — those are display timers, that one MUTATES the fold, and a
-    // fold that advanced because the UI polled would make a replay disagree with the live tail.
+    // …and the BLADE COATS are consulted against the class model on the same log clock. Deliberately
+    // NOT in the snapshot beside the two above — those are display timers, this one MUTATES the fold,
+    // and a fold that advanced because the UI polled would make a replay disagree with the live tail.
+    sweep_coat_class(st, ev);
     if ingest_world(st, ev) {
         return;
     }
@@ -66,8 +78,46 @@ pub fn ingest_event(st: &mut EngineState, ev: &Event) {
     if ingest_cast(st, ev) {
         return;
     }
-    ingest_choice(st, ev);
+    if ingest_choice(st, ev) {
+        return;
+    }
+    ingest_modifier(st, ev);
 }
+
+/// LEAVING ROGUE BARES THE BLADES (`combat/coatClass.ts`) — the second of the two boundaries the
+/// wiki's Rogue page names ("poisons remain active until class swap or death"), and the one the app
+/// could not see until that file existed.
+///
+/// THE WHOLE FEATURE IS THE GATE ON WHEN THE CLASS MODEL MAY BE CONSULTED, and the gate is what is
+/// reproduced here. Its three clauses: there must be SOMETHING TO CLEAR (two field reads, which is all
+/// every non-rogue in the world ever pays); a LOADOUT-STATING EVENT (`selfWho` / `level`) asks
+/// immediately; otherwise at most once per `CLASS_CHECK_MS` of LOG time.
+///
+/// THE CONSULTATION ITSELF CANNOT HAPPEN IN THIS FOLD, and that is a property of the golden's
+/// construction rather than of the rule: `foldArm.mts` never calls `setCombo`, so `comboProvider()`
+/// answers null and the TS returns right there. The gate is ported anyway — including the throttle
+/// stamp, which the TS writes BEFORE it asks — so the one thing that IS observable (`coat_class_checked_ts`
+/// advancing on exactly the events the TS advances it on) agrees, and a later shift that wires a combo
+/// provider inherits a gate rather than having to rediscover it.
+fn sweep_coat_class(st: &mut EngineState, ev: &Event) {
+    if st.coat_utility.is_none() && st.coat_combat.is_empty() {
+        return;
+    }
+    let states_loadout = matches!(ev.kind(), "selfWho" | "level");
+    if !states_loadout && ev.ts() - st.coat_class_checked_ts < CLASS_CHECK_MS {
+        return;
+    }
+    st.coat_class_checked_ts = ev.ts();
+    // `st.comboProvider()` — null in this fold, so the TS returns here and so does this.
+}
+
+/// THE POLL PERIOD, in LOG milliseconds — never a wall clock, so a replay consults at exactly the
+/// instants the live tail did.
+///
+/// Fifteen minutes because that is the combo interval model's own `WINDOW_FLOOR_MS`: it refuses to
+/// bisect a span below it, so it CANNOT date a swap finer than fifteen minutes and a faster poll could
+/// only re-ask a question whose answer is not allowed to have moved.
+const CLASS_CHECK_MS: i64 = 15 * 60_000;
 
 // ── WORLD ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -90,6 +140,14 @@ fn ingest_world(st: &mut EngineState, ev: &Event) -> bool {
             st.world.reset();
             st.charm.reset();
             st.ally.reset();
+            // …and the BLADE COATS go with them. This case used to censor the coat SPANS below and
+            // leave the slots standing — the identical slot-versus-span disagreement the death rule was
+            // written to cure, rebuilt one boundary over. A rebirth is a DIFFERENT CHARACTER; nothing
+            // was on these blades. Same shared door, so the two can never drift apart again.
+            clear_coats(st, ev.ts());
+            // An epoch severs every active-state span: the beta character's stances, coats and buffs are
+            // not this character's. CENSORED, never `observed`, and never a fabricated expiry.
+            st.state_timeline.censor_all(ev.ts());
             st.specials.reset();
             true
         }
@@ -348,34 +406,49 @@ fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
             true
         }
         "heal" => {
-            routing::route_heal(
+            let line = HealLine {
+                ts: ev.ts(),
+                target: ev.str("target").unwrap_or_default().to_string(),
+                healer: ev.str("healer").map(str::to_string),
+                amount: ev.int("amount").unwrap_or(0),
+                raw_amount: ev.int("rawAmount"),
+                spell: ev.str("spell").map(str::to_string),
+                crit: ev.bool("crit"),
+            };
+            routing::route_heal(st, &line);
+            fold_heal_analytics(st, &line, ev.bool("overTime"));
+            true
+        }
+        // A heal with NO AMOUNT cannot enter the proc model — a 0-amount "Mend proc" is a fabricated
+        // observation — so it reaches the healing ledger's own count-lane and nothing else. It never
+        // opens, joins or extends an encounter and never moves the damage timeline (law 8).
+        "healUnstated" => {
+            routing::route_heal_unstated(st, ev.ts(), ev.str("skill").unwrap_or_default());
+            true
+        }
+        // Damage PREVENTED, not hit points restored, so it never touches a DAMAGE total. It does reach
+        // the HEALING total as a rune/absorbed row.
+        "mitigation" => {
+            routing::route_mitigation(
                 st,
-                &HealLine {
+                &MitigationLine {
                     ts: ev.ts(),
-                    target: ev.str("target").unwrap_or_default().to_string(),
-                    healer: ev.str("healer").map(str::to_string),
-                    amount: ev.int("amount").unwrap_or(0),
+                    mtype: ev.str("mtype").unwrap_or_default(),
+                    amount: ev.int("amount"),
                 },
             );
             true
         }
-        // A heal with no amount cannot enter the proc model and reaches only the healing ledger's own
-        // count-lane, which is unported. It never opens, joins or extends an encounter and never
-        // moves the damage timeline (law 8), so there is nothing else for it to do here.
-        "healUnstated" => true,
-        // Damage PREVENTED, not hit points restored, so it never touches a DAMAGE total. It does
-        // reach the HEALING total as a rune/absorbed row — unported — and, like miss and resist, it
-        // never opens, joins or extends an encounter.
-        "mitigation" => true,
         "miss" => {
             let Some(mtype) = ev.str("mtype").and_then(MissType::parse) else {
                 return true;
             };
+            let attacker = ev.str("attacker").unwrap_or_default().to_string();
             routing::route_miss(
                 st,
                 &MissLine {
                     ts: ev.ts(),
-                    attacker: ev.str("attacker").unwrap_or_default().to_string(),
+                    attacker: attacker.clone(),
                     target: ev.str("target").unwrap_or_default().to_string(),
                     mtype,
                     verb: ev.str("verb").map(str::to_string),
@@ -392,6 +465,21 @@ fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
                         .collect(),
                 },
             );
+            // YOUR avoided swing is still a swing ATTEMPT, and the mechanical proc denominator is
+            // attempts — a proc that cannot fire on a miss still had the chance to.
+            if id_key(&attacker) == "you" {
+                fold_both(st, ev.ts(), |agg, active| {
+                    agg.windows.fold(
+                        &WindowFold {
+                            ts: ev.ts(),
+                            swings: 1,
+                            ..WindowFold::default()
+                        },
+                        active,
+                    );
+                    agg.procs.add_swing(active);
+                });
+            }
             true
         }
         "resist" => {
@@ -402,6 +490,11 @@ fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
             // OWN outgoing resist counts; an incoming one — we shrugged off a mob's spell — says
             // nothing about what we were casting.
             if !incoming && id_key(&caster) == "you" {
+                // A FULLY-RESISTED cast landed NOTHING, so like a fizzle it must not stay in the window
+                // to claim the next proc of the same name. `forget` drops only an UNCLAIMED record,
+                // which is what keeps a partially-resisted AoE honest: if a target of the same firing
+                // already took damage, the cast is spent and the rest of that instant still joins.
+                st.recent_casts.forget(&spell);
                 st.charm.note_cast_failed(&spell, ev.ts());
             }
             routing::route_resist(
@@ -429,7 +522,176 @@ fn ingest_damage(st: &mut EngineState, ev: &Event) {
     };
     eval_closure(st, ev.ts());
     let dmg = to_damage_event(st, ev, attacker);
-    routing::route(st, &dmg);
+    // WHERE IT CAME FROM, BEFORE IT IS FILED. The verdict names the LANE, so it has to be reached
+    // before `route()` folds the hit — and it is reached exactly once, here, because it CONSUMES the
+    // cast claim (asking twice would take two claims off one cast line and count the second landing as
+    // a proc).
+    let origin = damage_origin(st, &dmg);
+    // The lane a cast-less firing lands in. A fresh record, never a mutation of the one the ledger
+    // gets: `spell_procs` is keyed by the SPELL, so the ledger row, its PPM and its tag stay ONE lane
+    // however many meter rows the spell now occupies.
+    let laned = match origin {
+        None => None,
+        Some(o) => Some(DamageEvent {
+            skill: lane_name_for(&dmg.skill, o),
+            ..dmg.clone()
+        }),
+    };
+    // Read the engine's active-time clock either side of `route()`: the DIFFERENCE is the exact
+    // capped-gap delta it accrued for this hit. A fresh encounter (one `route()` opened) contributes
+    // 0, which is precisely what the routing path does for a first hit.
+    let enc_before = st.current.as_ref().map(|e| e.id.clone());
+    let active_before = st.current.as_ref().map_or(0, |e| e.active_ms);
+    let Some(at) = routing::route(st, laned.as_ref().unwrap_or(&dmg)) else {
+        return;
+    };
+    let same_encounter = st.current.as_ref().map(|e| e.id.clone()) == enc_before;
+    let delta = if same_encounter {
+        st.current.as_ref().map_or(0, |e| e.active_ms) - active_before
+    } else {
+        0
+    };
+    fold_damage_analytics(st, &dmg, delta, &at, origin);
+}
+
+/// WHERE ONE OF YOUR SPELL EFFECTS CAME FROM, decided BEFORE the line is routed because the answer
+/// names the meter LANE it lands in. `None` = the question does not arise: not a spell effect, not
+/// yours, or a line the meter drops anyway.
+///
+/// The two eligibility gates run FIRST and in that order, so only a `dtype: spell` line of the
+/// player's ever pays for the extra `classify` — a few hundredths of the fold's damage lines.
+fn damage_origin(st: &mut EngineState, ev: &DamageEvent) -> Option<SpellOrigin> {
+    if ev.amount <= 0 {
+        return None;
+    }
+    if !proc_eligible_damage(&ev.dtype, &ev.skill) {
+        return None;
+    }
+    if id_key(&ev.attacker) != "you" {
+        return None;
+    }
+    if routing::classify(st, &ev.attacker, &ev.target) != Attribution::OutYou {
+        return None;
+    }
+    // The cast ledger answers cast-or-not; the held-clicky set is what turns a `proc` verdict into a
+    // `click` one. Empty set ⇒ identity, so this line changes nothing without a dump.
+    let verdict = st.recent_casts.origin(&ev.skill, ev.ts);
+    Some(castless_kind(verdict, &ev.skill, &st.held_clickies))
+}
+
+/// Fold one judgement into BOTH ledgers this segment has — the zone aggregate and the FRESH
+/// encounter, if any. Every proc counter is written through here so the two can never disagree about a
+/// line, and so the per-state split is fed from exactly one place.
+///
+/// `active` is the state timeline's O(1) open set, read at the event's own instant and PASSED (never
+/// re-read) into every accumulator, because the whole point of folding on ingest is that "what was on
+/// when this fired" is knowable only now. It is CLONED once per fold rather than borrowed, because the
+/// set and the two aggregates are three fields of one state object.
+fn fold_both(
+    st: &mut EngineState,
+    ts: i64,
+    f: impl Fn(&mut crate::combat::aggregate::Agg, &std::collections::HashSet<String>),
+) {
+    let active = st.state_timeline.active.clone();
+    f(&mut st.zone_agg, &active);
+    if let Some(enc) = st.fresh_encounter(ts) {
+        f(&mut enc.agg, &active);
+    }
+}
+
+/// PROC ANALYTICS for one attributed damage line. PURELY ADDITIVE — everything below is a COUNT or an
+/// INDEX over damage the meter already counted.
+///
+/// The three judgements, each with its gate:
+///   * OUTGOING-YOURS only. A pet's damage is not your swing and not your proc, and neither is a group
+///     member's: proc analytics stay strictly first-person because the cast-less inference reads `You
+///     begin casting`, which only you print.
+///   * SWING = a melee or slay HIT (misses are added by the miss path). Slay counts because a Slay
+///     Undead proc rides an ordinary swing — it IS a swing.
+///   * PROC = a cast-less spell effect. A CLICK is a cast-less firing too, so it still folds a lane —
+///     what changes is the LANE NAME, which `ingest_damage` has already applied.
+fn fold_damage_analytics(
+    st: &mut EngineState,
+    ev: &DamageEvent,
+    active_delta_ms: i64,
+    at: &Attribution,
+    origin: Option<SpellOrigin>,
+) {
+    if ev.amount <= 0 || *at == Attribution::Ignore {
+        return;
+    }
+    let mine = *at == Attribution::OutYou;
+    let swing = mine && (ev.category == "melee" || ev.category == "slay");
+    let proc = mine && matches!(origin, Some(SpellOrigin::Proc) | Some(SpellOrigin::Click));
+    let click = origin == Some(SpellOrigin::Click);
+    let fold = WindowFold {
+        ts: ev.ts,
+        active_delta_ms,
+        out_damage: if mine { ev.amount } else { 0 },
+        proc_damage: if proc { ev.amount } else { 0 },
+        swings: i64::from(swing),
+    };
+    // The LEDGER gets the UN-SPLIT skill: `spell_procs` is keyed by the SPELL, so the ledger row, its
+    // PPM and its drill tag stay one lane however many meter rows the spell now occupies.
+    let spell = ev.skill.clone();
+    fold_both(st, ev.ts, |agg, active| {
+        agg.windows.fold(&fold, active);
+        agg.procs.add_active_ms(active_delta_ms, active);
+        if swing {
+            agg.procs.add_swing(active);
+        }
+        if proc {
+            agg.procs.add_spell_proc(&SpellProcFold {
+                spell: &spell,
+                side: ProcSide::Damage,
+                amount: Some(ev.amount),
+                active,
+                click,
+            });
+        }
+    });
+}
+
+/// A heal with no own cast behind it — the healing half of the same inference (`Lifetap Strike`: 1,814
+/// procs and 52,861 hit points restored, zero casts, in the real log). Gated to YOUR OWN heals —
+/// another player's cast-less heal is their proc, not yours — and to the two refusals `is_castless_heal`
+/// owns (a HoT tick and a Quick Buff burst landing).
+fn fold_heal_analytics(st: &mut EngineState, ev: &HealLine, over_time: bool) {
+    let Some(spell) = ev.spell.clone() else {
+        return;
+    };
+    if id_key(ev.healer.as_deref().unwrap_or("")) != "you" {
+        return;
+    }
+    let quick_buff_ts = st.quick_buff_ts;
+    if !is_castless_heal(
+        &mut st.recent_casts,
+        &HealProcInput {
+            spell: &spell,
+            ts: ev.ts,
+            over_time,
+            quick_buff_ts,
+        },
+    ) {
+        return;
+    }
+    // The gate above has already reached `proc`; the held set is what would promote it. A clicky heal
+    // is the same shape as the damage side.
+    let click = castless_kind(
+        crate::combat::procdetect::CastVerdict::Proc,
+        &spell,
+        &st.held_clickies,
+    ) == SpellOrigin::Click;
+    let amount = ev.amount;
+    fold_both(st, ev.ts, |agg, active| {
+        agg.procs.add_spell_proc(&SpellProcFold {
+            spell: &spell,
+            side: ProcSide::Heal,
+            amount: Some(amount),
+            active,
+            click,
+        });
+    });
 }
 
 /// The engine's internal damage record, with the lane NAMED.
@@ -484,6 +746,7 @@ fn ingest_cast(st: &mut EngineState, ev: &Event) -> bool {
     match ev.kind() {
         "castBegin" => {
             if let Some(spell) = ev.str("spell") {
+                st.recent_casts.note(spell, ev.ts());
                 st.charm.note_cast_begin(spell, ev.ts());
             }
             // …and the pet-summon NUDGE is the third reader of the same exclusivity — LIVE ONLY, and
@@ -493,8 +756,9 @@ fn ingest_cast(st: &mut EngineState, ev: &Event) -> bool {
         }
         "castFizzle" | "castInterrupted" => {
             // A cast that resolved to nothing explains no landing, and nothing it might have
-            // "resolved" is ours.
+            // "resolved" is ours. An interrupt can still RECOVER, which is what `castResumed` is for.
             if let Some(spell) = ev.str("spell") {
+                st.recent_casts.forget(spell);
                 st.charm.note_cast_failed(spell, ev.ts());
             }
             true
@@ -517,11 +781,14 @@ fn ingest_cast(st: &mut EngineState, ev: &Event) -> bool {
             });
             true
         }
-        // `You regain your concentration and continue your casting.` — the interrupted cast is back
-        // on. It gives the cast-less proc detector its claim back and DELIBERATELY does not re-arm
-        // the charm/CC model: that model's own evidence rules are a separate question and were not
-        // measured here. With the proc detector unported this consumes the line and does nothing.
-        "castResumed" => true,
+        // `You regain your concentration and continue your casting.` — the interrupted cast is back on
+        // and will land, so give it back its claim, with its ORIGINAL cast ts. DELIBERATELY does not
+        // re-arm the charm/CC model: that model's own evidence rules are a separate question and were
+        // not measured here.
+        "castResumed" => {
+            st.recent_casts.resume();
+            true
+        }
         _ => false,
     }
 }
@@ -533,17 +800,19 @@ fn ingest_cast(st: &mut EngineState, ev: &Event) -> bool {
 /// Its own family rather than three more cases beside the annotations, because the three answer the
 /// same question and none of them is an event in a fight: they are what the character has DECIDED to
 /// do, persisting across pulls and zones until the game prints a different decision.
-fn ingest_choice(st: &mut EngineState, ev: &Event) {
+fn ingest_choice(st: &mut EngineState, ev: &Event) -> bool {
     match ev.kind() {
         "stanceChange" => {
-            if let Some(name) = ev.str("stance") {
-                apply_stance(&mut st.stance, name, ev.ts());
+            if let Some(name) = ev.str("stance").map(str::to_string) {
+                apply_stance(st, "stance", &name, ev.ts());
             }
+            true
         }
         "invocationChange" => {
-            if let Some(name) = ev.str("invocation") {
-                apply_stance(&mut st.invocation, name, ev.ts());
+            if let Some(name) = ev.str("invocation").map(str::to_string) {
+                apply_stance(st, "invocation", &name, ev.ts());
             }
+            true
         }
         "specialAttack" => {
             // `You will now use Dragon Punch instead of Eagle Strike while attacking.` — the ONE line
@@ -552,11 +821,100 @@ fn ingest_choice(st: &mut EngineState, ev: &Event) {
             if let Some(skill) = ev.str("skill") {
                 st.specials.note(skill);
             }
+            true
         }
-        // `buffApply` is `ingest_modifier`'s, and one of its four disjoint curated gates is ported:
-        // the one that BINDS A PET (JOS-188). The other three — the dispel ledger, the proc-buff
-        // span and the self-landing proc count — are proc analytics and are unported.
-        "buffApply" => bind_pet_buff_landing(st, ev),
+        _ => false,
+    }
+}
+
+// ── MODIFIER ──────────────────────────────────────────────────────────────────────────────────
+
+/// coats · procs · dispel landings · Quick Buff · your own death. Everything here is an ANNOTATION:
+/// none of it opens, extends or closes an encounter.
+fn ingest_modifier(st: &mut EngineState, ev: &Event) {
+    match ev.kind() {
+        "poisonCoat" => route_coat(
+            st,
+            &CoatLine {
+                ts: ev.ts(),
+                poison: ev.str("poison").unwrap_or("unknown"),
+                group: ev.str("group").unwrap_or("unknown"),
+                who: ev.str("who").unwrap_or_default(),
+            },
+        ),
+        "poisonDry" => route_dry(st, ev.str("group").unwrap_or_default(), ev.ts()),
+        "poisonProc" => route_proc(
+            st,
+            &ProcLine {
+                ts: ev.ts(),
+                strike: ev.str("strike").unwrap_or_default(),
+                candidates: ev
+                    .arr_str("candidates")
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                target: ev.str("target").unwrap_or_default(),
+                effect: ev.str("effect").unwrap_or_default(),
+            },
+        ),
+        "buffApply" => {
+            let names = ev.candidate_names("candidates");
+            let target = ev.str("target").unwrap_or_default().to_string();
+            // THE PET BIND RUNS FIRST so the three curated gates below see a world model that already
+            // knows whose the buffed entity is. FOUR disjoint gates over ONE event, and not one of
+            // them consumes another's lines: this one BINDS, the dispel family names a lane on a MOB,
+            // the proc-buff catalog opens a SELF-BUFF SPAN, and the self-landing registry counts a
+            // FIRING.
+            if target != "self" {
+                bind_pet_buff_landing(st, ev);
+            }
+            route_dispel_landing(st, ev.ts(), &target, &names);
+            route_proc_buff_apply(st, ev.ts(), &target, &names);
+            route_self_landing_proc(st, ev.ts(), &target, &names);
+        }
+        // The rare PRINTED end of a tracked proc buff — the only path that can close a buff span
+        // `observed`. In the real log this fires ONCE against 97 landings, which is exactly why edge
+        // evidence exists at all.
+        // `arr_str`, NOT `candidate_names`: the two events spell their candidate list differently and
+        // the difference is load-bearing. A `buffApply` carries OBJECTS (`{name, durationMs, illusion}`)
+        // because the buffs module needs the duration; a `buffWearOff` carries plain STRINGS, because a
+        // fade line has nothing else to say. Reading the wrong one silently answers an empty list, and
+        // an empty list means this gate NEVER fires — which leaves every tracked buff span open to be
+        // superseded or censored later instead of ending `observed` where the game printed an end.
+        "buffWearOff" => {
+            let names: Vec<String> = ev
+                .arr_str("candidates")
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            route_proc_buff_wear_off(st, ev.ts(), &names);
+        }
+        // THE QUICK BUFF BURST. This AA re-applies every memorized buff and prints their LANDINGS
+        // ONLY — no cast line for any of them — so without this stamp 254 buff landings in the real
+        // log read as cast-less procs. Recording the activation is the whole fix: the burst is cast
+        // evidence in a different shape.
+        "aaActivate" => {
+            if id_key(ev.str("name").unwrap_or_default()) == QUICK_BUFF_AA {
+                st.quick_buff_ts = ev.ts();
+            }
+        }
+        "playerDeath" => {
+            // BLADE COATS DIE WITH YOU. The wiki's Rogue page states poisons "remain active until
+            // class swap or death", and the log corroborates it without ever printing a dry line:
+            // `Your Paralytic Poison spell did not take hold. (Blocked by Neurotoxic Poison.)` at
+            // 20:01:47, then — after `You have been slain by a rock golem!` at 21:01:40 — the SAME
+            // Paralytic coat lands cleanly at 21:15:23. Something removed Neurotoxic in between and no
+            // line said so.
+            //
+            // FIRST, and through the shared door: the coat clear runs BEFORE the censor below so the
+            // coat spans close through `clear_coats`, which — unlike a bare censor — also STAMPS the
+            // window transition. That stamp is what discards the boundary minute from the Tier-B
+            // purity gate, and a minute in which the player died and four coats ended is the last
+            // minute that should be believed clean. The censor then finds the coat groups already
+            // closed and severs everything else.
+            clear_coats(st, ev.ts());
+            st.state_timeline.censor_all(ev.ts());
+        }
         _ => {}
     }
 }
@@ -606,26 +964,4 @@ fn bind_pet_buff_landing(st: &mut EngineState, ev: &Event) {
         return;
     }
     bind_pet_claim(st, &target, ev.ts());
-}
-
-/// `procRouting.ts applyStance`, the half of it that writes the session-scoped pair.
-///
-/// THE NO-OP RE-ASSERT RETURNS EARLY, and that is load-bearing rather than an optimisation: the nine
-/// stances (and the nine invocations) are mutually exclusive, so a commit ENDS the previous span —
-/// the game prints no "your stance ends" line, ever — and without this guard a re-assert of the
-/// stance you are already in would accrue a zero-width span and move `stanceTs` to a moment nothing
-/// happened at. The goldens pin the consequence: `stanceTs` and `invocationTs` are the ts of the last
-/// CHANGE, not of the last line that mentioned one.
-///
-/// The rest of `applyStance` — the session state timeline's exclusivity commit, the open encounter's
-/// span bookkeeping, the timeline marker and the two proc switch counters — belongs to the timeline
-/// and the proc ledger, and is unported with them.
-fn apply_stance(slot: &mut Option<Modifier>, name: &str, ts: i64) {
-    if slot.as_ref().is_some_and(|m| m.name == name) {
-        return;
-    }
-    *slot = Some(Modifier {
-        name: name.to_string(),
-        ts,
-    });
 }

@@ -31,7 +31,54 @@
 
 use crate::combat::aggregate::Agg;
 use crate::jsmap::JsMap;
+use serde::Serialize;
 use std::collections::HashSet;
+
+/// One coated poison and when it went on — `shared/combat.ts CoatSlot`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoatSlot {
+    /// DB spell name, or `unknown` when the line refused to name it.
+    pub poison: String,
+    /// Epoch ms of the coat line.
+    pub since_ts: i64,
+}
+
+/// Internal raw timeline record (absolute ts; converted to relative at snapshot).
+#[derive(Debug, Clone)]
+pub struct TimelineRaw {
+    pub ts: i64,
+    pub lane: String,
+    pub category: String,
+    pub amount: i64,
+    pub crit: bool,
+    pub modifiers: Vec<String>,
+    pub kind: &'static str,
+    /// `miss` / `resist` for avoided and resisted instants; `None` = a landed hit.
+    pub outcome: Option<&'static str>,
+    /// Miss subtype (dodge/parry/…) or `resisted`, for the tooltip.
+    pub detail: Option<String>,
+    /// Target/defender name, for the tooltip.
+    pub target: Option<String>,
+}
+
+/// Internal raw timeline MARKER (absolute ts; converted to relative at snapshot).
+#[derive(Debug, Clone)]
+pub struct MarkerRaw {
+    pub ts: i64,
+    pub kind: &'static str,
+    pub label: String,
+    pub detail: Option<String>,
+}
+
+/// Internal raw stance/invocation span (absolute ts). `end` is `None` while active.
+#[derive(Debug, Clone)]
+pub struct StanceRaw {
+    pub group: &'static str,
+    pub name: String,
+    pub start: i64,
+    pub end: Option<i64>,
+}
 
 /// Why a zone session stopped accruing. `Zone` — you walked through a zone line (or the epoch
 /// boundary did it for you). `Mark` — the user pressed "New session".
@@ -109,6 +156,29 @@ pub struct Encounter {
     /// immutable thereafter. Recomputing it for every history entry on every snapshot was the
     /// dominant snapshot cost.
     pub summary: Option<crate::combat::lifecycle::SegmentSummary>,
+    /// Per-encounter TIMELINE event ring. Each attributed damage/miss/resist instant is appended here
+    /// (absolute ts), capped drop-oldest at `TIMELINE_CAP` so a marathon charm-grind fight cannot grow
+    /// unbounded. Retained only for the most recent `TIMELINE_HISTORY_CAP` finalized encounters.
+    pub events: Vec<TimelineRaw>,
+    /// TRUE count of every instant ever pushed, including ones the drop-oldest cap has evicted. ONE
+    /// integer per encounter, and the only way a consumer can tell "the ring holds 8,000" from "the
+    /// fight had 8,000": once the cap engages, `events.len()` saturates and would silently understate
+    /// the fight. Nothing else reads it — no aggregate, total or attribution depends on it.
+    pub events_total: i64,
+    /// Stance/invocation spans that overlapped this encounter, recorded as they change while it is
+    /// open (absolute ts). DELIBERATELY NOT the session state timeline: this list feeds the shipped
+    /// timeline view and sits inside the byte-identical regression surface. Two lists, one writer.
+    pub stance_spans: Vec<StanceRaw>,
+    /// Point ANNOTATIONS on this fight's clock: stance/invocation commits, blade coats, slow landings.
+    /// Never downsampled and never counted from. Capped drop-oldest purely as a memory bound; the
+    /// densest fight in the owner's whole log carries three.
+    pub markers: Vec<MarkerRaw>,
+    /// The UTILITY blade coat that was already on when this encounter opened, and the combat venoms
+    /// alongside it. Snapshotted at open from the engine's live coat state, because "could this pull
+    /// have been slowed?" is a question about the moment of ENGAGE — re-reading today's coat when the
+    /// fight is later rendered would silently re-label every past fight after a poison swap.
+    pub coat_at_engage: Option<CoatSlot>,
+    pub combat_at_engage: Vec<CoatSlot>,
 }
 
 impl Encounter {
@@ -126,6 +196,12 @@ impl Encounter {
             cc_active_until: JsMap::new(),
             last_out_target: None,
             summary: None,
+            events: Vec::new(),
+            events_total: 0,
+            stance_spans: Vec::new(),
+            markers: Vec::new(),
+            coat_at_engage: None,
+            combat_at_engage: Vec::new(),
         }
     }
 }
@@ -142,6 +218,25 @@ pub const ZONE_HISTORY_CAP: usize = 24;
 /// keeps. Small on purpose: it answers "how is my poison doing right now", not "average my whole
 /// evening's loadouts together".
 pub const SLOW_SAMPLE_CAP: usize = 25;
+
+// ── Timeline ring bounds ──────────────────────────────────────────────────────────────────────
+//
+// `TIMELINE_CAP` was bumped 5k→8k when miss AND resist ticks joined the ring (misses are ~70% of
+// combat lines), roughly doubling the densest fight's instant count. Full-log measurement: exactly ONE
+// marathon charm-grind fight exceeds 5k, peaking at 5,259 instants, so 8k captures it with ZERO
+// drop-oldest at trivial cost. If a denser fight ever DOES overflow, the loss is DECLARED rather than
+// silent — `events_total` keeps the true count and the view's `truncated` flag says so.
+pub const TIMELINE_CAP: usize = 8_000;
+/// How many finalized encounters keep their event ring after finalize. Older ones drop the ring, so
+/// the whole-session RSS delta stays bounded across thousands of fights.
+pub const TIMELINE_HISTORY_CAP: usize = 60;
+/// Max events serialized into a single timeline view; above this the engine downsamples with a uniform
+/// stride and flags it.
+pub const TIMELINE_BUDGET: usize = 2_000;
+/// Per-encounter marker ring. Markers are point annotations, NOT damage: they are never downsampled,
+/// because uniform-striding a sparse series just deletes most of it. A pure memory bound that has
+/// never engaged, and no COUNT is derived from markers, so even if it did no statistic would move.
+pub const MARKER_CAP: usize = 1_000;
 
 /// THE NAME OF AN ENCOUNTER. Two modes:
 ///

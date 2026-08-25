@@ -39,8 +39,10 @@
 
 use crate::combat::aggregate::{Agg, DamageEvent, MissFold, MissType, SourceKind, SourceRef};
 use crate::combat::ally::AllyBind;
-use crate::combat::encounter::ACTIVE_MS;
+use crate::combat::encounter::{TimelineRaw, ACTIVE_MS};
+use crate::combat::healing::{HealInput, HealSourceKind};
 use crate::combat::lifecycle::ensure_encounter;
+use crate::combat::procdetect::base_lane_name;
 use crate::combat::state::EngineState;
 use crate::combat::world::Resolved;
 use eqlog::names::id_key;
@@ -220,17 +222,28 @@ fn engage_hostile(st: &mut EngineState, inst: &Resolved, ts: i64) {
     enc.engaged_seen.insert(inst.instance_id.clone(), ts);
 }
 
-/// RESOLVE THE DEFENDER'S LABEL FOR ITS SIDE EFFECTS. Every damage-free path over there ends with
-/// `const tgtName = enc ? st.defenderLabel(enc, target, ts) : target`, and the label feeds the
-/// timeline instant and the processing line — both unported. The CALL is not optional even so:
-/// `defenderLabel` resolves through the world model, which retires the name's stale instances and
-/// adopts the sighting's casing as the instance display, and that display is what the NEXT
-/// `bumpTarget` freezes into a fight's name. `state.rs` carries the measurement.
+/// RESOLVE THE DEFENDER'S LABEL, AND NOTE THAT THE CALL IS NOT A PURE READ. Every damage-free path
+/// over there ends with `const tgtName = enc ? st.defenderLabel(enc, target, ts) : target`, and the
+/// label feeds the timeline instant and the processing line. The CALL would not be optional even if
+/// nothing read the result: `defenderLabel` resolves through the world model, which retires the name's
+/// stale instances and ADOPTS the sighting's casing as the instance display, and that display is what
+/// the NEXT `bump_target` freezes into a fight's name. `state.rs` carries the measurement.
 ///
-/// The freshness gate is the caller's `enc ?`, reproduced here as the one condition.
-fn note_defender(st: &mut EngineState, target: &str, ts: i64) {
+/// The freshness gate is the caller's `enc ?`, reproduced here as the one condition — WITHOUT a fresh
+/// encounter the raw name stands and the world model is not touched at all.
+fn note_defender(st: &mut EngineState, target: &str, ts: i64) -> String {
     if st.fresh_encounter_id(ts) {
-        let _ = st.defender_label(target, ts);
+        st.defender_label(target, ts)
+    } else {
+        target.to_string()
+    }
+}
+
+/// Push one instant onto the FRESH encounter's ring, or nothing at all when no fight is open. The
+/// gate is the caller's, mirrored here so no path can push into a stale fight.
+fn push_fresh_timeline(st: &mut EngineState, ts: i64, rec: TimelineRaw) {
+    if let Some(enc) = st.fresh_encounter(ts) {
+        EngineState::push_timeline(enc, rec);
     }
 }
 
@@ -335,6 +348,24 @@ fn route_incoming_damage(st: &mut EngineState, ev: &DamageEvent) {
     let (id, name) = (att.instance_id.clone(), att.label.clone());
     both(st, ev.ts, false, |agg| agg.add_inc(&id, &name, ev));
     engage_hostile(st, &att, ev.ts);
+    // Timeline: an incoming instant lanes under the ATTACKER's skill (its own row).
+    if let Some(enc) = st.current.as_mut() {
+        EngineState::push_timeline(
+            enc,
+            TimelineRaw {
+                ts: ev.ts,
+                lane: ev.skill.clone(),
+                category: ev.category.clone(),
+                amount: ev.amount,
+                crit: ev.crit,
+                modifiers: ev.modifiers.clone(),
+                kind: "enemy",
+                outcome: None,
+                detail: None,
+                target: None,
+            },
+        );
+    }
 }
 
 /// You, your pet or a group member landed a hit.
@@ -359,6 +390,19 @@ fn route_outgoing_damage(st: &mut EngineState, ev: &DamageEvent, at: &Attributio
     // it does beyond its own row is ENGAGE ITS TARGET — which is the whole point, because the mob
     // your group-mate is fighting is the mob you are fighting.
 
+    // POISON-TYPED DAMAGE: the game states the damage TYPE on every typed spell line ("… for 53 points
+    // of POISON damage by Asp Venom Strike."), so a poison lane is a fact the log PRINTED, not a
+    // name-matched guess. Outgoing only — a mob's poison DoT on you is not a proc of ours — and
+    // additive, a second index over damage already counted, so no total moves.
+    if ev.dclass.as_deref() == Some("poison") {
+        // `base_lane_name`: the LEDGER is about the venom, not the meter row. A cast-less firing's
+        // meter lane carries the origin marker and this counter must not inherit it — every other proc
+        // counter is keyed on the spell for the same reason.
+        let venom = base_lane_name(&ev.skill).to_string();
+        both(st, ev.ts, false, |agg| {
+            agg.procs.add_poison_damage(&venom, ev.amount)
+        });
+    }
     // Resolve the target to an instance. For a same-name ambiguous pet hit the target is the HOSTILE
     // twin (`prefer_charmed = false` picks the hostile instance).
     let tgt = st.resolve(&ev.target, ev.ts, false);
@@ -371,7 +415,26 @@ fn route_outgoing_damage(st: &mut EngineState, ev: &DamageEvent, at: &Attributio
     // LIVE-name tracking: the current fight is named after whatever you are presently swinging at.
     // Finalize switches to the largest target; until then this drives the live label.
     if let Some(enc) = st.current.as_mut() {
-        enc.last_out_target = Some(tname);
+        enc.last_out_target = Some(tname.clone());
+        // Timeline: an outgoing instant lanes under the skill/spell name. `target` carries the
+        // INSTANCE-RESOLVED defender label — the same value `bump_target` aggregates under, so twins
+        // stay distinct — because it drives the tooltip AND the per-mob breakdown, which needs
+        // per-event defenders to answer "what did I land on THIS mob".
+        EngineState::push_timeline(
+            enc,
+            TimelineRaw {
+                ts: ev.ts,
+                lane: ev.skill.clone(),
+                category: ev.category.clone(),
+                amount: ev.amount,
+                crit: ev.crit,
+                modifiers: ev.modifiers.clone(),
+                kind: src.kind.as_str(),
+                outcome: None,
+                detail: None,
+                target: Some(tname),
+            },
+        );
     }
 }
 
@@ -451,10 +514,14 @@ pub fn route_miss(st: &mut EngineState, ev: &MissLine) {
         let (id, name) = (att.instance_id, att.label);
         both(st, ev.ts, true, |agg| agg.add_inc_miss(&id, &name, &fold));
         // ABSORPTION: an incoming swing absorbed by YOUR rune is also a mitigation instant, and it
-        // belongs to the healing ledger — which is unported, so the counter has nowhere to go. Named
-        // rather than silently skipped, because `incoming` means the defender is YOU (a swing at
-        // your pet classifies as `Ignore`), so this can never pick up a pet's or a mob's own rune.
-        let _ = MissType::Absorb;
+        // belongs to the healing ledger. `Incoming` means the defender is YOU (a swing at your pet
+        // classifies as `Ignore`), so this can never pick up a pet's or a mob's own rune. It is the
+        // SECOND source for the same line family the parser's `absorbSwing` mitigation event covers:
+        // whichever regex claims the line, exactly ONE event is emitted, so the two paths can never
+        // double-count.
+        if ev.mtype == MissType::Absorb {
+            both(st, ev.ts, true, |agg| agg.heal.add_absorbed_swing());
+        }
         return;
     }
     route_outgoing_miss(st, ev, &fold, at.out_kind());
@@ -469,7 +536,26 @@ fn route_outgoing_miss(st: &mut EngineState, ev: &MissLine, fold: &MissFold, kin
         st.charm.note_pet_evidence(&id_key(&ev.attacker));
     }
     both(st, ev.ts, true, |agg| agg.add_out_miss(&src, fold));
-    note_defender(st, &ev.target, ev.ts);
+    // Timeline: a miss tick lanes under `Melee` (a hollow mark in the renderer). The defender goes
+    // through `defender_label` so it matches the INSTANCE label the damage path writes — a raw name
+    // made every whiff at a twin pile onto a phantom bare row.
+    let tgt_name = note_defender(st, &ev.target, ev.ts);
+    push_fresh_timeline(
+        st,
+        ev.ts,
+        TimelineRaw {
+            ts: ev.ts,
+            lane: "Melee".to_string(),
+            category: "melee".to_string(),
+            amount: 0,
+            crit: false,
+            modifiers: Vec::new(),
+            kind: src.kind.as_str(),
+            outcome: Some("miss"),
+            detail: Some(ev.mtype.as_str().to_string()),
+            target: Some(tgt_name),
+        },
+    );
 }
 
 // ── RESIST ────────────────────────────────────────────────────────────────────────────────────
@@ -523,6 +609,22 @@ pub fn route_resist(st: &mut EngineState, ev: &ResistLine) {
         both(st, ev.ts, true, |agg| {
             agg.add_inc_resist(&id, &name, &spell, CATEGORY)
         });
+        push_fresh_timeline(
+            st,
+            ev.ts,
+            TimelineRaw {
+                ts: ev.ts,
+                lane: ev.spell.clone(),
+                category: CATEGORY.to_string(),
+                amount: 0,
+                crit: false,
+                modifiers: Vec::new(),
+                kind: "enemy",
+                outcome: Some("resist"),
+                detail: Some("resisted".to_string()),
+                target: Some("You".to_string()),
+            },
+        );
         return;
     }
 
@@ -542,7 +644,25 @@ pub fn route_resist(st: &mut EngineState, ev: &ResistLine) {
     both(st, ev.ts, true, |agg| {
         agg.add_out_resist(&src, &spell, CATEGORY)
     });
-    note_defender(st, &ev.target, ev.ts);
+    // Same instance resolution as the miss and damage paths — a resisted cast at a twin must land on
+    // that twin's per-mob row, not a bare-named ghost.
+    let tgt_name = note_defender(st, &ev.target, ev.ts);
+    push_fresh_timeline(
+        st,
+        ev.ts,
+        TimelineRaw {
+            ts: ev.ts,
+            lane: ev.spell.clone(),
+            category: CATEGORY.to_string(),
+            amount: 0,
+            crit: false,
+            modifiers: Vec::new(),
+            kind: src.kind.as_str(),
+            outcome: Some("resist"),
+            detail: Some("resisted".to_string()),
+            target: Some(tgt_name),
+        },
+    );
 }
 
 // ── HEAL ──────────────────────────────────────────────────────────────────────────────────────
@@ -552,6 +672,21 @@ pub struct HealLine {
     pub target: String,
     pub healer: Option<String>,
     pub amount: i64,
+    /// Raw/pre-overheal amount, present only on the `for N (M) hit points` lines.
+    pub raw_amount: Option<i64>,
+    pub spell: Option<String>,
+    pub crit: bool,
+}
+
+impl HealLine {
+    fn input(&self) -> HealInput {
+        HealInput {
+            amount: self.amount,
+            raw_amount: self.raw_amount,
+            spell: self.spell.clone(),
+            crit: self.crit,
+        }
+    }
 }
 
 /// Consume a heal. Three things matter for combat stats: a heal on an engaged HOSTILE is "enemy
@@ -602,19 +737,87 @@ pub fn route_heal(st: &mut EngineState, ev: &HealLine) {
 }
 
 /// Incoming heal to You (or the player by name) / your pet.
+///
+/// The `inc_heal` map keeps its original `amount <= 0` gate so its totals AND its healer lists stay
+/// byte-identical; the LEDGER takes the zero-effective lines too, because `… for 0 (2) hit points …`
+/// is the overheal evidence and belongs to the ledger that reports overheal.
 fn add_friendly_heal(st: &mut EngineState, ev: &HealLine, healer_key: Option<&str>) {
-    if ev.amount <= 0 {
-        return;
-    }
     let hk = healer_key.unwrap_or("unknown").to_string();
     let healer_name = ev.healer.clone().unwrap_or_else(|| "Unknown".to_string());
+    if ev.amount > 0 {
+        both(st, ev.ts, true, |agg| {
+            agg.add_inc_heal(&hk, &healer_name, ev.amount)
+        });
+    }
+    // Healing ledger: ranked by HEALER. Row id `you` for self-heals keeps the healing meter's primary
+    // row keyed the same way the damage meter's is.
+    let kind = if hk == "you" {
+        HealSourceKind::You
+    } else if st.pet_names.contains(&hk) {
+        HealSourceKind::Pet
+    } else {
+        HealSourceKind::Other
+    };
+    let id = if hk == "you" {
+        "you".to_string()
+    } else {
+        format!("heal:{hk}")
+    };
+    let input = ev.input();
     both(st, ev.ts, true, |agg| {
-        agg.add_inc_heal(&hk, &healer_name, ev.amount)
+        agg.heal.add_friendly(&id, &healer_name, kind, &input)
+    });
+}
+
+/// Consume an ANNOUNCED-BUT-UNVALUED heal — `You mend your wounds and heal some damage.`
+///
+/// It reaches the healing ledger as a COUNT on its own lane and nothing else. Everything the valued
+/// path does with an amount is SKIPPED rather than done with a zero: no `inc_heal` (the top-healers
+/// list ranks by hit points and this line has none), no proc analytics (a 0-amount "Mend proc" is a
+/// fabricated observation), no min/max/overheal.
+///
+/// NO WORLD-MODEL EVIDENCE IS READ OFF IT EITHER, unlike every other heal line: a heal names two
+/// parties and one of them can be filed, but this sentence names NOBODY — not even you, grammatically
+/// — so there is nothing to learn and nothing to get wrong.
+pub fn route_heal_unstated(st: &mut EngineState, ts: i64, skill: &str) {
+    let skill = skill.to_string();
+    both(st, ts, true, |agg| agg.heal.add_unstated(&skill));
+}
+
+/// One absorption / mitigation line.
+pub struct MitigationLine<'a> {
+    pub ts: i64,
+    /// `rune` · `absorbSwing` · `absorbDamageShield`.
+    pub mtype: &'a str,
+    pub amount: Option<i64>,
+}
+
+/// Consume an ABSORPTION / MITIGATION line — damage PREVENTED, not hit points restored, so it never
+/// touches a DAMAGE total. It does reach the HEALING total: the rune counters are folded in as a row
+/// classified `absorbed`, while the two count-only families carry no amount and so reach no total at
+/// all.
+///
+/// These lines NEVER open, join or extend an encounter and never move the damage timeline — the same
+/// rule miss and resist follow (law 8). A rune ticking while you stand around out of combat belongs to
+/// the zone lane and nowhere else.
+pub fn route_mitigation(st: &mut EngineState, ev: &MitigationLine) {
+    let mtype = ev.mtype.to_string();
+    // Defensive: the amount is required by the regex, but keep the ledger clean if a future shape ever
+    // omits it — a rune with no amount is a count we cannot value.
+    let amount = ev.amount.unwrap_or(0);
+    both(st, ev.ts, true, |agg| match mtype.as_str() {
+        "rune" => {
+            if amount > 0 {
+                agg.heal.add_rune(amount);
+            }
+        }
+        "absorbSwing" => agg.heal.add_absorbed_swing(),
+        _ => agg.heal.add_absorbed_damage_shield(),
     });
 }
 
 /// Heal on a hostile instance we are currently engaged with → enemy healing.
-fn add_hostile_heal(st: &mut EngineState, ev: &HealLine, _healer_key: Option<&str>) {
+fn add_hostile_heal(st: &mut EngineState, ev: &HealLine, healer_key: Option<&str>) {
     let t_key = id_key(&ev.target);
     // A KNOWN PLAYER is never a hostile, so their heals are never "enemy healing". `engage_hostile`
     // already keeps them out of `engaged`, which makes this unreachable for a player the heal stream
@@ -643,6 +846,15 @@ fn add_hostile_heal(st: &mut EngineState, ev: &HealLine, _healer_key: Option<&st
             agg.add_enemy_heal(&id, &name, ev.amount)
         });
     }
+    // Counter-healing ledger, ranked by the HEALER (a mob healing itself is its own row). It takes the
+    // zero-effective lines the map above refuses, for the reason the friendly side does.
+    let hk = healer_key.unwrap_or("unknown").to_string();
+    let healer_name = ev.healer.clone().unwrap_or_else(|| "Unknown".to_string());
+    let input = ev.input();
+    both(st, ev.ts, false, |agg| {
+        agg.heal
+            .add_hostile(&format!("heal:{hk}"), &healer_name, &input)
+    });
     // PRESENCE: a heal on an engaged hostile proves BOTH ends are still in the fight — the mob
     // receiving it, and (when a second mob cast it) the healer. The real case this came from:
     // `Baron Telyx V`Zher healed Soldier of V`Zher for 175` — the Baron had landed nothing for
@@ -729,7 +941,8 @@ fn route_other_damage(st: &mut EngineState, ev: &DamageEvent) -> bool {
     st.others.note(&key, &ev.attacker);
     let src = other_source(st, &ev.attacker, &key, false);
     both(st, ev.ts, true, |agg| agg.add_out(&src, ev, false));
-    note_defender(st, &ev.target, ev.ts);
+    let tgt_name = note_defender(st, &ev.target, ev.ts);
+    push_fresh_timeline(st, ev.ts, damage_instant(ev, "other", tgt_name));
     true
 }
 
@@ -740,7 +953,8 @@ fn route_other_miss(st: &mut EngineState, ev: &MissLine, fold: &MissFold) -> boo
     st.others.note(&key, &ev.attacker);
     let src = other_source(st, &ev.attacker, &key, false);
     both(st, ev.ts, true, |agg| agg.add_out_miss(&src, fold));
-    note_defender(st, &ev.target, ev.ts);
+    let tgt_name = note_defender(st, &ev.target, ev.ts);
+    push_fresh_timeline(st, ev.ts, miss_instant(ev, "other", tgt_name));
     true
 }
 
@@ -754,8 +968,56 @@ fn route_other_resist(st: &mut EngineState, ev: &ResistLine, category: &str) -> 
     both(st, ev.ts, true, |agg| {
         agg.add_out_resist(&src, &spell, category)
     });
-    note_defender(st, &ev.target, ev.ts);
+    let tgt_name = note_defender(st, &ev.target, ev.ts);
+    push_fresh_timeline(
+        st,
+        ev.ts,
+        TimelineRaw {
+            ts: ev.ts,
+            lane: ev.spell.clone(),
+            category: category.to_string(),
+            amount: 0,
+            crit: false,
+            modifiers: Vec::new(),
+            kind: "other",
+            outcome: Some("resist"),
+            detail: Some("resisted".to_string()),
+            target: Some(tgt_name),
+        },
+    );
     true
+}
+
+/// The timeline instant a RECORDED combatant's (or an ally pet's) landed hit leaves.
+fn damage_instant(ev: &DamageEvent, kind: &'static str, target: String) -> TimelineRaw {
+    TimelineRaw {
+        ts: ev.ts,
+        lane: ev.skill.clone(),
+        category: ev.category.clone(),
+        amount: ev.amount,
+        crit: ev.crit,
+        modifiers: ev.modifiers.clone(),
+        kind,
+        outcome: None,
+        detail: None,
+        target: Some(target),
+    }
+}
+
+/// …and the avoided-swing twin, which lanes under `Melee` like every other whiff.
+fn miss_instant(ev: &MissLine, kind: &'static str, target: String) -> TimelineRaw {
+    TimelineRaw {
+        ts: ev.ts,
+        lane: "Melee".to_string(),
+        category: "melee".to_string(),
+        amount: 0,
+        crit: false,
+        modifiers: Vec::new(),
+        kind,
+        outcome: Some("miss"),
+        detail: Some(ev.mtype.as_str().to_string()),
+        target: Some(target),
+    }
 }
 
 // ── SOMEBODY ELSE'S CHARM PET (allyRouting.ts) ────────────────────────────────────────────────
@@ -817,7 +1079,8 @@ fn route_ally_pet_damage(st: &mut EngineState, ev: &DamageEvent) {
     };
     let src = ally_pet_source(bind);
     both(st, ev.ts, true, |agg| agg.add_out(&src, ev, false));
-    note_defender(st, &ev.target, ev.ts);
+    let tgt_name = note_defender(st, &ev.target, ev.ts);
+    push_fresh_timeline(st, ev.ts, damage_instant(ev, "allyPet", tgt_name));
 }
 
 /// The avoided-swing twin, on the same aggregate-only terms. A miss carries no amount, so this can
@@ -831,7 +1094,8 @@ fn route_ally_pet_miss(st: &mut EngineState, ev: &MissLine, fold: &MissFold) {
     };
     let src = ally_pet_source(bind);
     both(st, ev.ts, true, |agg| agg.add_out_miss(&src, fold));
-    note_defender(st, &ev.target, ev.ts);
+    let tgt_name = note_defender(st, &ev.target, ev.ts);
+    push_fresh_timeline(st, ev.ts, miss_instant(ev, "allyPet", tgt_name));
 }
 
 #[cfg(test)]
@@ -1006,6 +1270,9 @@ mod tests {
                 target: "a spite golem".into(),
                 healer: Some("a spite golem".into()),
                 amount: 15,
+                raw_amount: None,
+                spell: None,
+                crit: false,
             },
         );
         let enc = st.current.as_ref().expect("open");
@@ -1022,6 +1289,9 @@ mod tests {
                 target: "a bat".into(),
                 healer: Some("a bat".into()),
                 amount: 15,
+                raw_amount: None,
+                spell: None,
+                crit: false,
             },
         );
         assert_eq!(
