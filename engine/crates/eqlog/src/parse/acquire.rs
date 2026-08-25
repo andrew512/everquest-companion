@@ -23,6 +23,14 @@ pub struct AcquireRes {
     item_fashioned: Regex,
 }
 
+/// `Default` is `new`: a compiled pattern table has exactly one value, so there is nothing to
+/// choose between them. (Clippy asks for it on every one of these six holders.)
+impl Default for AcquireRes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AcquireRes {
     pub fn new() -> Self {
         let s = crate::jsstr::JS_S;

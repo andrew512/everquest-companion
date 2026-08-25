@@ -24,7 +24,8 @@ use crate::names::db_canon_key;
 use serde::Deserialize;
 use std::collections::HashMap;
 
-const BASELINE_JSON: &str = include_str!("../../../../../src/main/data/messageOverlay.baseline.json");
+const BASELINE_JSON: &str =
+    include_str!("../../../../../src/main/data/messageOverlay.baseline.json");
 
 #[derive(Deserialize)]
 struct BaselineFile {

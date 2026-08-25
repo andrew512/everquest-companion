@@ -41,6 +41,13 @@ pub struct CombatRes {
     ds_owner_poss: Regex,
 }
 
+/// See `AcquireRes`'s note: `Default` is `new`.
+impl Default for CombatRes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CombatRes {
     pub fn new() -> Self {
         CombatRes {
@@ -173,26 +180,28 @@ pub fn melee_skill(verb: &str) -> &'static str {
     "Melee"
 }
 
-/// `dmg()` — the damage-shield shape, which carries no paren modifier and maps its category 1:1.
-fn dmg(
-    c: &Ctx,
-    out: &mut Ev,
-    attacker: &str,
-    target: &str,
+/// `dmg()`'s `spec` argument, kept as one value for the reason the TS keeps it as one object
+/// literal: these six fields are the damage-shield reading of a line and travel together.
+struct Dmg<'a> {
+    attacker: &'a str,
+    target: &'a str,
     amount: i64,
-    dtype: &str,
-    skill: &str,
+    dtype: &'a str,
+    skill: &'a str,
     crit: bool,
-) {
+}
+
+/// `dmg()` — the damage-shield shape, which carries no paren modifier and maps its category 1:1.
+fn dmg(c: &Ctx, out: &mut Ev, spec: Dmg<'_>) {
     out.begin("damage");
     out.envelope(c.seq, c.ts, c.raw);
-    out.s("attacker", attacker);
-    out.s("target", target);
-    out.i("amount", amount);
-    out.s("dtype", dtype);
-    out.s("skill", skill);
-    out.b("crit", crit);
-    out.s("category", damage_category(dtype, &[]));
+    out.s("attacker", spec.attacker);
+    out.s("target", spec.target);
+    out.i("amount", spec.amount);
+    out.s("dtype", spec.dtype);
+    out.s("skill", spec.skill);
+    out.b("crit", spec.crit);
+    out.s("category", damage_category(spec.dtype, &[]));
 }
 
 /// Misses / avoided swings (by far the most common combat line).
@@ -269,7 +278,9 @@ pub fn classify_mitigation(r: &CombatRes, c: &Ctx, out: &mut Ev) -> bool {
             return true;
         }
     }
-    if c.text.starts_with("YOUR magical skin absorbs the damage of ") {
+    if c.text
+        .starts_with("YOUR magical skin absorbs the damage of ")
+    {
         if let Some(m) = r.skin_absorb_ds.captures(c.text) {
             out.begin("mitigation");
             out.envelope(c.seq, c.ts, c.raw);
@@ -333,12 +344,14 @@ fn points_damage(r: &CombatRes, c: &Ctx, out: &mut Ev) -> bool {
         dmg(
             c,
             out,
-            &owner,
-            &norm(&m[1]),
-            m[4].parse().unwrap_or(0),
-            "ds",
-            crate::jsstr::js_trim(&m[3]),
-            false,
+            Dmg {
+                attacker: &owner,
+                target: &norm(&m[1]),
+                amount: m[4].parse().unwrap_or(0),
+                dtype: "ds",
+                skill: crate::jsstr::js_trim(&m[3]),
+                crit: false,
+            },
         );
         return true;
     }
@@ -346,12 +359,14 @@ fn points_damage(r: &CombatRes, c: &Ctx, out: &mut Ev) -> bool {
         dmg(
             c,
             out,
-            &norm(&m[1]),
-            "You",
-            m[3].parse().unwrap_or(0),
-            "ds",
-            crate::jsstr::js_trim(&m[2]),
-            false,
+            Dmg {
+                attacker: &norm(&m[1]),
+                target: "You",
+                amount: m[3].parse().unwrap_or(0),
+                dtype: "ds",
+                skill: crate::jsstr::js_trim(&m[2]),
+                crit: false,
+            },
         );
         return true;
     }
@@ -502,7 +517,10 @@ pub fn classify_heal(r: &CombatRes, c: &Ctx, out: &mut Ev) -> bool {
     let spell = m.get(6).map(|g| crate::jsstr::js_trim(g.as_str()));
     out.s_opt("spell", spell.filter(|s| !s.is_empty()));
     out.s("healer", &healer);
-    out.b("crit", r.critical.is_match(m.get(7).map_or("", |g| g.as_str())));
+    out.b(
+        "crit",
+        r.critical.is_match(m.get(7).map_or("", |g| g.as_str())),
+    );
     if m.get(3).is_some() {
         out.b("overTime", true);
     }

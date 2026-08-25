@@ -65,14 +65,12 @@ pub fn apply_corrections(spells: &mut [SpellEntry], corrections: &[Correction]) 
             };
             // `rowsFor`: a MESSAGE correction writes the first row of its name; a name / spellType
             // / classes correction writes all of them.
-            let rows: &[usize] = if c.field == "name"
-                || c.field == "spellType"
-                || c.field == "classes"
-            {
-                all
-            } else {
-                &all[..1]
-            };
+            let rows: &[usize] =
+                if c.field == "name" || c.field == "spellType" || c.field == "classes" {
+                    all
+                } else {
+                    &all[..1]
+                };
             for &at in rows {
                 let current = field_of(&spells[at], &c.field).map(|s| s.to_string());
                 if current.as_deref() == Some(c.to.as_str()) {
@@ -219,8 +217,10 @@ pub fn parse_duration_ms(text: Option<&str>) -> Option<i64> {
     }
     static REFUSE: OnceLock<Regex> = OnceLock::new();
     let refuse = REFUSE.get_or_init(|| {
-        Regex::new(r"instant|permanent|unlimited|until(?-u:\b)|special|varies|n/a|per tick|per level")
-            .unwrap()
+        Regex::new(
+            r"instant|permanent|unlimited|until(?-u:\b)|special|varies|n/a|per tick|per level",
+        )
+        .unwrap()
     });
     if refuse.is_match(t) {
         return None;

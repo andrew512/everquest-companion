@@ -40,6 +40,13 @@ pub struct WorldRes {
     item_tier: Regex,
 }
 
+/// See `AcquireRes`'s note: `Default` is `new`.
+impl Default for WorldRes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WorldRes {
     pub fn new() -> Self {
         let s = crate::jsstr::JS_S;
@@ -228,7 +235,11 @@ pub fn classify_loot(r: &WorldRes, c: &Ctx, out: &mut Ev) -> bool {
     if !text.contains("looted") {
         return false;
     }
-    if let Some(m) = r.loot.captures(text).or_else(|| r.loot_plain.captures(text)) {
+    if let Some(m) = r
+        .loot
+        .captures(text)
+        .or_else(|| r.loot_plain.captures(text))
+    {
         loot(
             c,
             out,

@@ -54,7 +54,8 @@ pub fn charm_stems_test(name: &str) -> bool {
 /// The lookaheads sit inside a `/i` pattern, so ` of Death` satisfies `(?! of death)` exactly as
 /// ` of death` does. `lower` must already be lowercase ASCII.
 fn starts_with_ci(text: &str, lower: &str) -> bool {
-    text.len() >= lower.len() && text.as_bytes()[..lower.len()].eq_ignore_ascii_case(lower.as_bytes())
+    text.len() >= lower.len()
+        && text.as_bytes()[..lower.len()].eq_ignore_ascii_case(lower.as_bytes())
 }
 
 /// `CC_STEMS.test(name)` — no lookahead anywhere, so it stays one pattern.

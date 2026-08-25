@@ -23,6 +23,13 @@ pub struct GroupRes {
     named: Vec<(Regex, &'static str)>,
 }
 
+/// See `AcquireRes`'s note: `Default` is `new`.
+impl Default for GroupRes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GroupRes {
     pub fn new() -> Self {
         let re = |body: String| Regex::new(&body).unwrap();
@@ -35,7 +42,10 @@ impl GroupRes {
                     )),
                     "leave",
                 ),
-                (re(format!(r"^You remove {NAME} from the group\.$")), "leave"),
+                (
+                    re(format!(r"^You remove {NAME} from the group\.$")),
+                    "leave",
+                ),
                 (
                     re(format!(r"^{NAME} is now the leader of your group\.$")),
                     "leader",

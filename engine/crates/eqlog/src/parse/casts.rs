@@ -62,6 +62,13 @@ pub struct CastRes {
     say_kind_by_text: HashMap<&'static str, &'static str>,
 }
 
+/// See `AcquireRes`'s note: `Default` is `new`.
+impl Default for CastRes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CastRes {
     pub fn new() -> Self {
         let s = crate::jsstr::JS_S;
@@ -81,10 +88,8 @@ impl CastRes {
         CastRes {
             charm: Regex::new(r"^(.+?) has been charmed\.$").unwrap(),
             uncharm: Regex::new(r"^Your (.+?) spell has worn off of (.+?)\.$").unwrap(),
-            cc_apply: Regex::new(
-                r"^(.+?) has been (mesmerized|enthralled|entranced|ensnared)\.$",
-            )
-            .unwrap(),
+            cc_apply: Regex::new(r"^(.+?) has been (mesmerized|enthralled|entranced|ensnared)\.$")
+                .unwrap(),
             cc_wake: Regex::new(r"^(.+?) has been awakened by (.+?)\.$").unwrap(),
             pet_claim: Regex::new(
                 r"^(.+?) told you, '(?:Attacking .+ Master|I am unable to wake .+?, Master)\.'$",
@@ -111,10 +116,8 @@ impl CastRes {
             )
             .unwrap(),
             coat_other_named: Regex::new(r"^(.+?) coats their blades in (.+?)!$").unwrap(),
-            coat_other_generic: Regex::new(&format!(
-                r"^(.+?){s}?coats their blades in poison\.$"
-            ))
-            .unwrap(),
+            coat_other_generic: Regex::new(&format!(r"^(.+?){s}?coats their blades in poison\.$"))
+                .unwrap(),
             article: Regex::new(&format!(r"(?i)^(?:a|an|the){s}")).unwrap(),
             single_word_name: Regex::new(r"^[A-Z][A-Za-z`']*$").unwrap(),
             proc_by_last_word,
@@ -357,12 +360,7 @@ pub fn classify_pet_say(r: &CastRes, c: &Ctx, out: &mut Ev) -> bool {
 }
 
 /// `<Name> says, 'My leader is <You>.'` — the `/pet who leader` answer, which BINDS.
-pub fn classify_pet_leader(
-    r: &CastRes,
-    character: Option<&str>,
-    c: &Ctx,
-    out: &mut Ev,
-) -> bool {
+pub fn classify_pet_leader(r: &CastRes, character: Option<&str>, c: &Ctx, out: &mut Ev) -> bool {
     let Some(self_name) = character.filter(|s| !s.is_empty()) else {
         return false;
     };
@@ -646,7 +644,10 @@ pub fn classify_db_buff(db: Option<&SpellDb>, c: &Ctx, out: &mut Ev) -> bool {
             out.s("spell", &db.entry(worn[0]).name);
             out.strs(
                 "candidates",
-                &worn.iter().map(|&i| db.entry(i).name.clone()).collect::<Vec<_>>(),
+                &worn
+                    .iter()
+                    .map(|&i| db.entry(i).name.clone())
+                    .collect::<Vec<_>>(),
             );
             out.s("target", "self");
             return true;

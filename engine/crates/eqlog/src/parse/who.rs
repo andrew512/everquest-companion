@@ -19,6 +19,13 @@ pub struct WhoRes {
     item_activate: Regex,
 }
 
+/// See `AcquireRes`'s note: `Default` is `new`.
+impl Default for WhoRes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WhoRes {
     pub fn new() -> Self {
         let s = crate::jsstr::JS_S;
@@ -43,12 +50,7 @@ impl WhoRes {
 }
 
 /// The character's OWN `/who` row. The self-name check is the WHOLE guard.
-pub fn classify_self_who(
-    r: &WhoRes,
-    character: Option<&str>,
-    c: &Ctx,
-    out: &mut Ev,
-) -> bool {
+pub fn classify_self_who(r: &WhoRes, character: Option<&str>, c: &Ctx, out: &mut Ev) -> bool {
     let Some(self_name) = character.filter(|s| !s.is_empty()) else {
         return false;
     };
@@ -69,7 +71,9 @@ pub fn classify_self_who(
         "classes",
         &m[2].split('/').map(|s| s.to_string()).collect::<Vec<_>>(),
     );
-    let race = m.get(4).map_or(String::new(), |g| js_trim(g.as_str()).to_string());
+    let race = m
+        .get(4)
+        .map_or(String::new(), |g| js_trim(g.as_str()).to_string());
     if !race.is_empty() {
         out.s("race", &race);
     }

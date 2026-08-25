@@ -126,7 +126,9 @@ fn diff(
         let expected = if read == 0 {
             "(golden ended)".to_string()
         } else {
-            want.trim_end_matches('\n').trim_end_matches('\r').to_string()
+            want.trim_end_matches('\n')
+                .trim_end_matches('\r')
+                .to_string()
         };
         if expected != got {
             first = Some((at, expected, got.to_string()));

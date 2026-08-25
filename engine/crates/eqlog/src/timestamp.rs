@@ -58,7 +58,10 @@ fn month_of(m: &str) -> Option<u32> {
         "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
     ];
     let lower = m.to_ascii_lowercase();
-    MONTHS.iter().position(|x| *x == lower).map(|i| i as u32 + 1)
+    MONTHS
+        .iter()
+        .position(|x| *x == lower)
+        .map(|i| i as u32 + 1)
 }
 
 impl Clock {
@@ -127,7 +130,10 @@ mod tests {
     #[test]
     fn reads_the_slice_corpus_shape() {
         // The first line of the patch-week golden: [Wed Aug 19 16:21:47 2026] → 1787181707000.
-        assert_eq!(la().parse_eq_timestamp("Wed Aug 19 16:21:47 2026"), 1787181707000);
+        assert_eq!(
+            la().parse_eq_timestamp("Wed Aug 19 16:21:47 2026"),
+            1787181707000
+        );
     }
 
     #[test]

@@ -35,11 +35,11 @@ pub mod stems;
 pub mod taxonomy;
 pub mod timestamp;
 
-pub use parse::Parser;
-pub use timestamp::{host_timezone, Clock};
 /// Re-exported so a consumer names the zone type through this crate rather than pinning its own
 /// `chrono-tz` version — two tz databases in one process is a way for two answers to appear.
 pub use chrono_tz::Tz;
+pub use parse::Parser;
+pub use timestamp::{host_timezone, Clock};
 
 /// Build the parser the app builds: the effective spell DB (spells.json + every load-time overlay +
 /// the committed message-overlay corrections) installed, and the tailed character's name known.
@@ -98,7 +98,10 @@ mod tests {
     fn an_unclassified_line_is_the_unknown_envelope() {
         let p = bare();
         assert_eq!(
-            parse_one(&p, "[Wed Aug 19 16:21:47 2026] You are not currently assigned to an adventure."),
+            parse_one(
+                &p,
+                "[Wed Aug 19 16:21:47 2026] You are not currently assigned to an adventure."
+            ),
             r#"{"kind":"unknown","seq":0,"ts":1787181707000,"raw":"[Wed Aug 19 16:21:47 2026] You are not currently assigned to an adventure."}"#
         );
     }
@@ -123,7 +126,11 @@ mod tests {
         ));
         // …but a CR sitting where the ONE optional space goes is consumed by `\s?` and the line
         // parses, because that is what the TS pattern does too.
-        assert!(p.parse_event("[Sun Aug 16 20:09:40 2026]\rWelcome to EverQuest Legends!", 0, &mut ev));
+        assert!(p.parse_event(
+            "[Sun Aug 16 20:09:40 2026]\rWelcome to EverQuest Legends!",
+            0,
+            &mut ev
+        ));
         assert!(ev.finish().starts_with(r#"{"kind":"sessionStart""#));
     }
 
@@ -131,7 +138,10 @@ mod tests {
     fn the_group_kind_writes_change_before_the_envelope() {
         let p = bare();
         assert_eq!(
-            parse_one(&p, "[Wed Aug 19 16:21:47 2026] Dranix has joined the group."),
+            parse_one(
+                &p,
+                "[Wed Aug 19 16:21:47 2026] Dranix has joined the group."
+            ),
             r#"{"kind":"group","change":"join","name":"Dranix","seq":0,"ts":1787181707000,"raw":"[Wed Aug 19 16:21:47 2026] Dranix has joined the group."}"#
         );
     }
@@ -174,10 +184,16 @@ mod tests {
     #[test]
     fn the_experience_percentage_is_the_one_float_in_the_stream() {
         let p = bare();
-        let out = parse_one(&p, "[Wed Aug 19 16:21:54 2026] You gain experience! (3.288%)");
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:54 2026] You gain experience! (3.288%)",
+        );
         assert!(out.ends_with(r#""party":false,"pct":3.288}"#), "{out}");
         // …and an integral one prints as JS prints it: no fraction.
-        let out = parse_one(&p, "[Wed Aug 19 16:21:54 2026] You gain party experience! (3%)");
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:54 2026] You gain party experience! (3%)",
+        );
         assert!(out.ends_with(r#""party":true,"pct":3}"#), "{out}");
         // …and a line that states none omits the key rather than saying zero.
         let out = parse_one(&p, "[Wed Aug 19 16:21:54 2026] You gain experience!");

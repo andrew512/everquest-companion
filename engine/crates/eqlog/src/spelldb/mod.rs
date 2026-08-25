@@ -109,7 +109,8 @@ impl SpellDb {
     /// True when the derived roster (or, for a name the catalog does not carry, `CHARM_STEMS`)
     /// calls this spell a charm — `derivedCharmRoster` in rulesets.ts.
     pub fn is_charm_spell(&self, name: &str) -> bool {
-        self.charm_keys.contains(&crate::names::spell_canon_key(name))
+        self.charm_keys
+            .contains(&crate::names::spell_canon_key(name))
             || crate::stems::charm_stems_test(name)
     }
 
@@ -146,7 +147,10 @@ impl SpellDb {
 }
 
 /// `firstSuffixMatch` — the two rejections are as load-bearing as the match.
-fn first_suffix_match<'a>(text: &str, list: &'a [SuffixEntry]) -> Option<(&'a SuffixEntry, String)> {
+fn first_suffix_match<'a>(
+    text: &str,
+    list: &'a [SuffixEntry],
+) -> Option<(&'a SuffixEntry, String)> {
     for entry in list {
         if text.ends_with(&entry.tail) && text.len() > entry.tail.len() {
             let target = crate::jsstr::js_trim(&text[..text.len() - entry.tail.len()]);
@@ -167,12 +171,10 @@ pub fn cast_on_other_suffix(msg: &str) -> Option<String> {
     static POSS: OnceLock<Regex> = OnceLock::new();
     static LEAD: OnceLock<Regex> = OnceLock::new();
     let s = crate::jsstr::JS_S;
-    let spaced = SPACED.get_or_init(|| {
-        Regex::new(&format!(r"(?i)^Someone{s}+'s(?-u:\b)(.*)$", s = s)).unwrap()
-    });
+    let spaced = SPACED
+        .get_or_init(|| Regex::new(&format!(r"(?i)^Someone{s}+'s(?-u:\b)(.*)$", s = s)).unwrap());
     let poss = POSS.get_or_init(|| Regex::new(r"(?i)^Someone's(?-u:\b)(.*)$").unwrap());
-    let lead =
-        LEAD.get_or_init(|| Regex::new(&format!(r"(?i)^Someone{s}+(.*)$", s = s)).unwrap());
+    let lead = LEAD.get_or_init(|| Regex::new(&format!(r"(?i)^Someone{s}+(.*)$", s = s)).unwrap());
     let m = crate::jsstr::js_trim(msg);
     if let Some(c) = spaced.captures(m) {
         return Some(crate::jsstr::js_trim(&format!("'s{}", &c[1])).to_string());
@@ -239,8 +241,9 @@ fn build(spells: Vec<SpellEntry>) -> SpellDb {
 
     for (i, s) in spells.iter().enumerate() {
         let key = db_canon_key(&s.name);
-        if !by_key.contains_key(&key) {
-            by_key.insert(key, i);
+        // `if (!byKey.has(key)) byKey.set(key, s)` — the FIRST row per canonical name wins.
+        if let std::collections::hash_map::Entry::Vacant(slot) = by_key.entry(key) {
+            slot.insert(i);
             by_key_order.push(i);
         }
         if let Some(msg) = s.msg_cast_on_you.as_deref() {
@@ -272,7 +275,10 @@ fn build(spells: Vec<SpellEntry>) -> SpellDb {
         };
         match last_word_key(&suffix) {
             None => cast_on_other_unkeyed.push(entry),
-            Some(key) => cast_on_other_by_last_word.entry(key).or_default().push(entry),
+            Some(key) => cast_on_other_by_last_word
+                .entry(key)
+                .or_default()
+                .push(entry),
         }
     }
 
@@ -316,12 +322,10 @@ fn push_candidate_vec(list: &mut Vec<usize>, i: usize, spells: &[SpellEntry]) {
 fn charm_roster(spells: &[SpellEntry]) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     for s in spells {
-        let charms = s
-            .effects
-            .as_deref()
-            .unwrap_or(&[])
-            .iter()
-            .any(|line| crate::stems::classify_effect_line_is_charm(crate::jsstr::js_trim(line)));
+        let charms =
+            s.effects.as_deref().unwrap_or(&[]).iter().any(|line| {
+                crate::stems::classify_effect_line_is_charm(crate::jsstr::js_trim(line))
+            });
         if !charms {
             continue;
         }
@@ -344,12 +348,15 @@ fn apply_overlay_corrections(db: &mut SpellDb, corrections: &[(String, String, O
         if db.spells[idx].spell_type.as_deref() == Some("Detrimental") {
             continue;
         }
+        // The TS states three branches; two of them WRITE THE SAME THING for different reasons —
+        // a wiki CONTRADICTION overrides the message's candidates, and a message the DB never had
+        // fills the gap. Merged here because clippy refuses two identical arms, and named so the
+        // two reasons survive the merge.
         let existing = db.cast_on_you.get(text).cloned();
-        if contradicts.is_some() {
-            db.cast_on_you.insert(text.clone(), vec![idx]);
-        } else if existing.is_none() {
+        if contradicts.is_some() || existing.is_none() {
             db.cast_on_you.insert(text.clone(), vec![idx]);
         } else {
+            // The DB maps this text to other spells too — add ours as a candidate.
             let key = db_canon_key(&db.spells[idx].name);
             let list = db.cast_on_you.get_mut(text).expect("checked above");
             let already = list
