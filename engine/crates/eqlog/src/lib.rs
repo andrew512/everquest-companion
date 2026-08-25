@@ -2,8 +2,10 @@
 //! eqlog — THE EVERQUEST LEGENDS LOG PARSER, IN RUST (JOS-459 phase 1, JOS-469).
 //! ============================================================================
 //!
-//! Bytes in, canonical events out. Scan + parse of COMPLETE FILES only; the live tail is a later
-//! phase and nothing here is incremental.
+//! Bytes in, canonical events out. Two ways in and ONE line law between them: `scan.rs` folds a
+//! complete file, `tail.rs` (JOS-472) follows one EverQuest is still appending to, byte-exactly, and
+//! the acceptance for the second is that its line sequence equals the first's over any chunking at
+//! all. Wiring the tail into `engined`'s session is a later ticket.
 //!
 //! THE BAR IS BYTE IDENTITY, not equivalence (owner ruling 12, docs/plans/data-server.md). The TS
 //! pipeline's event stream over six slices of the owner's real log is recorded as NDJSON — one
@@ -32,6 +34,7 @@ pub mod parse;
 pub mod scan;
 pub mod spelldb;
 pub mod stems;
+pub mod tail;
 pub mod taxonomy;
 pub mod timestamp;
 
