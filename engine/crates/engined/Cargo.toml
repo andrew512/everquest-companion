@@ -1,0 +1,17 @@
+[package]
+name = "engined"
+description = "The engine process (JOS-466, phase 0): the spawn contract, loopback TCP, and the protocol's ops answered from generated types. No game logic."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# DELIBERATELY DEPENDENCY-LIGHT: std::net plus one thread per connection, and the contract crate.
+# An async runtime buys nothing at this scale - the app opens one connection per renderer, a
+# handful in total - and it would be the largest thing in the engine's dependency tree on the day
+# the binary joins the code-signing set. If a later phase measures a reason, adding it is a change
+# inside this crate and nothing above it moves.
+protocol = { path = "../protocol" }
+serde_json.workspace = true
