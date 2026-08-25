@@ -67,6 +67,10 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { ROOT } from '../e2e/build.mjs'
 import { foldForGoldens } from './foldArm.mjs'
+// THE DEEP-EQUALITY WALK LIVES IN `src/shared` SINCE JOS-479 and is re-exported below, unchanged.
+// The in-app parity probe asks this file's question of the same pair of worlds inside the running
+// product, and "are these the same?" may not have two implementations in one repo.
+import { firstDiff, type Diff } from '../../src/shared/deepDiff'
 import { parseEqTimestamp } from '../../src/main/log/parser'
 import type { LogEvent } from '../../src/shared/logEvents'
 import type { Slicer } from '../../src/main/log/replaySlicer'
@@ -434,54 +438,12 @@ function moduleOf(golden: SnapshotGolden, path: string): string | undefined {
   return /^\.(combat|scopes)\b/.test(path) ? 'combat engine' : undefined
 }
 
-/** What `firstDiff` hands back: where two structures stopped agreeing, and what each said there. */
-export interface Diff {
-  path: string
-  expected: unknown
-  actual: unknown
-}
-
 /**
- * The first structural disagreement between two parsed JSON values, with its dotted path.
- *
- * DEEP EQUALITY rather than a byte compare, and only on this half of the golden: a snapshot is
- * assembled on demand out of maps and view builders, so key ORDER is not a claim the engine
- * makes and pinning it would fail a Rust engine for being right in a different order. The event
- * stream, where emission order IS the claim, is compared byte for byte instead.
+ * The deep-equality walk, re-exported so this file stays the one door every oracle caller already
+ * knows (`rustParity.mts`, `goldenCli.mts`). The implementation and its whole argument moved to
+ * `src/shared/deepDiff.ts` in JOS-479 — see the import above.
  */
-export function firstDiff(a: unknown, b: unknown, path: string): Diff | null {
-  if (a === b) return null
-  if (Array.isArray(a) || Array.isArray(b)) return arrayDiff(a, b, path)
-  if (a !== null && b !== null && typeof a === 'object' && typeof b === 'object') {
-    return objectDiff(a as Record<string, unknown>, b as Record<string, unknown>, path)
-  }
-  return { path, expected: a, actual: b }
-}
-
-function arrayDiff(a: unknown, b: unknown, path: string): Diff | null {
-  if (!Array.isArray(a) || !Array.isArray(b)) return { path, expected: a, actual: b }
-  // LENGTH FIRST, and reported as its own path: "the buffs module published 41 actives where the
-  // golden has 40" is a diagnosis, and walking to the first index that happens to differ is not.
-  if (a.length !== b.length) return { path: `${path}.length`, expected: a.length, actual: b.length }
-  for (let i = 0; i < a.length; i++) {
-    const d = firstDiff(a[i], b[i], `${path}[${String(i)}]`)
-    if (d) return d
-  }
-  return null
-}
-
-function objectDiff(a: Record<string, unknown>, b: Record<string, unknown>, path: string): Diff | null {
-  const rest = new Set(Object.keys(b))
-  for (const k of Object.keys(a)) {
-    if (!rest.has(k)) return { path: `${path}.${k}`, expected: a[k], actual: undefined }
-    const d = firstDiff(a[k], b[k], `${path}.${k}`)
-    if (d) return d
-    rest.delete(k)
-  }
-  // Whatever `b` has that `a` never mentioned — a field the re-fold grew.
-  for (const k of rest) return { path: `${path}.${k}`, expected: undefined, actual: b[k] }
-  return null
-}
+export { firstDiff, type Diff }
 
 /** sha256 of a file, streamed — used by the manifest and by nothing else. */
 export async function sha256File(path: string): Promise<string> {

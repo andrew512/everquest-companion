@@ -25,6 +25,12 @@
 // both variables instead of having to undo a gate. The rule this repo actually keeps is that the
 // test mode changes as little about the product as possible.
 //
+// AND SINCE JOS-479 THE FLAG BUYS ONE MORE THING: the app's own CLIENT. `engineClientHost.ts`
+// connects to the launch this file supervises, attaches the engine to the log this process is
+// tailing, and runs the parity probe. It is armed from inside the guard below and torn down beside
+// the supervisor, so `EQC_ENGINE` remains the single switch for the whole feature — a second gate
+// would be a second thing to forget.
+//
 // WHAT IT LOOKS LIKE WITH NO BINARY — which is any checkout that has not run `cargo build`, since
 // a PACKAGED build now carries its own (JOS-473 ships `resources/engine/engined.exe`). The
 // supervisor probes, finds nothing, logs one line naming what it looked for, and stops. No
@@ -39,6 +45,9 @@ import { mintToken } from './token'
 import { engineBinaryCandidates } from './engineProtocol'
 import { connectToEngine } from './socketChannel'
 import { createEngineSupervisor, type EngineSupervisor, type SupervisedChild } from './supervisor'
+// THE APP'S OWN CLIENT (JOS-479, phase 3). It lives behind THIS file's flag and nothing else, which
+// is why it reads no environment variable of its own: one gate, in one place.
+import { installEngineClient, onEngineReady, stopEngineClient } from './engineClientHost'
 
 /** How long a loopback connect may take before the probe gives up on it. Loopback either answers
  *  immediately or is not listening; this is a bound on the pathological case, not a budget. */
@@ -115,6 +124,11 @@ function dirOf(path: string): string {
  */
 export function startEngineSupervisor(): void {
   if (!engineEnabled()) return
+  // ARMED BEFORE THE SUPERVISOR CAN REACH READY. `installEngineClient` only registers the
+  // world-rebuilt observer — it opens no socket — but the TypeScript fold can land at any moment
+  // and a rebuild that arrived before the observer existed would be a rebuild the client never
+  // hears about, i.e. an engine that stays pointed at nothing until the next character switch.
+  installEngineClient()
   supervisor ??= createEngineSupervisor({
     resolveBinary: resolveEngineBinary,
     spawn: spawnEngine,
@@ -137,7 +151,11 @@ export function startEngineSupervisor(): void {
     report: (log) => logError('main:dataServerEngine', log),
     // The priority arm. Below-normal, following the same switch as the rest of the app — the
     // argument is on `setEnginePid` in processPriority.ts.
-    onPid: setEnginePid
+    onPid: setEnginePid,
+    // …and the CLIENT arm (JOS-479): the port and the launch's token, at the one moment a round
+    // trip has proven there is something to talk to. `onPid` is about a process and this is about a
+    // connection — see the dep's own comment for why they are two callbacks rather than one.
+    onReady: onEngineReady
   })
   supervisor.start()
 }
@@ -154,6 +172,11 @@ export function startEngineSupervisor(): void {
  * child's exit is how a wedged child becomes a window that will not close.
  */
 export function stopEngineSupervisor(): void {
+  // THE CLIENT GOES FIRST, and the order is the same courtesy the supervisor extends to the engine:
+  // closing our socket before closing the engine's stdin means the engine sees a client leave and
+  // then a shutdown, rather than being asked to exit while a connection is still open. Idempotent
+  // and safe on a launch that never armed a client.
+  stopEngineClient()
   supervisor?.stop()
   setEnginePid(null)
 }

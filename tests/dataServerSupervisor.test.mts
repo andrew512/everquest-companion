@@ -14,7 +14,11 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createEngineSupervisor, type EngineSupervisorDeps } from '../src/main/dataServer/supervisor'
+import {
+  createEngineSupervisor,
+  type EngineSupervisorDeps,
+  type ReadyEngine
+} from '../src/main/dataServer/supervisor'
 import {
   ENGINE_ANNOUNCE_TIMEOUT_MS,
   ENGINE_HEALTH_INTERVAL_MS,
@@ -32,6 +36,7 @@ function harness(opts: { binary?: string | null; behaviour?: ChannelBehaviour; s
   const reports: EngineExitLog[] = []
   const logs: string[] = []
   const pids: (number | null)[] = []
+  const readies: (ReadyEngine | null)[] = []
   const tokens: string[] = []
   let mintCount = 0
   // MUTABLE, because a health WATCHDOG is only a watchdog if the answer can change under it: the
@@ -56,7 +61,8 @@ function harness(opts: { binary?: string | null; behaviour?: ChannelBehaviour; s
     now: clock.now,
     debug: (line) => logs.push(line),
     report: (log) => reports.push(log),
-    onPid: (pid) => pids.push(pid)
+    onPid: (pid) => pids.push(pid),
+    onReady: (engine) => readies.push(engine)
   }
   return {
     clock,
@@ -64,6 +70,7 @@ function harness(opts: { binary?: string | null; behaviour?: ChannelBehaviour; s
     reports,
     logs,
     pids,
+    readies,
     tokens,
     supervisor: createEngineSupervisor(deps),
     setBehaviour: (next: ChannelBehaviour) => (behaviour = next)
@@ -211,6 +218,67 @@ test('THE WATCHDOG KEEPS ASKING — an engine that goes wedged mid-session is ca
   assert.equal(h.reports[0].name, 'EngineUnhealthy')
   assert.equal(child.stdin.ended, true, 'a wedged engine is retired, not left holding a port')
   assert.equal(h.supervisor.state, 'backoff')
+})
+
+// ---- 4b. the READY handover (JOS-479) --------------------------------------------------------
+//
+// The one thing phase 3 added to this file's surface: the launch hands out its port and its TOKEN,
+// once, at the moment a round trip has proven there is something to talk to. It is the only way an
+// in-app client can exist at all — rule 1 puts the secret on stdin and nowhere else, so the process
+// that minted it is the only one that can offer it.
+
+test('READY HANDS THE CLIENT A PORT AND THE LAUNCH’S OWN TOKEN — after the ready line, never before', async () => {
+  const h = harness()
+  const child = await launched(h)
+  assert.equal(h.readies.length, 1)
+  const ready = h.readies[0]
+  assert.notEqual(ready, null)
+  if (ready === null) return
+  assert.equal(ready.port, 51413)
+  assert.equal(ready.pid, child.pid)
+  assert.equal(ready.token, h.tokens[0], 'the token handed out is THIS launch’s, not a second mint')
+  assert.equal(ready.protocolVersion, 1)
+  assert.equal(ready.engineVersion, '0.0.0-scripted')
+  assert.equal(ready.epoch, 1, 'the generation the engine reported, before any attach of ours')
+  // The dev log must read cause-then-consequence: whatever the client does is caused by ready.
+  assert.ok(
+    h.logs.findIndex((l) => l.includes('ready')) >= 0,
+    'the ready narration precedes the handover, so a log read top to bottom explains itself'
+  )
+})
+
+test('A RESPAWN IS A LAUNCH: null on the way down, then a DIFFERENT port’s token on the way back', async () => {
+  const h = harness()
+  await launched(h)
+  h.children[0].exit(1)
+  assert.deepEqual(h.readies.slice(1), [null], 'a client holding a socket to a dead engine must be told')
+  h.clock.advance(ENGINE_RESTART_BACKOFF_MS[0])
+  h.children[1].announce()
+  await settle()
+  assert.equal(h.readies.length, 3)
+  const second = h.readies[2]
+  assert.notEqual(second, null)
+  if (second === null) return
+  assert.equal(second.token, h.tokens[1])
+  assert.notEqual(second.token, h.tokens[0], 'nothing is carried across a respawn — resume is re-query')
+})
+
+test('a launch that never reached ready never hands anything out, and still says null when it ends', () => {
+  const h = harness()
+  h.supervisor.start()
+  h.clock.advance(ENGINE_ANNOUNCE_TIMEOUT_MS)
+  // One `null` and no engine: there was never a connection to offer, and the end is still an end.
+  assert.deepEqual(h.readies, [null])
+})
+
+test('a DELIBERATE stop tells the client too — an orderly shutdown is not a silent one', async () => {
+  const h = harness()
+  const child = await launched(h)
+  assert.equal(h.readies.length, 1)
+  h.supervisor.stop()
+  child.exit(0)
+  assert.deepEqual(h.readies.slice(1), [null])
+  assert.equal(h.reports.length, 0, 'we asked for this — it is not a failure')
 })
 
 // ---- 5. crash, backoff, and the folded trail -----------------------------------------------

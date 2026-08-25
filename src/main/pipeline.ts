@@ -139,6 +139,35 @@ export function sendWorldRebuilt(character: CharacterRef | null): void {
     sendToMain(IPC.onCharacter, character)
     sendToModuleOverlays(IPC.onCharacter, character)
   })
+  // …AND ANYTHING IN-PROCESS THAT NEEDS THE SAME NEWS (JOS-479). Null on every launch that did not
+  // ask for an engine, so with `EQC_ENGINE` unset this is one null check and the behaviour above is
+  // untouched. See `setWorldRebuiltObserver`.
+  worldRebuiltObserver?.(character)
+}
+
+/**
+ * ONE IN-PROCESS LISTENER FOR "the world for this character was rebuilt" (JOS-479).
+ *
+ * `sendWorldRebuilt` is already the ONE answer to "who is told the world was rebuilt" for every
+ * WINDOW; the data-server client needs the identical news for a different reason — it is the moment
+ * the TypeScript fold has landed and its module snapshots are worth comparing against the engine's,
+ * and it is also the character-switch funnel, so it is where a re-attach belongs. Hooking it here
+ * rather than adding a second call site in session.ts is the whole point: the reason the overlays
+ * were once missing from this fan-out is that there used to be several call sites (JOS-172).
+ *
+ * A REGISTRATION RATHER THAN AN IMPORT, and that is a dependency decision rather than a style one:
+ * the client host reads `registry` out of THIS module, so an import in the other direction would be
+ * a cycle at module-evaluation time. The composition of the engine feature (engineHost.ts, behind
+ * `EQC_ENGINE=1`) installs this; nothing else ever does.
+ *
+ * IT RUNS OUTSIDE THE `timeSeam` BRACKET on purpose. That bracket measures OUR half of the
+ * rebuild fan-out — the `webContents.send`s — and folding a dev-only probe into the same
+ * measurement would put an instrument's cost inside the number the instrument reports.
+ */
+let worldRebuiltObserver: ((character: CharacterRef | null) => void) | null = null
+
+export function setWorldRebuiltObserver(fn: ((character: CharacterRef | null) => void) | null): void {
+  worldRebuiltObserver = fn
 }
 
 // The extension framework. Modules own their slice of log-derived state and push
