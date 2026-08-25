@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:7bafe829bc9bd7d8ff96bcdea78eea8ea153ce9819b0c0870712cc930ea8e418
+//! schema-digest: sha256:5cdf78820ea5a3277568854aef18305a1d1f5c8aae618a1e84fcc263227b1295
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -583,6 +583,7 @@ impl ::std::convert::From<RosterDefineRequest> for ClientMessage {
 ///  "type": "object",
 ///  "required": [
 ///    "classes",
+///    "endTs",
 ///    "setAt",
 ///    "startTs"
 ///  ],
@@ -595,7 +596,7 @@ impl ::std::convert::From<RosterDefineRequest> for ClientMessage {
 ///      }
 ///    },
 ///    "endTs": {
-///      "description": "`null` means `from startTs onward`, i.e. it applies to the open interval too. Explicitly nullable rather than optional, because the store writes the null and the two readings are the same one.",
+///      "description": "`null` means `from startTs onward`, i.e. it applies to the open interval too. REQUIRED AND NULLABLE rather than optional, because the store's own type says `number | null` and its only writer always writes one of the two — and because an optional nullable is a field that does not survive a round trip: a generator lowers it to `Option`, drops the null on the way back out, and a fixture that carried the store's own shape stops matching itself.",
 ///      "type": [
 ///        "integer",
 ///        "null"
@@ -617,12 +618,8 @@ impl ::std::convert::From<RosterDefineRequest> for ClientMessage {
 pub struct ComboCorrection {
     ///One to three class codes, as the `/who` row spells them.
     pub classes: ::std::vec::Vec<::std::string::String>,
-    ///`null` means `from startTs onward`, i.e. it applies to the open interval too. Explicitly nullable rather than optional, because the store writes the null and the two readings are the same one.
-    #[serde(
-        rename = "endTs",
-        default,
-        skip_serializing_if = "::std::option::Option::is_none"
-    )]
+    ///`null` means `from startTs onward`, i.e. it applies to the open interval too. REQUIRED AND NULLABLE rather than optional, because the store's own type says `number | null` and its only writer always writes one of the two — and because an optional nullable is a field that does not survive a round trip: a generator lowers it to `Option`, drops the null on the way back out, and a fixture that carried the store's own shape stops matching itself.
+    #[serde(rename = "endTs")]
     pub end_ts: ::std::option::Option<i64>,
     ///When the user set it — a later correction wins over an earlier overlapping one.
     #[serde(rename = "setAt")]

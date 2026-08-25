@@ -566,7 +566,7 @@
       "properties": {
         "startTs": { "type": "integer" },
         "endTs": {
-          "description": "`null` means `from startTs onward`, i.e. it applies to the open interval too. Explicitly nullable rather than optional, because the store writes the null and the two readings are the same one.",
+          "description": "`null` means `from startTs onward`, i.e. it applies to the open interval too. REQUIRED AND NULLABLE rather than optional, because the store's own type says `number | null` and its only writer always writes one of the two — and because an optional nullable is a field that does not survive a round trip: a generator lowers it to `Option`, drops the null on the way back out, and a fixture that carried the store's own shape stops matching itself.",
           "type": ["integer", "null"]
         },
         "classes": {
@@ -579,7 +579,7 @@
           "type": "integer"
         }
       },
-      "required": ["startTs", "classes", "setAt"],
+      "required": ["startTs", "endTs", "classes", "setAt"],
       "additionalProperties": true
     },
 

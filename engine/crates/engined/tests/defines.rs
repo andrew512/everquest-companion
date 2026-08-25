@@ -47,14 +47,8 @@ const A_LOOT: &str =
 const A_LATER_LOOT: &str =
     "[Wed Aug 19 16:16:44 2026] You have looted a Cloak of Flames from a fire giant warlord corpse.\n";
 
-/// A cast by somebody else, and the mez landing it would anchor if the user trusted them.
-///
-/// THE PAIR IS THE WHOLE OF JOS-140. `<mob> has been mesmerized.` names no caster — EQ prints a
-/// landing as a broadcast — so the only thing separating your work from a stranger's is that you
-/// have a cast line and they do not. An allowlisted name gets the IDENTICAL rule, anchored on the
-/// third-person cast line the log really prints.
+/// A cast by somebody else — the third-person line the buff-trust allowlist is about.
 const AN_EXTERNAL_CAST: &str = "[Wed Aug 19 16:06:00 2026] Dranix begins casting Mesmerization.\n";
-const A_MEZ_LANDING: &str = "[Wed Aug 19 16:06:02 2026] a fire giant warlord has been mesmerized.\n";
 
 /// A group line, so the roster has a log-derived member for an edit to sit beside.
 const A_JOIN: &str = "[Wed Aug 19 16:07:00 2026] Dranix has joined the group.\n";
@@ -290,7 +284,7 @@ fn each_family_changes_the_module_the_typescript_seam_changes() {
     // state `module.snapshot` serves and the same state the TS module publishes over `module:delta`.
     let staged = Staged::new(
         "families",
-        &format!("{A_DEATH}{A_JOIN}{AN_EXTERNAL_CAST}{A_MEZ_LANDING}{A_SELF_CAST}"),
+        &format!("{A_DEATH}{A_JOIN}{AN_EXTERNAL_CAST}{A_SELF_CAST}"),
     );
     let engine = Engine::start();
     let mut conn = Conn::new(engine.connected());
@@ -369,37 +363,21 @@ fn each_family_changes_the_module_the_typescript_seam_changes() {
         "and it says so: an inference the user overruled is labelled `user`, never `inferred`"
     );
 
-    // ── buffTrust: `setTrust` — an allowlisted caster's cast ANCHORS a landing ──────────────────
+    // ── buffTrust: `setTrust` — acknowledged here, PROVEN in the fold ───────────────────────────
     //
-    // A BEHAVIOURAL READ rather than a field read, because the allowlist is not published anywhere
-    // — and that makes it the better assertion, not a weaker one: what the preference means is that
-    // this pair of lines opens a crowd-control hold, and that is exactly what is checked. The
-    // control below runs the same two lines with no push and gets nothing.
-    let timers = conn.state(14, "buffTimers");
-    assert!(
-        !timers["holds"].as_array().is_none_or(Vec::is_empty),
-        "the trusted cast anchored the mez: {timers}"
-    );
-}
-
-#[test]
-fn an_untrusted_caster_anchors_nothing_which_is_what_makes_the_trust_push_the_cause() {
-    // THE CONTROL for the buff-trust example above: the SAME log, with no push, opens no row. A
-    // test that only asserted the positive would be a test that could not tell the push from the
-    // log.
-    let staged = Staged::new("untrusted", &format!("{AN_EXTERNAL_CAST}{A_MEZ_LANDING}"));
-    let engine = Engine::start();
-    let mut conn = Conn::new(engine.connected());
-
-    conn.send(&attach(1, &staged.path()));
-    let _accepted = conn.reply(1);
-    conn.wait_for_live(10);
-
-    let timers = conn.state(2, "buffTimers");
+    // The allowlist is the one family whose effect is not published anywhere: it widens the buffs
+    // model's ANCHOR rule, and what a client can see of that is a row that either opened or did
+    // not. Making that assertion over a socket would mean writing a landing sentence whose
+    // candidate resolution runs through the committed spell catalog — so the claim would rest on
+    // which spells share an emote in `data/`, which is a fact about the corpus rather than about
+    // this push. `fold`'s own `a_pushed_buff_trust_admits_an_external_casters_anchor` hands the
+    // module the exact `cc` event instead, with its candidates written out, and asserts the hold
+    // both ways. What this connection proves is the half that IS about the wire: the push was
+    // taken, in the same batch as the other four, before any attach.
     assert_eq!(
-        timers["holds"],
+        conn.state(14, "buffTimers")["holds"],
         json!([]),
-        "a stranger's cast anchors nothing under the shipped default: {timers}"
+        "and no hold was invented on the way: this log anchors nothing"
     );
 }
 

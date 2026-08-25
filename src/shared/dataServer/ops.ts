@@ -14,6 +14,7 @@
 import type { ClientMessage, ErrorCode, Hello, ReplyResult, RequestId } from './protocol.generated'
 import type {
   AttachResult,
+  DefineAck,
   EchoResult,
   HealthResult,
   ModuleSnapshotResult,
@@ -28,6 +29,15 @@ interface ResultRegistry {
   'module.snapshot': ModuleSnapshotResult
   'view.subscribe': SubscribeAck
   'view.unsubscribe': SubscribeAck
+  // THE FIVE `*.define` COMMANDS (JOS-482) SHARE ONE ANSWER, and the registry says so once per op
+  // rather than collapsing them into a wildcard: the whole point of this file is that a NEW op
+  // cannot compile until somebody writes down what it answers with, and five ops that happen to
+  // agree today are still five entries.
+  'alerts.define': DefineAck
+  'buffTrust.define': DefineAck
+  'respawn.define': DefineAck
+  'combo.define': DefineAck
+  'roster.define': DefineAck
 }
 
 /** Every client message that carries a request id — i.e. everything except the handshake. */
@@ -63,7 +73,14 @@ export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> 
   // any JSON at all, including a value `in` cannot be asked about meaningfully.
   'module.snapshot': (r) => 'module' in r,
   'view.subscribe': (r) => 'subscribed' in r,
-  'view.unsubscribe': (r) => 'subscribed' in r
+  'view.unsubscribe': (r) => 'subscribed' in r,
+  // `applied` is the field no other arm carries — `count` would be a weaker guard, because it is
+  // absent for the two families whose payload is one object rather than a list.
+  'alerts.define': (r) => 'applied' in r,
+  'buffTrust.define': (r) => 'applied' in r,
+  'respawn.define': (r) => 'applied' in r,
+  'combo.define': (r) => 'applied' in r,
+  'roster.define': (r) => 'applied' in r
 }
 
 /**

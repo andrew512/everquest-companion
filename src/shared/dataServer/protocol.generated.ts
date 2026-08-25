@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:7bafe829bc9bd7d8ff96bcdea78eea8ea153ce9819b0c0870712cc930ea8e418
+// schema-digest: sha256:5cdf78820ea5a3277568854aef18305a1d1f5c8aae618a1e84fcc263227b1295
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -282,9 +282,9 @@ export interface ComboDefineParams {
 export interface ComboCorrection {
   startTs: number
   /**
-   * `null` means `from startTs onward`, i.e. it applies to the open interval too. Explicitly nullable rather than optional, because the store writes the null and the two readings are the same one.
+   * `null` means `from startTs onward`, i.e. it applies to the open interval too. REQUIRED AND NULLABLE rather than optional, because the store's own type says `number | null` and its only writer always writes one of the two — and because an optional nullable is a field that does not survive a round trip: a generator lowers it to `Option`, drops the null on the way back out, and a fixture that carried the store's own shape stops matching itself.
    */
-  endTs?: number | null
+  endTs: number | null
   /**
    * One to three class codes, as the `/who` row spells them.
    */
