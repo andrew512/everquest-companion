@@ -481,6 +481,14 @@ impl Knowledge for Corpus {
         }
     }
 
+    /// `localMobEntry(name) !== null` — the committed catalog, and NOTHING ELSE. No overlay read
+    /// (a pushed answer is a wiki page the app fetched, which is a statement about a name this
+    /// process already failed to know), no alias resolution (`localMobEntry` does none), and — the
+    /// load-bearing half — no miss. See [`Knowledge::known_mob`].
+    fn known_mob(&self, name: &str) -> bool {
+        self.mob_index().entry(name.trim()).is_some()
+    }
+
     fn take_misses(&self) -> Vec<Miss> {
         self.pending
             .lock()

@@ -407,6 +407,10 @@ mod tests {
                 found: true,
             }
         }
+        /// Every name this table is asked about is a mob, and nothing on the feed's path asks.
+        fn known_mob(&self, _name: &str) -> bool {
+            true
+        }
         fn take_misses(&self) -> Vec<Miss> {
             Vec::new()
         }

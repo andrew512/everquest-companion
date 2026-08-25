@@ -469,12 +469,18 @@ impl EventSink for FoldSink {
     ///
     /// A LINE THAT NAMES NOTHING IS DROPPED HERE rather than sent as an empty card, which is
     /// `noteConsider`'s own first guard: a creature name that folds to no key has no queue identity.
+    ///
+    /// …AND SO IS A PERSON (JOS-492). The corpus this sink already holds for the `knowledge.*` ops
+    /// is the second half of `conCardIsPlayer`, so the refusal the app has always made is made here
+    /// too — see `crate::concard`. It is the SAME `Arc` the registry was handed at construction, so
+    /// there is exactly one catalog in this process and the card cannot disagree with a lookup.
     fn take_con_cards(&mut self) -> Vec<protocol::generated::ConCardMessage> {
+        let knowledge = std::sync::Arc::clone(&self.knowledge);
         self.fold
             .registry
             .take_cons()
             .iter()
-            .filter_map(crate::concard::card)
+            .filter_map(|ev| crate::concard::card(ev, &*knowledge))
             .collect()
     }
 

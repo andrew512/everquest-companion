@@ -529,6 +529,12 @@ mod tests {
                 found: true,
             }
         }
+        /// This double stands in for a CATALOG, so it says yes — and the point of it saying so
+        /// here is that nothing on this module's path asks. The con-card refusal reads it, and
+        /// that refusal lives one layer up (`engined::concard`).
+        fn known_mob(&self, _name: &str) -> bool {
+            true
+        }
         fn take_misses(&self) -> Vec<Miss> {
             Vec::new()
         }
