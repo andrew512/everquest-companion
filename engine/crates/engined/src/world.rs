@@ -41,6 +41,7 @@
 //! the lock and answers `false` to a turn that has lost; a loser can therefore write nothing, ever,
 //! however long it takes to notice. See `ingest.rs` for the other half.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -50,7 +51,8 @@ use std::time::Instant;
 use protocol::generated::{
     AttachResult, DiffMessage, DiffMessageKind, EngineMessage, Epoch, EpochMessage,
     EpochMessageKind, EpochReason, FoldProgress, HealthResult, HealthResultStatus, LogMark,
-    RequestId, ResetMessage, ResetMessageKind, Row,
+    PerfIngest, PerfServeSource, PerfSnapshotResult, PerfSnapshotResultStatus, RequestId,
+    ResetMessage, ResetMessageKind, Row,
 };
 
 use crate::ingest::{self, Starter};
@@ -91,6 +93,22 @@ pub enum SnapshotAnswer {
     Unavailable(String),
 }
 
+/// What [`World::perf_snapshot`] found.
+///
+/// TWO OUTCOMES AND NOT THREE, and the missing one is the point: there is no `NotFound`, because a
+/// perf question names nothing that could be absent. An engine with no fold at all is NOT a
+/// failure here either — it is an idle engine, and `status: idle` with an empty serve list says so
+/// exactly. The only refusal is a fold that HAS a door and did not answer through it, which is a
+/// wedged ingest and the one thing a performance panel most needs to be told about rather than
+/// shown as a row of zeros.
+#[derive(Debug)]
+pub enum PerfAnswer {
+    /// The engine's own numbers.
+    Perf(Box<PerfSnapshotResult>),
+    /// A fold that was there to ask and did not answer in time.
+    Unavailable(String),
+}
+
 /// A handle on the process's whole state. Cheap to clone; every clone is the same world.
 #[derive(Clone)]
 pub struct World {
@@ -123,11 +141,16 @@ struct State {
     fold: Fold,
     /// THE WAY TO ASK THE CURRENT FOLD A QUESTION, or `None` when nothing is folding.
     ///
+    /// ONE DOOR, EVERY QUESTION (see [`ingest::Ask`]): a module's published state, and — since
+    /// JOS-483 — what this ingest has cost. A second channel would be a second thing the fold loop
+    /// has to remember to drain at every boundary, which is how one of them ends up drained only
+    /// while the tail is live.
+    ///
     /// It is a SENDER and not the fold, which is the whole design (see [`ingest::SnapshotAsk`]):
     /// the world holds a way to reach the ingest thread, never a second handle on its state. A
     /// preemption drops it — `attach` clears the field under the same lock that bumps the epoch —
     /// so a reader can never be answered by a fold the world has already disowned.
-    snapshots: Option<Sender<ingest::SnapshotAsk>>,
+    asks: Option<Sender<ingest::Ask>>,
 }
 
 /// What the world's fold has consumed. A COORDINATE PAIR plus what was counted along the way.
@@ -276,7 +299,7 @@ impl World {
                     next_listener: 0,
                     status: HealthResultStatus::Idle,
                     fold: Fold::default(),
-                    snapshots: None,
+                    asks: None,
                 }),
             }),
         }
@@ -508,7 +531,7 @@ impl World {
     /// Answer `module.snapshot` — one module's published state, from the fold that is running.
     ///
     /// THE ANSWER COMES FROM THE INGEST THREAD AND FROM NOWHERE ELSE. This method holds the world's
-    /// lock only long enough to copy the way IN (see [`State::snapshots`]); the wait happens with
+    /// lock only long enough to copy the way IN (see [`State::asks`]); the wait happens with
     /// the lock released, or the fold's own `report_progress` would deadlock against the reader
     /// waiting for it.
     ///
@@ -524,7 +547,7 @@ impl World {
         // binding inside a block, and the block ends before anything below can block.
         let asks = {
             let state = self.lock();
-            state.snapshots.clone()
+            state.asks.clone()
         };
         let Some(asks) = asks else {
             return SnapshotAnswer::Unavailable(
@@ -532,10 +555,10 @@ impl World {
             );
         };
         let (answer, wait) = channel();
-        let ask = ingest::SnapshotAsk {
+        let ask = ingest::Ask::Module(ingest::SnapshotAsk {
             module: module.to_owned(),
             answer,
-        };
+        });
         if asks.send(ask).is_err() {
             // The receiver is gone: the ingest ended between the copy above and this send. That is
             // the same outcome as never having had one, and it is stated differently because the
@@ -550,6 +573,99 @@ impl World {
                 SNAPSHOT_PATIENCE.as_millis()
             )),
         }
+    }
+
+    /// Answer `perf.snapshot` — what this engine is doing and what it has cost (ruling 19, JOS-483).
+    ///
+    /// THE ANSWER HAS TWO HALVES AND THEY COME FROM TWO PLACES, which is the whole shape of this
+    /// method. The WORLD knows where the fold has got to (the same five facts [`World::health`]
+    /// reports) and who is subscribed to what — both under this lock, in one critical section, so
+    /// the counts and the coordinate describe the same instant. The INGEST THREAD knows what the
+    /// scan cost and what the serve path has cost, and it is asked through the one door with the
+    /// lock RELEASED, for the deadlock reason [`World::module_snapshot`] states.
+    ///
+    /// AN ENGINE WITH NOTHING ATTACHED STILL ANSWERS. There is no fold to ask, so the ingest half is
+    /// empty — but `status`, `epoch` and `uptimeMs` are real facts about a real process, and a panel
+    /// that could not show a just-launched engine at all would be a panel that goes blank exactly
+    /// when somebody is waiting for the engine to come up.
+    ///
+    /// IT READS THE COUNTERS AND RESETS NOTHING (`Meter::peek`). Two panels open at once must see
+    /// the same session, and the stderr report must not lose the interval it was about to print.
+    #[must_use]
+    pub fn perf_snapshot(&self) -> PerfAnswer {
+        // ONE CRITICAL SECTION FOR THE WORLD'S WHOLE HALF, and it ends before anything can block.
+        //
+        // IT COPIES THE STATE RATHER THAN CALLING `health()`, and that is not duplication for its
+        // own sake: `health()` STATS THE LOG FILE with the lock deliberately released (see its own
+        // note — a filesystem call is unbounded and the world's lock is on the path of every
+        // `report_*` an ingest makes), so calling it from inside a lock would be exactly the
+        // deadlock-and-stall shape that method's design forbids. And the copy has to happen here
+        // anyway: the subscriber counts and the coordinate must describe the SAME instant, or the
+        // row states one epoch's mark beside another's watchers.
+        //
+        // `perf.snapshot` CARRIES NO MTIME. It is a question about this process, not about the file
+        // it is reading — `session.health` is where the file fact belongs and where it stays.
+        let (status, epoch, fold, watched, asks) = {
+            let state = self.lock();
+            (
+                state.status,
+                state.epoch,
+                state.fold.clone(),
+                subscriber_counts(&state),
+                state.asks.clone(),
+            )
+        };
+        // A world with no fold has no door, and that is an idle engine rather than a refusal.
+        let measured = match asks {
+            None => ingest::EnginePerf::default(),
+            Some(asks) => match self.ask_perf(&asks) {
+                Ok(measured) => measured,
+                Err(why) => return PerfAnswer::Unavailable(why),
+            },
+        };
+        let mark = fold.log.as_ref().map(|log| LogMark {
+            log: log.to_string_lossy().into_owned(),
+            offset: i64::try_from(fold.checkpoint).unwrap_or(i64::MAX),
+        });
+        PerfAnswer::Perf(Box::new(PerfSnapshotResult {
+            status: perf_status(status),
+            epoch: Epoch(epoch),
+            uptime_ms: i64::try_from(self.inner.started.elapsed().as_millis()).unwrap_or(i64::MAX),
+            // The same pairing `health()` argues for: the count rides with the mark, because they
+            // are one measurement read two ways, and `lastEventTs` does not, because it has its own
+            // reason to be missing.
+            events: mark.as_ref().map(|_| fold.events),
+            last_event_ts: fold.last_ts,
+            mark,
+            ingest: PerfIngest {
+                spell_db_ms: measured.ingest.spell_db_ms.map(clamp_i64),
+                scan_ms: measured.ingest.scan_ms.map(clamp_i64),
+                scan_bytes: measured.ingest.scan_bytes.map(clamp_i64),
+            },
+            serve: serve_rows(&measured.serve, &watched),
+        }))
+    }
+
+    /// Post the perf ask and wait for the fold, on the same terms `module_snapshot` waits: a
+    /// deadline that turns a wedged ingest into a refusal rather than a connection that never
+    /// answers. The lock is NOT held here — see the caller.
+    fn ask_perf(&self, asks: &Sender<ingest::Ask>) -> Result<ingest::EnginePerf, String> {
+        let (answer, wait) = channel();
+        if asks
+            .send(ingest::Ask::Perf(ingest::PerfAsk { answer }))
+            .is_err()
+        {
+            // The ingest ended between copying the sender and sending through it. Its measurements
+            // went with it, and reporting the last generation's numbers under this one's epoch
+            // would be worse than saying so.
+            return Err("the fold that was answering has ended".to_owned());
+        }
+        wait.recv_timeout(SNAPSHOT_PATIENCE).map_err(|_| {
+            format!(
+                "the fold did not answer within {} ms",
+                SNAPSHOT_PATIENCE.as_millis()
+            )
+        })
     }
 
     /// What the fold has consumed: the log, THE MARK, and what was counted reaching it.
@@ -606,7 +722,7 @@ impl World {
             // strips it of its ownership. Not when it notices, not when its thread ends: a reader
             // must never be answered by a generation the world has already replaced, and the
             // preempted ingest's own `report_*` calls already cannot write anything.
-            state.snapshots = None;
+            state.asks = None;
             let announcement = EngineMessage::EpochMessage(EpochMessage {
                 kind: EpochMessageKind::Epoch,
                 epoch: Epoch(state.epoch),
@@ -630,19 +746,19 @@ impl World {
         self.inner.generation.load(Ordering::SeqCst) == generation
     }
 
-    /// THE INGEST OFFERS TO ANSWER QUESTIONS: install this turn's snapshot channel.
+    /// THE INGEST OFFERS TO ANSWER QUESTIONS: install this turn's ask channel.
     ///
     /// A `report_*` method like every other statement an ingest makes, and for the same reason —
     /// ownership is re-asked INSIDE the lock, so a turn that has already lost cannot install a door
     /// onto a fold nobody wants. It is called once per attach, before the first byte is folded, so
-    /// that `module.snapshot` during the historical scan is answerable rather than merely
-    /// eventually answerable.
-    pub fn serve_snapshots(&self, generation: u64, asks: Sender<ingest::SnapshotAsk>) -> bool {
+    /// that `module.snapshot` and `perf.snapshot` during the historical scan are answerable rather
+    /// than merely eventually answerable.
+    pub fn serve_asks(&self, generation: u64, asks: Sender<ingest::Ask>) -> bool {
         let mut state = self.lock();
         if !self.owns(generation) {
             return false;
         }
-        state.snapshots = Some(asks);
+        state.asks = Some(asks);
         true
     }
 
@@ -734,7 +850,7 @@ impl World {
         // AND NOTHING IS ASKABLE ANY MORE. The ingest's receiver is about to be dropped with its
         // thread; clearing the sender here makes the world say "no fold" rather than making every
         // reader discover it one failed send at a time.
-        state.snapshots = None;
+        state.asks = None;
         true
     }
 
@@ -756,6 +872,108 @@ impl World {
 impl Default for World {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---- the `perf.snapshot` folds ---------------------------------------------------------------
+//
+// FREE FUNCTIONS, ALL FOUR, and none of them touches the lock: `perf_snapshot` reads the world once
+// and then does its arithmetic outside the critical section. A fold that formatted numbers with the
+// world held would be a fold that made every connection wait for a diagnostic.
+
+/// The two status enums are generated from two schema definitions with the same five members, so
+/// the mapping is exhaustive BY THE COMPILER: a member added to one and not the other stops this
+/// building rather than being quietly mapped to the wrong thing.
+fn perf_status(status: HealthResultStatus) -> PerfSnapshotResultStatus {
+    match status {
+        HealthResultStatus::Starting => PerfSnapshotResultStatus::Starting,
+        HealthResultStatus::Attaching => PerfSnapshotResultStatus::Attaching,
+        HealthResultStatus::Folding => PerfSnapshotResultStatus::Folding,
+        HealthResultStatus::Live => PerfSnapshotResultStatus::Live,
+        HealthResultStatus::Idle => PerfSnapshotResultStatus::Idle,
+    }
+}
+
+/// A counter onto the wire's `integer`. Saturating rather than wrapping: a byte count this app can
+/// produce does not reach 2^63, and an `as` cast that could silently report a negative one has no
+/// place in an instrument.
+fn clamp_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+/// HOW MANY SUBSCRIPTIONS ARE OPEN OVER EACH SOURCE, RIGHT NOW, across every connection.
+///
+/// A LIVE COUNT, not a cumulative one, and the world's own answer rather than the meter's — the
+/// meter counts frames that were sent and knows nothing about who is still listening. It is what
+/// makes a row with no recent frames readable: `subscribers 0` means nobody is watching, and
+/// `subscribers 2, frames 40` on a quiet source means nothing has moved.
+fn subscriber_counts(state: &State) -> BTreeMap<&'static str, i64> {
+    let mut counts: BTreeMap<&'static str, i64> = BTreeMap::new();
+    for listener in &state.listeners {
+        for sub in listener.subscriptions.values() {
+            *counts.entry(sub.view.source.id).or_default() += 1;
+        }
+    }
+    counts
+}
+
+/// THE UNION OF WHAT HAS SERVED AND WHAT IS BEING WATCHED, ordered by source name.
+///
+/// TWO REASONS A SOURCE BELONGS IN THIS LIST and they are different sentences. It has served frames
+/// (the meter has an entry) — that is a cost, and it belongs whether or not anybody is still
+/// subscribed, because the generation's bill does not disappear when a window closes. Or somebody is
+/// subscribed to it right now and it has served nothing yet — that is a subscription waiting for its
+/// first frame, which is precisely the state a person stares at when a view looks empty, and
+/// omitting it would make "opened and nothing came" indistinguishable from "never opened".
+///
+/// A source in NEITHER set is absent, and that is the panel's own rule arriving from the data: no
+/// rows of zeros for a source this session has never had anything to do with.
+fn serve_rows(
+    served: &[views::SourceMeter],
+    watched: &BTreeMap<&'static str, i64>,
+) -> Vec<PerfServeSource> {
+    let mut rows: BTreeMap<&'static str, PerfServeSource> = BTreeMap::new();
+    for source in served {
+        rows.insert(
+            source.source,
+            PerfServeSource {
+                source: source.source.to_owned(),
+                frames: clamp_i64(source.frames),
+                resets: clamp_i64(source.resets),
+                diffs: clamp_i64(source.diffs),
+                rows: clamp_i64(source.rows),
+                bytes: clamp_i64(source.bytes),
+                widest_bytes: clamp_i64(source.widest as u64),
+                fold_to_frame_us_mean: source.latency_mean_us.map(clamp_i64),
+                fold_to_frame_us_max: source.latency_max_us.map(clamp_i64),
+                // Filled below, from the world's own count — a source that has served frames and
+                // has since been unsubscribed honestly has zero.
+                subscribers: 0,
+            },
+        );
+    }
+    for (source, count) in watched {
+        rows.entry(source)
+            .or_insert_with(|| empty_serve_row(source))
+            .subscribers = *count;
+    }
+    rows.into_values().collect()
+}
+
+/// A source somebody is subscribed to that has served nothing yet. Every counter is a REAL zero
+/// here — no frame has been sent — and the two latencies are absent, because nothing was timed.
+fn empty_serve_row(source: &str) -> PerfServeSource {
+    PerfServeSource {
+        source: source.to_owned(),
+        frames: 0,
+        resets: 0,
+        diffs: 0,
+        rows: 0,
+        bytes: 0,
+        widest_bytes: 0,
+        fold_to_frame_us_mean: None,
+        fold_to_frame_us_max: None,
+        subscribers: 0,
     }
 }
 

@@ -57,7 +57,7 @@ use protocol::cell::Cell;
 use protocol::generated::{Cells, ErrorCode, Row, RowKey, ViewDescriptor};
 
 pub use diff::diff;
-pub use meter::{FrameKind, Meter};
+pub use meter::{FrameKind, Meter, SourceMeter};
 
 /// The floor between two services of the same subscription — rule 2's "~10 Hz max while live".
 ///

@@ -15,6 +15,7 @@
         { "$ref": "#/$defs/SessionHealthRequest" },
         { "$ref": "#/$defs/SessionProgressRequest" },
         { "$ref": "#/$defs/ModuleSnapshotRequest" },
+        { "$ref": "#/$defs/PerfSnapshotRequest" },
         { "$ref": "#/$defs/ViewSubscribeRequest" },
         { "$ref": "#/$defs/ViewUnsubscribeRequest" }
       ]
@@ -169,7 +170,8 @@
         { "$ref": "#/$defs/HealthResult" },
         { "$ref": "#/$defs/AttachResult" },
         { "$ref": "#/$defs/SubscribeAck" },
-        { "$ref": "#/$defs/ModuleSnapshotResult" }
+        { "$ref": "#/$defs/ModuleSnapshotResult" },
+        { "$ref": "#/$defs/PerfSnapshotResult" }
       ]
     },
 
@@ -328,6 +330,127 @@
       "title": "ModuleState",
       "description": "THE MODULE'S PUBLISHED STATE, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the same argument Cells makes, one level up: the field set belongs to the thing that publishes it, so a module growing a field is not a protocol change. `type` NAMES EVERY JSON TYPE rather than being omitted, and that is not decoration: an omitted `type` lowers to an INDEX-SIGNATURE object in TypeScript, which would forbid the ARRAY half of the registry — `kills` publishes an object, `loot`, `consider` and `eventFeed` publish arrays of rows, and a schema that named one of those shapes would be a rule the fold already breaks. IT IS THE SECOND HAND-WRITTEN REPLACEMENT ON THE RUST SIDE, for exactly the reason `Cell` is: typify lowers a multi-type schema to an untagged enum whose number arm is `f64`, and a module state is FULL of counts. The replacement is `serde_json::Value`, which is the same claim this definition makes, spelled in Rust.",
       "type": ["object", "array", "string", "number", "boolean", "null"]
+    },
+
+    "PerfSnapshotRequest": {
+      "title": "PerfSnapshotRequest",
+      "description": "THE ENGINE'S OWN PERFORMANCE, ASKED FOR (owner ruling 19 surface, JOS-483). Everything `session.health` says about where the fold has got to, plus what the ingest cost to build and what the serve path has cost since — the counters `views::meter` already keeps, read WITHOUT resetting them so two asks read as a progression rather than as two disconnected windows. It is answered through the same one door `module.snapshot` uses: the meter lives on the ingest thread, the request arrives on a connection thread, and the ingest answers at a boundary it already reaches. THE APP MUST NOT POLL THIS IDLY. It is the in-app performance panel's data and the panel is open a few seconds at a time; a perf surface that costs a round trip a second while nobody is looking at it is the bug it exists to find.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["perf.snapshot"] },
+        "params": { "$ref": "#/$defs/NoParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "PerfSnapshotResult": {
+      "title": "PerfSnapshotResult",
+      "description": "What the engine is doing and what it has cost. The first five fields are `HealthResult`'s and mean exactly what they mean there, restated rather than nested so a panel reads one object — and OPTIONAL on the same terms, because a health answer given before any attach honestly has no mark, no event count and no log timestamp. `ingest` is what building this generation cost; `serve` is one row per view source, cumulative for the generation.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["starting", "attaching", "folding", "live", "idle"]
+        },
+        "epoch": { "$ref": "#/$defs/Epoch" },
+        "uptimeMs": {
+          "description": "How long THIS PROCESS has been up. Process metadata, never world state: it survives an attach, which the epoch does not.",
+          "type": "integer"
+        },
+        "mark": { "$ref": "#/$defs/LogMark" },
+        "events": {
+          "description": "Events folded in this generation. Counts EVENTS, not lines — the same number `HealthResult.events` carries.",
+          "type": "integer"
+        },
+        "lastEventTs": {
+          "description": "The `ts` of the last event folded — THE LOG'S OWN CLOCK, never the host's. Its distance from the host's clock is the freshness figure the panel draws, and that subtraction is the CALLER's to make: the engine does not read a wall clock to answer this.",
+          "type": "integer"
+        },
+        "ingest": { "$ref": "#/$defs/PerfIngest" },
+        "serve": {
+          "description": "One row per view source that has served a frame in this generation. A source nobody has subscribed to is ABSENT rather than a row of zeros — the same rule the panel applies to a process type with no process behind it.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/PerfServeSource" }
+        }
+      },
+      "required": ["status", "epoch", "uptimeMs", "ingest", "serve"],
+      "additionalProperties": false
+    },
+
+    "PerfIngest": {
+      "title": "PerfIngest",
+      "description": "WHAT STARTING THIS GENERATION COST. Every field is optional and absent means NOT YET MEASURED rather than zero: `scanMs` is unknown until the scan finishes, and a zero there would say a whole log folded instantly. The engine prints the same two numbers to stderr; this is the same measurement on the wire, so a panel does not have to scrape a log.",
+      "type": "object",
+      "properties": {
+        "spellDbMs": {
+          "description": "How long the parser's spell catalog took to become available for this attach. Near zero after the first attach of a process — the catalog is built once per process — and the number is reported rather than assumed.",
+          "type": "integer"
+        },
+        "scanMs": {
+          "description": "Wall time from the first byte read to the fold landing. Absent while the scan is still running.",
+          "type": "integer"
+        },
+        "scanBytes": {
+          "description": "Bytes read by the scan, up to the mark it landed on. Absent while the scan is still running.",
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "PerfServeSource": {
+      "title": "PerfServeSource",
+      "description": "ONE SOURCE'S SERVE PATH, cumulative for this generation — the counters `views::meter` keeps, exactly as ruling 19 names them. QUEUE TIME IS NEVER COUNTED AS COMPUTE: `foldToFrameUs*` is measured from the instant the fold produced what the frame reports to the instant the frame reached the connection's outbox, and a frame with no fold behind it (the fresh reset a just-opened subscription is owed) is COUNTED but not TIMED — which is why the two latency fields are optional and their absence means `no frame here had a fold behind it`, never `zero microseconds`.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "The view source's name, exactly as the source registry spells it.",
+          "type": "string"
+        },
+        "frames": {
+          "description": "Frames actually sent — `resets + diffs`. Reported rather than left to the caller's addition so the row reads without arithmetic.",
+          "type": "integer"
+        },
+        "resets": { "type": "integer" },
+        "diffs": { "type": "integer" },
+        "rows": {
+          "description": "Rows carried by the resets. A diff carries ops, not rows.",
+          "type": "integer"
+        },
+        "bytes": {
+          "description": "Bytes of frame payload sent, from the frame's own serialization. The payload budget ruling 4 asks for, weighed.",
+          "type": "integer"
+        },
+        "widestBytes": {
+          "description": "The largest single frame. The budget number that matters — a mean hides the one frame that stalled a window.",
+          "type": "integer"
+        },
+        "foldToFrameUsMean": {
+          "description": "Mean fold-to-frame latency in MICROSECONDS, over the timed frames only. Microseconds rather than milliseconds because cutting a fifty-row window off a fold takes tens of them, and a serve path reporting `0 ms` reads as a measurement nobody took.",
+          "type": "integer"
+        },
+        "foldToFrameUsMax": {
+          "description": "The worst timed frame, in microseconds.",
+          "type": "integer"
+        },
+        "subscribers": {
+          "description": "Open subscriptions over this source RIGHT NOW, across every connection — a live count, not a cumulative one, and the world's answer rather than the meter's. It is what makes a row with no recent frames readable: nobody is watching, as against nothing is moving.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "source",
+        "frames",
+        "resets",
+        "diffs",
+        "rows",
+        "bytes",
+        "widestBytes",
+        "subscribers"
+      ],
+      "additionalProperties": false
     },
 
     "SessionProgressRequest": {
