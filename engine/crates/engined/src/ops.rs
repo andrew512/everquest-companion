@@ -12,8 +12,6 @@
 //! them, which is what lets the whole op table be tested with no socket in the room — the same
 //! argument `protocol::transport::memory` makes one layer down.
 
-use std::collections::BTreeSet;
-
 use protocol::generated::{
     ClientMessage, EchoRequestOp, EchoResult, EngineMessage, ErrorCode, ErrorReply, ErrorReplyKind,
     HelloOp, ProtocolError, Reply, ReplyKind, ReplyResult, RequestId, ResetMessage,
@@ -21,19 +19,29 @@ use protocol::generated::{
     SubscribeAck, ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
 };
 
-use crate::world::World;
+use crate::world::{ListenerId, World};
 
 /// One connection's own state — everything that belongs to this conversation rather than to the
 /// world.
 ///
-/// SUBSCRIPTIONS ARE PER-CONNECTION BY CONSTRUCTION. A subscription is named by the id of the
-/// request that opened it, and request ids are client-chosen, so two renderers routinely pick the
-/// same number. Keeping the set here means one client can never unsubscribe another's stream — a
-/// property worth having structurally rather than by a check somebody remembers to write.
-#[derive(Default)]
+/// SUBSCRIPTIONS ARE PER-CONNECTION BY CONSTRUCTION, AND THE WORLD IS WHERE THEY LIVE. A
+/// subscription is named by the id of the request that opened it, and request ids are
+/// client-chosen, so two renderers routinely pick the same number; the world keys them by
+/// (listener, id), so one client can never unsubscribe another's stream — a property worth having
+/// structurally rather than by a check somebody remembers to write. They moved there when the fold
+/// did: a landing fold must reset EVERY open subscription on EVERY connection, and a set held out
+/// here is a set the world cannot see. This session is therefore its receipt and nothing else.
 pub struct Session {
-    /// The subscribe-request ids currently open on this connection.
-    open: BTreeSet<i64>,
+    /// This connection's membership of the world.
+    listener: ListenerId,
+}
+
+impl Session {
+    /// The session of the connection holding this membership.
+    #[must_use]
+    pub fn new(listener: ListenerId) -> Self {
+        Self { listener }
+    }
 }
 
 /// What a dispatched message produced.
@@ -73,11 +81,13 @@ impl Session {
                 reply(request.id, ReplyResult::HealthResult(world.health()))
             }
 
-            // ATTACH. A stub with real consequences — it bumps the generation and announces it. See
-            // `World::attach` for exactly what it does not do. The request's `logPath` is not read.
-            ClientMessage::SessionAttachRequest(request) => {
-                reply(request.id, ReplyResult::AttachResult(world.attach()))
-            }
+            // ATTACH. Bumps the generation, announces it, and STARTS AN INGEST over the named log:
+            // scan at full speed, then tail live. See `World::attach` for the critical section and
+            // `ingest.rs` for the generation law that makes a second attach preempt this one.
+            ClientMessage::SessionAttachRequest(request) => reply(
+                request.id,
+                ReplyResult::AttachResult(world.attach(&request.params.log_path)),
+            ),
 
             // PROGRESS. Acknowledged with a `SubscribeAck` naming this request, because that is
             // what the op IS: a subscription to the connection-wide progress channel, whose frames
@@ -86,9 +96,10 @@ impl Session {
             // arm of its own for this op; the ack shape fits it exactly, which is why no schema
             // change was needed to answer it honestly.
             //
-            // NO FRAME EVER FOLLOWS IN PHASE 0, and that is the truth rather than an omission: the
-            // attach stub starts no fold, so there is no progress to report. When there is, it
-            // arrives on the channel this ack just named.
+            // THE FRAMES ARRIVE ON THE CHANNEL THIS ACK NAMES, and since JOS-474 they are real:
+            // an attach starts a fold and the fold announces itself at a bounded cadence. They are
+            // connection-wide, so an attach on ANOTHER connection is heard here too — which is what
+            // makes a second renderer's loading state honest without it having asked for anything.
             ClientMessage::SessionProgressRequest(request) => {
                 let subscription = RequestId(*request.id);
                 reply(
@@ -110,7 +121,9 @@ impl Session {
             // with the source registry in phase 3. Until a source exists to be unknown, refusing
             // every subscription would make this op untestable and prove nothing.
             ClientMessage::ViewSubscribeRequest(request) => {
-                self.open.insert(*request.id);
+                // THE REGISTRATION AND THE STAMP ARE ONE ACT (`World::open_subscription`), so the
+                // epoch this reset names cannot be superseded between reading it and sending it.
+                let epoch = world.open_subscription(self.listener, *request.id);
                 let subscription = RequestId(*request.id);
                 let ack = Reply {
                     kind: ReplyKind::Reply,
@@ -124,7 +137,7 @@ impl Session {
                 let reset = ResetMessage {
                     kind: ResetMessageKind::Reset,
                     id: RequestId(*request.id),
-                    epoch: world.epoch(),
+                    epoch,
                     total: 0,
                     rows: Vec::new(),
                 };
@@ -139,7 +152,7 @@ impl Session {
             // open would tell a client its bookkeeping is fine when it is not.
             ClientMessage::ViewUnsubscribeRequest(request) => {
                 let named = *request.params.subscription;
-                if self.open.remove(&named) {
+                if world.close_subscription(self.listener, named) {
                     reply(
                         request.id,
                         ReplyResult::SubscribeAck(SubscribeAck {
@@ -338,10 +351,23 @@ mod tests {
         }
     }
 
+    /// A world whose attaches START NOTHING, and one connection joined to it.
+    ///
+    /// The op table's job is the envelope, and every test here is about a shape rather than about a
+    /// fold; giving these tests a real ingest would make them depend on a file, a thread and a spell
+    /// DB none of them says anything about. `ingest.rs` and `tests/ingest.rs` own that half.
+    fn table() -> (World, Session) {
+        let world = World::with_ingest(std::sync::Arc::new(|_world, _generation, _log| {}));
+        let session = Session::new(world.join().id);
+        (world, session)
+    }
+
+    /// The path an attach names in this module. Nothing opens it.
+    const A_LOG: &str = "C:/nowhere/eqlog_Primitive_freeport.txt";
+
     #[test]
     fn echo_returns_what_it_was_given() {
-        let world = World::new();
-        let mut session = Session::default();
+        let (world, mut session) = table();
         let messages = sent(session.dispatch(&world, echo(11, "a\nb\tc")));
         let [EngineMessage::Reply(reply)] = messages.as_slice() else {
             panic!("one reply");
@@ -356,9 +382,8 @@ mod tests {
 
     #[test]
     fn health_reports_the_worlds_generation() {
-        let world = World::new();
-        let mut session = Session::default();
-        world.attach();
+        let (world, mut session) = table();
+        world.attach(A_LOG);
         let messages = sent(session.dispatch(
             &world,
             ClientMessage::SessionHealthRequest(SessionHealthRequest {
@@ -378,8 +403,7 @@ mod tests {
 
     #[test]
     fn attach_answers_with_the_new_generation() {
-        let world = World::new();
-        let mut session = Session::default();
+        let (world, mut session) = table();
         let messages = sent(session.dispatch(
             &world,
             ClientMessage::SessionAttachRequest(SessionAttachRequest {
@@ -402,8 +426,7 @@ mod tests {
 
     #[test]
     fn a_subscription_acknowledges_then_opens_with_an_empty_reset() {
-        let world = World::new();
-        let mut session = Session::default();
+        let (world, mut session) = table();
         let messages = sent(session.dispatch(&world, subscribe(7)));
         let [EngineMessage::Reply(reply), EngineMessage::ResetMessage(reset)] = messages.as_slice()
         else {
@@ -422,8 +445,7 @@ mod tests {
 
     #[test]
     fn unsubscribing_closes_the_stream_once_and_then_reports_not_found() {
-        let world = World::new();
-        let mut session = Session::default();
+        let (world, mut session) = table();
         sent(session.dispatch(&world, subscribe(7)));
 
         let first = sent(session.dispatch(&world, unsubscribe(8, 7)));
@@ -447,9 +469,10 @@ mod tests {
 
     #[test]
     fn one_connection_cannot_unsubscribe_anothers_stream() {
-        let world = World::new();
-        let mut mine = Session::default();
-        let mut theirs = Session::default();
+        let (world, mut mine) = table();
+        // A SECOND CONNECTION, joined to the SAME world: the isolation is between listeners, so a
+        // test that shared one membership would prove nothing.
+        let mut theirs = Session::new(world.join().id);
         sent(mine.dispatch(&world, subscribe(7)));
 
         let messages = sent(theirs.dispatch(&world, unsubscribe(1, 7)));
@@ -461,8 +484,7 @@ mod tests {
 
     #[test]
     fn a_second_hello_ends_the_conversation() {
-        let world = World::new();
-        let mut session = Session::default();
+        let (world, mut session) = table();
         let hello = ClientMessage::Hello(Hello {
             op: HelloOp::Hello,
             protocol_version: protocol::PROTOCOL_VERSION,
