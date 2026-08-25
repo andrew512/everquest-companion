@@ -218,7 +218,7 @@ async function openConnection(mine: number, info: ReadyEngine, client: EngineCli
   // The hello rides this call — the client sends it the moment it has a transport, and queues
   // everything else behind the answer, so there is no handshake to sequence here.
   client.attach(createNdjsonTransport<ClientMessage, EngineMessage>(channel))
-  // THE FIRES, LOGGED AND COUNTED — NEVER PLAYED. See `onFire`.
+  // THE FIRES — logged and counted always, PLAYED when the cutover armed. See `noteFire`.
   client.onFire((fire) => {
     noteFire(fire)
   })
