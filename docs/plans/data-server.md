@@ -58,6 +58,19 @@ parses, aggregates, compresses, and serves; the UI becomes a query/subscribe cli
     JOS-182/184 removed `powershell.exe`/`reg.exe`/`wmic` launches because *those binaries*
     trip heuristics. A shipped Rust engine child process is acceptable; it must simply never
     shell out to PowerShell, and it joins the code-signing set like any shipped executable.
+17. *(2026-08-24, JOS-464 shape ratification)* The wire shapes as built: uniform
+    `{id, op, params}` request envelope; everything the engine sends carries one `kind`
+    discriminant; rows are `{key, cells}` (identity outside the data); epoch messages are
+    connection-wide and carry no request id; **`pct` is a float** (the owner overturned the
+    worker's integer call — examples use fractional values so fixtures stay byte-verbatim
+    across languages). The committed `protocol/fixtures/` are the verbatim truth over any prose.
+18. *(2026-08-24, strengthens ruling 5)* **The parse-once cache is a stated later goal, not a
+    maybe.** The owner's words: "our goal later is to build a cache underneath the datastore
+    that requires us to parse up to a message only once… i want to think about cache semantics
+    so that even within the rust apis/process, the caller doesn't need to think about it much."
+    Build no cache now — but every interface is designed so a cache can appear underneath it
+    TRANSPARENTLY, including to the engine's own internal callers. See "Cache transparency"
+    below.
 
 ## The shape
 
@@ -107,22 +120,91 @@ engine restart bumps it; the client drops state and takes the fresh reset; **res
 re-query** (reconnect-after-crash ≡ character switch); **(4)** rows are render-ready.
 
 ```jsonc
-// subscribe
-→ {"id":7,"op":"view.subscribe","view":{"source":"loot.ledger","filter":{"session":"current"},
+// subscribe — every request is {id, op, params}; the reply restates nothing (the op of the
+// request whose id it names decides the result shape)
+→ {"id":7,"op":"view.subscribe","params":{"source":"loot.ledger","filter":{"session":"current"},
    "sort":[["at","desc"]],"window":{"offset":0,"limit":50}}}
-← {"id":7,"kind":"reset","epoch":3,"total":1834,"rows":[{"key":"loot:9412", ...}, ...]}
-// live diff (a kill drops loot into a newest-first 50-row window)
-← {"id":7,"kind":"diff","epoch":3,"total":1835,"ops":[
-   {"op":"insert","before":"loot:9412","row":{"key":"loot:9413", ...}},
+← {"kind":"reply","id":7,"ok":true,"result":{"subscription":7,"subscribed":true}}
+← {"kind":"reset","id":7,"epoch":3,"total":1834,"rows":[{"key":"loot:9412","cells":{...}}, ...]}
+// live diff (a kill drops loot into a newest-first 50-row window). Rows are {key, cells}: the
+// identity lives OUTSIDE the data so a reset row and an update apply the same way.
+← {"kind":"diff","id":7,"epoch":3,"total":1835,"ops":[
+   {"op":"insert","before":"loot:9412","row":{"key":"loot:9413","cells":{...}}},
    {"op":"drop","key":"loot:8790"}]}
 // meter tick (10 Hz, changed cells only)
-← {"id":12,"kind":"diff","epoch":3,"ops":[
+← {"kind":"diff","id":12,"epoch":3,"ops":[
    {"op":"update","key":"ally:Primitive","cells":{"damage":184220,"dps":412.6,"share":0.38}},
-   {"op":"insert","after":"ally:Rowel","row":{"key":"pet:Vibartik", ...}}]}
-// character switch / engine restart
-← {"kind":"epoch","epoch":4,"reason":"attach","progress":{"pct":62,"events":1571003}}
-← {"id":7,"kind":"reset","epoch":4,"total":0,"rows":[]}   // per subscription, when the fold lands
+   {"op":"insert","after":"ally:Rowel","row":{"key":"pet:Vibartik","cells":{...}}}]}
+// character switch / engine restart — epoch messages are CONNECTION-WIDE (the one stream message
+// with no id); progress pct is a float (owner ruling 5b), fractional in examples so the fixture
+// round-trips byte-verbatim through both languages
+← {"kind":"epoch","epoch":4,"reason":"attach","progress":{"pct":62.4,"events":1571003}}
+← {"kind":"reset","id":7,"epoch":4,"total":0,"rows":[]}   // per subscription, when the fold lands
 ```
+
+These four moments are committed as `protocol/fixtures/01-04` and round-tripped by both languages'
+suites — the fixtures, not this prose, are the verbatim truth (owner ratification 2026-08-24:
+uniform `params` envelope; one `kind` discriminant on everything the engine sends; `{key, cells}`
+rows; connection-wide epoch messages; float `pct`).
+
+## Cache transparency — the parse-once goal (ruling 18)
+
+The destination: an engine that parses any given log byte **once, ever**, with a cache under the
+store seam so transparent that even the engine's own internal callers cannot tell cached from
+computed. Nothing is built now; these are the interface laws that keep the door open, and every
+phase-1/2 ticket inherits them:
+
+1. **Determinism IS cacheability.** A checkpoint of fold state at byte offset N is only sound if
+   the fold is a pure function of the bytes — which is exactly what the golden oracle already
+   enforces (no wall clock, no host locale, no slicer dependence). Every determinism pin is also
+   a cache-correctness proof; treat any new nondeterminism as a cache bug, not a style issue.
+2. **Reads go through one door.** Internal Rust callers ask a store/world handle for state —
+   never reach into a module's fields, never hold state derived from raw events across calls.
+   The handle answering from a memoized checkpoint instead of a fresh fold must be unobservable.
+3. **State is addressed by (log identity, byte offset).** The tail mark, the slice manifest, and
+   any future checkpoint all speak the same coordinates: byte offsets on line boundaries. Keep
+   it that way — an interface that addresses state any other way (wall time, "current") is
+   hiding the coordinate a cache would key on. ("Current" = "as of the tail offset", and APIs
+   should mean that explicitly.)
+4. **Impure inputs are versioned inputs.** Anything pushed into the engine that changes parse or
+   fold output (spell-db overlays, `*.define` commands, corrections) is part of the cache key.
+   Keep such inputs few, explicit, and hash-friendly (full-set replace semantics — see command
+   idempotency below), and never let a new impure input sneak into the parse path silently.
+5. **A cache invalidates by version, never by patching.** Engine build + schema version + input
+   hashes make the key; a mismatch is a full re-fold (which is exactly a launch). No incremental
+   repair of stale state, ever — the crash-respawn story and the cache-miss story are the same
+   story.
+
+## Program feedback loop — ergonomics reviews after every worker
+
+Standing practice (owner directive 2026-08-24): after each worker reports, mine the report for
+protocol/doc changes — worker friction is design signal — and check it against how modern
+sync-engine projects (Linear's sync engine, Replicache/Zero, Figma's LiveGraph) think about the
+same problems. Gleanings land here; shape changes go through the owner.
+
+From the first two workers (JOS-464/465), now law for later phases:
+
+- **Codegen house rules (typify/json-schema-to-typescript friction, learned the hard way):** no
+  cross-file `$ref` (bundle before generating); tag properties are single-member `enum`s, never
+  `const` (typify lowers `const` to `serde_json::Value` and variants collapse); a multi-type
+  scalar becomes `f64` in Rust — any type where integer identity matters gets a hand-written
+  replacement à la `Cell`; generation ends in rustfmt, so the toolchain pin is load-bearing.
+- **Test doubles must be as rude as the OS.** A `Cursor` over a complete buffer quietly grants
+  the one property a real socket never provides (whole-message reads). `OneByteAtATime` in
+  `engine/crates/protocol/tests/transport.rs` is the required harness for any framing work; the
+  slicer-arm sweep is its fold-side sibling.
+- **Commands are idempotent full-set replaces** (`alerts.define` carries the whole rule set, not
+  a delta). This is the Replicache-family lesson: replayable, order-collapsing commands make
+  crash-respawn trivial (replay the latest definitions) and make command inputs hash-friendly
+  for ruling 18's cache key.
+- **Resume-is-requery is the honest v1** of what Linear ships as "delta catch-up since
+  lastSyncId, rebootstrap when too stale" — we ship only the rebootstrap arm, by ruling. If
+  phase 3 measures reconnect cost worth optimizing, the upgrade path is a per-subscription
+  monotonic sequence number on diffs; that is a schema version bump designed to be additive,
+  not a rethink. Do not build it speculatively.
+- **The UI is a cache of server truth** (the Figma/Linear framing) — we are stricter: the
+  renderer never even re-derives (no munging, ruling 4). Any future "make the client smarter"
+  proposal should be read against that ruling first.
 
 ## Boundary verdicts (each resolves a census finding)
 
