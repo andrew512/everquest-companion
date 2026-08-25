@@ -351,24 +351,30 @@ re-derivable: byte-exact line-boundary cuts at first-line-of-day offsets). The b
 State at writing: phases 0–2 COMPLETE (ingest, all 20 modules + combat proven, serve layer first
 light, app connected with the parity probe, packaging signed). Remaining to build, in rough order:
 
-1. **Engine live tick + file facts** (rulings 21–22; JOS-481): the engine ticks its modules while
-   live; health serves the log's mtime; later a `logs.list` discovery surface.
-2. **`*.define` commands** (boundary verdict 3): alert defs, buff trust, respawn prefs, combo
-   corrections, roster edits pushed on change; store stays persistence truth.
+1. ~~Engine live tick + file facts~~ **DONE** (JOS-481) — except the `logs.list` discovery
+   surface, still open (and carrying an owner question: who names the directory).
+2. ~~`*.define` commands~~ **DONE** (JOS-482) — all five families push on connect and on change;
+   fires stream live (logged, not played). TWO NAMED GAPS for the audio-cutover ticket:
+   `earlyWarnSec` defs are compiled out of the engine evaluator (needs the timer-row projection),
+   and Rust's regex refuses lookaround/backreferences V8 accepts — measure against the owner's
+   real def set before cutover.
 3. **The remaining view sources** — every list in the product: `combat.live` (the meter; where
    update-op coverage arrives), encounters/drilldown, buff+timer rows (the overlays), respawn,
    progression, kills, and the Knowledge surface (items/spells/mobs/quests move engine-side —
    deletes ~12 MB from main's heap and the renderer-bundled corpora).
-4. **Streams**: `alerts.fires` (app plays audio — the whole app-side alert system becomes
-   "receive fire → sound/window"), `world.conCard` fully resolved engine-side.
-5. **Renderer brokering** (ruling 7: main brokers a renderer's connection) + surfaces cut over
-   one-by-one behind the dev flag, `useModule` → `useView`.
+4. **Streams**: `alerts.fires` DONE as a stream (JOS-482; the AUDIO cutover — app plays from the
+   frame and the TS evaluator dies — is its own ticket, owning the two named gaps above);
+   `world.conCard` fully resolved engine-side still open.
+5. **Renderer brokering DONE** (JOS-484: byte relay through MessagePorts, main never parses a
+   frame; loot.ledger proven by DOM equality behind the dev toggle) — remaining surfaces cut over
+   one-by-one, `useModule` → `useView`.
 6. **Main's 18 sync readers rewired** (3 genuine queries → ops; mirrors → pushed streams);
    fold-owned persisted artifacts (resist ledger, message-overlay register) move their IO into
    the engine; `sessionMarks` as a command; `spells_us.txt` parse engine-side; wiki-miss events
    with app-side fetch pushing results in.
-7. **Ruling 19 surface**: `perf.budgets`/`perf.timeline` ops, the in-app performance panel
-   section, bug-report attachment.
+7. **Ruling 19 surface**: the in-app performance panel section is DONE (JOS-483: engine
+   CPU/memory row, `perf.snapshot`, serve table, parity summary); `perf.budgets`/`perf.timeline`
+   ops, CI budgets, and bug-report attachment still open.
 8. **The no-munging lint** (ruling 4) failing builds on renderer sort/filter over domain data.
 9. Open owner item: the render-cell LOCALE (dates/numbers) as pushed app knowledge vs fixed en-US.
 
