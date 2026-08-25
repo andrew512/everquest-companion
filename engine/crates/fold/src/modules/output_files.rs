@@ -59,6 +59,12 @@ impl EqModule for OutputFilesModule {
         }
     }
 
+    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
+    /// state to read it. See `EqModule::published_seq`.
+    fn published_seq(&self) -> Option<i64> {
+        Some(self.seq)
+    }
+
     fn snapshot(&self) -> Value {
         json!({ "seq": self.seq, "state": self.written })
     }

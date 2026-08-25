@@ -35,6 +35,7 @@
 import {
   PROTOCOL_VERSION,
   type ClientMessage,
+  type ConCardMessage,
   type DiffMessage,
   type EngineMessage,
   type Epoch,
@@ -44,6 +45,7 @@ import {
   type FoldProgress,
   type Hello,
   type HelloReply,
+  type ModuleChangedMessage,
   type KnowledgeMissMessage,
   type Reply,
   type ReplyResult,
@@ -51,6 +53,7 @@ import {
   type ResetMessage,
   type ViewDescriptor
 } from './protocol.generated'
+import { createBroadcasts, deliver, listen, type Broadcasts } from './broadcasts'
 import { TransportError, type Transport } from './transport'
 import { EngineError, RESULT_GUARDS, type ParamsFor, type RequestOp, type ResultFor } from './ops'
 import { LOADING, applyDiff, type ViewState } from './viewWindow'
@@ -104,6 +107,30 @@ export interface EngineClient {
    * the honest shape for a sound: an alert nobody was listening for is not an alert to replay.
    */
   onFire(listener: (fire: FireMessage) => void): () => void
+
+  /**
+   * ONE LIVE `/con` PRODUCED A CARD (JOS-487, boundary verdict 2).
+   *
+   * `onFire`'s shape exactly, and for `onFire`'s reasons: connection-wide, no subscription, no
+   * epoch, nothing to replay. A card is a thing that happened, and a listener that missed one has
+   * missed it — which is the honest shape for a card whose whole purpose is the two seconds before
+   * you decide to pull.
+   */
+  onConCard(listener: (card: ConCardMessage) => void): () => void
+
+  /**
+   * A MODULE'S PUBLISHED STATE MOVED — the dirty bit (JOS-487).
+   *
+   * THE PUSH THAT REPLACES A POLL. It carries a name and a cursor and no state at all, so a holder
+   * of a `module.snapshot` compares its own `seq` against this one and refetches only when this one
+   * is ahead. The app-side `useModule` refetch shim rides it; until that lands, this is the seam it
+   * will ride and nothing subscribes.
+   *
+   * IT IS COALESCED ENGINE-SIDE to one per module per serve beat, so a busy tail delivers a
+   * bounded number of these rather than one per event — but a listener must still be idempotent in
+   * the cursor, because "the newest number wins" is the only thing the coalescing promises.
+   */
+  onModuleChanged(listener: (changed: ModuleChangedMessage) => void): () => void
   /**
    * KNOWLEDGE MISSES (JOS-486, boundary verdict 5). Connection-wide, like fires and progress, and
    * with the same shape for the same reason: a miss belongs to the PROCESS's corpus rather than to
@@ -154,8 +181,9 @@ interface ClientState {
   readonly subs: Map<RequestId, LiveSubscription>
   readonly stateListeners: Set<(state: ConnectionState) => void>
   readonly progressListeners: Set<(progress: FoldProgress) => void>
-  readonly fireListeners: Set<(fire: FireMessage) => void>
-  readonly missListeners: Set<(miss: KnowledgeMissMessage) => void>
+  /** The four connection-wide fan-outs, held together because they are one family — see
+   *  `broadcasts.ts` for what makes them one. */
+  readonly broadcasts: Broadcasts
 }
 
 function setConnectionState(s: ClientState, next: ConnectionState): void {
@@ -467,16 +495,12 @@ function receive(s: ClientState, message: EngineMessage): void {
   else if (message.kind === 'error') onErrorReply(s, message)
   else if (message.kind === 'epoch') onEpochMessage(s, message)
   else if (message.kind === 'reset') onReset(s, message)
-  // A FIRE TOUCHES NO WINDOW AND NO EPOCH. It carries neither, deliberately — see `onFire` — so it
-  // is handed straight to the listeners without passing through `noteEpoch`, which is the one place
-  // this client is entitled to drop state.
-  else if (message.kind === 'fire') for (const listener of s.fireListeners) listener(message)
-  // …AND NEITHER DOES A KNOWLEDGE MISS, for the same two reasons and one more: it names no window,
-  // it carries no generation, and it is a statement about the process's CORPUS — committed data
-  // plus an overlay that survives an attach — which outlives every epoch this client will see.
-  else if (message.kind === 'knowledgeMiss')
-    for (const listener of s.missListeners) listener(message)
-  else onDiff(s, message)
+  // THE FOUR CONNECTION-WIDE FRAMES, IN ONE BRANCH. None of them carries an id or an epoch, so none
+  // of them passes through `noteEpoch` — the one place this client is entitled to drop state — and
+  // `broadcasts.ts` is where that property became structural rather than repeated four times.
+  else if (deliver(s.broadcasts, message)) {
+    // Handled there. The predicate is what narrows the remaining frame to a diff below.
+  } else onDiff(s, message)
 }
 
 export function createEngineClient(options: EngineClientOptions): EngineClient {
@@ -492,8 +516,7 @@ export function createEngineClient(options: EngineClientOptions): EngineClient {
     subs: new Map(),
     stateListeners: new Set(),
     progressListeners: new Set(),
-    missListeners: new Set(),
-    fireListeners: new Set()
+    broadcasts: createBroadcasts()
   }
   return {
     get state() {
@@ -520,18 +543,13 @@ export function createEngineClient(options: EngineClientOptions): EngineClient {
         s.progressListeners.delete(listener)
       }
     },
-    onFire: (listener): (() => void) => {
-      s.fireListeners.add(listener)
-      return (): void => {
-        s.fireListeners.delete(listener)
-      }
-    },
-    onKnowledgeMiss: (listener): (() => void) => {
-      s.missListeners.add(listener)
-      return (): void => {
-        s.missListeners.delete(listener)
-      }
-    },
+    // FOUR ONE-LINERS OVER ONE HELPER. What these methods ever had in common was the
+    // add-and-return-a-delete, and four copies of it were four chances to write a listener that
+    // could not be removed.
+    onFire: (listener): (() => void) => listen(s.broadcasts.fire, listener),
+    onConCard: (listener): (() => void) => listen(s.broadcasts.conCard, listener),
+    onModuleChanged: (listener): (() => void) => listen(s.broadcasts.moduleChanged, listener),
+    onKnowledgeMiss: (listener): (() => void) => listen(s.broadcasts.knowledgeMiss, listener),
     close: (): void => {
       if (s.state === 'closed') return
       setConnectionState(s, 'closed')

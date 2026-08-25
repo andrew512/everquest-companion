@@ -199,8 +199,8 @@ enum Answer<T> {
 }
 
 /// Everything that can legitimately arrive while a request is outstanding. A hello here would be a
-/// real surprise; a progress frame or another subscription's reset is the ordinary traffic of a
-/// connection that asked for them.
+/// real surprise; a progress frame, another subscription's reset, or — since JOS-487 — a module's
+/// dirty bit is the ordinary traffic of a live connection, and none of it is this suite's subject.
 fn skip(message: &EngineMessage) {
     assert!(
         matches!(
@@ -210,6 +210,7 @@ fn skip(message: &EngineMessage) {
                 | EngineMessage::EpochMessage(_)
                 | EngineMessage::ResetMessage(_)
                 | EngineMessage::DiffMessage(_)
+                | EngineMessage::ModuleChangedMessage(_)
         ),
         "nothing else belongs on this stream: {message:?}"
     );

@@ -320,20 +320,53 @@ diffs as the fold moves.
 | Source | Reads | Default order | Cells |
 | --- | --- | --- | --- |
 | `loot.ledger` | the `loot` module's rows | `at` desc, then `seq` desc — newest first, which is what the flat ledger draws | `at`, `item`, `count`, `from`, `zone`, `disposition`, `created` |
+| `timers.rows` | `buffs.active` + `buffTimers.holds`/`.ends`, through `fold::modules::buff_timer_rows` | `order` asc — the projection's own: self rows, then one block per target | `name`, `rank`, `kind`, `surface`, `group`, `mode`, `ambiguous`, `calmsTarget`, `inferredTarget`, `startedTs`, `durationMs`, `endsAt`, `target`, `targetKey`, `count`, `caster`, `order`, `flat` |
+| `buffs.active` | the `buffs` module's live instances | `startedTs` asc — the order the module publishes and the tab lists | `spell`, `castName`, `cls`, `self`, `disposition`, `target`, `inferredTarget`, `startedTs`, `estimatedMs`, `p25`, `p75`, `n`, `durationSource`, `permanent`, `permanentSource`, `messageDriven`, `ambiguous`, `count`, `caster`, `calmsTarget` |
+| `respawn.watches` | the `respawn` module's rows | `order` asc — the module's own, which is a function of `now` | `display`, `key`, `zone`, `baseTs`, `basis`, `source`, `overridden`, `samples`, `kills`, `seenTs`, `seenVia`, `estimateMs`, `observedMs`, `customMs`, `wikiText`, `wikiMs`, `wikiPage`, `order` |
+| `kills.recent` | the `progression` module's recent-kill ring | `at` desc, then `seq` desc | `at`, `name`, `zone`, `pet`, `expLine`, `expStated`, `expParty`, `expPct` |
+| `progression.recent` | the `progression` module's level and AA columns | `at` desc, then `seq` desc | `at`, `kind`, `value`, `label` |
+| `eventFeed.recent` | the `eventFeed` module's ring | `at` desc, then `seq` desc | `at`, `kind`, `title`, `detail`, `page`, `rewardItem`, `rewardPage`, `rewardStats`, `conFaction`, `conDifficulty`, `conLevel`, `conRare` |
 | `combat.live` | the combat engine's selected segment | `total` desc — the meter's own ranking, which is what every surface draws | `rank`, `name`, `kind`, `tag`, `pct`, `total`, `dps`, `crit`, `hit`, `resist`, `ambiguous` |
 
-**THE TWO ARE DIFFERENT KINDS OF SOURCE, and that is why the second one mattered.** `loot.ledger`
-APPENDS — a row, once written, never changes — so a live window over it produces inserts and drops
-and never an `update`. `combat.live` EDITS: the same handful of keys sit in the window for a whole
-fight while their numbers move. That is the shape the diff protocol's third op exists for, and until
-JOS-485 it had exhaustive unit tests and no integration coverage at all. `tests/combat.rs` is where
-it gets some.
+**THEY ARE TWO DIFFERENT KINDS OF SOURCE, and that is why `combat.live` mattered.** `loot.ledger`,
+`kills.recent`, `progression.recent` and `eventFeed.recent` APPEND — a row, once written, never
+changes — so a live window over one produces inserts and drops and never an `update`.
+`combat.live`, `timers.rows`, `buffs.active` and `respawn.watches` EDIT: the same handful of keys sit
+in the window while their numbers move. That is the shape the diff protocol's third op exists for,
+and until JOS-485 it had exhaustive unit tests and no integration coverage at all. `tests/combat.rs`
+is where it gets some.
 
-`eventFeed.recent` is **skipped, and named rather than forgotten**: the fold's event feed admits
-nothing that did not arrive live through an injected item probe, an injected consider table, or an
-out-of-band alert push, and this engine carries none of the three. Its ring is empty in every fold
-this build can perform, so a view over it could only ever serve an empty window and no test could
-tell a working one from a broken one. It arrives with the sources that feed it.
+**`kills.recent` reads the PROGRESSION module and the name says the SURFACE.** Every other source
+here is named for the module it reads, and this one is the exception with a reason: the `kills`
+module is a lifetime tally keyed by mob that the boss and mob pages look things up in, and it has no
+recent list at all — the recent-kills FEED is a fifty-entry ring `progression` keeps, because a kill
+and the experience line that follows it are one fact joined at fold time and only that module sees
+both. A client asking for recent kills gets recent kills.
+
+**`eventFeed.recent` was unregistered for two reasons and TWO TICKETS TOOK THEM AWAY SEPARATELY.**
+The reason was: the ring admits nothing that did not arrive live through an injected item probe, an
+injected consider table, or an out-of-band alert or quest push, so it could only ever be empty — and
+therefore "no test could tell a working one from a broken one". JOS-487 answered the second clause by
+pointing the test somewhere else: the projection is a pure function of a ring, `views/event_feed.rs`
+pins every cell against a hand-built one, and a broken cell fails a test whether or not any fold can
+produce the entry it mangled. JOS-486 took the FIRST clause away in the same wave — the loot source's
+item probe is a real in-process lookup now, so a live loot line puts a row in that ring. A renderer
+subscribing during the cutover is told **nothing here yet** rather than **no such surface**, which
+were always different things to be told.
+
+**Two orders that no column sort can express are published as integer FIELDS.** `timers.rows` carries
+`order` (self rows, then per-target blocks, blocks ordered by their soonest row) and `flat`
+(`compareRows` over everything: countdowns ahead of count-ups ahead of permanents, then by end
+instant); `respawn.watches` carries `order` (seen-recently first, then unstale, then by remaining —
+a subtraction against `now`). Each is the row's index in that order, computed once per serve pass by
+the projection that owns the rule, so the client names the order it wants and never re-sorts. That is
+ruling 4 kept rather than bent: the decision stayed engine-side and what crossed the wire is its
+answer. Both are unique, so either makes the sort total on its own.
+
+**`respawn.watches` is ordered against the MODULE's clock, never a fresh read.** The respawn module
+is advanced by the log while folding and by the live tick once a tail owns the file; reading a second
+clock in the serve path would order the rows against an instant the model has never seen, and would
+put a wall-clock read where ruling 18 law 1 forbids one.
 
 **A query FIELD is not a CELL, and the whole layer turns on that.** A sort term names `at`; a cell is
 also called `at`; they are different values. The cell is `"Aug 19, 04:14 PM"` because that is what the
@@ -365,6 +398,34 @@ built a window publishes nothing. A subscription is re-cut only when its source'
 counter the `loot` module bumps on every push and every clear, read through the same kind of pull seam
 `as_roster` is — so an idle session costs one comparison per cadence tick and nothing else. The rate
 is a ceiling (~10 Hz, `views::SERVE_EVERY`), not a heartbeat: nothing is sent when nothing moved.
+
+**WHERE RULING 4 STOPS: numbers, not sentences.** `loot.ledger` renders its instant as
+`"Aug 19, 04:21 PM"` because that is what the pixel says, and six sources later that is still the
+rule — with two named exceptions, both of which are the APP's own decision rather than a relaxation
+of the owner's. A value read against NOW is served as the INSTANT: a timer bar's remaining time
+changes every frame, so serving it as text would mean a diff per visible row per serve beat and it
+would still be stale between two frames. What crosses is `startedTs`, `durationMs` and `mode` — the
+three numbers `timerReading` is a pure function of, which is what the overlay already ticks against
+at 1 Hz — plus `endsAt`, the one derived instant that is a fact about the ROW rather than about now.
+And a value whose wording is a SHARED derivation is served as its numbers: the buff row's
+`~4m 30s`, the resist chip's `R 126 (110-144)`, the respawn row's provenance line are each built by
+one function the tab, the overlay and the hover card all read, so a wire carrying finished strings
+would be a second copy of a vocabulary that must not drift — which is the call `shared/conCard.ts`
+already made for a payload that fetches nothing ("IT CARRIES NUMBERS, NOT SENTENCES"). Everything
+else is rendered here: a date, a name, a count, a decomposed bitfield (`kills.recent`'s three
+experience flags, so no renderer runs `flag & 2`), a routing answer (`timers.rows`' `surface`), a
+comparison already made (`respawn.watches`' `overridden`). **AND A CELL IS A SCALAR** — a list or an
+object is not one, so a row's candidate spells become its joined `name` plus an `ambiguous` flag and
+a feed entry's `reward` block becomes prefixed cells. Nothing is stringified into a cell for a client
+to parse back out; that would be the munging the ruling forbids, wearing a scalar's clothes.
+
+**Three of the seven change signals are COARSE, and the coarseness is stated at the module.** `loot`,
+`respawn` and `buffTimers` keep real revision counters that move only when their state could have;
+`buffs`, `progression` and `eventFeed` do not, so they report the fold's own `seq`, which moves on
+every event. That never misses a change — the property correctness needs — and it over-reports, which
+costs one re-cut per serve beat on a busy tail over row sets of tens. The honest fix is the counters,
+not a cache (ruling 5). `timers.rows` takes the MAX of its two inputs, because either moving could
+move the window.
 
 **`src/views/diff.rs` is the engine half of `src/shared/dataServer/viewWindow.ts`, and that file is
 its specification.** The client refuses rather than guesses — an anchor it does not hold, a key it
@@ -493,6 +554,77 @@ on. `engineClientHost.ts noteFire` writes one dev-log line per fire and counts t
 cutover is the alerts-surface ticket, which deletes the app-side evaluator in the same change that
 gives that line a speaker, so the two can never both be live.
 
+## The live surfaces — the con card, the session mark, the module dirty bit
+
+Three things JOS-487 adds beside the views, and all three are about the same boundary: what a LIVE
+engine says without being asked, and the one command it is allowed to refuse.
+
+**`world.conCard` — the fold stops calling into Electron** (boundary verdict 2). The census found
+`considerModule.setConCardHook` running `main/conCard.ts noteConsider` INSIDE the fold's own delivery
+— a knowledge lookup, a resist profile and an overlay send, on the thread parsing the log. The
+verdict inverts it: the consider module buffers its live cons (`take_cons`, the shape `take_fires`
+already is), the ingest drains them beside the fires, and `crate::concard` resolves the whole card.
+It is connection-wide with no `id` and no `epoch`, on the `FireMessage` precedent, and LIVE ONLY
+structurally — a startup replay of a month of logs draws nothing, because a historical event cannot
+reach the push at all.
+
+**The chips are the EMPTY five and `spellData` is false, and that is not a stub.** It is the branch
+`mobResistProfile` itself takes app-side when the client's `spells_us.txt` has not been read — five
+empty axes and the flag down, exactly what the card draws today on the first `/con` of a session.
+The engine cannot take the other branch yet: **the spell-table parse is boundary verdict 7 and the
+cutover ledger's item 6, still open**, and without it there is no axis for a spell, no resist adjust,
+and therefore no estimate to fit — nor has the estimator behind it moved (`shared/resistModel.ts`,
+`resistFit.ts`, `resistFormula.ts`). **So the con-card CUTOVER is blocked on the spell table and this
+frame is not**: the shape is final, the header is real, and the chips fill in with no protocol change
+the day the table lands. That is why `ConCardChip` is typed on the wire in full rather than left
+open.
+
+**Two of the app's three refusals stay app-side, with reasons.** The re-open suppression ("never
+twice inside a minute of a close") is a fact about the PERSON measured on the wall clock they live on
+— EQ stamps to the second, and a log-clock comparison put the card straight back up in the app's own
+e2e — and its only input is a window event the fold never sees. The PLAYER refusal is
+`isPlayerShapedName(name) && !knownMob(name)`, and this engine has the first half and not the second:
+the committed mob catalog moves with the KNOWLEDGE surface. Applying the name-shape test alone would
+refuse a card for every proper-named NPC the app draws one for today — Innoruuk, Blugurg, Sheldon —
+which is a regression wearing a port's clothes. So neither half is applied here, and until the
+catalog is engine-side the app's own `looksLikePlayer` still stands in front of the overlay window.
+
+**`sessionMarks.add` — a command that can be refused** (boundary verdict 6). One press splits
+everything, so the APP stamps the clock once and hands that same number in; an engine that stamped
+its own would put everything looted between the two reads on the wrong side of one of the two
+boundaries. THE ENGINE STORES NOTHING — a mark is ephemeral on both sides, which is half of why a
+relaunch replays the log into the records the log alone describes. The other half is the refusal:
+`accepted: false` unless the world is LIVE, which is the honest engine-side spelling of
+`combat/engine.ts sessionMark`'s `if (st.hydrating) return false`. A refusal is NOT an error — the
+frame deserialized, the op exists, the instant is well formed, and the answer is *not now* — so it is
+a reply a client branches on rather than something in every error log the app collects. The ack
+carries the STATUS it decided under, in the same critical section as the decision, because a client
+asking `session.health` afterwards would be racing a fold that may have gone live in between.
+
+**What an accepted mark DOES to the world today is nothing, and that is a named gap.** The mark's
+effect is a COMBAT-ENGINE act — close the open fight, freeze the running stay into history tagged
+`closedBy: 'mark'`, mint fresh accumulators — and this crate's sink does not register the combat
+engine at all (`Fold::with_combat` is the combat surface's own ticket). What exists now is the
+command, the law and the reply: the half that decides WHETHER, without the half that DOES.
+
+**`moduleChanged` — the dirty bit, and the end of the poll.** Every module answers
+`EqModule::published_seq`: the same cursor `snapshot` puts in its answer, read WITHOUT building the
+state — because the serve loop asks all twenty once per beat, and asking through `snapshot()` would
+serialize twenty modules' whole state ten times a second to compare twenty integers. The frame
+carries a name and a cursor and no state at all, so a client not showing that module pays one small
+frame and ignores it, and a client that is re-fetches through `module.snapshot` — the op that already
+exists and the only place a module's shape is stated. A frame that carried the state would be
+`module.snapshot` pushed at a cadence nobody asked for, which is the per-window snapshot fan-out this
+boundary exists to delete.
+
+**It is coalesced to one frame per module per beat**, not one per event: the ingest holds the last
+cursor it announced per module (`Serving::announced_seqs`, beside the meter and for the meter's
+reasons — it belongs to this generation and it costs no lock) and hands the world only what moved.
+Nothing is sent for a module that did not move, so an idle session pays twenty integer comparisons at
+10 Hz and nothing else. It is NOT an epoch and does not replace one: a bump still means
+drop-everything-and-take-the-reset, and a `moduleChanged` inside one generation means only *there is
+something newer to fetch*. The app-side `useModule` → refetch shim is a later ticket; this is the
+seam it rides.
 ## The knowledge surface
 
 **The corpora move into the engine (JOS-486, design surface 5).** `items.json` (8.75 MB, 11,288 item
@@ -1377,6 +1509,176 @@ The `spell db ready in 403 ms` line is a first attach. A second attach in the sa
 the catalog is `Arc`-shared per process now, and the fold's resist catalog reads that same one rather
 than loading a second.
 
+## Watching the live surfaces, by hand
+
+A **real session** covering all three at once, on the same twenty-copy fixture the sections above
+use. Two things about the staging are load-bearing rather than convenient. The tail lines are stamped
+from the HOST's clock, not dated in 2026: a live engine ticks its own modules on the wall clock
+(ruling 22), so a 24-second mez recorded a week ago is swept the instant the fold goes live — which
+is exactly the divergence JOS-479's parity probe measured. And the first `sessionMarks.add` goes out
+WITH the attach, so the world is still starting when it lands.
+
+```js
+// scratch/drive487.mjs — node scratch/drive487.mjs <repo root> [repeats]
+// (staging, spawn and frame printing are drive.mjs's, verbatim; the tail lines and `talk` differ)
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+const stamp = (agoSec) => {
+  const d = new Date(Date.now() - agoSec * 1000)
+  const p = (n) => String(n).padStart(2, '0')
+  return `[Mon ${MONTHS[d.getMonth()]} ${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${d.getFullYear()}]`
+}
+fs.appendFileSync(log, [
+  `${stamp(90)} You have entered Nagafen's Lair.`,
+  `${stamp(32)} You begin casting Mesmerization.`,     // the anchor: a landing with no cast is nobody's
+  `${stamp(30)} a lava guardian has been mesmerized.`,
+  ''
+].join('\n'))
+
+function talk(port) {
+  const s = net.connect({ host: '127.0.0.1', port })
+  let buf = ''
+  let live = false
+  const send = (o) => { console.log('-> ' + JSON.stringify(o)); s.write(JSON.stringify(o) + '\n') }
+  s.on('connect', () => {
+    send({ op: 'hello', token: TOKEN, protocolVersion: 1 })
+    send({ id: 3, op: 'session.attach', params: { logPath: log } })
+    send({ id: 4, op: 'sessionMarks.add', params: { at: Date.now() } })   // mid-fold, deliberately
+    send({ id: 7, op: 'view.subscribe', params: { source: 'timers.rows', filter: { surface: 'debuffs' } } })
+  })
+  s.on('data', (d) => {
+    buf += d.toString()
+    const parts = buf.split('\n'); buf = parts.pop()
+    for (const lineText of parts.filter(Boolean)) {
+      console.log('<- ' + lineText)
+      const msg = JSON.parse(lineText)
+      if (!live && msg.kind === 'moduleChanged') {      // the first beat past the landing
+        live = true
+        setTimeout(() => {
+          send({ id: 8, op: 'sessionMarks.add', params: { at: Date.now() } })
+          console.log('# the game writes a /con and a loot line')
+          fs.appendFileSync(log, [
+            `${stamp(1)} A fire giant warlord glares at you threateningly -- looks like quite a gamble. (Lvl: 52)`,
+            `${stamp(0)} You have looted a Cloak of Flames from a fire giant warlord corpse.`,
+            ''
+          ].join('\n'))
+          setTimeout(() => { s.end(); engine.stdin.end(); fs.rmSync(dir, { recursive: true }) }, 3500)
+        }, 500)
+      }
+    }
+  })
+}
+```
+
+**Every byte below is what came off the socket**, nothing elided — including all twenty dirty bits.
+
+```console
+$ cargo build --release -p engined
+$ node scratch/drive487.mjs C:/Users/jmoye/everquest-companion 20
+# staged C:\Users\…\Temp\engined-487-2VZKHE\eqlog_Primitive_freeport.txt (9185424 bytes)
+EQC-ENGINE PORT=61565 PROTOCOL=1
+-> {"op":"hello","token":"0f7d…7089","protocolVersion":1}
+-> {"id":3,"op":"session.attach","params":{"logPath":"C:\\Users\\…\\eqlog_Primitive_freeport.txt"}}
+-> {"id":4,"op":"sessionMarks.add","params":{"at":1787692441556}}
+-> {"id":7,"op":"view.subscribe","params":{"source":"timers.rows","filter":{"surface":"debuffs"}}}
+<- {"engineVersion":"0.1.0","kind":"hello","ok":true,"protocolVersion":1}
+<- {"epoch":2,"kind":"epoch","reason":"attach"}
+<- {"id":3,"kind":"reply","ok":true,"result":{"accepted":true,"epoch":2}}
+<- {"id":4,"kind":"reply","ok":true,"result":{"accepted":false,"status":"attaching"}}
+<- {"id":7,"kind":"reply","ok":true,"result":{"subscribed":true,"subscription":7}}
+<- {"epoch":2,"id":7,"kind":"reset","rows":[],"total":0}
+[eqc-engine] ingest: spell db ready in 392 ms
+<- {"epoch":2,"kind":"epoch","progress":{"events":15932,"pct":11.415172560352142},"reason":"progress"}
+<- {"epoch":2,"kind":"epoch","progress":{"events":63844,"pct":45.6623776975347},"reason":"progress"}
+<- {"epoch":2,"kind":"epoch","progress":{"events":111763,"pct":79.90908204128628},"reason":"progress"}
+<- {"epoch":2,"kind":"epoch","progress":{"events":139863,"pct":100.0},"reason":"progress"}
+[eqc-engine] fold landed: 139863 events, mark 9185424 of C:\Users\…\eqlog_Primitive_freeport.txt, now live
+[eqc-engine] views: timers.rows 1 frames (1 reset / 0 diff), 1 rows, 0 ops, 440 B (widest 440 B); fold->frame mean 8.8 ms max 8.8 ms over 1
+<- {"epoch":2,"id":7,"kind":"reset","rows":[{"cells":{"ambiguous":false,"calmsTarget":false,"caster":null,"count":null,"durationMs":24000,"endsAt":1787692435000,"flat":0,"group":"target","inferredTarget":false,"kind":"cc","mode":"countdown","name":"Mesmerization","order":0,"rank":null,"startedTs":1787692411000,"surface":"debuffs","target":"a lava guardian","targetKey":"a lava guardian"},"key":"cc|a lava guardian|mesmerization"}],"total":1}
+<- {"kind":"moduleChanged","module":"combo","seq":139343}
+<- {"kind":"moduleChanged","module":"roster","seq":139862}
+<- {"kind":"moduleChanged","module":"loot","seq":139862}
+<- {"kind":"moduleChanged","module":"turnins","seq":139862}
+<- {"kind":"moduleChanged","module":"classUnlocks","seq":139862}
+<- {"kind":"moduleChanged","module":"kills","seq":139862}
+<- {"kind":"moduleChanged","module":"respawn","seq":3}
+<- {"kind":"moduleChanged","module":"progression","seq":139862}
+<- {"kind":"moduleChanged","module":"leveling","seq":139862}
+<- {"kind":"moduleChanged","module":"character","seq":38}
+<- {"kind":"moduleChanged","module":"outputFiles","seq":139862}
+<- {"kind":"moduleChanged","module":"spellSets","seq":139862}
+<- {"kind":"moduleChanged","module":"itemTiers","seq":139862}
+<- {"kind":"moduleChanged","module":"observedSpellRanks","seq":139862}
+<- {"kind":"moduleChanged","module":"alerts","seq":139862}
+<- {"kind":"moduleChanged","module":"buffs","seq":139862}
+<- {"kind":"moduleChanged","module":"buffTimers","seq":1}
+<- {"kind":"moduleChanged","module":"consider","seq":139862}
+<- {"kind":"moduleChanged","module":"resist","seq":139862}
+<- {"kind":"moduleChanged","module":"eventFeed","seq":139862}
+-> {"id":8,"op":"sessionMarks.add","params":{"at":1787692443380}}
+# the game writes a /con and a loot line
+<- {"id":8,"kind":"reply","ok":true,"result":{"accepted":true,"status":"live"}}
+<- {"epoch":2,"kind":"epoch","progress":{"events":139865,"pct":100.0},"reason":"progress"}
+<- {"at":1787692442000,"chips":[{"axis":"magic","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false},{"axis":"fire","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false},{"axis":"cold","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false},{"axis":"poison","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false},{"axis":"disease","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false}],"id":"a fire giant warlord","kind":"conCard","level":52,"name":"A fire giant warlord","spellData":false,"zone":"Nagafen's Lair"}
+<- {"domain":"mob","kind":"knowledgeMiss","name":"A fire giant warlord"}
+<- {"kind":"moduleChanged","module":"roster","seq":139864}
+<- {"kind":"moduleChanged","module":"loot","seq":139864}
+<- {"kind":"moduleChanged","module":"turnins","seq":139864}
+<- {"kind":"moduleChanged","module":"classUnlocks","seq":139864}
+<- {"kind":"moduleChanged","module":"kills","seq":139864}
+<- {"kind":"moduleChanged","module":"progression","seq":139864}
+<- {"kind":"moduleChanged","module":"leveling","seq":139864}
+<- {"kind":"moduleChanged","module":"outputFiles","seq":139864}
+<- {"kind":"moduleChanged","module":"spellSets","seq":139864}
+<- {"kind":"moduleChanged","module":"itemTiers","seq":139864}
+<- {"kind":"moduleChanged","module":"observedSpellRanks","seq":139864}
+<- {"kind":"moduleChanged","module":"alerts","seq":139864}
+<- {"kind":"moduleChanged","module":"buffs","seq":139864}
+<- {"kind":"moduleChanged","module":"consider","seq":139864}
+<- {"kind":"moduleChanged","module":"resist","seq":139864}
+<- {"kind":"moduleChanged","module":"eventFeed","seq":139864}
+```
+
+Nine things in that transcript are this ticket:
+
+1. **The same press, refused and then taken.** `{"accepted":false,"status":"attaching"}` at request 4
+   and `{"accepted":true,"status":"live"}` at request 8. Neither is an error; the status is what
+   makes the first one readable without a follow-up question that would race the fold — and *which*
+   not-live state it names is itself a race the ack settles honestly, because the same press against
+   the same script has answered `starting` on other runs. Any of the four is a refusal; the ack says
+   which one it was, in the same critical section as the decision.
+2. **A timer row, cut off a 139,863-event fold in 8.8 ms.** One hold, in the debuffs window, because
+   the descriptor said `{"surface":"debuffs"}` — the routing decision made engine-side and served as
+   a cell, so the two floating windows are one model filtered rather than two.
+3. **The row carries the three numbers a countdown is read from and none of the reading.**
+   `"startedTs":1787692411000`, `"durationMs":24000`, `"mode":"countdown"` — and `"endsAt"`, which is
+   `startedTs + durationMs` and is the number the early-warning offset is computed from. There is no
+   `remaining`, and there is not going to be one.
+4. **Both presentation orders are on the row.** `"order":0` and `"flat":0`: the grouped order and the
+   soonest-first order, each an index the client sorts by and never re-derives.
+5. **`"caster":null`, `"rank":null`, `"count":null`.** Absence has a spelling here for
+   `loot.ledger`'s reason: a diff needs a cell to be able to become null, and a display decision
+   about nothing is the renderer's.
+6. **Twenty dirty bits at the landing, sixteen at the next beat.** The first beat announces every
+   module, because a client that just took a fresh world holds nothing. The second announces only
+   what a `/con` and a loot line moved — and `respawn`, `character`, `combo` and `buffTimers` are
+   ABSENT from it, which is the four modules with real revision counters staying quiet while the
+   sixteen that report the fold's `seq` all move. The coarseness this README names is visible on the
+   wire.
+7. **One frame per module per beat.** Two log lines moved `loot` and fifteen others once each, not
+   once per event: the ingest holds the last cursor it announced and hands over only the difference.
+8. **The con card, fully resolved and honestly empty where it must be.** `"name":"A fire giant
+   warlord"` capped and collapsed, `"id":"a fire giant warlord"` the queue identity, `"level":52`
+   off the line, `"zone"` off the module — and five chips at `n: 0` beside `"spellData":false`,
+   which is the app's own no-spell-table branch rather than a stub. `"rare"` is ABSENT rather than
+   false, which is the payload's own shape. The historical `/con`s in nine megabytes of fixture drew
+   nothing at all.
+9. **And the frame right after it belongs to somebody else, which is the point.**
+   `{"domain":"mob","kind":"knowledgeMiss","name":"A fire giant warlord"}` is JOS-486's: the same con
+   that produced the card also asked the corpus about that creature and did not get an answer. Two
+   connection-wide frames, from two tickets, one live line — they interleave on the stream without
+   either knowing about the other, which is what "connection-wide, no id, no epoch" buys and why
+   `broadcasts.ts` routes all four of them in one place.
+
 ## Tests
 
 ```console
@@ -1513,6 +1815,18 @@ caster's anchor, with the SAME two lines opening nothing under the shipped defau
 the reason the split exists: proving it over a socket would rest the claim on which spells share an
 emote in the committed catalog, which is a fact about the corpus rather than about the push.
 
+**And the live surfaces are proven over the socket** (`tests/live_surfaces.rs`), which is the half no
+unit test can reach — all three are about the boundary between the ingest thread and a connection
+thread while a tail is actually watching a file. A HISTORICAL `/con` draws nothing and the same shape
+appended live draws a card, header and all; a mark is refused with `status: idle` before any attach
+and taken with `status: live` once the tail owns the file, twice, because a mark is stored nowhere
+for a second press to collide with; one live loot line produces exactly ONE `moduleChanged` for
+`loot` (the coalescing, asserted rather than assumed) carrying a name, a cursor and nothing else; and
+a timer subscription over two live mezzes serves two rows in the debuffs window, with the buffs
+window's own filter answering zero for the same fold. That last test writes its log lines from the
+HOST's clock, and the reason is in its own header: a running timer is by definition recent, and a
+fixture dated last week is swept by the live tick before anybody can subscribe to it.
+
 ## Reading order
 
 * `src/main.rs` — the spawn contract, stated in full, and the accept loop.
@@ -1531,6 +1845,17 @@ emote in the committed catalog, which is a fact about the corpus rather than abo
 * `src/views/mod.rs` — **the query.** The source registry, descriptor validation, and why a query
   FIELD is not a CELL. `views/diff.rs` is the engine half of the client's `applyDiff` and is written
   against it; `views/loot.rs` argues every cell of the first product source against the renderer that
+  draws it; `views/meter.rs` is ruling 19's measurement. The other six sources each argue their own
+  cells in their own header; `views/timers.rs` is the one to read second, because it carries the two
+  arguments the rest inherit — why a clock-dependent value is served as its numbers, and why an order
+  no column sort can express is published as a FIELD.
+* `fold::modules::buff_timer_rows` — **the timer-row projection**, `src/shared/buffTimers.ts`'s model
+  half. It lives in `fold` rather than in the view layer because two callers need it: the
+  `timers.rows` source and, later, the alerts evaluator's `earlyWarnSec` (which is `timer_ends_at`
+  minus the user's offset — the half JOS-482 was missing when it compiled those defs out).
+* `src/concard.rs` — **the con card, resolved.** Boundary verdict 2 landing: what the engine can
+  state today, why the chips are the empty five and what has to move before they are not, and which
+  of the app's three refusals stay app-side and why.
   draws it; `views/combat.rs` does the same for the damage meter, against BOTH surfaces that draw
   one, and is the source whose rows edit; `views/meter.rs` is ruling 19's measurement.
 * `src/search.rs` — the fuzzy scorer behind `combat.searchFights`, ported from `shared/fuzzy.ts` and

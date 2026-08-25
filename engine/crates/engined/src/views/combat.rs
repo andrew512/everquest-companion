@@ -423,7 +423,7 @@ mod tests {
             window: None,
         };
         // The default order is the meter's: total desc.
-        let view = validate(&d).ok().expect("a view");
+        let view = validate(&d).expect("a view");
         let (window, total) = cut(&view, &built);
         assert_eq!(
             window.iter().map(|r| r.key.0.as_str()).collect::<Vec<_>>(),
@@ -437,7 +437,7 @@ mod tests {
             "name".to_owned(),
             "asc".to_owned(),
         ])];
-        let view = validate(&d).ok().expect("a view");
+        let view = validate(&d).expect("a view");
         let (window, _) = cut(&view, &built);
         assert_eq!(
             window.iter().map(|r| r.key.0.as_str()).collect::<Vec<_>>(),

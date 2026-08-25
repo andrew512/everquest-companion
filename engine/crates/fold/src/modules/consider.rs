@@ -54,9 +54,13 @@
 //! oracle harness), so the equivalence law is untouched: the goldens still record `knowledge` absent
 //! from every row.
 //!
-//! WHAT IS STILL NOT PORTED, by name: the JOS-383 con-card hook (installed by `pipeline.ts` only,
-//! and boundary verdict 2 makes it a server-emitted `world.conCard` stream event rather than a
-//! synchronous call INTO Electron — its own ticket).
+//! THE CON-CARD HOOK IS PORTED NOW (JOS-487), AND IT IS INVERTED. Over there `pipeline.ts` installs
+//! `setConCardHook` and this module calls synchronously INTO Electron mid-fold; boundary verdict 2
+//! makes it a server-emitted `world.conCard` frame instead, so what lives here is a HAND-BACK —
+//! [`ConEvent`]s buffered on the live path and taken by the ingest, exactly the shape `take_fires`
+//! and `take_derived` already are. Nothing about the RING moved: the card is a thing that happened
+//! and the ring is a state, which is why the two are folded side by side rather than one from the
+//! other.
 
 use crate::event::Event;
 use crate::knowledge::{Knowledge, OwnLoot, SeenDrop};
@@ -157,6 +161,32 @@ struct ConsiderRow {
     knowledge: Option<Value>,
 }
 
+/// ONE LIVE `/con`, AS THE CON-CARD HOOK SAW IT (JOS-487, boundary verdict 2).
+///
+/// THE SEAM THE HEADER SAID WAS NOT PORTED, now ported the only way this crate can port it. Over
+/// there `pipeline.ts` installs `considerModule.setConCardHook((ev, zone) => …)` and the module
+/// calls INTO Electron mid-fold; the verdict inverts that, so this is a HAND-BACK rather than a
+/// callback — the same shape `take_fires` and `take_derived` already are, and for the same
+/// ownership reason: a module cannot hold a mutable reference to something the registry is
+/// iterating. It carries the four facts the card is built from and nothing derived, because
+/// deriving is the serve layer's job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConEvent {
+    /// The `ts` of the con line — THE LOG'S OWN CLOCK.
+    pub ts: i64,
+    /// The mob's display name, exactly as the line printed it. Uncapped and unfolded here: capping
+    /// is a rendering guarantee and folding is an identity, and both belong to whoever builds the
+    /// card rather than to the module that saw the line.
+    pub mob: String,
+    /// The level the con line stated, when it stated one.
+    pub level: Option<i64>,
+    /// The ` - a rare creature - ` infix was on the line.
+    pub rare: bool,
+    /// The zone the player was in — the module's own, which is the second argument the TS hook
+    /// takes and the reason this is not simply the event.
+    pub zone: Option<String>,
+}
+
 #[derive(Default)]
 pub struct ConsiderModule {
     /// Newest LAST (the UI reverses it), one entry per mob key. A linear scan is `indexOf`'s own
@@ -164,6 +194,9 @@ pub struct ConsiderModule {
     ring: Vec<ConsiderRow>,
     zone: Option<String>,
     seq: i64,
+    /// THE LIVE CONS FOLDED SINCE THE LAST DRAIN, in fold order, waiting for the ingest to take
+    /// them. Structurally empty for a historical fold — see [`ConEvent`] and `on_event`'s gate.
+    cons: Vec<ConEvent>,
     /// The shared own-loot index's ACCUMULATION, kept because this module owns its lifetime. It is
     /// published nowhere, and it is READ through [`EqModule::as_own_loot`] — see the header.
     own_loot: OwnLootIndex,
@@ -265,6 +298,18 @@ impl ConsiderModule {
         Self::default()
     }
 
+    /// THE LIVE CONS THIS MODULE SAW SINCE THE LAST DRAIN (JOS-487). See [`ConEvent`].
+    pub fn take_cons(&mut self) -> Vec<ConEvent> {
+        std::mem::take(&mut self.cons)
+    }
+
+    /// THE CHANGE SIGNAL — the last event folded, coarse like `buffs`' (this module keeps no
+    /// revision counter). It never misses a change to the ring.
+    #[must_use]
+    pub fn revision(&self) -> i64 {
+        self.seq
+    }
+
     /// ASK THE KNOWLEDGE LOOKUP ABOUT ONE ROW — `probe`, minus the promise.
     ///
     /// Three refusals, all of them the TS's: no lookup installed (every construction but the
@@ -345,12 +390,21 @@ impl EqModule for ConsiderModule {
         self.zone = None;
         self.seq = 0;
         self.own_loot.reset();
+        // A CARD FOR THE WORLD THAT JUST ENDED IS NOT A CARD (JOS-487). Anything the ingest had not
+        // drained by the time a rebirth or a character switch landed describes a creature the player
+        // was sizing up in a world nobody is looking at any more.
+        self.cons.clear();
         // `backfilled = false` — a character (re)load is a new replay, and the tick that follows it
         // is the new replay's "the history is over" edge. The LOOKUP is not cleared: it is a handle
         // on committed data, not on this character's world.
         self.backfilled = false;
     }
 
+    /// `live` DECIDES TWO THINGS NOW, and they are different things. JOS-486 reads it to keep the
+    /// knowledge PROBE off the replay path; JOS-487 reads it for the CON CARD, because a card is a
+    /// thing that happens and the third of `main/conCard.ts`'s three refusals is that a historical
+    /// line never draws one. Both refusals are structural here: a startup replay of a month of logs
+    /// can reach neither.
     fn on_event(&mut self, ev: &Event, live: bool) {
         self.seq = ev.seq();
         match ev.kind() {
@@ -376,9 +430,30 @@ impl EqModule for ConsiderModule {
                     ev.int("count").unwrap_or(1),
                 );
             }
-            "consider" => self.fold_consider(ev, live),
+            "consider" => {
+                self.fold_consider(ev, live);
+                // THE CON CARD'S OWN LINE (JOS-487), and it is beside the fold rather than inside it
+                // because the two answer different questions: `fold_consider` maintains a STATE (the
+                // mobs you have been conning, history included) while this is a thing that HAPPENED.
+                // The zone is the module's own, which is the second argument the TS hook takes.
+                if live {
+                    self.cons.push(ConEvent {
+                        ts: ev.ts(),
+                        mob: ev.str("mob").unwrap_or_default().to_owned(),
+                        level: ev.int("level"),
+                        rare: ev.bool("rare"),
+                        zone: self.zone.clone(),
+                    });
+                }
+            }
             _ => {}
         }
+    }
+
+    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
+    /// state to read it. See `EqModule::published_seq`.
+    fn published_seq(&self) -> Option<i64> {
+        Some(self.seq)
     }
 
     /// THE FIRST LIVE TICK IS "THE HISTORICAL REPLAY IS OVER" — `onTick`, verbatim in shape.
@@ -400,6 +475,11 @@ impl EqModule for ConsiderModule {
 
     fn snapshot(&self) -> Value {
         json!({ "seq": self.seq, "state": self.ring })
+    }
+
+    /// THE CON-CARD SEAM (JOS-487). See `EqModule::take_cons`.
+    fn take_cons(&mut self) -> Vec<ConEvent> {
+        Self::take_cons(self)
     }
 
     fn as_own_loot(&self) -> Option<&dyn OwnLoot> {

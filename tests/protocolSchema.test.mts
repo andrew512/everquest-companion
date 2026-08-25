@@ -338,7 +338,10 @@ test('every fixture message VALIDATES against the schema and narrows through the
     'diff',
     'epoch',
     'fire',
-    'knowledgeMiss'
+    'knowledgeMiss',
+    'sessionMarks.add',
+    'conCard',
+    'moduleChanged'
   ]) {
     assert.ok(seen.has(tag), `no fixture demonstrates \`${tag}\``)
   }

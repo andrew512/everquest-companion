@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:12873663924e9721b53bef4921a0ffc109f41ab0ffbfdbc6c436ab65bfef91f5
+// schema-digest: sha256:35aecb5d73df536ab00809aa780d6a5df370fa4c45d4dca7bc18681afb422444
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -39,6 +39,7 @@ export type ClientMessage =
   | KnowledgeSpellRequest
   | KnowledgeSearchRequest
   | KnowledgeDefineRequest
+  | SessionMarkAddRequest
 /**
  * The per-launch shared secret. Minted by Electron main at spawn, handed to the engine out of band, presented once at hello. It is never persisted and never reused across launches. Compare it in CONSTANT TIME (src/main/dataServer/token.ts, engine/crates/protocol/src/token.rs) - a byte-at-a-time compare over a loopback socket is a timing oracle. The shape rules are environment-neutral and live in src/shared/dataServer/token.ts.
  */
@@ -78,6 +79,8 @@ export type EngineMessage =
   | EpochMessage
   | FireMessage
   | KnowledgeMissMessage
+  | ConCardMessage
+  | ModuleChangedMessage
 /**
  * THE RESULT REGISTRY, and it is CLOSED. Which shape a reply carries is decided by the OP of the request whose id it names - the envelope does not repeat it, because a reply that had to restate its own op would be a second place for the two to disagree. This list is the additive seam for the eight API surfaces: a new op adds an arm and nothing else in the envelope moves. There is deliberately NO open arm for a shape this build does not know: both sides generate from this one artifact and a protocolVersion mismatch is fatal at hello, so an engine that could answer with an unnamed shape is an engine this client already refused to talk to. A wildcard arm would also make the whole list unusable - an open object matches every named shape too, so `oneOf` could never pick one.
  */
@@ -93,6 +96,7 @@ export type ReplyResult =
   | CombatSearchFightsResult
   | KnowledgeResult
   | KnowledgeSearchResult
+  | SessionMarkAck
 /**
  * The world's generation. Monotonic within one engine process. A client that sees an epoch it did not expect DROPS ALL STATE and waits for the reset — it never reconciles across a bump.
  */
@@ -118,6 +122,19 @@ export type ErrorCode =
 export type RowKey = string
 export type DiffOp = InsertOp | UpdateOp | DropOp
 export type EpochReason = 'attach' | 'restart' | 'progress'
+/**
+ * `shared/resistTypes.ts ResistAxis`. The display order is this list's order and every surface uses all five of it.
+ */
+export type ResistAxis = 'magic' | 'fire' | 'cold' | 'poison' | 'disease'
+/**
+ * `shared/resistTypes.ts ResistTag` — the scannable word. NO ACRONYMS, EVER (owner ruling): the axis word is the only label this app prints for an axis, and these four are the only bands.
+ */
+export type ResistTag = 'weak' | 'normal' | 'resistant' | 'very resistant'
+/**
+ * `shared/resistTypes.ts ResistGuidance` — the sentence under the word. The same three bands read twice: `resistant` means `needs overchannel`, every time, on every surface.
+ */
+export type ResistGuidance =
+  'should land' | 'needs overchannel' | 'may not land even with overchannel'
 
 /**
  * The FIRST message on a connection, always. The engine answers with HelloReply or closes the connection; nothing else may precede it.
@@ -491,6 +508,20 @@ export interface KnowledgeRecord {
   [k: string]: unknown
 }
 /**
+ * PRESS `NEW SESSION` (boundary verdict 6: `sessionMark` is a command with an accepted/refused reply; marks stay ephemeral for replay determinism). ONE INSTANT SPLITS EVERYTHING — the loot ledger app-side and the meter's engine records — so the app stamps the clock ONCE and hands that same number here, exactly as `src/main/sessionMarks.ts pressNewSession` hands it to `combat.sessionMark(ts)` today. THE ENGINE STORES NOTHING. A mark is a user action that is persisted nowhere, which is half of why a relaunch replays the log into the records the log alone describes; the other half is the refusal below. IT CAN BE REFUSED, and a refusal is not an error: the request is perfectly well formed and the honest answer is `not now` (see SessionMarkAck).
+ */
+export interface SessionMarkAddRequest {
+  id: RequestId
+  op: 'sessionMarks.add'
+  params: SessionMarkAddParams
+}
+export interface SessionMarkAddParams {
+  /**
+   * THE INSTANT THE PERSON PRESSED, in epoch milliseconds, on the app's WALL CLOCK — and it is the caller's clock rather than the engine's on purpose (JOS-436's rule, moved rather than re-decided). Marking at the live edge of the log would hand the stale minutes since the newest line — the zoning, the corpse run, the instance reset itself — to the session that had not started yet. It is also the one number that makes the two halves of the split share ONE boundary: the app applies the same value to its own ledger, so nothing looted in between can fall on the wrong side of one of them. This is NOT in tension with ruling 18 law 1: a mark is an IMPURE INPUT (law 4), pushed and named, never a clock the engine read for itself.
+   */
+  at: number
+}
+/**
  * The handshake answer. `ok: false` is a courtesy sent immediately before the engine closes the connection — a client must treat a closed connection with no reply as the same outcome.
  */
 export interface HelloReply {
@@ -738,6 +769,19 @@ export interface KnowledgeHit {
   page?: string
 }
 /**
+ * TAKEN, OR NOT TAKEN, AND WHAT THE WORLD WAS DOING. `accepted: false` IS NOT AN ERROR — it is the census's own semantics (boundary verdict 6) and it mirrors `combat/engine.ts sessionMark`, which returns false while the historical fold is still running. A mark cannot enter a replaying fold at all, which is what makes the JOS-208 replay-versus-live divergence class structurally impossible here rather than carefully avoided. THE CALLER MUST TREAT A REFUSAL AS `NEITHER HALF` (`pressNewSession`'s own law): a mark the engine never took is a boundary only half the app has, so the app records nothing either and leaves its loading state up. `status` is here rather than left to a follow-up `session.health` because the two would RACE — a fold that went live between the refusal and the question would explain the refusal with a state that no longer holds — and because a refusal that cannot say what it was refusing under is a bug report with a hole in it. WHETHER THE MARK MINTED A RECORD IS A DIFFERENT QUESTION and this ack deliberately does not answer it: an empty stay mints nothing, which is also what makes a double press harmless, and the honest answer to `did anything change` is the history itself.
+ */
+export interface SessionMarkAck {
+  /**
+   * True when the live fold took the instant. False ONLY when the world was not live — see `status`.
+   */
+  accepted: boolean
+  /**
+   * What the engine's ingest was doing at the moment it decided, in `HealthResult.status`'s own words. `live` accompanies every acceptance; anything else accompanies a refusal.
+   */
+  status: 'starting' | 'attaching' | 'folding' | 'live' | 'idle'
+}
+/**
  * A refused request. An error is always a reply to a request id — a failure with no request behind it closes the connection instead.
  */
 export interface ErrorReply {
@@ -870,6 +914,131 @@ export interface KnowledgeMissMessage {
    * The name to look up, in the spelling the FETCH should use — the display name for an item (what `resolvePage(display)` searches for), and for a mob the CANONICAL spelling the raid roster states, because that is the spelling the wiki and the committed catalog use. Never a folded key: a key is a join handle and the wiki has no page for one.
    */
   name: string
+}
+/**
+ * ONE LIVE `/con`, AS A FINISHED CARD (boundary verdict 2). The fold used to call synchronously INTO Electron — `considerModule.setConCardHook` — and the verdict inverts that: the engine emits the card and main only opens the overlay window. CONNECTION-WIDE, carrying no `id` and no `epoch`, on the `FireMessage` precedent and for its reasons: a con belongs to the world rather than to any subscription, and it is a thing that HAPPENED once, with no window state to reconcile across a generation. LIVE ONLY, STRUCTURALLY — a historical fold reaches this nowhere, so a startup replay of a month of logs draws nothing. It is the same boundary law a fire obeys and the same one `main/conCard.ts` states as its third refusal. SELF-CONTAINED BY LAW: the overlay window has no knowledge service, no ledger and no store, so everything the card draws is in this frame and the window fetches nothing (`shared/conCard.ts ConCardPayload`, whose field set this is). TWO OF THE APP'S THREE REFUSALS ARE NOT HERE, and both absences are argued rather than overlooked. The re-open suppression is a fact about the PERSON — a card they closed within the last minute, measured on the wall clock they live on — and it is driven by a window event (`con:card-closed`) that never reaches the fold; it stays with the window that owns it. The PLAYER refusal (`conCardIsPlayer`) needs the committed mob catalog to answer, and applying only its name-shape half would refuse a card for every proper-named NPC the app draws one for today (Innoruuk, Blugurg) — a regression dressed as a port. It arrives with the knowledge surface; until then the app's own gate still stands in front of the overlay.
+ */
+export interface ConCardMessage {
+  kind: 'conCard'
+  /**
+   * When the `/con` happened, on THE LOG'S OWN CLOCK — the `ts` of the consider event, never the host's. Spelled `at` here rather than `ts` because that is what every other connection-wide frame the engine sends calls its instant (`FireMessage.at`), and one vocabulary for one concept is worth a rename in the app-side shim.
+   */
+  at: number
+  /**
+   * QUEUE IDENTITY: the canonical mob key (`shared/mobKey.ts mobKey`). A re-con REFRESHES the card on screen rather than stacking a second one, which is what the overlay's card queue keys off.
+   */
+  id: string
+  /**
+   * The mob's display name as the log printed it, whitespace-collapsed and capped (`cappedName`) — a rendering guarantee, not taste: a 40 kB mob name cannot push a card off the screen.
+   */
+  name: string
+  /**
+   * The level the con line stated. Every con line in the real log states one; absent when this one did not.
+   */
+  level?: number
+  /**
+   * The zone the player was in when they conned. Absent before the first zone line of the fold.
+   */
+  zone?: string
+  /**
+   * The ` - a rare creature - ` infix was on the line. Absent rather than false when it was not, which is the shape the app's payload has.
+   */
+  rare?: boolean
+  /**
+   * ALWAYS FIVE, ALWAYS IN `RESIST_AXES` ORDER (magic, fire, cold, poison, disease). All five are present whatever the ledger has seen, because `we have not seen fire cast on this` and `fire is fine` are different statements and a missing chip says neither.
+   */
+  chips: ConCardChip[]
+  /**
+   * FALSE WHEN THE CLIENT'S `spells_us.txt` COULD NOT BE READ, and the card says so instead of drawing five identical `not enough data` chips with no explanation. It is false in every frame this build sends: the spell-table parse is boundary verdict 7 and has not moved engine-side yet, so this engine takes the SAME branch `mobResistProfile` takes app-side when the table is absent — five empty chips and this flag down. That is the app's own honest answer under the same condition rather than a stub, and it is named in the engine README as the gap the con-card cutover waits on.
+   */
+  spellData: boolean
+}
+/**
+ * ONE AXIS CHIP (`shared/conCard.ts ConCardChip`). IT CARRIES NUMBERS, NOT SENTENCES, and that is the same decision the app made: the words on the chip (`R 126 (110-144)`, `n=32`) are the mob page's own vocabulary, built by the one derivation both surfaces read, and a wire carrying finished strings would be a second copy of it that drifts the first time a word changes. This is the one place the render-ready rule bends, and it bends the way the app already bent it. ABSENT IS THE EMPTY CELL. `tag`, `benchmark` and `fit` are optional here where the app's type spells them `| null`, and the two say the same thing: a con card is a WHOLE CARD every time, so absence has no second meaning to be confused with — unlike a diff's `cells`, where absent means unchanged and null means cleared. The three travel together: a chip has all of them or none of them. `tag` is the guidance band, absent when nothing at all has been observed on this axis AND when the fit is PINNED — a posterior that slid off the end of the grid is the model saying it cannot answer, and a card that printed a band anyway would be inventing one. `benchmark` is the two landing chances behind that band at the viewer's level, plus the same pair at each end of the interval. `fit` is the estimate and its 95% interval, wide at a low `n`, which is the honest display of a thin cell rather than a reason to withhold it.
+ */
+export interface ConCardChip {
+  axis: ResistAxis
+  tag?: ResistTag
+  benchmark?: ResistAxisBenchmark
+  /**
+   * The fit ran out of grid: no number, no band, and the raw resist rate instead.
+   */
+  pinned: boolean
+  empirical: ResistEmpirical
+  /**
+   * Every observation behind this axis came from a pet or another creature. The chip says so.
+   */
+  npcOnly: boolean
+  /**
+   * OBSERVATIONS THAT COULD HAVE GONE EITHER WAY — `ResistEstimate.nInformative`, not `n`. The two are the same number on most cells and part company exactly where a proc dominates, which is where an older chip claimed eighty observations off eight.
+   */
+  n: number
+  /**
+   * Everything the fit saw, informative or not. Printed beside `n` when they differ.
+   */
+  nTotal: number
+  fit?: ResistFit
+}
+/**
+ * `shared/resistTypes.ts ResistAxisBenchmark` — the answer at the estimate, and the answer at each end of the interval, so a surface prints the uncertainty in the reader's own units. `atLo` is the OPTIMISTIC end (the low R) and `atHi` the pessimistic one: the interval's ends CROSS when they are mapped through the level formula, and naming them after the R they came from is what stops a surface printing the range backwards.
+ */
+export interface ResistAxisBenchmark {
+  level: number
+  mobLevel: number | null
+  atMobLevel: boolean
+  pPlain: number
+  pOver: number
+  tag: ResistTag
+  guidance: ResistGuidance
+  atLo: ResistBenchmark
+  atHi: ResistBenchmark
+}
+/**
+ * ONE EVALUATION OF THE BENCHMARK (`shared/resistTypes.ts ResistBenchmark`): the two probabilities the tag is drawn from, and how they were evaluated. `level` is the caster level `rc0` was computed at; `atMobLevel` says the viewer's own level was not known, so the benchmark is an EVEN-LEVEL cast and the surfaces say `at the mob's level`.
+ */
+export interface ResistBenchmark {
+  level: number
+  mobLevel: number | null
+  atMobLevel: boolean
+  /**
+   * P(a rank-0, adjust-0, all-or-nothing spell lands), 0 to 1.
+   */
+  pPlain: number
+  /**
+   * The same, with the overchannel invocation up.
+   */
+  pOver: number
+  tag: ResistTag
+  guidance: ResistGuidance
+}
+/**
+ * What the informative observations said, with no model in the way: how many there were and how many of them resisted.
+ */
+export interface ResistEmpirical {
+  total: number
+  resisted: number
+}
+/**
+ * The posterior's point estimate and the ends of its 95% interval, in resist points. Clamped at zero for DISPLAY app-side — the grid runs below zero because `rc` does, and `R -150` is noise on a card while `R 0` is the same statement in the reader's units.
+ */
+export interface ResistFit {
+  R: number
+  lo: number
+  hi: number
+}
+/**
+ * A MODULE'S PUBLISHED STATE MOVED — the dirty bit, and nothing more. CONNECTION-WIDE and carrying no `id`, on the `FireMessage` precedent: a module belongs to the world rather than to any subscription. IT CARRIES NO STATE, DELIBERATELY. The whole payload is a name and a cursor, so a client that is not showing that module pays one small frame and ignores it, and a client that is re-fetches through `module.snapshot` — which is the op that already exists and the only place a module's shape is stated. A frame that carried the state would be `module.snapshot` pushed at a cadence nobody asked for, which is the per-window snapshot fan-out this whole boundary exists to delete. IT IS COALESCED TO ONE PER MODULE PER SERVE BEAT (~10 Hz, `views::SERVE_EVERY`), not one per event: a busy tail moves a module's seq many times between two beats and the newest cursor is the whole answer — the same newest-wins rule rule 2 states for diffs. Nothing is sent for a module whose seq did not move, so an idle session pays nothing. IT IS NOT AN EPOCH AND DOES NOT REPLACE ONE: a bump still means drop-everything-and-take-the-reset, and a `moduleChanged` inside one generation means only `there is something newer to fetch`.
+ */
+export interface ModuleChangedMessage {
+  kind: 'moduleChanged'
+  /**
+   * The module's id, exactly as the registry spells it and exactly as `module.snapshot` takes it — `loot`, `kills`, `buffTimers`.
+   */
+  module: string
+  /**
+   * The module's OWN published seq as of this beat — the same cursor `ModuleSnapshotResult.seq` carries, so a client holding a snapshot compares the two numbers and refetches only when this one is ahead. For the four modules that publish a private revision counter (combo, character, respawn, buffTimers) it is that counter, because a preference push advances no log seq.
+   */
+  seq: number
 }
 
 /**

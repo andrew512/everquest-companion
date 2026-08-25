@@ -114,30 +114,39 @@ pub fn difficulty_short(difficulty: &str) -> Option<&'static str> {
 /// The consider context of a `con` row — `FeedConsider`, carried structurally so the overlay can
 /// draw the faction rung rather than re-deriving it from prose.
 #[derive(Debug, Clone, Serialize)]
-struct FeedConsider {
-    faction: String,
+pub struct FeedConsider {
+    /// The faction rung the con line printed.
+    pub faction: String,
+    /// The level it stated, when it stated one.
     #[serde(skip_serializing_if = "Option::is_none")]
-    level: Option<i64>,
-    rare: bool,
+    pub level: Option<i64>,
+    /// The rare infix was on the line.
+    pub rare: bool,
     /// VERBATIM difficulty clause.
-    difficulty: String,
+    pub difficulty: String,
 }
 
 /// One row of the feed — `FeedEvent`. Every optional field is `skip_serializing_if` because the
 /// golden was recorded through `JSON.stringify`, which DROPS an `undefined`.
 #[derive(Debug, Clone, Serialize)]
-struct FeedEvent {
+pub struct FeedEvent {
     /// `f1`, `f2`, … — monotonic per session, the React key and the dedupe handle.
-    id: String,
-    kind: &'static str,
-    ts: i64,
-    title: String,
+    pub id: String,
+    /// Which of the feed's four kinds this is.
+    pub kind: &'static str,
+    /// When, on the log's own clock.
+    pub ts: i64,
+    /// The line the overlay draws.
+    pub title: String,
+    /// The second line, when there is one.
     #[serde(skip_serializing_if = "Option::is_none")]
-    detail: Option<String>,
+    pub detail: Option<String>,
+    /// The wiki page this row deep-links to.
     #[serde(skip_serializing_if = "Option::is_none")]
-    page: Option<String>,
+    pub page: Option<String>,
+    /// The consider context, on a `con` row.
     #[serde(skip_serializing_if = "Option::is_none")]
-    con: Option<FeedConsider>,
+    pub con: Option<FeedConsider>,
 }
 
 #[derive(Default)]
@@ -156,6 +165,28 @@ pub struct EventFeedModule {
 impl EventFeedModule {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// THE FEED PULL SEAM (JOS-487) — the ring as the module keeps it, OLDEST FIRST. The view
+    /// reverses it, as the overlay does.
+    ///
+    /// IT HAS SOMETHING IN IT NOW, and that is JOS-486 landing rather than this seam changing: the
+    /// loot source's item probe is a real in-process lookup, so a live loot line puts a row here.
+    /// The seam was written when the ring could still only ever be empty, and the argument that
+    /// justified it then is the one that still holds — the PROJECTION over a ring is a pure function
+    /// and is pinned against a hand-built one, so a broken cell fails a test whether or not a fold
+    /// can produce the entry it mangled.
+    #[must_use]
+    pub fn ring(&self) -> &[FeedEvent] {
+        &self.ring
+    }
+
+    /// THE CHANGE SIGNAL — the module's published `seq`, which this module bumps on every APPEND as
+    /// well as on every event (see `append` below). Coarse in the same way `buffs`' is, and for the
+    /// same reason: there is no separate revision counter to read.
+    #[must_use]
+    pub fn revision(&self) -> i64 {
+        self.seq
     }
 
     /// Append one row and bump the seq.
@@ -320,8 +351,19 @@ impl EqModule for EventFeedModule {
         }
     }
 
+    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
+    /// state to read it. See `EqModule::published_seq`.
+    fn published_seq(&self) -> Option<i64> {
+        Some(self.seq)
+    }
+
     fn snapshot(&self) -> Value {
         json!({ "seq": self.seq, "state": self.ring })
+    }
+
+    /// THE VIEW PULL SEAM (JOS-487). See `EqModule::as_event_feed`.
+    fn as_event_feed(&self) -> Option<&EventFeedModule> {
+        Some(self)
     }
 
     fn install_knowledge(&mut self, k: &Arc<dyn Knowledge>) {
