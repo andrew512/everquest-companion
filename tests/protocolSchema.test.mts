@@ -331,9 +331,37 @@ function isDefine(message: ClientMessage): message is DefineMessage {
   return message.op.endsWith('.define')
 }
 
+/**
+ * THE COMBAT SURFACE (JOS-485), split out on exactly `describeDefine`'s terms and for exactly its
+ * reason: the exhaustive-switch trick survives a split by TYPE, and `describeClient` is at the
+ * measured complexity ceiling — the rule there is to split rather than to ratchet.
+ */
+type CombatMessage = Extract<ClientMessage, { op: `combat.${string}` }>
+
+function describeCombat(message: CombatMessage): string {
+  switch (message.op) {
+    // THE OPTS ARE OPTIONAL AND THE DESCRIPTION SAYS SO — `combat.snapshot` with no params at all is
+    // the ordinary call, which is what `combat.snapshot(Date.now(), opts ?? {})` already means
+    // app-side.
+    case 'combat.snapshot':
+      return `combat#${String(message.id)} ${message.params.opts === undefined ? 'default' : 'opts'}`
+    case 'combat.searchFights':
+      return `searchFights#${String(message.id)} ${JSON.stringify(message.params.query)}`
+    default: {
+      const unreachable: never = message
+      throw new Error(`unhandled combat op ${JSON.stringify(unreachable)}`)
+    }
+  }
+}
+
+function isCombat(message: ClientMessage): message is CombatMessage {
+  return message.op.startsWith('combat.')
+}
+
 /** Same trick on the client half. */
 function describeClient(message: ClientMessage): string {
   if (isDefine(message)) return describeDefine(message)
+  if (isCombat(message)) return describeCombat(message)
   switch (message.op) {
     case 'hello':
       return `hello v${String(message.protocolVersion)}`

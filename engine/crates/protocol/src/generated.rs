@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:d27bc88f8048d384cf5b01d87b2df086cf5ef77a70c5a8a19b5f097ef7e0fd43
+//! schema-digest: sha256:b52a7519a944d754c989534ed2895ad73f9213ad23a056b42c50a78a35bbaacb
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -488,6 +488,12 @@ impl ::std::convert::From<::std::collections::BTreeMap<::std::string::String, cr
 ///    },
 ///    {
 ///      "$ref": "#/$defs/RosterDefineRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/CombatSnapshotRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/CombatSearchFightsRequest"
 ///    }
 ///  ]
 ///}
@@ -510,6 +516,8 @@ pub enum ClientMessage {
     RespawnDefineRequest(RespawnDefineRequest),
     ComboDefineRequest(ComboDefineRequest),
     RosterDefineRequest(RosterDefineRequest),
+    CombatSnapshotRequest(CombatSnapshotRequest),
+    CombatSearchFightsRequest(CombatSearchFightsRequest),
 }
 impl ::std::convert::From<Hello> for ClientMessage {
     fn from(value: Hello) -> Self {
@@ -579,6 +587,467 @@ impl ::std::convert::From<ComboDefineRequest> for ClientMessage {
 impl ::std::convert::From<RosterDefineRequest> for ClientMessage {
     fn from(value: RosterDefineRequest) -> Self {
         Self::RosterDefineRequest(value)
+    }
+}
+impl ::std::convert::From<CombatSnapshotRequest> for ClientMessage {
+    fn from(value: CombatSnapshotRequest) -> Self {
+        Self::CombatSnapshotRequest(value)
+    }
+}
+impl ::std::convert::From<CombatSearchFightsRequest> for ClientMessage {
+    fn from(value: CombatSearchFightsRequest) -> Self {
+        Self::CombatSearchFightsRequest(value)
+    }
+}
+///`CombatSearchFightsParams`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSearchFightsParams",
+///  "type": "object",
+///  "required": [
+///    "query"
+///  ],
+///  "properties": {
+///    "limit": {
+///      "description": "How many ranked hits to return. CLAMPED to the engine's own bounds rather than refused, which is `world.ts`'s rule kept verbatim: a renderer bug asking for an unbounded payload is a payload problem, not a conversation-ending one, and a search box that stopped answering because a number was silly would be the worse failure. Absent takes the engine's default.",
+///      "type": "integer"
+///    },
+///    "query": {
+///      "description": "What the user typed. Tokenized to lowercase alphanumerics; an empty or whitespace-only query answers NO hits rather than everything — the UI shows its ordinary browse list in that state, and returning the whole corpus would make the empty box the most expensive keystroke of all.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSearchFightsParams {
+    ///How many ranked hits to return. CLAMPED to the engine's own bounds rather than refused, which is `world.ts`'s rule kept verbatim: a renderer bug asking for an unbounded payload is a payload problem, not a conversation-ending one, and a search box that stopped answering because a number was silly would be the worse failure. Absent takes the engine's default.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub limit: ::std::option::Option<i64>,
+    ///What the user typed. Tokenized to lowercase alphanumerics; an empty or whitespace-only query answers NO hits rather than everything — the UI shows its ordinary browse list in that state, and returning the whole corpus would make the empty box the most expensive keystroke of all.
+    pub query: ::std::string::String,
+}
+///SEARCH THE FIGHT HISTORY (Task #61, moved server-side by JOS-485). `src/main/ipc/world.ts`'s `searchFights` handler, whose semantics are mirrored here exactly: a non-string query is the empty string, and a `limit` is CLAMPED rather than refused — see `CombatSearchFightsParams.limit`. The corpus is the engine's UNCAPPED encounter history plus the open fight, which is why this is an op and not a view: it is a ranked answer to a question, not a window over a collection, and its rows are the app's own `SegmentSummary` rather than cells.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSearchFightsRequest",
+///  "description": "SEARCH THE FIGHT HISTORY (Task #61, moved server-side by JOS-485). `src/main/ipc/world.ts`'s `searchFights` handler, whose semantics are mirrored here exactly: a non-string query is the empty string, and a `limit` is CLAMPED rather than refused — see `CombatSearchFightsParams.limit`. The corpus is the engine's UNCAPPED encounter history plus the open fight, which is why this is an op and not a view: it is a ranked answer to a question, not a window over a collection, and its rows are the app's own `SegmentSummary` rather than cells.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "combat.searchFights"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/CombatSearchFightsParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSearchFightsRequest {
+    pub id: RequestId,
+    pub op: CombatSearchFightsRequestOp,
+    pub params: CombatSearchFightsParams,
+}
+///`CombatSearchFightsRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "combat.searchFights"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CombatSearchFightsRequestOp {
+    #[serde(rename = "combat.searchFights")]
+    CombatSearchFights,
+}
+impl ::std::fmt::Display for CombatSearchFightsRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CombatSearchFights => f.write_str("combat.searchFights"),
+        }
+    }
+}
+impl ::std::str::FromStr for CombatSearchFightsRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "combat.searchFights" => Ok(Self::CombatSearchFights),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CombatSearchFightsRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for CombatSearchFightsRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CombatSearchFightsRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`src/shared/combat.ts FightSearchResult`. Ranked hits, best first, ties broken by recency and then by id so the order never depends on the corpus's arrival order.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSearchFightsResult",
+///  "description": "`src/shared/combat.ts FightSearchResult`. Ranked hits, best first, ties broken by recency and then by id so the order never depends on the corpus's arrival order.",
+///  "type": "object",
+///  "required": [
+///    "corpus",
+///    "hits"
+///  ],
+///  "properties": {
+///    "corpus": {
+///      "description": "How many fights were SEARCHED — the whole uncapped history plus the open fight. It lets a UI say `12 of 1,428` honestly instead of implying the corpus is the result set, and it is present even when `hits` is empty, because `no matches in 1,428` and `nothing to search` are different sentences.",
+///      "type": "integer"
+///    },
+///    "hits": {
+///      "description": "The ranked hits, already capped by `limit`.",
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/FightSearchHit"
+///      }
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSearchFightsResult {
+    ///How many fights were SEARCHED — the whole uncapped history plus the open fight. It lets a UI say `12 of 1,428` honestly instead of implying the corpus is the result set, and it is present even when `hits` is empty, because `no matches in 1,428` and `nothing to search` are different sentences.
+    pub corpus: i64,
+    ///The ranked hits, already capped by `limit`.
+    pub hits: ::std::vec::Vec<FightSearchHit>,
+}
+///`src/shared/combat.ts SnapshotOpts`, and OPEN rather than closed — the one shape in this schema where an unlisted key is IGNORED instead of refused. An option is a request for MORE work, so an engine that does not know one has already given the honest answer by not doing it; refusing the whole call would turn a client that learned a new option into a client that cannot ask for anything. That is the opposite of `AlertDefinition`'s openness, which exists because a definition ROUND-TRIPS and a dropped field would rewrite the user's data — nothing here comes back, so dropping an unknown key costs a caller nothing it can lose. Every field is absent-means-the-engine's-default; there is deliberately no `combinePets`, which the owner cut in 2026-08-04 and which lives in the renderer now.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSnapshotOpts",
+///  "description": "`src/shared/combat.ts SnapshotOpts`, and OPEN rather than closed — the one shape in this schema where an unlisted key is IGNORED instead of refused. An option is a request for MORE work, so an engine that does not know one has already given the honest answer by not doing it; refusing the whole call would turn a client that learned a new option into a client that cannot ask for anything. That is the opposite of `AlertDefinition`'s openness, which exists because a definition ROUND-TRIPS and a dropped field would rewrite the user's data — nothing here comes back, so dropping an unknown key costs a caller nothing it can lose. Every field is absent-means-the-engine's-default; there is deliberately no `combinePets`, which the owner cut in 2026-08-04 and which lives in the renderer now.",
+///  "type": "object",
+///  "properties": {
+///    "maxSegments": {
+///      "description": "Cap on finalized-fight summaries to serialize, newest-first. A PAYLOAD bound, never a retention one: the current encounter and the zone summary are always included, and a selected fight outside the cap still resolves fully through `selected`.",
+///      "type": "integer"
+///    },
+///    "selectedId": {
+///      "description": "Which fight or zone session to resolve `selected` against. An id this fold does not carry falls back to the default selection — the open fight, else the most recent finalized one, and NEVER the zone aggregate.",
+///      "type": "string"
+///    },
+///    "showUnparsed": {
+///      "description": "Include lines the engine could not classify. Reads the classification ring, which this fold never writes — see `fold/src/combat/state.rs` fact 2 — so it moves nothing here and is carried because the option is the app's and this op is its replacement.",
+///      "type": "boolean"
+///    },
+///    "timeline": {
+///      "description": "Include the SELECTED encounter's event timeline. Off by default because the timeline payload is heavier than the bar view.",
+///      "type": "boolean"
+///    }
+///  },
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+pub struct CombatSnapshotOpts {
+    ///Cap on finalized-fight summaries to serialize, newest-first. A PAYLOAD bound, never a retention one: the current encounter and the zone summary are always included, and a selected fight outside the cap still resolves fully through `selected`.
+    #[serde(
+        rename = "maxSegments",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub max_segments: ::std::option::Option<i64>,
+    ///Which fight or zone session to resolve `selected` against. An id this fold does not carry falls back to the default selection — the open fight, else the most recent finalized one, and NEVER the zone aggregate.
+    #[serde(
+        rename = "selectedId",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub selected_id: ::std::option::Option<::std::string::String>,
+    ///Include lines the engine could not classify. Reads the classification ring, which this fold never writes — see `fold/src/combat/state.rs` fact 2 — so it moves nothing here and is carried because the option is the app's and this op is its replacement.
+    #[serde(
+        rename = "showUnparsed",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub show_unparsed: ::std::option::Option<bool>,
+    ///Include the SELECTED encounter's event timeline. Off by default because the timeline payload is heavier than the bar view.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub timeline: ::std::option::Option<bool>,
+}
+impl ::std::default::Default for CombatSnapshotOpts {
+    fn default() -> Self {
+        Self {
+            max_segments: Default::default(),
+            selected_id: Default::default(),
+            show_unparsed: Default::default(),
+            timeline: Default::default(),
+        }
+    }
+}
+///`CombatSnapshotParams`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSnapshotParams",
+///  "type": "object",
+///  "properties": {
+///    "opts": {
+///      "$ref": "#/$defs/CombatSnapshotOpts"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSnapshotParams {
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub opts: ::std::option::Option<CombatSnapshotOpts>,
+}
+impl ::std::default::Default for CombatSnapshotParams {
+    fn default() -> Self {
+        Self {
+            opts: Default::default(),
+        }
+    }
+}
+///THE COMBAT ENGINE, ASKED (JOS-485). The whole of what `combat:snapshot` serves over IPC today — the selection, the segment list, the zone sessions, the stance and poison readouts, the roster and the hydration flag — from the fold that is running, through the same one door `module.snapshot` uses. It is NOT a `module.snapshot`: the combat engine is not in the registry (`WIRING_ORDER` does not name it), it is the post-registry subscriber, and asking for it by a module name would be asking the wrong authority. THE INSTANT IS THE ENGINE'S TO CHOOSE and the reply says which one it chose — see `CombatSnapshotResult.now`.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSnapshotRequest",
+///  "description": "THE COMBAT ENGINE, ASKED (JOS-485). The whole of what `combat:snapshot` serves over IPC today — the selection, the segment list, the zone sessions, the stance and poison readouts, the roster and the hydration flag — from the fold that is running, through the same one door `module.snapshot` uses. It is NOT a `module.snapshot`: the combat engine is not in the registry (`WIRING_ORDER` does not name it), it is the post-registry subscriber, and asking for it by a module name would be asking the wrong authority. THE INSTANT IS THE ENGINE'S TO CHOOSE and the reply says which one it chose — see `CombatSnapshotResult.now`.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "combat.snapshot"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/CombatSnapshotParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSnapshotRequest {
+    pub id: RequestId,
+    pub op: CombatSnapshotRequestOp,
+    pub params: CombatSnapshotParams,
+}
+///`CombatSnapshotRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "combat.snapshot"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CombatSnapshotRequestOp {
+    #[serde(rename = "combat.snapshot")]
+    CombatSnapshot,
+}
+impl ::std::fmt::Display for CombatSnapshotRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CombatSnapshot => f.write_str("combat.snapshot"),
+        }
+    }
+}
+impl ::std::str::FromStr for CombatSnapshotRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "combat.snapshot" => Ok(Self::CombatSnapshot),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CombatSnapshotRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for CombatSnapshotRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CombatSnapshotRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///The snapshot, and the instant it was taken at. TWO FIELDS RATHER THAN ONE because `now` is not recoverable from the payload and the whole answer is a function of it: a fight closes on elapsed time, `inCombat` is a freshness test, and a summary's `active` flag is the same question per row. A client that could not see which clock the engine used could not tell a stale answer from a quiet log.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSnapshotResult",
+///  "description": "The snapshot, and the instant it was taken at. TWO FIELDS RATHER THAN ONE because `now` is not recoverable from the payload and the whole answer is a function of it: a fight closes on elapsed time, `inCombat` is a freshness test, and a summary's `active` flag is the same question per row. A client that could not see which clock the engine used could not tell a stale answer from a quiet log.",
+///  "type": "object",
+///  "required": [
+///    "now",
+///    "snapshot"
+///  ],
+///  "properties": {
+///    "now": {
+///      "description": "THE INSTANT THE SNAPSHOT WAS TAKEN AT, in epoch millis, and the engine chose it: the process's own wall clock once the tail is LIVE, and the fold's own `lastTs` — the log's clock — at every moment before that. A REPLAY IS NOT A MOMENT IN TIME (`engine.ts`'s hydrating gate, ported): every line of a months-old log is weeks behind the host clock, so a mid-scan answer stamped `Date.now()` would finalize whatever fight was open and hand the rest of it to a fresh encounter — MEASURED app-side, one 53,577-damage fight splitting into 43,504 + 10,073 under load. It is stated rather than assumed because it is what makes a mid-fold answer a REAL PREFIX STATE: the same bytes asked at the same `seq` give the same snapshot, which is ruling 18 law 1 for this surface.",
+///      "type": "integer"
+///    },
+///    "snapshot": {
+///      "$ref": "#/$defs/CombatState"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSnapshotResult {
+    ///THE INSTANT THE SNAPSHOT WAS TAKEN AT, in epoch millis, and the engine chose it: the process's own wall clock once the tail is LIVE, and the fold's own `lastTs` — the log's clock — at every moment before that. A REPLAY IS NOT A MOMENT IN TIME (`engine.ts`'s hydrating gate, ported): every line of a months-old log is weeks behind the host clock, so a mid-scan answer stamped `Date.now()` would finalize whatever fight was open and hand the rest of it to a fresh encounter — MEASURED app-side, one 53,577-damage fight splitting into 43,504 + 10,073 under load. It is stated rather than assumed because it is what makes a mid-fold answer a REAL PREFIX STATE: the same bytes asked at the same `seq` give the same snapshot, which is ruling 18 law 1 for this surface.
+    pub now: i64,
+    pub snapshot: CombatState,
+}
+///THE COMBAT SNAPSHOT, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the `ModuleState` argument, one surface over. `src/shared/combat.ts CombatSnapshot` is ~14 fields of nested view builders (six of them, each with its own row types), it is the app's own contract with its renderer, and a meter growing a column must not be a protocol change or a `badParams` refusal. Typed-where-cheap is emphatically not cheap here: typify would lower every count in it to `f64`, which is the `Cell` defect at the scale of a whole damage meter. It is an OBJECT and always one, which is where it differs from `ModuleState` — the registry publishes both objects and arrays, `CombatEngine::snapshot` publishes an object and nothing else — so this says `object` and lowers to an ordered map of raw JSON in both languages, with every integer intact.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatState",
+///  "description": "THE COMBAT SNAPSHOT, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the `ModuleState` argument, one surface over. `src/shared/combat.ts CombatSnapshot` is ~14 fields of nested view builders (six of them, each with its own row types), it is the app's own contract with its renderer, and a meter growing a column must not be a protocol change or a `badParams` refusal. Typed-where-cheap is emphatically not cheap here: typify would lower every count in it to `f64`, which is the `Cell` defect at the scale of a whole damage meter. It is an OBJECT and always one, which is where it differs from `ModuleState` — the registry publishes both objects and arrays, `CombatEngine::snapshot` publishes an object and nothing else — so this says `object` and lowers to an ordered map of raw JSON in both languages, with every integer intact.",
+///  "type": "object",
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct CombatState(pub ::serde_json::Map<::std::string::String, ::serde_json::Value>);
+impl ::std::ops::Deref for CombatState {
+    type Target = ::serde_json::Map<::std::string::String, ::serde_json::Value>;
+    fn deref(&self) -> &::serde_json::Map<::std::string::String, ::serde_json::Value> {
+        &self.0
+    }
+}
+impl ::std::convert::From<CombatState>
+    for ::serde_json::Map<::std::string::String, ::serde_json::Value>
+{
+    fn from(value: CombatState) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for CombatState
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self(value)
     }
 }
 ///`src/shared/classCombo.ts ComboCorrection` — a span the user re-labelled, and when they said so.
@@ -1759,6 +2228,74 @@ impl ::std::convert::TryFrom<::std::string::String> for ErrorReplyKind {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+///`FightSearchHit`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "FightSearchHit",
+///  "type": "object",
+///  "required": [
+///    "score",
+///    "summary"
+///  ],
+///  "properties": {
+///    "score": {
+///      "description": "0..1 relevance. Exact token matches outrank prefix, prefix substring, substring a bounded typo correction. A FLOAT and deliberately not a percentage: it is a ranking key the UI may show as a bar, and rounding it here would flatten ties the sort has already broken.",
+///      "type": "number"
+///    },
+///    "summary": {
+///      "$ref": "#/$defs/FightSummary"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct FightSearchHit {
+    ///0..1 relevance. Exact token matches outrank prefix, prefix substring, substring a bounded typo correction. A FLOAT and deliberately not a percentage: it is a ranking key the UI may show as a bar, and rounding it here would flatten ties the sort has already broken.
+    pub score: f64,
+    pub summary: FightSummary,
+}
+///One fight, EXACTLY AS THE ENGINE SUMMARIZES IT — `src/shared/combat.ts SegmentSummary`. Open for `CombatState`'s reason and read off the same builder, so a hit and the same fight inside a snapshot are byte-identical rather than two renderings of one row.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "FightSummary",
+///  "description": "One fight, EXACTLY AS THE ENGINE SUMMARIZES IT — `src/shared/combat.ts SegmentSummary`. Open for `CombatState`'s reason and read off the same builder, so a hit and the same fight inside a snapshot are byte-identical rather than two renderings of one row.",
+///  "type": "object",
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct FightSummary(pub ::serde_json::Map<::std::string::String, ::serde_json::Value>);
+impl ::std::ops::Deref for FightSummary {
+    type Target = ::serde_json::Map<::std::string::String, ::serde_json::Value>;
+    fn deref(&self) -> &::serde_json::Map<::std::string::String, ::serde_json::Value> {
+        &self.0
+    }
+}
+impl ::std::convert::From<FightSummary>
+    for ::serde_json::Map<::std::string::String, ::serde_json::Value>
+{
+    fn from(value: FightSummary) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for FightSummary
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self(value)
     }
 }
 ///AN ALERT FIRED (owner ruling 22). The engine evaluates the user's alert definitions against LIVE events — replay must never make a sound, which is the same boundary law the app-side evaluator has always obeyed — and this is what it says when one matches. CONNECTION-WIDE, and therefore carrying NO `id`: a fire belongs to the world rather than to any subscription, which is the `EpochMessage` precedent. It carries no `epoch` either, and that is the difference from an epoch message rather than an oversight: every other stream frame describes WINDOW STATE a client has to reconcile across a generation, while a fire is a thing that happened once — there is nothing to drop and nothing to re-request, so a generation number would be a field with no reader. IT IS FULLY RESOLVED SERVER-SIDE (the conCard principle): everything the app needs in order to make the identical noise is in these four fields, so no client ever has to hold the definition the fire came from.
@@ -3294,6 +3831,12 @@ impl ::std::convert::TryFrom<::std::string::String> for ReplyKind {
 ///    },
 ///    {
 ///      "$ref": "#/$defs/DefineAck"
+///    },
+///    {
+///      "$ref": "#/$defs/CombatSnapshotResult"
+///    },
+///    {
+///      "$ref": "#/$defs/CombatSearchFightsResult"
 ///    }
 ///  ]
 ///}
@@ -3309,6 +3852,8 @@ pub enum ReplyResult {
     ModuleSnapshotResult(ModuleSnapshotResult),
     PerfSnapshotResult(PerfSnapshotResult),
     DefineAck(DefineAck),
+    CombatSnapshotResult(CombatSnapshotResult),
+    CombatSearchFightsResult(CombatSearchFightsResult),
 }
 impl ::std::convert::From<EchoResult> for ReplyResult {
     fn from(value: EchoResult) -> Self {
@@ -3343,6 +3888,16 @@ impl ::std::convert::From<PerfSnapshotResult> for ReplyResult {
 impl ::std::convert::From<DefineAck> for ReplyResult {
     fn from(value: DefineAck) -> Self {
         Self::DefineAck(value)
+    }
+}
+impl ::std::convert::From<CombatSnapshotResult> for ReplyResult {
+    fn from(value: CombatSnapshotResult) -> Self {
+        Self::CombatSnapshotResult(value)
+    }
+}
+impl ::std::convert::From<CombatSearchFightsResult> for ReplyResult {
+    fn from(value: CombatSearchFightsResult) -> Self {
+        Self::CombatSearchFightsResult(value)
     }
 }
 ///Client-chosen correlation id. A reply carries the id of its request; every stream message carries the id of the subscribe request that opened it.
