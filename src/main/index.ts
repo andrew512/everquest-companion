@@ -361,7 +361,10 @@ if (!gotSingleInstanceLock) {
     markStartupPhase('tailAttached')
     // THE DATA-SERVER ENGINE (JOS-459 phase 0, docs/plans/data-server.md), behind `EQC_ENGINE=1`
     // and nothing else. A NO-OP on every launch that is not a developer's: without the env var this
-    // returns before touching anything, and it refuses outright under EQ_E2E.
+    // returns before touching anything. `EQ_E2E` is NOT a second gate here, and that is deliberate
+    // rather than an omission — engineHost.ts's header carries the argument, and JOS-470's
+    // tests/e2e/engine-boots.e2e.mts is the spec that opts IN by setting both variables. Every
+    // other spec in that suite sets neither and therefore runs with no engine at all.
     //
     // HERE, right after the tail attaches, because the engine is the eventual successor to that
     // fold and this is where its lifecycle belongs in the boot order — and because the supervisor

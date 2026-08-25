@@ -1,6 +1,7 @@
 /**
  * build.mts — where the e2e suite gets its BINARIES: the checkout root, Node's own resolver
- * rooted at it, the out-e2e/ build gate and its cross-process lock, and the Electron executable.
+ * rooted at it, the out-e2e/ build gate and its cross-process lock, the Electron executable, and
+ * (JOS-470) the engine binary cargo produces.
  *
  * Split out of appHarness.mts, which the lock pushed past the 400-code-line factoring ceiling.
  * The split is also honest about the dependency shape: nothing here knows what a `Page` is, so
@@ -8,7 +9,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, readdirSync, rmdirSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -45,6 +46,16 @@ function newestMtime(dir: string): number {
   return newest
 }
 
+/**
+ * Is `out-e2e/` newer than everything that goes into it?
+ *
+ * THE ENGINE'S RUST IS DELIBERATELY NOT IN THIS QUESTION, and the omission is a decision rather
+ * than a gap — see `buildEngineIfStale` below for the whole argument. In one line: nothing under
+ * `engine/` is in electron-vite's graph, so a `.rs` edit cannot change a single byte of `out-e2e/`,
+ * and folding it in here would make every Rust edit pay for a ~12 s bundle rebuild that could only
+ * ever produce the same output — while STILL not answering the question that actually matters,
+ * which is whether `engined.exe` is stale.
+ */
 function isFresh(): boolean {
   let outMs = 0
   try {
@@ -57,6 +68,84 @@ function isFresh(): boolean {
     statSync(join(ROOT, 'electron.vite.config.ts')).mtimeMs
   )
   return outMs > srcMs
+}
+
+// ── the ENGINE build (JOS-470) ─────────────────────────────────────────────────────────
+//
+// TWO OUTPUTS, TWO GATES. `out-e2e/` is electron-vite's; `engine/target/debug/engined.exe` is
+// cargo's. They share no input file and neither can invalidate the other, so one boolean cannot
+// honestly answer for both: a `.rs` edit leaves the bundle perfectly fresh, and a `.ts` edit leaves
+// the binary perfectly fresh. Asking the two questions separately is what lets each answer be true.
+//
+// AND THE ENGINE GATE IS ONLY ASKED BY THE ONE SPEC THAT NEEDS IT (`engine-boots.e2e.mts`), not by
+// the runner's up-front `buildIfStale()`. `npm run test:e2e -- leveling` must not compile Rust, and
+// a full run must not serialize forty specs behind a cargo build that thirty-nine of them will
+// never look at. When it IS fresh — the common case — this costs a handful of `stat` calls.
+//
+// NO LOCK OF ITS OWN, unlike the bundle above, and for a reason rather than an oversight: cargo
+// takes a file lock on its own target directory, so two concurrent invocations already queue behind
+// each other instead of writing over one another's output. Re-implementing that here would be a
+// second, worse copy of a guarantee the tool already gives.
+
+/** The engine binary this checkout's Rust produces. Debug, because `cargo build -p engined` with
+ *  no `--release` is what the resolver in `src/main/dataServer/engineProtocol.ts` probes first. */
+export const ENGINE_BIN = join(ROOT, 'engine', 'target', 'debug', 'engined.exe')
+
+/** Newest mtime across everything cargo would rebuild from: the crates, the workspace manifests and
+ *  the pinned toolchain. `engine/target/` is NOT under `crates/`, so the walk cannot see its own
+ *  output and call itself stale. */
+function newestEngineSourceMtime(): number {
+  let newest = newestMtime(join(ROOT, 'engine', 'crates'))
+  for (const name of ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml']) {
+    try {
+      newest = Math.max(newest, statSync(join(ROOT, 'engine', name)).mtimeMs)
+    } catch {
+      // `Cargo.lock` may not exist in a checkout that has never built; that is staleness, not an
+      // error, and the missing file simply contributes no mtime.
+    }
+  }
+  return newest
+}
+
+/**
+ * `cargo`, which is NOT on PATH in a fresh shell on this machine (AGENTS.md's toolchain note says
+ * so for the shell; a spawned harness inherits whatever the shell had). PATH first — a developer
+ * who put a different toolchain in front means it — then rustup's default install location.
+ */
+function cargoBinary(): string {
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? ''
+  const fallback = home === '' ? null : join(home, '.cargo', 'bin', 'cargo.exe')
+  if (fallback !== null && existsSync(fallback)) return fallback
+  return 'cargo'
+}
+
+/**
+ * Build `engined.exe` if the Rust that produces it has moved since the binary was written.
+ *
+ * INCREMENTALITY IS CARGO'S STORY, NOT OURS. This gate is not trying to be a build system — it
+ * answers one question ("is the binary older than the sources?") and hands the real decision to
+ * cargo, which then does nothing at all when its own fingerprints agree. What the mtime check buys
+ * is skipping the ~200 ms of cargo startup on the overwhelmingly common no-op run.
+ *
+ * Returns the binary's path. Throws when the build fails or when the build claimed success and the
+ * binary still is not there — a spec that silently ran against no engine would assert the ABSENCE
+ * path and pass, which is the one failure this whole file exists to prevent.
+ */
+export function buildEngineIfStale(): string {
+  const binMs = existsSync(ENGINE_BIN) ? statSync(ENGINE_BIN).mtimeMs : 0
+  if (binMs > newestEngineSourceMtime()) {
+    console.log(`build: ${ENGINE_BIN} is fresh — reusing it`)
+    return ENGINE_BIN
+  }
+  console.log('build: cargo build -p engined (the engine binary is stale)…')
+  const res = spawnSync(cargoBinary(), ['build', '-p', 'engined'], {
+    cwd: join(ROOT, 'engine'),
+    stdio: 'inherit'
+  })
+  if (res.error) throw new Error(`e2e: could not run cargo — ${res.error.message}`)
+  if (res.status !== 0) throw new Error(`cargo build -p engined failed (exit ${String(res.status)})`)
+  if (!existsSync(ENGINE_BIN)) throw new Error(`e2e: cargo reported success but ${ENGINE_BIN} is missing`)
+  return ENGINE_BIN
 }
 
 /** electron-vite's CLI entry, via its package manifest — `bin` is the field that names it, and
