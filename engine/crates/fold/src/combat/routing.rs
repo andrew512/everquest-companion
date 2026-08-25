@@ -220,6 +220,20 @@ fn engage_hostile(st: &mut EngineState, inst: &Resolved, ts: i64) {
     enc.engaged_seen.insert(inst.instance_id.clone(), ts);
 }
 
+/// RESOLVE THE DEFENDER'S LABEL FOR ITS SIDE EFFECTS. Every damage-free path over there ends with
+/// `const tgtName = enc ? st.defenderLabel(enc, target, ts) : target`, and the label feeds the
+/// timeline instant and the processing line — both unported. The CALL is not optional even so:
+/// `defenderLabel` resolves through the world model, which retires the name's stale instances and
+/// adopts the sighting's casing as the instance display, and that display is what the NEXT
+/// `bumpTarget` freezes into a fight's name. `state.rs` carries the measurement.
+///
+/// The freshness gate is the caller's `enc ?`, reproduced here as the one condition.
+fn note_defender(st: &mut EngineState, target: &str, ts: i64) {
+    if st.fresh_encounter_id(ts) {
+        let _ = st.defender_label(target, ts);
+    }
+}
+
 /// Fold into the open encounter's aggregate and the zone aggregate alike — the pair every routing
 /// path writes, and never one without the other.
 fn both(st: &mut EngineState, ts: i64, fresh_only: bool, f: impl Fn(&mut Agg)) {
@@ -455,6 +469,7 @@ fn route_outgoing_miss(st: &mut EngineState, ev: &MissLine, fold: &MissFold, kin
         st.charm.note_pet_evidence(&id_key(&ev.attacker));
     }
     both(st, ev.ts, true, |agg| agg.add_out_miss(&src, fold));
+    note_defender(st, &ev.target, ev.ts);
 }
 
 // ── RESIST ────────────────────────────────────────────────────────────────────────────────────
@@ -527,6 +542,7 @@ pub fn route_resist(st: &mut EngineState, ev: &ResistLine) {
     both(st, ev.ts, true, |agg| {
         agg.add_out_resist(&src, &spell, CATEGORY)
     });
+    note_defender(st, &ev.target, ev.ts);
 }
 
 // ── HEAL ──────────────────────────────────────────────────────────────────────────────────────
@@ -713,6 +729,7 @@ fn route_other_damage(st: &mut EngineState, ev: &DamageEvent) -> bool {
     st.others.note(&key, &ev.attacker);
     let src = other_source(st, &ev.attacker, &key, false);
     both(st, ev.ts, true, |agg| agg.add_out(&src, ev, false));
+    note_defender(st, &ev.target, ev.ts);
     true
 }
 
@@ -723,6 +740,7 @@ fn route_other_miss(st: &mut EngineState, ev: &MissLine, fold: &MissFold) -> boo
     st.others.note(&key, &ev.attacker);
     let src = other_source(st, &ev.attacker, &key, false);
     both(st, ev.ts, true, |agg| agg.add_out_miss(&src, fold));
+    note_defender(st, &ev.target, ev.ts);
     true
 }
 
@@ -736,6 +754,7 @@ fn route_other_resist(st: &mut EngineState, ev: &ResistLine, category: &str) -> 
     both(st, ev.ts, true, |agg| {
         agg.add_out_resist(&src, &spell, category)
     });
+    note_defender(st, &ev.target, ev.ts);
     true
 }
 
@@ -798,6 +817,7 @@ fn route_ally_pet_damage(st: &mut EngineState, ev: &DamageEvent) {
     };
     let src = ally_pet_source(bind);
     both(st, ev.ts, true, |agg| agg.add_out(&src, ev, false));
+    note_defender(st, &ev.target, ev.ts);
 }
 
 /// The avoided-swing twin, on the same aggregate-only terms. A miss carries no amount, so this can
@@ -811,6 +831,7 @@ fn route_ally_pet_miss(st: &mut EngineState, ev: &MissLine, fold: &MissFold) {
     };
     let src = ally_pet_source(bind);
     both(st, ev.ts, true, |agg| agg.add_out_miss(&src, fold));
+    note_defender(st, &ev.target, ev.ts);
 }
 
 #[cfg(test)]

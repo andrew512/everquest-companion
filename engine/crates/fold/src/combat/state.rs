@@ -625,6 +625,19 @@ impl EngineState {
     /// intact in both directions: `engaged` membership only ever comes from LANDED damage or heals,
     /// so a whiff at a mob we have never damaged still has ZERO world-model side effects and simply
     /// keeps its raw name — the honest label when no instance exists.
+    /// ── AND IT IS NOT A PURE READ, WHICH IS WHY THE UNPORTED TIMELINE STILL HAS TO CALL IT ──────
+    ///
+    /// The `resolve()` inside it REFRESHES `lastSeenTs`, RETIRES the name's stale instances, and
+    /// ADOPTS the sighting's casing as the instance display. That last one is load-bearing for a
+    /// number the snapshot publishes: `bumpTarget` stores the label it is handed and never refreshes
+    /// it (first write wins), so a fight's NAME is whichever spelling the world model held at the
+    /// first outgoing hit — and an outgoing DAMAGE SHIELD tick is sentence-initial for the mob
+    /// (`A Teir\`Dal ranger is burned by YOUR flames …`). Skipping this call because its RETURN feeds
+    /// only the unported timeline left 25/71/2/1/53 fight names per slice capitalized, and it is the
+    /// mid-sentence miss at that mob — this call — that flips the display back.
+    ///
+    /// So the label is discarded here and the call is made anyway. The caller gates on the FRESH
+    /// encounter exactly as the TS does; without one, the raw name stands and nothing is touched.
     pub fn defender_label(&mut self, name: &str, ts: i64) -> String {
         let key = id_key(name);
         if key == "you" {
