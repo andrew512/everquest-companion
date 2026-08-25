@@ -57,7 +57,7 @@
 // And no `EQC_ENGINE` read: `engineHost.ts` owns the one gate for this feature, and it simply never
 // calls `noteEngineLaunch`, so the handler below finds no launch and refuses. One gate, one place.
 
-import { ipcMain, MessageChannelMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { ipcMain, MessageChannelMain, type IpcMainInvokeEvent } from 'electron'
 import { IPC } from '../../shared/ipc'
 import { logInfo } from '../errorLog'
 import { connectToEngine } from './socketChannel'
@@ -75,15 +75,27 @@ const CONNECT_TIMEOUT_MS = 2_000
 
 // ── the live relays ────────────────────────────────────────────────────────────────────────────
 
-/** One brokered connection: which window holds it, and how to take it away. */
+/** One brokered connection. It is only ever taken AWAY — which window holds it is the map's key,
+ *  so the record itself is the teardown and nothing else. */
 interface Relay {
-  readonly holder: WebContents
   readonly close: () => void
 }
 
 /** Keyed by `webContents.id` — which is what makes ONE CONNECTION PER RENDERER structural rather
  *  than a rule somebody has to remember. */
 const relays = new Map<number, Relay>()
+
+/**
+ * THE TURN, per window. `engineClientHost.ts`'s generation counter, needed here for its own reason.
+ *
+ * `ipcMain.handle` runs an async handler CONCURRENTLY with itself, so two connects from one window —
+ * which strict mode's double-mount produces on every dev launch — can both be waiting on a socket at
+ * once. Without this, the one that resolves SECOND is the one whose relay ends up in the map, and
+ * that is not necessarily the one the renderer is still listening to: a slow first connect would
+ * overwrite a fast second one and leave a live socket nobody drops until the window dies. Bumped
+ * before the await and re-asked after it, so a turn that has lost hands its socket back instead.
+ */
+const turns = new Map<number, number>()
 
 /** The launch a renderer would be connected to, or null when there is no engine. Set only by
  *  `engineHost.ts`, which is where this feature's one flag is read. */
@@ -159,6 +171,8 @@ async function onConnect(event: IpcMainInvokeEvent, nonce: unknown): Promise<Eng
   }
   // ONE CONNECTION PER RENDERER (ruling 7). A window that asks again has replaced its own.
   dropRelay(id, 'the window asked for a new connection')
+  const mine = (turns.get(id) ?? 0) + 1
+  turns.set(id, mine)
 
   let channel: ByteChannel
   try {
@@ -168,18 +182,23 @@ async function onConnect(event: IpcMainInvokeEvent, nonce: unknown): Promise<Eng
     debug(`data-server broker: could not reach the engine for window ${String(id)} (${why})`)
     return { ok: false, reason: why }
   }
-  // The window may have gone while the connect was in flight, and the launch may have been replaced
-  // — both are ordinary. A socket nobody will read is closed rather than relayed into a dead port.
-  if (sender.isDestroyed() || launch !== info) {
+  // THREE WAYS THIS TURN CAN HAVE LOST while the connect was in flight, and all three are ordinary:
+  // the window went, the launch was replaced, or this window asked AGAIN and that ask has already
+  // been answered. A socket nobody will read is closed rather than relayed into a dead port — and,
+  // in the third case, rather than overwriting a live relay the renderer is actually listening to.
+  if (sender.isDestroyed() || launch !== info || turns.get(id) !== mine) {
     channel.close()
     return { ok: false, reason: 'the connection was superseded before it was handed over' }
   }
 
   const { port1, port2 } = new MessageChannelMain()
   const close = relayBytes(channel, port1)
-  relays.set(id, { holder: sender, close })
+  relays.set(id, { close })
   sender.once('destroyed', () => {
     dropRelay(id, 'the window was destroyed')
+    // The turn goes with it. Ids are not reused while a window lives, but a map that only ever
+    // grows is a leak with a slow fuse, and this is the one moment it can be emptied honestly.
+    turns.delete(id)
   })
   // THE TOKEN RIDES THE PORT. One delivery, and it lands in the preload's closure — see the header.
   sender.postMessage(IPC.onEnginePort, { nonce, token: info.token }, [port2])
