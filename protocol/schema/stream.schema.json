@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://everquest-companion.local/protocol/stream",
+  "title": "Data-server protocol — the subscription diff protocol",
+  "description": "The four rules, verbatim from docs/plans/data-server.md: (1) reset-then-diffs — every subscription opens with a full `reset` of the window; (2) newest-wins coalescing per batch (~10 Hz live), an `update` carries only changed cells; (3) every message carries `epoch`, the world's generation — a character switch or engine restart bumps it, the client drops state and takes the fresh reset, and RESUME IS ALWAYS RE-QUERY (reconnect-after-crash is a character switch); (4) rows are render-ready.",
+  "$defs": {
+    "Epoch": {
+      "title": "Epoch",
+      "description": "The world's generation. Monotonic within one engine process. A client that sees an epoch it did not expect DROPS ALL STATE and waits for the reset — it never reconciles across a bump.",
+      "type": "integer"
+    },
+
+    "RowKey": {
+      "title": "RowKey",
+      "description": "Stable identity of a row within one view, e.g. `loot:9413` or `ally:Primitive`. Unique inside a subscription; meaningless outside it.",
+      "type": "string"
+    },
+
+    "Cell": {
+      "title": "Cell",
+      "description": "ONE RENDER-READY VALUE. The renderer never munges domain data (owner ruling), so a cell is what the pixel says: already formatted, already rounded, already sorted into place. Numbers stay numbers only where the renderer needs the magnitude (a bar width, a share).",
+      "type": ["string", "number", "boolean", "null"]
+    },
+
+    "Cells": {
+      "title": "Cells",
+      "description": "A row's fields by name. Open by design — the field set is the VIEW's contract, not the protocol's, so a new column is not a protocol change.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/Cell" }
+    },
+
+    "Row": {
+      "title": "Row",
+      "description": "One render-ready row: its key and its cells. THE KEY IS OUTSIDE THE CELLS on purpose — an `update` op carries `cells` alone, so reset rows and diff updates have to agree on where the identity lives or a client cannot apply a diff to a row it already holds.",
+      "type": "object",
+      "properties": {
+        "key": { "$ref": "#/$defs/RowKey" },
+        "cells": { "$ref": "#/$defs/Cells" }
+      },
+      "required": ["key", "cells"],
+      "additionalProperties": false
+    },
+
+    "ResetMessage": {
+      "title": "ResetMessage",
+      "description": "The whole window, as of now. Every subscription opens with one, and every epoch bump produces a new one once the fold lands.",
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["reset"] },
+        "id": { "$ref": "#/$defs/RequestId" },
+        "epoch": { "$ref": "#/$defs/Epoch" },
+        "total": {
+          "description": "How many rows the view holds in total, ignoring the window — what a `1–50 of 1834` line reads off.",
+          "type": "integer"
+        },
+        "rows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Row" }
+        }
+      },
+      "required": ["kind", "id", "epoch", "total", "rows"],
+      "additionalProperties": false
+    },
+
+    "DiffMessage": {
+      "title": "DiffMessage",
+      "description": "One coalesced batch of changes to the open window. Ops apply IN ORDER. `total` is present only when it moved.",
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["diff"] },
+        "id": { "$ref": "#/$defs/RequestId" },
+        "epoch": { "$ref": "#/$defs/Epoch" },
+        "total": { "type": "integer" },
+        "ops": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DiffOp" }
+        }
+      },
+      "required": ["kind", "id", "epoch", "ops"],
+      "additionalProperties": false
+    },
+
+    "DiffOp": {
+      "title": "DiffOp",
+      "oneOf": [
+        { "$ref": "#/$defs/InsertOp" },
+        { "$ref": "#/$defs/UpdateOp" },
+        { "$ref": "#/$defs/DropOp" }
+      ]
+    },
+
+    "InsertOp": {
+      "title": "InsertOp",
+      "description": "A row entered the window. EXACTLY ONE of `before`/`after` is present and names an anchor row already in the window; neither present means the window was empty. That constraint is not expressible here without an if/then the Rust generator cannot read, so it is enforced in code and pinned by test.",
+      "type": "object",
+      "properties": {
+        "op": { "type": "string", "enum": ["insert"] },
+        "before": { "$ref": "#/$defs/RowKey" },
+        "after": { "$ref": "#/$defs/RowKey" },
+        "row": { "$ref": "#/$defs/Row" }
+      },
+      "required": ["op", "row"],
+      "additionalProperties": false
+    },
+
+    "UpdateOp": {
+      "title": "UpdateOp",
+      "description": "CHANGED CELLS ONLY. A cell absent from `cells` is unchanged, never cleared — clearing is an explicit null.",
+      "type": "object",
+      "properties": {
+        "op": { "type": "string", "enum": ["update"] },
+        "key": { "$ref": "#/$defs/RowKey" },
+        "cells": { "$ref": "#/$defs/Cells" }
+      },
+      "required": ["op", "key", "cells"],
+      "additionalProperties": false
+    },
+
+    "DropOp": {
+      "title": "DropOp",
+      "description": "A row left the window. It may still exist in the view — a newest-first window pushes the oldest row out on every insert.",
+      "type": "object",
+      "properties": {
+        "op": { "type": "string", "enum": ["drop"] },
+        "key": { "$ref": "#/$defs/RowKey" }
+      },
+      "required": ["op", "key"],
+      "additionalProperties": false
+    },
+
+    "EpochMessage": {
+      "title": "EpochMessage",
+      "description": "CONNECTION-WIDE, and therefore the one stream message with no `id`: the world's generation belongs to the connection, not to any subscription. It announces a bump (`attach`, `restart`) or reports fold progress within the current generation (`progress`, which never changes `epoch`). After a bump every open subscription receives its own fresh reset when the fold lands.",
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["epoch"] },
+        "epoch": { "$ref": "#/$defs/Epoch" },
+        "reason": { "$ref": "#/$defs/EpochReason" },
+        "progress": { "$ref": "#/$defs/FoldProgress" }
+      },
+      "required": ["kind", "epoch", "reason"],
+      "additionalProperties": false
+    },
+
+    "EpochReason": {
+      "title": "EpochReason",
+      "type": "string",
+      "enum": ["attach", "restart", "progress"]
+    },
+
+    "FoldProgress": {
+      "title": "FoldProgress",
+      "description": "What the loading UI reads. Present while a fold is running and on the bump that starts one.",
+      "type": "object",
+      "properties": {
+        "pct": {
+          "description": "0 to 100, WHOLE. A loading bar has no use for a fractional percent, and an integer is the one numeric shape that survives a JSON round trip unchanged in every language - a float 62 comes back as 62.0.",
+          "type": "integer"
+        },
+        "events": { "type": "integer" }
+      },
+      "required": ["pct", "events"],
+      "additionalProperties": false
+    }
+  }
+}

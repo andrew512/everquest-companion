@@ -1,0 +1,315 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://everquest-companion.local/protocol/messages",
+  "x-protocolVersion": 1,
+  "title": "Data-server protocol — envelopes and handshake",
+  "description": "THE MESSAGES, AND NOTHING ABOUT BYTES. Nothing in protocol/schema/ may mention newlines, sockets, ports, framing or lengths: the schema describes MESSAGES so the wire method can be swapped by replacing one transport adapter (owner ruling, JOS-464). The framing lives in exactly two files - src/shared/dataServer/ndjson.ts and engine/crates/protocol/src/transport/ndjson.rs - and a WebSocket transport is a sibling of those, with nothing above them changed. Both are pinned by a round-trip test that runs the same conversation over an in-memory transport with no bytes in it at all.",
+  "$defs": {
+    "ClientMessage": {
+      "title": "ClientMessage",
+      "description": "Every message the app sends the engine. Internally tagged on `op`, so a new surface is a new branch and the envelope never changes.",
+      "oneOf": [
+        { "$ref": "#/$defs/Hello" },
+        { "$ref": "#/$defs/EchoRequest" },
+        { "$ref": "#/$defs/SessionAttachRequest" },
+        { "$ref": "#/$defs/SessionHealthRequest" },
+        { "$ref": "#/$defs/SessionProgressRequest" },
+        { "$ref": "#/$defs/ViewSubscribeRequest" },
+        { "$ref": "#/$defs/ViewUnsubscribeRequest" }
+      ]
+    },
+
+    "EngineMessage": {
+      "title": "EngineMessage",
+      "description": "Every message the engine sends the app. Internally tagged on `kind`.",
+      "oneOf": [
+        { "$ref": "#/$defs/HelloReply" },
+        { "$ref": "#/$defs/Reply" },
+        { "$ref": "#/$defs/ErrorReply" },
+        { "$ref": "#/$defs/ResetMessage" },
+        { "$ref": "#/$defs/DiffMessage" },
+        { "$ref": "#/$defs/EpochMessage" }
+      ]
+    },
+
+    "RequestId": {
+      "title": "RequestId",
+      "description": "Client-chosen correlation id. A reply carries the id of its request; every stream message carries the id of the subscribe request that opened it.",
+      "type": "integer"
+    },
+
+    "Token": {
+      "title": "Token",
+      "description": "The per-launch shared secret. Minted by Electron main at spawn, handed to the engine out of band, presented once at hello. It is never persisted and never reused across launches. Compare it in CONSTANT TIME (src/main/dataServer/token.ts, engine/crates/protocol/src/token.rs) - a byte-at-a-time compare over a loopback socket is a timing oracle. The shape rules are environment-neutral and live in src/shared/dataServer/token.ts.",
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 256
+    },
+
+    "Hello": {
+      "title": "Hello",
+      "description": "The FIRST message on a connection, always. The engine answers with HelloReply or closes the connection; nothing else may precede it.",
+      "type": "object",
+      "properties": {
+        "op": { "type": "string", "enum": ["hello"] },
+        "token": { "$ref": "#/$defs/Token" },
+        "protocolVersion": {
+          "description": "The version the CLIENT was generated against. A mismatch is fatal by ruling: both sides log and the connection closes. Version skew is a build error, not a runtime state to recover from.",
+          "type": "integer"
+        }
+      },
+      "required": ["op", "token", "protocolVersion"],
+      "additionalProperties": false
+    },
+
+    "HelloReply": {
+      "title": "HelloReply",
+      "description": "The handshake answer. `ok: false` is a courtesy sent immediately before the engine closes the connection — a client must treat a closed connection with no reply as the same outcome.",
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["hello"] },
+        "ok": { "type": "boolean" },
+        "engineVersion": {
+          "description": "The engine binary's own version (informational; it is NOT the compatibility check).",
+          "type": "string"
+        },
+        "protocolVersion": {
+          "description": "The version the ENGINE was generated against.",
+          "type": "integer"
+        }
+      },
+      "required": ["kind", "ok", "engineVersion", "protocolVersion"],
+      "additionalProperties": false
+    },
+
+    "Reply": {
+      "title": "Reply",
+      "description": "A successful answer to one request.",
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["reply"] },
+        "id": { "$ref": "#/$defs/RequestId" },
+        "ok": { "type": "boolean", "enum": [true] },
+        "result": { "$ref": "#/$defs/ReplyResult" }
+      },
+      "required": ["kind", "id", "ok", "result"],
+      "additionalProperties": false
+    },
+
+    "ErrorReply": {
+      "title": "ErrorReply",
+      "description": "A refused request. An error is always a reply to a request id — a failure with no request behind it closes the connection instead.",
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["error"] },
+        "id": { "$ref": "#/$defs/RequestId" },
+        "ok": { "type": "boolean", "enum": [false] },
+        "error": { "$ref": "#/$defs/ProtocolError" }
+      },
+      "required": ["kind", "id", "ok", "error"],
+      "additionalProperties": false
+    },
+
+    "ProtocolError": {
+      "title": "ProtocolError",
+      "type": "object",
+      "properties": {
+        "code": { "$ref": "#/$defs/ErrorCode" },
+        "message": {
+          "description": "Human-readable, for a log line and a bug report. Never parsed — branch on `code`.",
+          "type": "string"
+        }
+      },
+      "required": ["code", "message"],
+      "additionalProperties": false
+    },
+
+    "ErrorCode": {
+      "title": "ErrorCode",
+      "description": "A CLOSED set. Both sides generate from this artifact, so adding a member is a schema edit that regenerates both — there is no version of the app that can meet a code it has never heard of.",
+      "type": "string",
+      "enum": [
+        "protocolMismatch",
+        "unauthorized",
+        "unknownOp",
+        "badParams",
+        "notFound",
+        "unavailable",
+        "internal"
+      ]
+    },
+
+    "EchoRequest": {
+      "title": "EchoRequest",
+      "description": "The skeleton's own op: it proves a whole message travelled the seam and came back, with no game logic anywhere.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["echo"] },
+        "params": { "$ref": "#/$defs/EchoParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "EchoParams": {
+      "title": "EchoParams",
+      "type": "object",
+      "properties": { "text": { "type": "string" } },
+      "required": ["text"],
+      "additionalProperties": false
+    },
+
+    "ReplyResult": {
+      "title": "ReplyResult",
+      "description": "THE RESULT REGISTRY, and it is CLOSED. Which shape a reply carries is decided by the OP of the request whose id it names - the envelope does not repeat it, because a reply that had to restate its own op would be a second place for the two to disagree. This list is the additive seam for the eight API surfaces: a new op adds an arm and nothing else in the envelope moves. There is deliberately NO open arm for a shape this build does not know: both sides generate from this one artifact and a protocolVersion mismatch is fatal at hello, so an engine that could answer with an unnamed shape is an engine this client already refused to talk to. A wildcard arm would also make the whole list unusable - an open object matches every named shape too, so `oneOf` could never pick one.",
+      "oneOf": [
+        { "$ref": "#/$defs/EchoResult" },
+        { "$ref": "#/$defs/HealthResult" },
+        { "$ref": "#/$defs/AttachResult" },
+        { "$ref": "#/$defs/SubscribeAck" }
+      ]
+    },
+
+    "EchoResult": {
+      "title": "EchoResult",
+      "type": "object",
+      "properties": { "text": { "type": "string" } },
+      "required": ["text"],
+      "additionalProperties": false
+    },
+
+    "SessionAttachRequest": {
+      "title": "SessionAttachRequest",
+      "description": "Begins tail + fold of one log. PREEMPTS any in-flight attach — last pick wins, never queued (JOS-457's generation ownership, promoted to protocol law). A successful attach bumps the epoch.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["session.attach"] },
+        "params": { "$ref": "#/$defs/SessionAttachParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "SessionAttachParams": {
+      "title": "SessionAttachParams",
+      "type": "object",
+      "properties": {
+        "logPath": {
+          "description": "Absolute path to the EverQuest log file. The engine never discovers a path of its own and never reads a settings file — the app owns discovery and pushes the answer in.",
+          "type": "string"
+        }
+      },
+      "required": ["logPath"],
+      "additionalProperties": false
+    },
+
+    "AttachResult": {
+      "title": "AttachResult",
+      "type": "object",
+      "properties": {
+        "epoch": { "$ref": "#/$defs/Epoch" },
+        "accepted": {
+          "description": "False when the attach was preempted by a later one before it began — the caller's own attach is the one that lost, and the epoch names the winner.",
+          "type": "boolean"
+        }
+      },
+      "required": ["epoch", "accepted"],
+      "additionalProperties": false
+    },
+
+    "SessionHealthRequest": {
+      "title": "SessionHealthRequest",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["session.health"] },
+        "params": { "$ref": "#/$defs/NoParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "HealthResult": {
+      "title": "HealthResult",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["starting", "attaching", "folding", "live", "idle"]
+        },
+        "epoch": { "$ref": "#/$defs/Epoch" },
+        "uptimeMs": { "type": "integer" }
+      },
+      "required": ["status", "epoch", "uptimeMs"],
+      "additionalProperties": false
+    },
+
+    "SessionProgressRequest": {
+      "title": "SessionProgressRequest",
+      "description": "Asks to be told about fold progress. The ticks themselves arrive as connection-wide EpochMessage frames carrying `progress` — the same channel the epoch bump uses, which is why they are not a fourth stream kind.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["session.progress"] },
+        "params": { "$ref": "#/$defs/NoParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "ViewSubscribeRequest": {
+      "title": "ViewSubscribeRequest",
+      "description": "Opens a subscription. The reply acknowledges; the data starts with a `reset` carrying the whole window.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["view.subscribe"] },
+        "params": { "$ref": "#/$defs/ViewDescriptor" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "ViewUnsubscribeRequest": {
+      "title": "ViewUnsubscribeRequest",
+      "description": "Closes a subscription. `id` is this REQUEST's id; `params.subscription` names the subscribe request whose stream is to stop.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["view.unsubscribe"] },
+        "params": { "$ref": "#/$defs/ViewUnsubscribeParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "ViewUnsubscribeParams": {
+      "title": "ViewUnsubscribeParams",
+      "type": "object",
+      "properties": { "subscription": { "$ref": "#/$defs/RequestId" } },
+      "required": ["subscription"],
+      "additionalProperties": false
+    },
+
+    "SubscribeAck": {
+      "title": "SubscribeAck",
+      "type": "object",
+      "properties": {
+        "subscription": { "$ref": "#/$defs/RequestId" },
+        "subscribed": { "type": "boolean" }
+      },
+      "required": ["subscription", "subscribed"],
+      "additionalProperties": false
+    },
+
+    "NoParams": {
+      "title": "NoParams",
+      "description": "An op that takes nothing still sends `params: {}`. The envelope keeps one shape, so adding a parameter later is a schema edit rather than an envelope change.",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  }
+}
