@@ -6,6 +6,20 @@ export const IPC = {
   getModuleSnapshot: 'module:getSnapshot',
   // main -> renderer
   onModuleDelta: 'module:delta',
+  // main -> renderer: THE OTHER WORLD'S CURSOR MOVED (JOS-493).
+  //
+  // Not an increment and never a payload — `{ moduleId, seq }`, the dirty bit the data-server
+  // protocol already defines (`ModuleChangedMessage`), forwarded to every window that folds a
+  // module. It exists because `module:delta` above is numbered in the TYPESCRIPT fold's space and,
+  // with `EQC_ENGINE_SERVE=1`, the snapshot a window is holding came out of the ENGINE's. Mixing
+  // the two is the JOS-490 defect verbatim: the hook hydrates `knownSeq` from the engine's
+  // revision counter and then drops the app's deltas as dupes.
+  //
+  // So each folder rides exactly ONE of the two channels, and which one is stated by the snapshot
+  // it is holding (`ModuleSnapshot.served`): an engine-served snapshot re-fetches on this channel
+  // and ignores `module:delta`; an app-served snapshot does the opposite. One world, one numbering
+  // space — src/renderer/src/lib/useModule.ts.
+  onModuleChanged: 'module:changed',
 
   // ---- progress / inventory (per-character persisted state) ----
   getProgress: 'progress:get',

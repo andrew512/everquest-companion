@@ -21,6 +21,7 @@ import type {
   LogSwitchNudge,
   LootEvent,
   MobKnowledge,
+  ModuleChanged,
   ModuleDelta,
   ModuleSnapshot,
   PackInstallProgress,
@@ -187,7 +188,7 @@ export interface SubmitOpts {
 }
 
 export type { CharacterRef, EqConfig, EqConfigResult, LogLine, LogSwitchNudge, LootEvent, ProgressState }
-export type { ModuleDelta, ModuleSnapshot }
+export type { ModuleChanged, ModuleDelta, ModuleSnapshot }
 export type { AlertDef, AlertPrefs, SoundData, SoundPack, SpellCatalog, ItemKnowledge, MobKnowledge }
 export type { UserSound, UserSoundImportResult, UserSoundRemoveResult }
 export type {
@@ -523,6 +524,17 @@ const api = {
     const listener = (_e: unknown, d: ModuleDelta<Delta>): void => cb(d)
     ipcRenderer.on(IPC.onModuleDelta, listener)
     return () => ipcRenderer.removeListener(IPC.onModuleDelta, listener)
+  },
+  /**
+   * Subscribe to every `module:changed` — the SERVED world's dirty bit (JOS-493); the hook filters
+   * by moduleId. The SAME member under the SAME name is on the overlay bridge, for the reason
+   * `onCharacter` is duplicated there: one transport, one spelling, or the two windows end up
+   * disagreeing about which world they are folding.
+   */
+  onModuleChanged: (cb: (c: ModuleChanged) => void): (() => void) => {
+    const listener = (_e: unknown, c: ModuleChanged): void => cb(c)
+    ipcRenderer.on(IPC.onModuleChanged, listener)
+    return () => ipcRenderer.removeListener(IPC.onModuleChanged, listener)
   },
 
   // ---- class-combo corrections (docs/plans/class-combo-inference.md § 5.3) ----
