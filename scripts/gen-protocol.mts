@@ -25,6 +25,17 @@ import { dirname, join, relative } from 'node:path'
 import { renderTypeScript } from './protocolCodegen.mjs'
 import { ROOT, RUST_OUT, TS_OUT, protocolVersion, readSchemaFiles, schemaDigest } from './protocolSchema.mjs'
 
+/**
+ * Write only if the CONTENT moved, comparing LF-normalized.
+ *
+ * The normalization is not cosmetic. This repo checks out with `core.autocrlf=true`, so the moment
+ * a generated file is committed it comes back to the working tree with CRLF while this generator
+ * emits LF. A raw byte compare therefore reports "written" on every single run, rewrites a file
+ * nobody changed, and churns its mtime — which is enough to make `git status` list the file as
+ * modified until something refreshes the stat cache, so the tree looks dirty when it is not. That
+ * is a generator lying about its own work, and it is exactly the class of thing JOS-458 already
+ * paid for once. The staleness suites compare the same way.
+ */
 function writeIfChanged(path: string, next: string): boolean {
   let before = ''
   try {
@@ -32,7 +43,7 @@ function writeIfChanged(path: string, next: string): boolean {
   } catch {
     before = ''
   }
-  if (before === next) return false
+  if (before.replace(/\r\n/g, '\n') === next.replace(/\r\n/g, '\n')) return false
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, next, 'utf8')
   return true

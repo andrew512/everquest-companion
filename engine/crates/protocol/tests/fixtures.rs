@@ -17,7 +17,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use protocol::generated::{
-    ClientMessage, DiffOp, EngineMessage, EpochReason, ProtocolMessage, PROTOCOL_VERSION,
+    ClientMessage, DiffOp, EngineMessage, EpochReason, ProtocolMessage, ReplyResult,
+    PROTOCOL_VERSION,
 };
 
 /// One line of a fixture conversation.
@@ -170,9 +171,24 @@ fn engine_frames(file: &str) -> Vec<EngineMessage> {
 
 #[test]
 fn rule_one_a_subscription_opens_with_a_full_reset() {
-    let [reset] = engine_frames("01-subscribe.json")
+    let [ack, reset] = engine_frames("01-subscribe.json")
         .try_into()
-        .expect("one engine frame");
+        .expect("an ack and a reset");
+
+    // THE ACK IS NOT THE DATA. It says the subscription exists; the reset says what is in it. Two
+    // messages rather than one because a subscription can be opened over a view whose first fold
+    // has not landed yet, and a client that conflated them would have nothing to render and no way
+    // to tell that from an empty view.
+    let EngineMessage::Reply(ack) = ack else {
+        panic!("a subscribe request is acknowledged before its data")
+    };
+    assert_eq!(*ack.id, 7);
+    let ReplyResult::SubscribeAck(ack) = ack.result else {
+        panic!("view.subscribe answers with a SubscribeAck")
+    };
+    assert_eq!(*ack.subscription, 7);
+    assert!(ack.subscribed);
+
     let EngineMessage::ResetMessage(reset) = reset else {
         panic!("a subscription must open with a reset");
     };
@@ -286,9 +302,9 @@ fn rule_three_an_epoch_bump_is_connection_wide_and_the_reset_follows_it() {
 
 #[test]
 fn rule_four_rows_are_render_ready_scalars() {
-    let [reset] = engine_frames("01-subscribe.json")
+    let [_ack, reset] = engine_frames("01-subscribe.json")
         .try_into()
-        .expect("one engine frame");
+        .expect("an ack and a reset");
     let EngineMessage::ResetMessage(reset) = reset else {
         panic!("expected a reset")
     };
