@@ -1,11 +1,18 @@
 [workspace]
 resolver = "2"
-members = ["crates/engined", "crates/protocol", "crates/protocol-codegen"]
+members = [
+  "crates/engined",
+  "crates/eqlog",
+  "crates/parity",
+  "crates/protocol",
+  "crates/protocol-codegen",
+]
 
-# THE ENGINE (JOS-459). Today this workspace holds the protocol contract (`protocol`, JOS-464) and
-# the process skeleton that answers it over loopback TCP (`engined`, JOS-466) — a spawn contract, a
-# handshake and echo-grade ops, with NO game logic anywhere. The tailer, parser and fold land in
-# later crates beside them.
+# THE ENGINE (JOS-459). Today this workspace holds the protocol contract (`protocol`, JOS-464), the
+# process skeleton that answers it over loopback TCP (`engined`, JOS-466) — a spawn contract, a
+# handshake and echo-grade ops, with NO game logic anywhere — and the PARSER (`eqlog`, JOS-469),
+# proven byte-identical against the TS pipeline's recorded event streams by the `parity` binary
+# beside it. The tailer and the fold land in later crates.
 #
 # TWO STANDING RULES FOR EVERYTHING UNDER engine/:
 #   * Nothing here may shell out to powershell.exe, ever, at build time or at run time.
