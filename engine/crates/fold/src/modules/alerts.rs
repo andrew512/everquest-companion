@@ -48,8 +48,23 @@
 //! modules the registry owns — a real structural cost, paid to reach code that provably cannot run.
 //! Recorded as a judgment call rather than made silently.
 //!
-//! `setDefs` is likewise absent: with a def list this crate has no way to receive (it is settings,
-//! not log), an empty `compiled` is not a simplification, it is the world.
+//! ── …AND SINCE JOS-482 THE MATCHER IS HERE AFTER ALL ──────────────────────────────────────────
+//!
+//! Both reasons above have been removed, one by each half of the cutover. `alerts.define` pushes
+//! the user's own definitions in (boundary verdict 3: the store stays persistence truth, and the
+//! engine never reads a settings file), and the LIVE TAIL delivers `live: true`. So `set_defs`
+//! exists, the evaluator lives in `alerts_rules.rs`, and a live match leaves a [`Fire`] for the
+//! ingest to put on the wire — owner ruling 22, which reduces the app-side alert system to
+//! receive-fire-make-sound.
+//!
+//! **NOTHING ABOUT A HISTORICAL FOLD MOVED.** `on_event`'s live gate is where the TS keeps it, one
+//! line above the loop, and the world this crate constructs by default still pushes no defs at all
+//! — so the six-slice oracle sees the identical `defs: []` / `history: {}` it always has. The two
+//! maps below are still the only thing a replay writes.
+//!
+//! The `setTimerRows` pull is still absent, and now for ONE reason rather than two: an alert that
+//! carries an early-warning offset is compiled OUT (`alerts_rules.rs`'s header argues why an early
+//! sound is worse than a missing one), so nothing here ever needs the timer projection.
 //!
 //! ── THE EVICTION IS THE ONLY PLACE MAP ORDER IS LOAD-BEARING ───────────────────────────────────
 //!
@@ -59,9 +74,10 @@
 //! `JsMap`'s whole reason for existing. The published object's KEY order is not a claim (the bar is
 //! deep equality), but WHICH KEY the cap threw away certainly is.
 
+use super::alerts_rules::{Fire, RuleSet};
 use crate::event::Event;
 use crate::jsmap::JsMap;
-use crate::EqModule;
+use crate::{Defines, EqModule};
 use eqlog::jsstr::js_trim;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -85,6 +101,11 @@ pub struct AlertsModule {
     /// RANK-PRESERVING cast recency. See the header on why the iteration order matters.
     spell_last_cast: JsMap<i64>,
     poison_slow_seen: Option<PoisonSlowRecency>,
+    /// THE USER'S OWN DEFINITIONS AND THE CLOCKS THEY FIRE UNDER (JOS-482). Empty until
+    /// `alerts.define` pushes a set, which is every world this crate constructs on its own.
+    rules: RuleSet,
+    /// Fires accumulated since the ingest last drained them — `pending`, one indirection out.
+    pending: Vec<Fire>,
 }
 
 impl AlertsModule {
@@ -165,6 +186,11 @@ impl EqModule for AlertsModule {
         self.seq = 0;
         self.spell_last_cast.clear();
         self.poison_slow_seen = None;
+        // Only the per-character firing bookkeeping — the DEFS survive, exactly as the TS's do:
+        // they are user preferences, not log state, and the app does not re-push them for a
+        // rebirth. `RuleSet::reset` says which half goes.
+        self.rules.reset();
+        self.pending.clear();
     }
 
     /// NOTE WHAT IS NOT HERE: no `epoch` branch. The TS has none either, and it is a deliberate
@@ -172,21 +198,28 @@ impl EqModule for AlertsModule {
     /// name still casts the same spells, and the fires ledger is user-facing history. So this
     /// module's maps span the launch boundary, which the goldens pin on the two slices that cross
     /// it.
-    fn on_event(&mut self, ev: &Event, _live: bool) {
+    fn on_event(&mut self, ev: &Event, live: bool) {
         self.seq = ev.seq();
         self.note_cast(ev);
         self.note_poison_slow(ev);
-        // …and then `if (!live) return`, above the matcher loop. See the header: with no defs and
-        // no live tail there is no loop to run.
+        // `if (!live) return`, above the matcher loop — THE BOUNDARY LAW, in the one place the TS
+        // keeps it: replay must never make a sound. A historical fold therefore reaches no rule,
+        // spends no cooldown and writes no history, which is what keeps the six-slice oracle
+        // looking at the module it always looked at.
+        if !live {
+            return;
+        }
+        self.pending.append(&mut self.rules.fire(ev));
     }
 
     fn snapshot(&self) -> Value {
         let mut state = json!({
-            // The user's alert definitions, which arrive from the settings store and never from
-            // the log. Empty in every world this crate can construct — the header says why.
-            "defs": Value::Array(Vec::new()),
-            // Per-alert ring of recent fires. Written by a FIRE and by nothing else.
-            "history": Value::Object(serde_json::Map::new()),
+            // The user's alert definitions, which arrive from the settings store (`alerts.define`)
+            // and never from the log. Empty in every world constructed without a push.
+            "defs": self.rules.defs(),
+            // Per-alert ring of recent fires. Written by a FIRE and by nothing else, so it is empty
+            // through any historical fold.
+            "history": self.rules.history(),
             "spellLastCast": self.spell_last_cast,
         });
         // Omitted rather than null: an absent key is the honest encoding of "no slow has ever been
@@ -195,5 +228,29 @@ impl EqModule for AlertsModule {
             state["poisonSlowSeen"] = serde_json::to_value(p).expect("a plain record");
         }
         json!({ "seq": self.seq, "state": state })
+    }
+
+    fn as_defines(&mut self) -> Option<&mut dyn Defines> {
+        Some(self)
+    }
+
+    fn take_fires(&mut self) -> Vec<Fire> {
+        std::mem::take(&mut self.pending)
+    }
+}
+
+impl Defines for AlertsModule {
+    fn family(&self) -> &'static str {
+        "alerts"
+    }
+
+    /// `alertsModule.setDefs(list)` — the whole rule set, replaced. The payload is the `defs` ARRAY
+    /// rather than the request's params object, because the family's knowledge IS the list; a
+    /// payload that is not one leaves the previous set standing.
+    fn define(&mut self, payload: &Value) {
+        let Some(list) = payload.as_array() else {
+            return;
+        };
+        self.rules.set_defs(list.clone());
     }
 }

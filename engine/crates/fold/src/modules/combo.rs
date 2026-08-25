@@ -56,6 +56,9 @@ pub const CLASS_ABBRS: &[ClassAbbr] = &[
     "SHM", "WAR", "WIZ",
 ];
 
+/// `shared/classCombo.ts MAX_COMBO_SLOTS` — EQ Legends runs up to three classes at once.
+pub const MAX_COMBO_SLOTS: usize = 3;
+
 /// `isClassAbbr` as a NARROWING rather than a predicate: an unknown code is dropped, never
 /// coerced. Answering the `'static` spelling is what lets every candidate list downstream be a
 /// plain `&str` compare instead of an owned string.
@@ -176,4 +179,77 @@ impl EqModule for ComboModule {
             }
         })
     }
+
+    fn as_defines(&mut self) -> Option<&mut dyn crate::Defines> {
+        Some(self)
+    }
+}
+
+impl crate::Defines for ComboModule {
+    fn family(&self) -> &'static str {
+        "combo"
+    }
+
+    /// `comboModule.setCorrectionsProvider(…)`'s answer, PUSHED (JOS-482).
+    ///
+    /// AND IT MARKS STALE, which is the half `ipc/combo.ts republish()` exists for and the half a
+    /// define could quietly skip: a correction re-labels an arbitrary span and advances no log seq,
+    /// so `useModule`'s `d.seq <= knownSeq` dedupe would drop the very push that carries it
+    /// (JOS-87, measured in the running app before it was fixed). The revision IS this module's
+    /// published `seq`, so bumping it here is what makes a correction written on an idle log
+    /// visible at all.
+    ///
+    /// A CORRECTION IS REFUSED WHOLE, never filtered: one to three DISTINCT class codes out of the
+    /// closed set, a start at or after the launch epoch (an older one describes the wiped beta
+    /// character), and an end that is either absent or not before the start. That is `ipc/combo.ts`
+    /// validating at its door, and the engine is a second door onto the same state.
+    fn define(&mut self, payload: &Value) {
+        let Some(list) = payload.as_array() else {
+            return;
+        };
+        let launch_ms = self.launch_ms;
+        self.corrections = list
+            .iter()
+            .filter_map(|c| read_correction(c, launch_ms))
+            .collect();
+        self.mark_stale();
+    }
+}
+
+/// One pushed `ComboCorrection`, validated. See [`crate::Defines`]'s impl above for the rule.
+fn read_correction(v: &Value, launch_ms: i64) -> Option<ComboCorrection> {
+    let start_ts = v.get("startTs")?.as_i64()?;
+    if start_ts < launch_ms {
+        return None;
+    }
+    let end_ts = match v.get("endTs") {
+        None | Some(Value::Null) => None,
+        Some(end) => {
+            let end = end.as_i64()?;
+            if end < start_ts {
+                return None;
+            }
+            Some(end)
+        }
+    };
+    let raw = v.get("classes")?.as_array()?;
+    if raw.is_empty() || raw.len() > MAX_COMBO_SLOTS {
+        return None;
+    }
+    let mut classes: Vec<ClassAbbr> = Vec::new();
+    for c in raw {
+        let abbr = as_class_abbr(c.as_str()?)?;
+        // Deduped by REFUSAL rather than by filtering — `[ENC, ENC]` is not a one-class loadout,
+        // it is a payload the app's own validator would have rejected.
+        if classes.contains(&abbr) {
+            return None;
+        }
+        classes.push(abbr);
+    }
+    Some(ComboCorrection {
+        start_ts,
+        end_ts,
+        classes,
+        set_at: v.get("setAt")?.as_i64()?,
+    })
 }

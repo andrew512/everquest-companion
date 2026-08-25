@@ -182,6 +182,71 @@ pub struct RespawnPrefs {
     pub watches: Vec<RespawnWatchPref>,
 }
 
+impl RespawnPrefs {
+    /// Read a pushed `respawn.define` payload — `{ watches: [...] }`, as the store holds it.
+    ///
+    /// IT NORMALIZES THE WAY `shared/respawn.ts normalizeRespawnPrefs` DOES, and that is not
+    /// belt-and-braces: the app normalizes at both the store reader AND the IPC handler precisely so
+    /// a hand-edited settings file and a renderer cannot hold two ideas of what a watch is, and an
+    /// engine that trusted the wire would be a third. The key is lowercased and capped, a watch with
+    /// no key is dropped, a duplicate key is dropped, an out-of-range `customSec` is dropped (which
+    /// reads as "use what you learn", never as zero), and the list is capped.
+    ///
+    /// `None` for a payload that is not an object at all — the caller leaves the previous set
+    /// standing, which is the honest outcome for app knowledge that arrived malformed.
+    pub fn read(payload: &Value) -> Option<RespawnPrefs> {
+        /// `RESPAWN_MAX_WATCHES`.
+        const MAX_WATCHES: usize = 200;
+        /// `MAX` on a stored key or display, in chars.
+        const MAX_NAME: usize = 64;
+        /// `RESPAWN_CUSTOM_MIN_SEC` / `RESPAWN_CUSTOM_MAX_SEC`.
+        const MIN_SEC: i64 = 1;
+        const MAX_SEC: i64 = 7 * 24 * 3600;
+
+        let obj = payload.as_object()?;
+        let mut watches: Vec<RespawnWatchPref> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for w in obj.get("watches").and_then(Value::as_array).into_iter().flatten() {
+            let key: String = w
+                .get("key")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_lowercase()
+                .chars()
+                .take(MAX_NAME)
+                .collect();
+            if key.is_empty() || !seen.insert(key.clone()) {
+                continue;
+            }
+            let display: String = w
+                .get("display")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .chars()
+                .take(MAX_NAME)
+                .collect();
+            let custom_sec = w
+                .get("customSec")
+                .and_then(Value::as_f64)
+                .map(f64::round)
+                .filter(|s| s.is_finite())
+                .map(|s| s as i64)
+                .filter(|s| (MIN_SEC..=MAX_SEC).contains(s));
+            watches.push(RespawnWatchPref {
+                display: if display.is_empty() { key.clone() } else { display },
+                key,
+                custom_sec,
+            });
+            if watches.len() >= MAX_WATCHES {
+                break;
+            }
+        }
+        Some(RespawnPrefs { watches })
+    }
+}
+
 // ───────────────────────────────────────────────────────────── the fold's own record
 
 /// What the fold knows about one mob in one zone.
@@ -656,5 +721,31 @@ impl EqModule for RespawnModule {
 
     fn snapshot(&self) -> Value {
         json!({ "seq": self.rev, "state": self.build(self.now_ms) })
+    }
+
+    fn as_defines(&mut self) -> Option<&mut dyn crate::Defines> {
+        Some(self)
+    }
+}
+
+impl crate::Defines for RespawnModule {
+    fn family(&self) -> &'static str {
+        "respawn"
+    }
+
+    /// `respawnModule.setPrefs(next)` — the watch list, replaced whole.
+    ///
+    /// AND THE REVISION MOVES, which is the second of the three duties `ipc/respawn.ts` names and
+    /// the one a define could quietly skip: a watch is a second input that advances no log seq, so
+    /// a renderer deduping on `seq` would drop the very push that carries it (JOS-87). The third
+    /// duty — push NOW rather than at the next heartbeat — is the serve layer's over here: a
+    /// revision that moved is what makes the next cadence tick re-cut the window.
+    fn define(&mut self, payload: &Value) {
+        let Some(prefs) = RespawnPrefs::read(payload) else {
+            return;
+        };
+        self.prefs = prefs;
+        self.reindex_watches();
+        self.rev += 1;
     }
 }

@@ -16,7 +16,12 @@
         { "$ref": "#/$defs/SessionProgressRequest" },
         { "$ref": "#/$defs/ModuleSnapshotRequest" },
         { "$ref": "#/$defs/ViewSubscribeRequest" },
-        { "$ref": "#/$defs/ViewUnsubscribeRequest" }
+        { "$ref": "#/$defs/ViewUnsubscribeRequest" },
+        { "$ref": "#/$defs/AlertsDefineRequest" },
+        { "$ref": "#/$defs/BuffTrustDefineRequest" },
+        { "$ref": "#/$defs/RespawnDefineRequest" },
+        { "$ref": "#/$defs/ComboDefineRequest" },
+        { "$ref": "#/$defs/RosterDefineRequest" }
       ]
     },
 
@@ -29,7 +34,8 @@
         { "$ref": "#/$defs/ErrorReply" },
         { "$ref": "#/$defs/ResetMessage" },
         { "$ref": "#/$defs/DiffMessage" },
-        { "$ref": "#/$defs/EpochMessage" }
+        { "$ref": "#/$defs/EpochMessage" },
+        { "$ref": "#/$defs/FireMessage" }
       ]
     },
 
@@ -169,7 +175,8 @@
         { "$ref": "#/$defs/HealthResult" },
         { "$ref": "#/$defs/AttachResult" },
         { "$ref": "#/$defs/SubscribeAck" },
-        { "$ref": "#/$defs/ModuleSnapshotResult" }
+        { "$ref": "#/$defs/ModuleSnapshotResult" },
+        { "$ref": "#/$defs/DefineAck" }
       ]
     },
 
@@ -386,6 +393,237 @@
       },
       "required": ["subscription", "subscribed"],
       "additionalProperties": false
+    },
+
+    "DefineAck": {
+      "title": "DefineAck",
+      "description": "The answer to every `*.define` command, and it is deliberately the SAME shape for all five. A define is an idempotent FULL-SET REPLACE (the cutover ledger's command law: replayable, order-collapsing, hash-friendly for ruling 18's cache key), so there is nothing per-family to report back — the engine either took the set or refused the frame. `count` is how many entries it took, which is the one number a caller can check its own push against; it is absent for a family whose payload is not a list (`buffTrust`, `respawn` push one object each).",
+      "type": "object",
+      "properties": {
+        "applied": { "type": "boolean", "enum": [true] },
+        "count": {
+          "description": "Entries taken, for a list-shaped payload. Absent means the payload was not a list, NEVER that nothing was taken — an empty list answers `count: 0`, which is how a caller clears a family and can tell it worked.",
+          "type": "integer"
+        }
+      },
+      "required": ["applied"],
+      "additionalProperties": false
+    },
+
+    "AlertsDefineRequest": {
+      "title": "AlertsDefineRequest",
+      "description": "THE USER'S ALERT DEFINITIONS, pushed (boundary verdict 3). The store stays persistence truth app-side and the engine never reads a settings file; the app pushes the WHOLE set on connect and on every save/delete. Since ruling 22 the engine is also what EVALUATES them: a match on a LIVE event becomes a `FireMessage` on the stream, and the app-side alert system reduces to receive-fire-make-sound.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["alerts.define"] },
+        "params": { "$ref": "#/$defs/AlertsDefineParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "AlertsDefineParams": {
+      "title": "AlertsDefineParams",
+      "type": "object",
+      "properties": {
+        "defs": {
+          "description": "THE WHOLE SET, always. Not a delta: a define replaces what the engine holds, so a crash-respawn is a replay of the latest push and a command input is hash-friendly.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/AlertDefinition" }
+        }
+      },
+      "required": ["defs"],
+      "additionalProperties": false
+    },
+
+    "AlertDefinition": {
+      "title": "AlertDefinition",
+      "description": "One alert, EXACTLY AS THE STORE HOLDS IT — `src/shared/alertTypes.ts AlertDef`. The protocol states nothing about its shape, and that is the `ModuleState`/`Cells` argument at full strength rather than a shortcut. Two reasons, and the second is the load-bearing one. (1) The field set is the STORE's contract: a def carries an id, a name, an enabled flag, a trigger grammar and a sound reference that the engine's evaluator reads, plus volume, audio channel, speech phrase, banner colour, notes and the early-warning offset that belong entirely to the app — and an alert growing a field must not be a protocol change or turn a whole push into `badParams`. (2) A DEFINITION ROUND-TRIPS: the fold republishes the pushed list as the `alerts` module's own `defs`, which is what the app's alert list is drawn from, so a typed protocol shape that quietly dropped an unlisted field would REWRITE THE USER'S ALERTS as they passed through the engine. Typed-where-cheap is not cheap here. The engine reads what it needs with its own reader (`fold::modules::alerts_rules::Rule::compile`), exactly as the fold reads an event.",
+      "type": "object",
+      "additionalProperties": true
+    },
+
+    "BuffTrustDefineRequest": {
+      "title": "BuffTrustDefineRequest",
+      "description": "WHOSE CASTS, BESIDES YOUR OWN, MAY ANCHOR A LANDING (JOS-140). Pushed like every other piece of app knowledge; it ships empty and stays empty for almost everybody.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["buffTrust.define"] },
+        "params": { "$ref": "#/$defs/BuffTrustDefineParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "BuffTrustDefineParams": {
+      "title": "BuffTrustDefineParams",
+      "type": "object",
+      "properties": { "trust": { "$ref": "#/$defs/BuffTrustPrefs" } },
+      "required": ["trust"],
+      "additionalProperties": false
+    },
+
+    "BuffTrustPrefs": {
+      "title": "BuffTrustPrefs",
+      "description": "`src/shared/buffTrust.ts BuffTrustPrefs`. Typed because it is cheap to type: one list of display spellings, in the order the user added them.",
+      "type": "object",
+      "properties": {
+        "externals": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["externals"],
+      "additionalProperties": true
+    },
+
+    "RespawnDefineRequest": {
+      "title": "RespawnDefineRequest",
+      "description": "WHICH MOBS GET A CLOCK (JOS-194) — tracking is opt-in per mob, so this list is the whole of what the respawn fold knows that the log did not tell it.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["respawn.define"] },
+        "params": { "$ref": "#/$defs/RespawnDefineParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "RespawnDefineParams": {
+      "title": "RespawnDefineParams",
+      "type": "object",
+      "properties": { "prefs": { "$ref": "#/$defs/RespawnPrefs" } },
+      "required": ["prefs"],
+      "additionalProperties": false
+    },
+
+    "RespawnPrefs": {
+      "title": "RespawnPrefs",
+      "description": "`src/shared/respawn.ts RespawnPrefs`. An object rather than a bare array because that is the shape the store holds and the shape a later preference would grow into.",
+      "type": "object",
+      "properties": {
+        "watches": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RespawnWatch" }
+        }
+      },
+      "required": ["watches"],
+      "additionalProperties": true
+    },
+
+    "RespawnWatch": {
+      "title": "RespawnWatch",
+      "description": "One mob the user chose to watch, and the number they typed if they typed one.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "Canonical (lowercased) mob name — what a death line's name canonicalizes to.",
+          "type": "string"
+        },
+        "display": { "type": "string" },
+        "customSec": {
+          "description": "The user's own respawn, in SECONDS. Absent means `use what you learn`, which is a different statement from zero.",
+          "type": "integer"
+        }
+      },
+      "required": ["key", "display"],
+      "additionalProperties": true
+    },
+
+    "ComboDefineRequest": {
+      "title": "ComboDefineRequest",
+      "description": "THE USER'S CLASS-COMBO CORRECTIONS — the one input to the loadout model that the log cannot state. Character-scoped app-side; the engine holds whatever the app last pushed for the character it is folding.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["combo.define"] },
+        "params": { "$ref": "#/$defs/ComboDefineParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "ComboDefineParams": {
+      "title": "ComboDefineParams",
+      "type": "object",
+      "properties": {
+        "corrections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ComboCorrection" }
+        }
+      },
+      "required": ["corrections"],
+      "additionalProperties": false
+    },
+
+    "ComboCorrection": {
+      "title": "ComboCorrection",
+      "description": "`src/shared/classCombo.ts ComboCorrection` — a span the user re-labelled, and when they said so.",
+      "type": "object",
+      "properties": {
+        "startTs": { "type": "integer" },
+        "endTs": {
+          "description": "`null` means `from startTs onward`, i.e. it applies to the open interval too. Explicitly nullable rather than optional, because the store writes the null and the two readings are the same one.",
+          "type": ["integer", "null"]
+        },
+        "classes": {
+          "description": "One to three class codes, as the `/who` row spells them.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "setAt": {
+          "description": "When the user set it — a later correction wins over an earlier overlapping one.",
+          "type": "integer"
+        }
+      },
+      "required": ["startTs", "classes", "setAt"],
+      "additionalProperties": true
+    },
+
+    "RosterDefineRequest": {
+      "title": "RosterDefineRequest",
+      "description": "THE USER'S GROUP-ROSTER EDITS — names they added the log never named, and names they removed that it did.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["roster.define"] },
+        "params": { "$ref": "#/$defs/RosterDefineParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "RosterDefineParams": {
+      "title": "RosterDefineParams",
+      "type": "object",
+      "properties": {
+        "edits": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RosterEdit" }
+        }
+      },
+      "required": ["edits"],
+      "additionalProperties": false
+    },
+
+    "RosterEdit": {
+      "title": "RosterEdit",
+      "description": "`src/shared/progressState.ts RosterEdit` — one name, one verb, and the instant the user said it. The instant is load-bearing rather than provenance: an edit older than the last character rebirth, or older than the last `You have been removed from the group.`, described a group that no longer exists and is dropped by the fold rather than by the pusher.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "The canonical identity key — `idKey(name)`.",
+          "type": "string"
+        },
+        "name": { "type": "string" },
+        "action": { "type": "string", "enum": ["add", "remove"] },
+        "setAt": { "type": "integer" }
+      },
+      "required": ["key", "name", "action", "setAt"],
+      "additionalProperties": true
     },
 
     "NoParams": {

@@ -540,6 +540,111 @@ pub fn ledger(sort: &[(&str, &str)], offset: i64, limit: i64) -> ViewDescriptor 
     }
 }
 
+// ---- the five `*.define` commands (JOS-482) ---------------------------------------------------
+//
+// Built from the generated types like every other request in this file. The PAYLOADS are read out
+// of `serde_json::Value`s the tests write, because that is what a store holds and what the app
+// pushes — an alert def in particular is an open object whose extra fields the engine must ride
+// past rather than refuse.
+
+/// One `alerts.define` request carrying the whole rule set.
+///
+/// # Panics
+/// If a def is not an object of the shape the schema states.
+#[must_use]
+pub fn alerts_define(id: i64, defs: &[serde_json::Value]) -> ClientMessage {
+    ClientMessage::AlertsDefineRequest(protocol::generated::AlertsDefineRequest {
+        id: RequestId(id),
+        op: protocol::generated::AlertsDefineRequestOp::AlertsDefine,
+        params: protocol::generated::AlertsDefineParams {
+            defs: defs
+                .iter()
+                .map(|d| serde_json::from_value(d.clone()).expect("an alert definition"))
+                .collect(),
+        },
+    })
+}
+
+/// One `buffTrust.define` request carrying the whole externals allowlist.
+#[must_use]
+pub fn buff_trust_define(id: i64, externals: &[&str]) -> ClientMessage {
+    ClientMessage::BuffTrustDefineRequest(protocol::generated::BuffTrustDefineRequest {
+        id: RequestId(id),
+        op: protocol::generated::BuffTrustDefineRequestOp::BuffTrustDefine,
+        params: protocol::generated::BuffTrustDefineParams {
+            trust: protocol::generated::BuffTrustPrefs {
+                externals: externals.iter().map(|n| (*n).to_owned()).collect(),
+            },
+        },
+    })
+}
+
+/// One `respawn.define` request carrying the whole watch list.
+#[must_use]
+pub fn respawn_define(id: i64, watches: &[(&str, &str)]) -> ClientMessage {
+    ClientMessage::RespawnDefineRequest(protocol::generated::RespawnDefineRequest {
+        id: RequestId(id),
+        op: protocol::generated::RespawnDefineRequestOp::RespawnDefine,
+        params: protocol::generated::RespawnDefineParams {
+            prefs: protocol::generated::RespawnPrefs {
+                watches: watches
+                    .iter()
+                    .map(|(key, display)| protocol::generated::RespawnWatch {
+                        key: (*key).to_owned(),
+                        display: (*display).to_owned(),
+                        custom_sec: None,
+                    })
+                    .collect(),
+            },
+        },
+    })
+}
+
+/// One `combo.define` request carrying the whole correction list.
+#[must_use]
+pub fn combo_define(id: i64, corrections: &[(i64, Option<i64>, &[&str], i64)]) -> ClientMessage {
+    ClientMessage::ComboDefineRequest(protocol::generated::ComboDefineRequest {
+        id: RequestId(id),
+        op: protocol::generated::ComboDefineRequestOp::ComboDefine,
+        params: protocol::generated::ComboDefineParams {
+            corrections: corrections
+                .iter()
+                .map(
+                    |(start_ts, end_ts, classes, set_at)| protocol::generated::ComboCorrection {
+                        start_ts: *start_ts,
+                        end_ts: *end_ts,
+                        classes: classes.iter().map(|c| (*c).to_owned()).collect(),
+                        set_at: *set_at,
+                    },
+                )
+                .collect(),
+        },
+    })
+}
+
+/// One `roster.define` request carrying the whole edit list.
+#[must_use]
+pub fn roster_define(id: i64, edits: &[(&str, &str, &str, i64)]) -> ClientMessage {
+    ClientMessage::RosterDefineRequest(protocol::generated::RosterDefineRequest {
+        id: RequestId(id),
+        op: protocol::generated::RosterDefineRequestOp::RosterDefine,
+        params: protocol::generated::RosterDefineParams {
+            edits: edits
+                .iter()
+                .map(|(key, name, action, set_at)| protocol::generated::RosterEdit {
+                    key: (*key).to_owned(),
+                    name: (*name).to_owned(),
+                    action: match *action {
+                        "add" => protocol::generated::RosterEditAction::Add,
+                        _ => protocol::generated::RosterEditAction::Remove,
+                    },
+                    set_at: *set_at,
+                })
+                .collect(),
+        },
+    })
+}
+
 /// One `view.unsubscribe` request naming a subscription.
 #[must_use]
 pub fn unsubscribe(id: i64, subscription: i64) -> ClientMessage {

@@ -49,8 +49,8 @@ use std::time::Instant;
 
 use protocol::generated::{
     AttachResult, DiffMessage, DiffMessageKind, EngineMessage, Epoch, EpochMessage,
-    EpochMessageKind, EpochReason, FoldProgress, HealthResult, HealthResultStatus, LogMark,
-    RequestId, ResetMessage, ResetMessageKind, Row,
+    EpochMessageKind, EpochReason, FireMessage, FireMessageKind, FoldProgress, HealthResult,
+    HealthResultStatus, LogMark, RequestId, ResetMessage, ResetMessageKind, Row,
 };
 
 use crate::ingest::{self, Starter};
@@ -121,6 +121,24 @@ struct State {
     status: HealthResultStatus,
     /// What the current ingest has folded, in the only coordinates law 3 allows.
     fold: Fold,
+    /// THE APP KNOWLEDGE THE ENGINE HAS BEEN TOLD — the latest `*.define` payload per family
+    /// (JOS-482, boundary verdict 3).
+    ///
+    /// ONE ENTRY PER FAMILY, AND THAT IS THE COMMAND LAW WORKING. A define is an idempotent
+    /// FULL-SET REPLACE, so the latest push is the whole of what the app has said and there is
+    /// nothing to accumulate: overwriting here is not losing history, it is the absence of history
+    /// by design. Which is also what makes a crash-respawn trivial (replay the latest push) and the
+    /// input hash-friendly for ruling 18's cache key.
+    ///
+    /// IT SURVIVES AN ATTACH, deliberately. This is not fold state — the fold's own copy is cleared
+    /// with the fold, like everything else a generation owns — it is what the APP has told this
+    /// process, and a character switch is not the app withdrawing it. Every attach re-applies it at
+    /// construction (`ingest::run`).
+    defines: std::collections::BTreeMap<String, serde_json::Value>,
+    /// THE WAY TO PUSH APP KNOWLEDGE INTO THE CURRENT FOLD, or `None` when nothing is folding.
+    /// Cleared by an attach and by an ended ingest, exactly as `snapshots` is and in the same
+    /// critical section: a preempted fold must not be able to take a define either.
+    define_to: Option<Sender<ingest::DefineAsk>>,
     /// THE WAY TO ASK THE CURRENT FOLD A QUESTION, or `None` when nothing is folding.
     ///
     /// It is a SENDER and not the fold, which is the whole design (see [`ingest::SnapshotAsk`]):
@@ -277,6 +295,8 @@ impl World {
                     status: HealthResultStatus::Idle,
                     fold: Fold::default(),
                     snapshots: None,
+                    defines: std::collections::BTreeMap::new(),
+                    define_to: None,
                 }),
             }),
         }
@@ -552,6 +572,102 @@ impl World {
         }
     }
 
+    /// TAKE ONE FAMILY OF APP KNOWLEDGE — `alerts.define` and its four siblings (JOS-482).
+    ///
+    /// TWO THINGS HAPPEN AND THE ORDER IS THE DESIGN. The world RECORDS the push first, under the
+    /// lock, replacing whatever that family last said; then, with the lock released, it hands the
+    /// push to the fold that is running and waits for it. Recording first is what makes the
+    /// before-attach case work with no special path at all: a define pushed at a world with no
+    /// ingest is simply a define nobody has asked for yet, and the next attach applies it at
+    /// construction ([`World::held_defines`]).
+    ///
+    /// THE WAIT IS WHAT THE ACK IS FOR. `applied: true` is meant to say that the live fold has this
+    /// set — not that a queue accepted it — so a client can push a rule and immediately reason
+    /// about the world it made. It is bounded by [`SNAPSHOT_PATIENCE`] for the same reason a
+    /// snapshot is: a wedged ingest must turn into an answer rather than into a connection that
+    /// never replies. The world's own record is already written by then, so a timeout costs the
+    /// current generation's copy and nothing more — the next attach still applies it.
+    ///
+    /// THE LOCK IS NOT HELD ACROSS THE WAIT, exactly as `module_snapshot` does not hold it: the
+    /// ingest thread takes this lock in every `report_*` it makes, so waiting under it would
+    /// deadlock against the very thread being waited for.
+    pub fn define(&self, family: &str, payload: serde_json::Value) {
+        let push = {
+            let mut state = self.lock();
+            state.defines.insert(family.to_owned(), payload.clone());
+            state.define_to.clone()
+        };
+        let Some(push) = push else {
+            return;
+        };
+        let (answer, wait) = channel();
+        let ask = ingest::DefineAsk {
+            family: family.to_owned(),
+            payload,
+            answer,
+        };
+        if push.send(ask).is_ok() {
+            let _took = wait.recv_timeout(SNAPSHOT_PATIENCE);
+        }
+    }
+
+    /// EVERYTHING THE APP HAS TOLD THIS PROCESS, for an attach to apply at construction.
+    ///
+    /// A COPY, taken under the lock and handed over — the ingest thread must not hold a borrow into
+    /// world state, and the payloads are a handful of small objects pushed a handful of times per
+    /// session. Ordered by family (a `BTreeMap`), so two attaches of the same world apply them in
+    /// the same order; the order is not observable today — the five families touch five different
+    /// modules — and pinning it costs nothing against the day it is.
+    #[must_use]
+    pub fn held_defines(&self) -> Vec<(String, serde_json::Value)> {
+        self.lock()
+            .defines
+            .iter()
+            .map(|(family, payload)| (family.clone(), payload.clone()))
+            .collect()
+    }
+
+    /// THE INGEST OFFERS TO TAKE DEFINES: install this turn's push channel.
+    ///
+    /// A `report_*` method like every other statement an ingest makes, and ownership is re-asked
+    /// INSIDE the lock for the same reason: a turn that has already lost must not be able to
+    /// install a door onto a fold nobody wants.
+    pub fn serve_defines(&self, generation: u64, push: Sender<ingest::DefineAsk>) -> bool {
+        let mut state = self.lock();
+        if !self.owns(generation) {
+            return false;
+        }
+        state.define_to = Some(push);
+        true
+    }
+
+    /// AN ALERT FIRED (owner ruling 22) — announce it to every connection.
+    ///
+    /// A `report_*` like every other statement an ingest makes: ownership is re-asked inside the
+    /// lock, so a preempted fold that matched a line on its way out announces nothing. CONNECTION-
+    /// WIDE, like the epoch, because a fire belongs to the world rather than to any subscription —
+    /// and because every window on this app plays the same sound.
+    ///
+    /// IT CHANGES NO WORLD STATE, which is what makes it different from every other `report_*` here
+    /// and why it takes the fire by reference: a fire is a thing that HAPPENED, and the engine keeps
+    /// no ledger of them (the fold's own module does, as its published `history`). Nothing to
+    /// reconcile means nothing to re-request, which is why the frame carries no epoch.
+    pub fn report_fire(&self, generation: u64, fire: &ingest::Fire) -> bool {
+        let mut state = self.lock();
+        if !self.owns(generation) {
+            return false;
+        }
+        let frame = EngineMessage::FireMessage(FireMessage {
+            kind: FireMessageKind::Fire,
+            at: fire.at,
+            rule: fire.rule.clone(),
+            sound: fire.sound.clone(),
+            message: fire.message.clone(),
+        });
+        broadcast(&mut state, &frame);
+        true
+    }
+
     /// What the fold has consumed: the log, THE MARK, and what was counted reaching it.
     ///
     /// The engine's own door onto the coordinate ruling 18 law 3 names. Not on the wire — see the
@@ -607,6 +723,10 @@ impl World {
             // must never be answered by a generation the world has already replaced, and the
             // preempted ingest's own `report_*` calls already cannot write anything.
             state.snapshots = None;
+            // …and neither is it PUSHABLE. `defines` itself is untouched: that is the app's
+            // knowledge, not this generation's, and the fold about to be built re-applies it at
+            // construction.
+            state.define_to = None;
             let announcement = EngineMessage::EpochMessage(EpochMessage {
                 kind: EpochMessageKind::Epoch,
                 epoch: Epoch(state.epoch),
@@ -735,6 +855,7 @@ impl World {
         // thread; clearing the sender here makes the world say "no fold" rather than making every
         // reader discover it one failed send at a time.
         state.snapshots = None;
+        state.define_to = None;
         true
     }
 

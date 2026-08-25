@@ -121,7 +121,18 @@ fn registry_for(inputs: &SinkInputs<'_>, launch_ms: i64) -> fold::Registry {
                 "logPath": inputs.log.to_string_lossy(),
             })
         }),
-        // ── app knowledge: EMPTY until the *.define commands land (boundary verdict 3) ──────────
+        // ── app knowledge: EMPTY AT CONSTRUCTION, and then PUSHED (JOS-482) ─────────────────────
+        //
+        // The `*.define` commands land immediately after this factory returns — `ingest::run`
+        // applies every held define before the first byte is folded — so a world the app has
+        // spoken to differs from this one by exactly those five pushes and by nothing else.
+        // Alerts, buff trust, respawn watches, combo corrections and roster edits all arrive that
+        // way, through the modules' own `Defines` seam rather than through this struct, because a
+        // define also has to be answerable MID-FOLD and a construction parameter cannot be.
+        //
+        // `self_name` is the one that has not moved: `roster.setSelfName` is `session.ts`'s line
+        // and it is not one of the five families the cutover ledger names. It stays `None` here,
+        // which is what the bench world and all six goldens recorded.
         self_name: None,
         respawn_prefs: fold::modules::respawn::RespawnPrefs::default(),
     })
@@ -218,6 +229,30 @@ impl EventSink for FoldSink {
             }
             _ => None,
         }
+    }
+
+    /// THE APP-KNOWLEDGE DOOR (JOS-482). One call through to the registry, which owns the mapping
+    /// from a family to the module that answers for it — the same shape `snapshot` has, one
+    /// direction reversed.
+    fn define(&mut self, family: &str, payload: &serde_json::Value) -> bool {
+        self.fold.registry.define(family, payload)
+    }
+
+    /// The alert fires the registry made while folding the last drain, converted from the FOLD's
+    /// shape into the INGEST's at this seam — which is the whole reason both types exist. Neither
+    /// `ingest.rs` nor `world.rs` ever learns what an alert is.
+    fn take_fires(&mut self) -> Vec<crate::ingest::Fire> {
+        self.fold
+            .registry
+            .take_fires()
+            .into_iter()
+            .map(|f| crate::ingest::Fire {
+                at: f.at,
+                rule: f.rule,
+                sound: f.sound,
+                message: f.message,
+            })
+            .collect()
     }
 
     fn source_revision(&self, source: &'static views::SourceDef) -> Option<u64> {

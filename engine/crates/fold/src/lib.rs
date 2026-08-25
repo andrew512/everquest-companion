@@ -139,6 +139,59 @@ pub trait EqModule {
     fn as_loot(&self) -> Option<&modules::loot::LootModule> {
         None
     }
+
+    /// THE APP-KNOWLEDGE SEAM (JOS-482, boundary verdict 3) — the one door a `*.define` command
+    /// reaches a module through.
+    ///
+    /// Exactly the shape `as_roster` and `as_loot` are, and for exactly their reason: a handful of
+    /// modules can answer, so those modules implement one method and the rest say nothing. What is
+    /// different is the MUTABILITY, and that is the whole of what a define is — the app telling the
+    /// fold something the log cannot.
+    ///
+    /// FIVE FAMILIES, ONE PER MODULE (see [`Defines::family`]). The mapping is total and static, so
+    /// `Registry::define` is a lookup rather than a negotiation.
+    fn as_defines(&mut self) -> Option<&mut dyn Defines> {
+        None
+    }
+
+    /// THE ALERT FIRES THIS MODULE PRODUCED WHILE FOLDING THE LIVE EVENT IT WAS JUST HANDED, in
+    /// emission order (JOS-482, owner ruling 22).
+    ///
+    /// A HAND-BACK RATHER THAN A CALLBACK, exactly like [`EqModule::take_derived`] and for the same
+    /// ownership reason: a module cannot hold a mutable reference to a queue the registry is
+    /// iterating, so it buffers its own and the caller takes them. Unlike `take_derived` these do
+    /// not re-enter the bus — a fire leaves the process — so they are drained by the INGEST at its
+    /// own boundary rather than by `Fold::on_primary`.
+    ///
+    /// One producer (`alerts`). Defaulted empty for the other nineteen, and structurally empty for
+    /// every historical fold: firing is live-only by the boundary law.
+    fn take_fires(&mut self) -> Vec<modules::alerts_rules::Fire> {
+        Vec::new()
+    }
+}
+
+/// WHAT A MODULE DOES WITH APP KNOWLEDGE. One method, one law.
+///
+/// A DEFINE IS AN IDEMPOTENT FULL-SET REPLACE. Not a delta, not a merge: the payload is the whole
+/// of what this family knows, so pushing A and then B leaves exactly what pushing B alone would
+/// have left. That is the cutover ledger's command law and it buys three things — a crash-respawn
+/// is a replay of the latest push, an order of arrival cannot matter, and the input is hash-friendly
+/// for ruling 18's eventual cache key.
+///
+/// THE PAYLOAD IS A `Value` AND THAT IS DELIBERATE. These shapes are the STORE's contract rather
+/// than the protocol's (the `Cells` argument), so the module reads what it needs out of the JSON the
+/// way `Event` reads what a module needs out of an event — one reader, at the place that knows what
+/// the fields mean, rather than a typed mirror in the protocol crate that would have to be kept in
+/// step with a settings file.
+pub trait Defines {
+    /// The family this module answers to: `alerts`, `buffTrust`, `respawn`, `combo`, `roster` —
+    /// the `*.define` op's own prefix, so the wire name and the module's claim on it are one string.
+    fn family(&self) -> &'static str;
+
+    /// Take the whole set. A payload this module cannot read leaves it exactly as it was, which is
+    /// the honest outcome for app knowledge that arrived malformed: the previous set is still the
+    /// last thing the user actually said.
+    fn define(&mut self, payload: &Value);
 }
 
 /// REGISTRATION ORDER = BUS DELIVERY ORDER, and it is load-bearing — `src/main/modules/wiring.ts`
@@ -273,6 +326,34 @@ impl Registry {
             .iter()
             .find(|m| m.id() == id)
             .map(|m| m.snapshot())
+    }
+
+    /// PUSH ONE FAMILY OF APP KNOWLEDGE INTO THE MODULE THAT OWNS IT (JOS-482).
+    ///
+    /// `false` for a family no registered module claims, which is the answer rather than an
+    /// absence: the registry is the authority on what a module is, exactly as it is for
+    /// `snapshot_of`. A linear scan over at most twenty entries, made a handful of times per
+    /// session rather than once per event.
+    pub fn define(&mut self, family: &str, payload: &Value) -> bool {
+        for m in &mut self.mods {
+            if let Some(d) = m.as_defines() {
+                if d.family() == family {
+                    d.define(payload);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// EVERY ALERT FIRE ANY MODULE PRODUCED SINCE THE LAST DRAIN, in registration order. Empty for
+    /// every historical fold — see [`EqModule::take_fires`].
+    pub fn take_fires(&mut self) -> Vec<modules::alerts_rules::Fire> {
+        let mut out = Vec::new();
+        for m in &mut self.mods {
+            out.append(&mut m.take_fires());
+        }
+        out
     }
 
     /// Every id `WIRING_ORDER` names that nothing registered — the harness's SKIPPED list.

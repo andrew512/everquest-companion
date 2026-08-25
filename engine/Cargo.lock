@@ -130,6 +130,7 @@ dependencies = [
  "eqlog",
  "fold",
  "protocol",
+ "serde",
  "serde_json",
 ]
 
