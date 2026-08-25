@@ -56,6 +56,13 @@
 //! the PROGRESS CADENCE — how often a measurement is announced, never what it measures, and a frame
 //! that is skipped changes no state at all — and one times the spell-DB build for a stderr
 //! diagnostic. Neither can reach a sink.
+//!
+//! **THERE IS EXACTLY ONE WALL-CLOCK READ THAT DOES REACH A SINK** (JOS-478), and it is named
+//! rather than hidden: [`now_ms`], read ONCE per attach into
+//! [`SinkInputs::attached_at_ms`] — the world's CONSTRUCTION clock. It measures when this world was
+//! built and nothing else; over there `WorldOpts.constructionNowMs` defaults to `Date.now()` at
+//! construction for the same reason. Once a fold exists, every time-based rule inside it advances
+//! off LOG timestamps, and `on_tick` — the live tail's heartbeat — is not called from here at all.
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -427,9 +434,10 @@ pub fn start(world: &World, generation: u64, log: PathBuf, sinks: SinkFactory) {
 
 /// Open the log, fold its history, then follow it. Returns when this turn no longer owns the world.
 fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::Result<Ended> {
-    // ATTACHING is exactly "opening the file and building what a parse depends on" — it covers the
-    // spell DB too, because a parse is a pure function of (bytes, spell DB, character) and the fold
-    // has not begun until all three exist.
+    // ATTACHING is exactly "opening the file and building what a fold depends on" — the spell DB
+    // and the character, because a parse is a pure function of (bytes, spell DB, character), and
+    // since JOS-478 the REGISTRY as well, because a fold that has no modules has not begun either.
+    // Nothing is folded until all of it exists, and the whole of it happens inside this window.
     if !world.report_status(generation, HealthResultStatus::Attaching) {
         return Ok(Ended::Preempted);
     }

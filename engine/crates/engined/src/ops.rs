@@ -342,10 +342,11 @@ mod tests {
     use crate::world::World;
     use protocol::generated::{
         ClientMessage, EchoParams, EchoRequest, EchoRequestOp, EngineMessage, ErrorCode, Hello,
-        HelloOp, ReplyResult, RequestId, SessionAttachParams, SessionAttachRequest,
-        SessionAttachRequestOp, SessionHealthRequest, SessionHealthRequestOp, Token,
-        ViewDescriptor, ViewSubscribeRequest, ViewSubscribeRequestOp, ViewUnsubscribeParams,
-        ViewUnsubscribeRequest, ViewUnsubscribeRequestOp,
+        HelloOp, ModuleSnapshotParams, ModuleSnapshotRequest, ModuleSnapshotRequestOp, ReplyResult,
+        RequestId, SessionAttachParams, SessionAttachRequest, SessionAttachRequestOp,
+        SessionHealthRequest, SessionHealthRequestOp, Token, ViewDescriptor, ViewSubscribeRequest,
+        ViewSubscribeRequestOp, ViewUnsubscribeParams, ViewUnsubscribeRequest,
+        ViewUnsubscribeRequestOp,
     };
 
     fn echo(id: i64, text: &str) -> ClientMessage {
@@ -569,6 +570,42 @@ mod tests {
             assert!(matches!(what, Unreadable::Uncorrelatable), "{raw}");
             assert!(refuse(&what).is_none());
         }
+    }
+
+    #[test]
+    fn module_snapshot_is_an_op_this_build_knows() {
+        // THE KNOWN-OP LIST IS BUILT FROM THE GENERATED TAG ENUMS and a new op must be added to it,
+        // or a request with a typo'd param gets `unknownOp` — which sends a client hunting for a
+        // missing feature instead of for its own mistake. This is the pin for the op JOS-478 added.
+        let raw =
+            serde_json::json!({"id": 44, "op": "module.snapshot", "params": {"modul": "loot"}});
+        let Some(EngineMessage::ErrorReply(refusal)) = refuse(&classify(&raw)) else {
+            panic!("a refusal");
+        };
+        assert!(matches!(refusal.error.code, ErrorCode::BadParams));
+    }
+
+    #[test]
+    fn a_module_snapshot_with_no_fold_is_unavailable_rather_than_not_found() {
+        // A world whose attaches start NOTHING has no ingest to ask, and the two refusals mean
+        // different things to a client — see the dispatch arm.
+        let (world, mut session) = table();
+        world.attach(A_LOG);
+        let messages = sent(session.dispatch(
+            &world,
+            ClientMessage::ModuleSnapshotRequest(ModuleSnapshotRequest {
+                id: RequestId(12),
+                op: ModuleSnapshotRequestOp::ModuleSnapshot,
+                params: ModuleSnapshotParams {
+                    module: "loot".to_owned(),
+                },
+            }),
+        ));
+        let [EngineMessage::ErrorReply(refusal)] = messages.as_slice() else {
+            panic!("a refusal");
+        };
+        assert_eq!(*refusal.id, 12);
+        assert!(matches!(refusal.error.code, ErrorCode::Unavailable));
     }
 
     #[test]

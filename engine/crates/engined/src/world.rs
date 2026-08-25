@@ -61,11 +61,14 @@ const FIRST_EPOCH: i64 = 1;
 
 /// How long [`World::module_snapshot`] waits for the ingest thread before calling it unreachable.
 ///
-/// GENEROUS ON PURPOSE. The expected wait is one read boundary of a scan (~a millisecond) or one
-/// tail nap (25 ms), so any value above that is only ever spent on a fold that is not coming back.
-/// Two seconds is short enough that a client's request does not look hung and long enough that a
-/// debug build folding a slice on a busy machine is never mistaken for one.
-const SNAPSHOT_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
+/// GENEROUS ON PURPOSE, AND THE ARITHMETIC IS THE REASON. The ingest answers at a boundary it
+/// already reaches: one 1 MiB read of the scan, or one 25 ms nap of the tail. A release build folds
+/// ~9 MB/s through the twenty modules, so that boundary is ~110 ms; a DEBUG build is an order of
+/// magnitude slower, which puts one slice near a second, and a loaded machine further still. Five
+/// seconds clears all of that by a wide margin while still being short enough that a client's
+/// request does not look hung — and every millisecond above the real wait is spent only on a fold
+/// that is not coming back.
+const SNAPSHOT_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// What [`World::module_snapshot`] found.
 ///
@@ -329,7 +332,13 @@ impl World {
     /// makes.
     #[must_use]
     pub fn module_snapshot(&self, module: &str) -> SnapshotAnswer {
-        let asks = { self.lock().snapshots.clone() };
+        // THE LOCK IS TAKEN AND RELEASED IN THESE THREE LINES, and they are three lines rather than
+        // one so that nothing about drop order has to be reasoned about: the guard is a named
+        // binding inside a block, and the block ends before anything below can block.
+        let asks = {
+            let state = self.lock();
+            state.snapshots.clone()
+        };
         let Some(asks) = asks else {
             return SnapshotAnswer::Unavailable(
                 "no log is attached, so there is no fold to ask".to_owned(),
