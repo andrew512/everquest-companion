@@ -48,6 +48,7 @@ pub mod epoch;
 pub mod event;
 pub mod jsfn;
 pub mod jsmap;
+pub mod knowledge;
 pub mod message_overlay;
 pub mod modules;
 pub mod session;
@@ -56,6 +57,7 @@ pub mod spell_facts;
 use event::Event;
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::sync::Arc;
 
 /// The extension contract — `src/main/modules/types.ts EqModule`.
 pub trait EqModule {
@@ -234,6 +236,30 @@ pub trait EqModule {
     fn take_fires(&mut self) -> Vec<modules::alerts_rules::Fire> {
         Vec::new()
     }
+
+    /// THE OWN-LOOT PULL SEAM (JOS-486) — what YOU have looted, off every corpse.
+    ///
+    /// The `as_roster`/`as_loot` shape a third time: one module owns the index (`consider`, which
+    /// also owns its character-scoped and epoch-scoped lifetime), so that module implements one
+    /// method and the other nineteen say nothing. It is the READ side only — the fold is the one
+    /// writer, and a knowledge join that could write into it would be a second owner of a lifetime
+    /// whose whole point is that it has one.
+    fn as_own_loot(&self) -> Option<&dyn knowledge::OwnLoot> {
+        None
+    }
+
+    /// INSTALL THE KNOWLEDGE LOOKUPS — the injected `deps.lookupItem` / `deps.lookupMob` this
+    /// module's TypeScript twin takes, arriving after construction rather than through
+    /// [`ClusterDeps`].
+    ///
+    /// A SEAM AND NOT A CONSTRUCTION PARAMETER, for the reason `setConCardHook` is one over there
+    /// and for one this crate cares about more: `ClusterDeps` is spelled as a struct LITERAL by the
+    /// parity runner, so a field added to it would have to be answered there — and the one answer
+    /// the oracle may ever give is "absent". A seam nobody calls in that construction cannot be
+    /// half-answered. Exactly one caller installs it: `engined::foldsink::registry_for`.
+    ///
+    /// Defaulted to a no-op, which is the eighteen modules that have nothing to ask.
+    fn install_knowledge(&mut self, _k: &Arc<dyn knowledge::Knowledge>) {}
 }
 
 /// WHAT A MODULE DOES WITH APP KNOWLEDGE. One method, one law.
@@ -422,6 +448,25 @@ impl Registry {
             out.append(&mut m.take_cons());
         }
         out
+    }
+
+    /// The registered module that owns the own-loot index (`consider`), or `None` when this build
+    /// registered none. The same linear scan, made once per mob lookup.
+    pub fn own_loot(&self) -> Option<&dyn knowledge::OwnLoot> {
+        self.mods.iter().find_map(|m| m.as_own_loot())
+    }
+
+    /// GIVE EVERY MODULE THAT ASKS THE KNOWLEDGE LOOKUPS — see [`EqModule::install_knowledge`].
+    ///
+    /// THE ONE CALLER IS THE PRODUCTION CONSTRUCTION. `engined::foldsink::registry_for` calls this
+    /// immediately after `registered()`; the parity runner, the bench arm and every test in this
+    /// crate call it nowhere, so the world the six goldens were recorded in is the world they are
+    /// still compared against. That is not a convention — `registered()` cannot reach a corpus, and
+    /// this crate cannot even name the one that holds them.
+    pub fn install_knowledge(&mut self, k: &Arc<dyn knowledge::Knowledge>) {
+        for m in &mut self.mods {
+            m.install_knowledge(k);
+        }
     }
 
     /// ONE MODULE'S PUBLISHED SNAPSHOT, by the id it answers to — `{ "seq": …, "state": … }`, the

@@ -14,9 +14,13 @@
 import type { ClientMessage, ErrorCode, Hello, ReplyResult, RequestId } from './protocol.generated'
 import type {
   AttachResult,
+  CombatSearchFightsResult,
+  CombatSnapshotResult,
   DefineAck,
   EchoResult,
   HealthResult,
+  KnowledgeResult,
+  KnowledgeSearchResult,
   ModuleSnapshotResult,
   PerfSnapshotResult,
   SessionMarkAck,
@@ -45,6 +49,23 @@ interface ResultRegistry {
   // always applies; a mark can be REFUSED while the fold is still replaying, and the caller has to
   // branch on it — `pressNewSession`'s "both halves or neither" is exactly that branch.
   'sessionMarks.add': SessionMarkAck
+  // THE COMBAT SURFACE (JOS-485). Two ops and two shapes: the meter's whole state, and a ranked
+  // answer to a search box. Neither is a `view.*` — one is the app's own `combat:snapshot` IPC
+  // moved server-side, the other is a question rather than a window — and the third surface the
+  // ticket adds, `combat.live`, is a view SOURCE and therefore not an op at all.
+  'combat.snapshot': CombatSnapshotResult
+  'combat.searchFights': CombatSearchFightsResult,
+  // THE KNOWLEDGE SURFACE (JOS-486). Three lookups share one result shape and that is the shape
+  // being right rather than the registry being lazy: `KnowledgeResult` names its own `domain`, so a
+  // caller holding an item card and a mob card can tell them apart from the value alone — which is
+  // what the five `*.define` ops CANNOT do with `DefineAck`, and why they are five entries too.
+  'knowledge.item': KnowledgeResult
+  'knowledge.mob': KnowledgeResult
+  'knowledge.spell': KnowledgeResult
+  'knowledge.search': KnowledgeSearchResult
+  // …and the push-back reuses `DefineAck`, because it IS a define: one entry taken, `applied` true,
+  // and no `count`, which the schema already says is what a non-list payload answers with.
+  'knowledge.define': DefineAck
 }
 
 /** Every client message that carries a request id — i.e. everything except the handshake. */
@@ -112,7 +133,25 @@ export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> 
   // `accepted` IS SHARED WITH `AttachResult`, so the guard names what a mark ack is NOT — it carries
   // no epoch. Same reasoning as `session.health`'s: a guard both arms pass cannot tell them apart,
   // and the matrix in `tests/dataServerOps.test.mts` is what would catch it if it did.
-  'sessionMarks.add': (r) => 'accepted' in r && !('epoch' in r)
+  'sessionMarks.add': (r) => 'accepted' in r && !('epoch' in r),
+  // `snapshot` rather than `now`: the payload is the field this result exists for, and a name as
+  // generic as `now` is the one a later result shape is most likely to want too. The lesson is
+  // JOS-483's — a guard is only worth its line if no other arm can pass it — and `status` losing its
+  // discriminating power the moment `perf.snapshot` restated it is what taught it.
+  'combat.snapshot': (r) => 'snapshot' in r,
+  // `corpus`, NOT `hits` — the integration lesson two parallel workers taught the matrix: both the
+  // fight search and the knowledge search reached for `hits` independently, and the matrix caught
+  // the collision at merge. `corpus` is this shape's own word and no other arm carries it.
+  'combat.searchFights': (r) => 'corpus' in r,
+  // `record` rather than `found`: it is the field no other arm carries, and a boolean guard would
+  // read `false` as "wrong shape" if `in` were ever swapped for a truthiness test by a later hand.
+  'knowledge.item': (r) => 'record' in r,
+  'knowledge.mob': (r) => 'record' in r,
+  'knowledge.spell': (r) => 'record' in r,
+  // `query` — same collision, same lesson: `hits` stopped discriminating the moment two searches
+  // existed. The query echo is required by the schema and carried by no other shape.
+  'knowledge.search': (r) => 'query' in r,
+  'knowledge.define': (r) => 'applied' in r
 }
 
 /**

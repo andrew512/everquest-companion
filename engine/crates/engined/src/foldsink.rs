@@ -41,21 +41,57 @@
 //! once, on the ingest thread, and it is the only wall clock any of this reaches — every
 //! time-based rule inside the fold advances off LOG timestamps (ruling 18 law 1).
 //!
-//! ── THE COMBAT ENGINE IS NOT REGISTERED HERE, AND THAT IS A DECISION ───────────────────────────
+//! ── THE COMBAT ENGINE IS REGISTERED HERE NOW (JOS-485), AND IT IS ONE BUILDER CALL ─────────────
 //!
-//! `fold::Fold::with_combat` subscribes the combat engine behind the registry, and this file does
-//! not call it. Two reasons, and the second is the load-bearing one. It is not a MODULE —
-//! `WIRING_ORDER` does not name it, `Registry::snapshot_of` cannot answer for it, and
-//! `module.snapshot` is a registry op — so wiring it in would fold a great deal of state that this
-//! ticket's only data-bearing op cannot serve. And its surfaces are VIEWS (`.combat.selected`,
-//! `.combat.timeline`, the scopes walk), which arrive with `view.subscribe`'s source registry; the
-//! ticket that builds those turns it on with one builder call and nothing else here moves. The
-//! coupling is one-way and checked: `Fold::observe` hands the engine the registry's roster, and no
-//! module reads the engine, so a fold without it publishes exactly what a fold with it publishes.
+//! JOS-478 left this off and said what turning it on would take: *"one builder call
+//! (`Fold::with_combat`) plus a source per surface, and nothing else here moves."* That is exactly
+//! what happened. It is still not a MODULE — `WIRING_ORDER` does not name it, `Registry::snapshot_of`
+//! cannot answer for it, and `module.snapshot` refuses the name `combat` on purpose — so it reaches
+//! clients through surfaces of its own: the op `combat.snapshot`, the op `combat.searchFights`, and
+//! the view source `combat.live`.
+//!
+//! **THE PRODUCTION CONSTRUCTION IS `parity`'s, LINE FOR LINE**, and that is deliberate rather than
+//! convenient: `engine/crates/parity/src/main.rs` is what the six-slice oracle runs, so a
+//! production engine built any other way would be an engine the oracle has never described. New,
+//! `reset()`, `set_player_name` off the log's own file name, then `with_combat` — which resets the
+//! engine again by itself, which is why the name is injected before it and re-seeded by it, exactly
+//! as `foldArm.mts construct()` does. `setCombo`, `setDerivedEmitter` and `setHeldClickies` are
+//! called there by nobody and by nobody here.
+//!
+//! **THE COUPLING IS ONE-WAY AND CHECKED.** `Fold::observe` hands the engine the registry's roster
+//! and no module reads the engine, so a fold WITH it publishes exactly what a fold without it
+//! publishes — which is what keeps `module.snapshot`, `loot.ledger` and the equivalence oracle
+//! untouched by this change. What it costs is real and is not hidden: every event now also folds
+//! through the combat engine, which is the same work `parity` measures and the same work the app
+//! has always done on its own thread.
+//!
+//! ── THE INSTANT A COMBAT ANSWER IS TAKEN AT, AND WHY THIS FILE IS WHERE IT IS DECIDED ──────────
+//!
+//! `combat.snapshot(now, opts)` app-side is `combat.snapshot(Date.now(), opts)` — the wall clock,
+//! every poll. `goldenOracle.mts` passes the slice's LAST EVENT TS instead, and `fold::combat`'s
+//! header is emphatic that this is not a recording convenience: the hydrating gate, the deferred
+//! encounter closure, the charm sweep and the ally-bind expiry all evaluate against `now`, so a
+//! REPLAY stamped with a host clock finalizes whatever fight was open and hands the rest of it to a
+//! fresh encounter (MEASURED app-side: one 53,577-damage fight splitting into 43,504 + 10,073).
+//!
+//! Both are right, for different worlds, and the discriminator is **whether this fold has reached
+//! its tail**. This file can answer that structurally rather than by asking: `EventSink::tick` is
+//! called only while the status is `live` — the historical scan does not call it, cannot reach it,
+//! and must not — so "has this sink ever been ticked" IS "is this world live", stated by the one
+//! call that could set it. See [`FoldSink::live`].
+//!
+//! **THE HISTORICAL PATH IS THEREFORE UNCHANGED AND THE ORACLE IS UNTOUCHED.** A fold that never
+//! ticks answers every combat question at `fold.last_ts()`, which is the number `goldenOracle.mts`
+//! passes — so a mid-scan `combat.snapshot` is a pure function of the bytes folded so far (ruling
+//! 18 law 1) and re-asking it at the same `seq` gives the same answer. The wall clock enters
+//! exactly where it already entered: a live world, which the oracle has never described.
 
 use std::collections::HashSet;
 
-use crate::ingest::{Event, EventSink, ModuleSnapshot, SinkFactory, SinkInputs, SinkReport};
+use crate::ingest::{
+    CombatOpts, CombatSnapshot, Event, EventSink, FightHit, FightSearch, ModuleSnapshot,
+    SinkFactory, SinkInputs, SinkReport,
+};
 use crate::views;
 
 /// The factory `main.rs` hands the world: every attach folds the whole registry.
@@ -64,9 +100,28 @@ pub fn folding_sinks() -> SinkFactory {
     std::sync::Arc::new(|inputs| Box::new(FoldSink::new(inputs)))
 }
 
+/// THE PROCESS'S KNOWLEDGE CORPUS.
+///
+/// One `Arc`, handed to the registry at every attach and held by the world for the `knowledge.*`
+/// ops. It is the SAME instance both times — a second corpus would be a second overlay, so a name
+/// the app pushed in answer to a miss would be a hit on one path and a miss on the other, forever.
+///
+/// THE CONCRETE TYPE, NOT THE TRAIT. `fold::knowledge::Knowledge` carries only what a MODULE needs
+/// to ask (an item, a mob, the identity keys, the miss ledger), and deliberately so — the fold has
+/// no business knowing a spell catalog or a search exist. The world answers ops off the wider
+/// surface and hands the registry the narrower one, which is one value seen two ways rather than
+/// two values.
+#[must_use]
+pub fn corpus() -> std::sync::Arc<knowledge::Corpus> {
+    knowledge::shared()
+}
+
 /// One attach's fold, and the counters the ingest reports off it.
 pub struct FoldSink {
     fold: fold::Fold,
+    /// The process's corpus, kept so this sink can drain its miss ledger at the ingest's boundary.
+    /// The SAME instance the registry was handed — see [`corpus`].
+    knowledge: std::sync::Arc<knowledge::Corpus>,
     /// THE PARSER'S OWN CLOCK, kept because a VIEW has to render an instant (JOS-480).
     ///
     /// The one thing a view source needs that the fold does not: `loot.ledger`'s `at` cell is the
@@ -75,6 +130,20 @@ pub struct FoldSink {
     /// spell DB's single copy makes one level up. It is the ZONE that is load-bearing here, never a
     /// wall-clock READ: nothing in this file asks what time it is now.
     clock: eqlog::Clock,
+    /// HAS THIS WORLD REACHED ITS TAIL? — the whole of the `now` decision (see the module header).
+    ///
+    /// Set by `tick` and by nothing else, which is what makes it structural: the tick is called
+    /// once at go-live and ~1×/sec after, and the historical scan has no path to it. So a fold that
+    /// is still scanning cannot have this set, and a fold that has gone live cannot have it clear.
+    live: bool,
+    /// HOW MANY BEATS THIS WORLD HAS TAKEN — half of `combat.live`'s revision signal.
+    ///
+    /// The meter's rows are a function of the events folded AND of the instant they are read at: a
+    /// fight's `durationSec` grows with `now` while the log says nothing, which is why the app polls
+    /// its own snapshot on a 1 s interval rather than on its tailer. Counting beats and adding them
+    /// to the event count gives the view layer a signal that moves on both — an event, or a second
+    /// of a live world — and never repeats across either.
+    beats: u64,
 }
 
 impl FoldSink {
@@ -83,15 +152,75 @@ impl FoldSink {
     pub fn new(inputs: &SinkInputs<'_>) -> Self {
         let launch_ms = fold::epoch::launch_ms(inputs.clock);
         Self {
-            fold: fold::Fold::new(registry_for(inputs, launch_ms), launch_ms),
+            fold: fold::Fold::new(registry_for(inputs, launch_ms), launch_ms)
+                .with_combat(combat_for(inputs)),
             clock: eqlog::Clock::new(inputs.clock.tz()),
+            live: false,
+            beats: 0,
+            knowledge: corpus(),
+        }
+    }
+
+    /// THE INSTANT A COMBAT ANSWER IS TAKEN AT. See the module header for the whole argument.
+    ///
+    /// The process's own wall clock once the tail is running — which is `Date.now()` at
+    /// `src/main/ipc/world.ts:23`, read fresh per answer exactly as that handler reads it — and the
+    /// fold's own `last_ts` before that, which is the number `goldenOracle.mts` passes and the only
+    /// honest instant for a replay.
+    fn combat_now(&self) -> i64 {
+        if self.live {
+            crate::ingest::wall_clock_ms()
+        } else {
+            self.fold.last_ts()
         }
     }
 }
 
+/// The combat engine one attach folds into, constructed as `parity` constructs it.
+///
+/// `reset()` then `set_player_name` BEFORE the builder, because `with_combat` resets what it is
+/// given and `CombatEngine::reset` re-seeds an injected name by itself — so this is one ordering
+/// stated twice rather than two orderings. The name is the log's own file name's, the same fact the
+/// parser derives its character from and the same one `goldenOracle.mts characterOf` reads off a
+/// slice filename; a second spelling of "whose log is this" is a way for the two to disagree.
+fn combat_for(inputs: &SinkInputs<'_>) -> fold::combat::CombatEngine {
+    let mut engine = fold::combat::CombatEngine::new();
+    engine.reset();
+    if let Some(name) = inputs.character {
+        engine.set_player_name(name);
+    }
+    engine
+}
+
 /// `ClusterDeps`, assembled — the one place either crate's construction is spelled.
+///
+/// ── AND THE ONE PLACE THE KNOWLEDGE LOOKUPS ARE INSTALLED (JOS-486) ────────────────────────────
+///
+/// `Registry::install_knowledge` is called HERE and in no other construction in this repo. That is
+/// the ticket's condition and it is structural rather than conventional: `fold::registered()` —
+/// which the parity runner, the bench arm and every fold test call — cannot reach a corpus, because
+/// the `fold` crate cannot name the crate that holds one (the dependency runs `knowledge → fold`).
+/// So the world the six goldens were recorded in is still exactly what those callers build:
+/// `consider` with no `lookupMob` and `eventFeed` with no `lookupItem`, which is what `foldArm.mts`
+/// passes and what every golden records (`knowledge` absent from every consider row, the feed `[]`).
+/// The proof is the DEFAULT `oracle:rust-fold` staying green.
+///
+/// A PRODUCTION FOLD DIFFERS FROM THAT WORLD ONLY ON THE LIVE TAIL. Both probes sit behind the
+/// `live` gate — the feed admits nothing historical at all, and consider enriches live cons plus a
+/// bounded backfill on the first WALL-CLOCK TICK, which `fold_bytes` never calls. A historical fold
+/// with a corpus installed is byte-for-byte the same fold as one without, which is the property the
+/// oracle checks and the reason this line is safe to write.
 fn registry_for(inputs: &SinkInputs<'_>, launch_ms: i64) -> fold::Registry {
-    fold::registered(fold::ClusterDeps {
+    let mut registry = fold::registered(cluster_deps(inputs, launch_ms));
+    let lookups: std::sync::Arc<dyn fold::knowledge::Knowledge> = corpus();
+    registry.install_knowledge(&lookups);
+    registry
+}
+
+/// The deps themselves. Split from `registry_for` so the install above reads as the one extra act
+/// it is, rather than hiding at the bottom of a forty-line struct literal.
+fn cluster_deps(inputs: &SinkInputs<'_>, launch_ms: i64) -> fold::ClusterDeps {
+    fold::ClusterDeps {
         // ── committed data, read off the parser's OWN catalog ──────────────────────────────────
         // The SAME database the parser is emitting `candidates` out of, never a second load: two
         // loads is two answers waiting to disagree after an overlay change (`Parser::spell_db`
@@ -135,7 +264,7 @@ fn registry_for(inputs: &SinkInputs<'_>, launch_ms: i64) -> fold::Registry {
         // which is what the bench world and all six goldens recorded.
         self_name: None,
         respawn_prefs: fold::modules::respawn::RespawnPrefs::default(),
-    })
+    }
 }
 
 /// The SERVER out of a log's file name — the second half of what `character_of` reads.
@@ -185,7 +314,13 @@ impl EventSink for FoldSink {
     /// about the bytes and stale about the hour. MEASURED by the in-app parity probe on a staged
     /// fixture whose buffs are long expired by wall time: twelve actives engine-side against three
     /// app-side, with the two folds agreeing exactly on everything the log had said (JOS-479).
+    /// …and since JOS-485 it is also the one call that says THIS WORLD IS LIVE. See
+    /// [`FoldSink::live`]: the flag is set here because this is the only method a historical scan
+    /// cannot reach, which makes "am I live" a fact stated by the call graph rather than a second
+    /// copy of the world's status that could drift from it.
     fn tick(&mut self, now_ms: i64) {
+        self.live = true;
+        self.beats = self.beats.saturating_add(1);
         self.fold.tick(now_ms);
     }
 
@@ -250,6 +385,18 @@ impl EventSink for FoldSink {
             id if id == views::event_feed::RECENT.id => {
                 Some(views::event_feed::rows(registry.event_feed()?))
             }
+            // THE METER'S ROWS COME OUT OF THE SNAPSHOT'S OWN `selected`, at the cheapest options
+            // that produce one: no finalized-fight list, no timeline, no unparsed ring. A level-1
+            // meter draws the selection's sources and nothing else, and `maxSegments: 0` is what
+            // says so — the current encounter and the zone summary are always included whatever the
+            // cap, so the selection still resolves exactly as a full-fat call resolves it.
+            id if id == views::combat::LIVE.id => {
+                let snapshot = self.combat_snapshot(&CombatOpts {
+                    max_segments: 0,
+                    ..CombatOpts::default()
+                })?;
+                Some(views::combat::rows(&snapshot.state["selected"]))
+            }
             _ => None,
         }
     }
@@ -299,6 +446,72 @@ impl EventSink for FoldSink {
             .collect()
     }
 
+    /// THE COMBAT SNAPSHOT (JOS-485) — one call through to the engine, at the instant this fold is
+    /// entitled to (see [`FoldSink::combat_now`]).
+    ///
+    /// THE ROSTER IS PULLED FROM THE REGISTRY, exactly as `Fold::observe` pulls it on every event
+    /// and exactly as `engine.ts:215` installs the closure app-side. Reading it from anywhere else
+    /// would be a second answer to "who am I grouped with" beside the one the meter's own rows were
+    /// attributed under — and the snapshot carries the roster precisely so the scope chip and the
+    /// rows it filters can never disagree.
+    fn combat_snapshot(&self, opts: &CombatOpts) -> Option<CombatSnapshot> {
+        let engine = self.fold.combat.as_ref()?;
+        let now = self.combat_now();
+        Some(CombatSnapshot {
+            now,
+            state: engine.snapshot(now, &snapshot_opts(opts), self.fold.registry.roster()),
+        })
+    }
+
+    /// THE FIGHT SEARCH (JOS-485). The corpus is the engine's — uncapped history plus the open
+    /// fight, through its own door rather than through a snapshot — and the ranking is
+    /// `crate::search`, which is `shared/fuzzy.ts` ported with its golden cases.
+    fn search_fights(&self, query: &str, limit: usize) -> Option<FightSearch> {
+        let engine = self.fold.combat.as_ref()?;
+        let corpus = engine.fight_summaries(self.combat_now());
+        Some(FightSearch {
+            // THE CORPUS IS COUNTED BEFORE THE QUERY IS LOOKED AT, which is what makes an empty
+            // query answer `{ hits: [], corpus: 1428 }` rather than `corpus: 0`. A UI saying
+            // "search 1,428 fights" in an empty box is reading this number.
+            corpus: i64::try_from(corpus.len()).unwrap_or(i64::MAX),
+            hits: crate::search::search(&corpus, query, limit)
+                .into_iter()
+                .map(|hit| FightHit {
+                    summary: hit.summary,
+                    score: hit.score,
+                })
+                .collect(),
+        })
+    }
+
+    /// WHAT YOU HAVE LOOTED OFF ONE CREATURE (JOS-486) — the half of a `knowledge.mob` answer that
+    /// only a FOLD can give, read through the module's own pull seam.
+    ///
+    /// It is on the sink rather than on the corpus because the two halves have different owners and
+    /// different lifetimes: the catalog is committed data that outlives every generation, and this is
+    /// character-scoped, epoch-scoped state the `consider` module clears on a rebirth. Joining them
+    /// anywhere but at the read would mean one of them holding a stale copy of the other.
+    ///
+    /// A build with no `consider` module answers with no rows — the same value a creature nothing has
+    /// been looted from answers with, so neither is a special case.
+    fn own_loot_drops(&self, spellings: &[String]) -> Vec<fold::knowledge::SeenDrop> {
+        self.fold
+            .registry
+            .own_loot()
+            .map(|index| index.drops_across(spellings))
+            .unwrap_or_default()
+    }
+
+    /// The names this fold's own probes could not answer — drained at the ingest's boundary and
+    /// announced connection-wide, exactly as `take_fires` is.
+    ///
+    /// IT IS THE CORPUS'S LEDGER, NOT THE FOLD'S. A miss made by a `knowledge.item` op on a
+    /// connection thread lands in the same place, which is why each name is announced once for the
+    /// process rather than once per asker.
+    fn take_knowledge_misses(&mut self) -> Vec<fold::knowledge::Miss> {
+        fold::knowledge::Knowledge::take_misses(&*self.knowledge)
+    }
+
     /// THE CHANGE SIGNAL PER SOURCE. Cheap by contract — a counter read, never a serialization.
     ///
     /// THREE OF THESE ARE COARSE AND THE COARSENESS IS STATED AT THE MODULE. `loot`, `respawn` and
@@ -328,8 +541,34 @@ impl EventSink for FoldSink {
             id if id == views::event_feed::RECENT.id => {
                 Some(signal(registry.event_feed()?.revision()))
             }
+            // NO COUNTER TO READ, AND THAT IS HONEST RATHER THAN A GAP. The `loot` module publishes
+            // a revision because it can say exactly when it changed; the combat engine cannot —
+            // every damage, miss, resist, heal, charm and zone line moves some row of the meter, so
+            // "when could this have changed" IS "did an event land". The event count answers that,
+            // it is a field read, and it is monotonic.
+            //
+            // THE BEATS ARE ADDED BECAUSE THE ROWS ARE A FUNCTION OF `now` TOO — a live fight's
+            // `durationSec` grows while the log is quiet, which is why the app polls its own
+            // snapshot on an interval rather than on its tailer. The sum of two monotonic counters
+            // is monotonic and cannot repeat across a change, so a quiet live meter re-cuts once a
+            // second and an idle historical one never re-cuts at all.
+            id if id == views::combat::LIVE.id => {
+                self.fold.combat.as_ref()?;
+                Some(self.fold.events().saturating_add(self.beats))
+            }
             _ => None,
         }
+    }
+}
+
+/// The ingest's opts, in the fold's vocabulary. The one place the two spellings meet — see
+/// [`crate::ingest::CombatOpts`] for why there are two.
+fn snapshot_opts(opts: &CombatOpts) -> fold::combat::SnapshotOpts {
+    fold::combat::SnapshotOpts {
+        selected_id: opts.selected_id.clone(),
+        show_unparsed: opts.show_unparsed,
+        max_segments: opts.max_segments,
+        timeline: opts.timeline,
     }
 }
 

@@ -208,14 +208,19 @@ fn a_source_this_engine_does_not_serve_is_not_found() {
     let engine = Engine::start();
     let mut client = engine.connected();
 
-    client.send(&subscribe(7, "combat.live"));
+    // THE STAND-IN KEEPS MOVING, WHICH IS THE REGISTRY WORKING. `combat.live` stood here until
+    // JOS-485 served it and `eventFeed.recent` until JOS-487 did; what is left is
+    // `combat.encounters`, which the cutover ledger names and the drill-down ticket will serve.
+    client.send(&subscribe(7, "combat.encounters"));
     let EngineMessage::ErrorReply(refusal) = client.recv() else {
         panic!("a refusal");
     };
     assert_eq!(*refusal.id, 7);
     assert!(matches!(refusal.error.code, ErrorCode::NotFound));
     assert!(
-        refusal.error.message.contains("loot.ledger"),
+        refusal.error.message.contains("loot.ledger")
+            && refusal.error.message.contains("combat.live")
+            && refusal.error.message.contains("eventFeed.recent"),
         "the refusal names what IS served: {}",
         refusal.error.message
     );

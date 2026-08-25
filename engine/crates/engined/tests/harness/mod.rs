@@ -521,6 +521,33 @@ pub fn session_mark(id: i64, at: i64) -> ClientMessage {
     })
 }
 
+/// One `combat.snapshot` request (JOS-485). `opts` absent is the ordinary call — the app's own
+/// `combat.snapshot(Date.now(), opts ?? {})`, with the instant left to the engine.
+#[must_use]
+pub fn combat_snapshot(
+    id: i64,
+    opts: Option<protocol::generated::CombatSnapshotOpts>,
+) -> ClientMessage {
+    ClientMessage::CombatSnapshotRequest(protocol::generated::CombatSnapshotRequest {
+        id: RequestId(id),
+        op: protocol::generated::CombatSnapshotRequestOp::CombatSnapshot,
+        params: protocol::generated::CombatSnapshotParams { opts },
+    })
+}
+
+/// One `combat.searchFights` request. `limit` absent takes the engine's default of 50.
+#[must_use]
+pub fn search_fights(id: i64, query: &str, limit: Option<i64>) -> ClientMessage {
+    ClientMessage::CombatSearchFightsRequest(protocol::generated::CombatSearchFightsRequest {
+        id: RequestId(id),
+        op: protocol::generated::CombatSearchFightsRequestOp::CombatSearchFights,
+        params: protocol::generated::CombatSearchFightsParams {
+            query: query.to_owned(),
+            limit,
+        },
+    })
+}
+
 /// One `view.subscribe` request over the named source, with the source's own defaults.
 #[must_use]
 pub fn subscribe(id: i64, source: &str) -> ClientMessage {

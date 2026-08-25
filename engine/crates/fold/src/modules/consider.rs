@@ -29,29 +29,61 @@
 //!     from a guard two files away.
 //!   * A `loot` event RETURNS, so it can never reach the consider fold below it.
 //!
-//! WHAT IS NOT PORTED, by name: the async `probe` (needs `deps.lookupMob`, which `foldArm.mts`
-//! passes nowhere — the bench's header calls the two knowledge lookups absent outright), the
-//! `onTick` backfill, and the JOS-383 con-card hook (installed by `pipeline.ts` only, and live-only
-//! by construction).
+//! THE PROBE IS REAL NOW (JOS-486), AND IT IS SYNCHRONOUS. `deps.lookupMob` arrives through
+//! [`crate::EqModule::install_knowledge`] — installed by `engined`'s PRODUCTION construction and by
+//! nothing else, so `foldArm.mts`'s world (the one all six goldens were recorded in, whose header
+//! calls the two knowledge lookups absent outright) is still exactly this module with no lookup at
+//! all. What changed is only what a LIVE con does when one IS installed: over there the answer may
+//! be a wiki round trip, so the row is appended and `knowledge` lands later as its own delta; here
+//! the committed corpus is an in-memory index in this very process, so a live con enriches inside
+//! the same fold and the row is published complete. There is nothing to await and therefore no
+//! out-of-band seq bump — the TS bumps `seq` on the async landing so `useModule`'s gap check accepts
+//! a delta with no event behind it, and a bump here would put this module's published seq ahead of
+//! the event it folded for no reader's benefit.
 //!
-//! THE BACKFILL'S ABSENCE IS ABOUT THE LOOKUP, NOT ABOUT THE TICK, and JOS-481 is why that sentence
-//! had to be rewritten: a live engine ticks now (`Fold::tick`, owner ruling 22). `onTick` over there
-//! does one thing — call `probe` for the newest rows the replay left in the ring — and `probe` is
-//! the very method this crate cannot have, because the wiki FETCH stays app-side in v1 (boundary
-//! verdict 5: the engine ships without a network stack and learns of a miss through an event the app
-//! answers). So there is nothing for a tick to drive here until the miss/answer pair exists, and
-//! implementing an `on_tick` that called nothing would be noise.
+//! WHAT A MISS DOES: nothing, here. The engine ships without a network stack (boundary verdict 5),
+//! so a name the corpus lacks is recorded by the knowledge implementation and announced by the
+//! INGEST as a `knowledgeMiss` frame; the app fetches and pushes the answer back with
+//! `knowledge.define`. This module simply keeps whatever the local sources knew, which is what
+//! `lookupMob` returns for a missing page anyway.
+//!
+//! THE BACKFILL IS PORTED WITH THE PROBE. `onTick` over there does one thing — probe the newest
+//! [`CONSIDER_BACKFILL`] rows the replay left in the ring, on the FIRST live tick, which is the
+//! module contract's "the historical replay is over" edge. A live engine ticks (`Fold::tick`, owner
+//! ruling 22) and a historical fold never does (`fold_bytes` does not call it, and neither does the
+//! oracle harness), so the equivalence law is untouched: the goldens still record `knowledge` absent
+//! from every row.
+//!
+//! THE CON-CARD HOOK IS PORTED NOW (JOS-487), AND IT IS INVERTED. Over there `pipeline.ts` installs
+//! `setConCardHook` and this module calls synchronously INTO Electron mid-fold; boundary verdict 2
+//! makes it a server-emitted `world.conCard` frame instead, so what lives here is a HAND-BACK —
+//! [`ConEvent`]s buffered on the live path and taken by the ingest, exactly the shape `take_fires`
+//! and `take_derived` already are. Nothing about the RING moved: the card is a thing that happened
+//! and the ring is a state, which is why the two are folded side by side rather than one from the
+//! other.
 
 use crate::event::Event;
+use crate::knowledge::{Knowledge, OwnLoot, SeenDrop};
 use crate::EqModule;
 use eqlog::jsstr::{js_trim, JS_S};
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// How many considered mobs the ring keeps. Oldest fall off the FRONT.
 pub const CONSIDER_CAP: usize = 50;
+
+/// How many of the ring's newest rows get enriched when the live tail takes over — `CONSIDER_
+/// BACKFILL`, verbatim.
+///
+/// A FULL RING WOULD BE FIFTY MOB PAGES, and over there that meant fifty wiki lookups on a cold
+/// cache; the newest handful is what a user actually looks at right after opening the app, and
+/// everything else resolves on hover. In this process the answer is a map read rather than a
+/// request, so the etiquette argument no longer binds — but the NUMBER is kept because the behaviour
+/// is what is being ported: a bound that silently became "all fifty" would be this module quietly
+/// deciding something its twin decided differently.
+pub const CONSIDER_BACKFILL: usize = 12;
 
 /// `shared/mobKey.ts mobKey` — THE canonical identity key for a mob name.
 ///
@@ -120,6 +152,13 @@ struct ConsiderRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     zone: Option<String>,
     cons: i64,
+    /// The mob's drop knowledge, once a lookup has answered for it. ABSENT until then, and absent
+    /// for the whole of every historical fold — never an empty record meaning "we checked" (law 1),
+    /// which is exactly what all six goldens record.
+    ///
+    /// Enrichment is per-MOB rather than per-con: a re-con keeps whatever was already learned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    knowledge: Option<Value>,
 }
 
 /// ONE LIVE `/con`, AS THE CON-CARD HOOK SAW IT (JOS-487, boundary verdict 2).
@@ -159,19 +198,32 @@ pub struct ConsiderModule {
     /// them. Structurally empty for a historical fold — see [`ConEvent`] and `on_event`'s gate.
     cons: Vec<ConEvent>,
     /// The shared own-loot index's ACCUMULATION, kept because this module owns its lifetime. It is
-    /// published nowhere — see the header.
+    /// published nowhere, and it is READ through [`EqModule::as_own_loot`] — see the header.
     own_loot: OwnLootIndex,
+    /// `deps.lookupMob`, or `None` in every construction but the production one. See the header.
+    knowledge: Option<Arc<dyn Knowledge>>,
+    /// The first live tick has run ⇒ the historical replay is over (`backfilled`).
+    backfilled: bool,
 }
 
-/// `mobLookupParse.ts MobLootIndex`, reduced to the half a fold can exercise: the note and the
-/// reset. What it accumulates is read over IPC by the mob hover card and by the drop-rate surfaces,
-/// neither of which is a snapshot, so the shape below is the accounting rather than the record —
-/// enough to keep the refusals honest and to make the lifetime claim (one owner, reset on epoch)
-/// mean something in this crate too.
+/// `mobLookupParse.ts MobLootIndex` — the note, the reset, and (since JOS-486) the READ that the
+/// mob knowledge join is built on.
+///
+/// It is still published in no snapshot: what it accumulates reaches a client through
+/// `knowledge.mob`'s `dropsSeen`, which is a JOIN made on demand rather than module state. That is
+/// why the goldens constrain its counts not at all and why the branch was originally ported for its
+/// REFUSALS — and why those refusals matter more now, not less: a destroy that reached this index
+/// would become a documented-looking drop on a mob card.
 #[derive(Default)]
 struct OwnLootIndex {
-    /// mob key → item name → (count, newest ts). Insertion order is not published.
-    by_mob: std::collections::HashMap<String, std::collections::HashMap<String, (i64, i64)>>,
+    /// mob key → LOWERCASED item key → (display spelling, count, newest ts).
+    ///
+    /// The item key is folded exactly as `MobLootIndex.note` folds it (`item.trim().toLowerCase()`)
+    /// and the DISPLAY spelling kept is the first one recorded for that key, which is the sentence
+    /// `note()` writes over there. Insertion order is not published — see `drops_across` for the
+    /// tiebreak that makes the read total without it.
+    by_mob:
+        std::collections::HashMap<String, std::collections::HashMap<String, (String, i64, i64)>>,
 }
 
 impl OwnLootIndex {
@@ -180,17 +232,64 @@ impl OwnLootIndex {
     }
 
     /// `note(item, source, ts, count)` — a row with NO SOURCE is refused, which is what makes every
-    /// drop-rate surface built on this index structurally immune to the destroy line.
+    /// drop-rate surface built on this index structurally immune to the destroy line. An EMPTY item
+    /// is refused for the same reason the TS refuses it (`if (!item || !source) return`): a nameless
+    /// row is not a drop.
     fn note(&mut self, item: &str, source: Option<&str>, ts: i64, count: i64) {
         let Some(source) = source else { return };
+        if item.trim().is_empty() {
+            return;
+        }
         let entry = self
             .by_mob
             .entry(mob_key(source))
             .or_default()
-            .entry(item.to_string())
-            .or_insert((0, 0));
-        entry.0 += count;
-        entry.1 = entry.1.max(ts);
+            .entry(item.trim().to_lowercase())
+            .or_insert_with(|| (item.trim().to_string(), 0, 0));
+        entry.1 += count;
+        entry.2 = entry.2.max(ts);
+    }
+}
+
+/// THE READ SIDE, for the knowledge join — `MobLootIndex.dropsAcross`.
+///
+/// Most-looted first, ties broken by recency, over the union of every spelling one creature answers
+/// to. Counts ADD and `lastTs` takes the later, because two spellings of one corpse's owner are one
+/// mob's history; the DISPLAY spelling kept is the first the index recorded for that item, which is
+/// what `note()` already decides within a single key.
+///
+/// A SINGLE SPELLING IS NOT A SPECIAL CASE HERE, unlike over there: the TS short-circuits to
+/// `drops()` to guarantee a byte-identical path for the 7.9k unaliased mobs, and the merge below IS
+/// that path for one key — one map read, one sort, no allocation the single-key form would not make.
+impl OwnLoot for OwnLootIndex {
+    fn drops_across(&self, spellings: &[String]) -> Vec<SeenDrop> {
+        let mut merged: std::collections::HashMap<String, SeenDrop> =
+            std::collections::HashMap::new();
+        for spelling in spellings {
+            let Some(items) = self.by_mob.get(&mob_key(spelling)) else {
+                continue;
+            };
+            for (key, (display, count, last_ts)) in items {
+                let row = merged.entry(key.clone()).or_insert_with(|| SeenDrop {
+                    item: display.clone(),
+                    count: 0,
+                    last_ts: 0,
+                });
+                row.count += count;
+                row.last_ts = row.last_ts.max(*last_ts);
+            }
+        }
+        let mut out: Vec<SeenDrop> = merged.into_values().collect();
+        // `b.count - a.count || b.lastTs - a.lastTs`, and then BY NAME. The TS sort is over a
+        // `Map`'s insertion order, which is deterministic there and is not here (`by_mob` is a
+        // `HashMap`), so the third term is what makes this answer the same answer twice.
+        out.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then(b.last_ts.cmp(&a.last_ts))
+                .then(a.item.cmp(&b.item))
+        });
+        out
     }
 }
 
@@ -211,21 +310,47 @@ impl ConsiderModule {
         self.seq
     }
 
+    /// ASK THE KNOWLEDGE LOOKUP ABOUT ONE ROW — `probe`, minus the promise.
+    ///
+    /// Three refusals, all of them the TS's: no lookup installed (every construction but the
+    /// production one), a row that already carries knowledge (enrichment is per-MOB, and a re-con
+    /// keeps what was learned), and — implicitly — a row that has fallen off the ring, which cannot
+    /// happen here because the answer is not in flight across any await.
+    ///
+    /// IT ASKS WITH THE ROW'S DISPLAY NAME, exactly as `probe` does (`lookup(row.mob)`), because the
+    /// alias boundary lives inside `lookupMob` and the display name is what the log said.
+    fn probe(&mut self, index: usize) {
+        let Some(knowledge) = self.knowledge.clone() else {
+            return;
+        };
+        let Some(row) = self.ring.get(index) else {
+            return;
+        };
+        if row.knowledge.is_some() {
+            return;
+        }
+        let answer = knowledge.mob(&row.mob.clone(), &self.own_loot);
+        if let Some(row) = self.ring.get_mut(index) {
+            row.knowledge = Some(answer.record);
+        }
+    }
+
     /// Fold ONE `consider` line into the ring: upsert the mob's single row (moving it to the front
     /// and bumping `cons`), then evict past the cap.
-    fn fold_consider(&mut self, ev: &Event) {
+    fn fold_consider(&mut self, ev: &Event, live: bool) {
         let mob = ev.str("mob").unwrap_or_default();
         let id = mob_key(mob);
         if id.is_empty() {
             return;
         }
         let prev = self.ring.iter().position(|r| r.id == id);
-        let (display, cons) = match prev {
+        let (display, cons, held) = match prev {
             Some(i) => (
                 adopt_display(Some(&self.ring[i].mob), mob),
                 self.ring[i].cons + 1,
+                self.ring[i].knowledge.clone(),
             ),
-            None => (adopt_display(None, mob), 1),
+            None => (adopt_display(None, mob), 1, None),
         };
         let row = ConsiderRow {
             id,
@@ -237,6 +362,8 @@ impl ConsiderModule {
             difficulty: ev.str("difficulty").unwrap_or_default().to_string(),
             zone: self.zone.clone(),
             cons,
+            // Enrichment is per-MOB, not per-con: a re-con keeps whatever was already learned.
+            knowledge: held,
         };
         if let Some(i) = prev {
             self.ring.remove(i);
@@ -244,6 +371,11 @@ impl ConsiderModule {
         self.ring.push(row);
         while self.ring.len() > CONSIDER_CAP {
             self.ring.remove(0);
+        }
+        // LIVE cons enrich immediately; historical ones wait for the bounded backfill on the first
+        // tick, so a startup replay of a month of logs never walks the corpus once per con.
+        if live {
+            self.probe(self.ring.len() - 1);
         }
     }
 }
@@ -258,17 +390,21 @@ impl EqModule for ConsiderModule {
         self.zone = None;
         self.seq = 0;
         self.own_loot.reset();
-        // A CARD FOR THE WORLD THAT JUST ENDED IS NOT A CARD. Anything the ingest had not drained
-        // by the time a rebirth or a character switch landed describes a creature the player was
-        // sizing up in a world nobody is looking at any more.
+        // A CARD FOR THE WORLD THAT JUST ENDED IS NOT A CARD (JOS-487). Anything the ingest had not
+        // drained by the time a rebirth or a character switch landed describes a creature the player
+        // was sizing up in a world nobody is looking at any more.
         self.cons.clear();
+        // `backfilled = false` — a character (re)load is a new replay, and the tick that follows it
+        // is the new replay's "the history is over" edge. The LOOKUP is not cleared: it is a handle
+        // on committed data, not on this character's world.
+        self.backfilled = false;
     }
 
-    /// `live` IS READ NOW, and it is read in exactly one place (JOS-487). The ring itself is still
-    /// deliberately history-fed — this module is a STATE ("the mobs you've been conning") rather
-    /// than a feed — but the CON CARD is a thing that happens, and the third of `main/conCard.ts`'s
-    /// three refusals is that a historical line never draws one. That refusal is structural here:
-    /// a startup replay of a month of logs cannot reach the push below.
+    /// `live` DECIDES TWO THINGS NOW, and they are different things. JOS-486 reads it to keep the
+    /// knowledge PROBE off the replay path; JOS-487 reads it for the CON CARD, because a card is a
+    /// thing that happens and the third of `main/conCard.ts`'s three refusals is that a historical
+    /// line never draws one. Both refusals are structural here: a startup replay of a month of logs
+    /// can reach neither.
     fn on_event(&mut self, ev: &Event, live: bool) {
         self.seq = ev.seq();
         match ev.kind() {
@@ -295,7 +431,11 @@ impl EqModule for ConsiderModule {
                 );
             }
             "consider" => {
-                self.fold_consider(ev);
+                self.fold_consider(ev, live);
+                // THE CON CARD'S OWN LINE (JOS-487), and it is beside the fold rather than inside it
+                // because the two answer different questions: `fold_consider` maintains a STATE (the
+                // mobs you have been conning, history included) while this is a thing that HAPPENED.
+                // The zone is the module's own, which is the second argument the TS hook takes.
                 if live {
                     self.cons.push(ConEvent {
                         ts: ev.ts(),
@@ -316,6 +456,23 @@ impl EqModule for ConsiderModule {
         Some(self.seq)
     }
 
+    /// THE FIRST LIVE TICK IS "THE HISTORICAL REPLAY IS OVER" — `onTick`, verbatim in shape.
+    ///
+    /// A historical fold never reaches here (`fold_bytes` calls no tick and neither does the oracle
+    /// harness), so every golden still records `knowledge` absent from every row. `_now_ms` is
+    /// unused deliberately: this is an EDGE, not a clock reading — the module wants to know that the
+    /// tail has taken over, and the number that says so is not read.
+    fn on_tick(&mut self, _now_ms: i64) {
+        if self.backfilled {
+            return;
+        }
+        self.backfilled = true;
+        let from = self.ring.len().saturating_sub(CONSIDER_BACKFILL);
+        for index in from..self.ring.len() {
+            self.probe(index);
+        }
+    }
+
     fn snapshot(&self) -> Value {
         json!({ "seq": self.seq, "state": self.ring })
     }
@@ -323,5 +480,234 @@ impl EqModule for ConsiderModule {
     /// THE CON-CARD SEAM (JOS-487). See `EqModule::take_cons`.
     fn take_cons(&mut self) -> Vec<ConEvent> {
         Self::take_cons(self)
+    }
+
+    fn as_own_loot(&self) -> Option<&dyn OwnLoot> {
+        Some(&self.own_loot)
+    }
+
+    fn install_knowledge(&mut self, k: &Arc<dyn Knowledge>) {
+        self.knowledge = Some(Arc::clone(k));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ConsiderModule, CONSIDER_BACKFILL};
+    use crate::event::Event;
+    use crate::knowledge::{Answer, Knowledge, Miss, OwnLoot, SeenDrop};
+    use crate::EqModule;
+    use serde_json::{json, Value};
+    use std::sync::{Arc, Mutex};
+
+    /// A lookup that answers everything and REMEMBERS WHO ASKED. What it answers with does not
+    /// matter here — the corpus is `knowledge`'s to prove — but whether it was called at all is the
+    /// whole of the oracle's claim.
+    #[derive(Default)]
+    struct Recorder {
+        asked: Mutex<Vec<String>>,
+    }
+
+    impl Knowledge for Recorder {
+        fn item(&self, name: &str) -> Answer {
+            Answer {
+                record: json!({ "name": name }),
+                found: true,
+            }
+        }
+        fn identity_keys(&self, mob: &str) -> Vec<String> {
+            vec![super::mob_key(mob)]
+        }
+        fn mob(&self, name: &str, loot: &dyn OwnLoot) -> Answer {
+            self.asked
+                .lock()
+                .expect("the recorder")
+                .push(name.to_owned());
+            let seen = loot.drops_across(&self.identity_keys(name));
+            Answer {
+                record: json!({ "name": name, "dropsSeen": seen.len() }),
+                found: true,
+            }
+        }
+        fn take_misses(&self) -> Vec<Miss> {
+            Vec::new()
+        }
+    }
+
+    fn ev(json: &str) -> Event {
+        Event::from_json(json).expect("a JSON object")
+    }
+
+    fn con(seq: i64, mob: &str) -> String {
+        format!(
+            r#"{{"kind":"consider","mob":"{mob}","rare":false,"level":38,"faction":"dubious","difficulty":"Looks kind of dangerous.","seq":{seq},"ts":1787181707000,"raw":"x"}}"#
+        )
+    }
+
+    fn rows(module: &ConsiderModule) -> Vec<Value> {
+        module.snapshot()["state"]
+            .as_array()
+            .expect("an array")
+            .clone()
+    }
+
+    #[test]
+    fn with_no_lookup_installed_knowledge_is_absent_from_every_row() {
+        // THE GOLDEN'S OWN CLAIM. `foldArm.mts` injects no `lookupMob`, so every recorded snapshot
+        // has `knowledge` missing from every consider row — never an empty record meaning "we
+        // checked" (law 1). This is the parity construction, and it is the DEFAULT one.
+        let mut module = ConsiderModule::new();
+        module.on_event(&ev(&con(1, "a sand giant")), false);
+        module.on_event(&ev(&con(2, "a sand giant")), true);
+        module.on_tick(1_787_181_708_000);
+        for row in rows(&module) {
+            assert_eq!(row.get("knowledge"), None, "{row}");
+        }
+    }
+
+    #[test]
+    fn a_live_con_enriches_inside_the_same_fold_and_a_historical_one_does_not() {
+        let recorder = Arc::new(Recorder::default());
+        let mut module = ConsiderModule::new();
+        module.install_knowledge(&(Arc::clone(&recorder) as Arc<dyn Knowledge>));
+
+        module.on_event(&ev(&con(1, "a hill giant")), false);
+        assert_eq!(
+            rows(&module)[0].get("knowledge"),
+            None,
+            "a replay probes nothing"
+        );
+        assert!(recorder.asked.lock().expect("the recorder").is_empty());
+
+        module.on_event(&ev(&con(2, "a sand giant")), true);
+        let rows = rows(&module);
+        assert_eq!(rows[1]["knowledge"]["name"], "a sand giant");
+        assert_eq!(
+            *recorder.asked.lock().expect("the recorder"),
+            vec!["a sand giant".to_owned()],
+            "asked with the row's DISPLAY name"
+        );
+    }
+
+    #[test]
+    fn a_re_con_keeps_what_was_learned_and_asks_nothing_twice() {
+        // Enrichment is per-MOB, not per-con — the TS carries `knowledge: prev?.knowledge` for
+        // exactly this, and `probe` returns early on a row that already has one.
+        let recorder = Arc::new(Recorder::default());
+        let mut module = ConsiderModule::new();
+        module.install_knowledge(&(Arc::clone(&recorder) as Arc<dyn Knowledge>));
+        module.on_event(&ev(&con(1, "a sand giant")), true);
+        module.on_event(&ev(&con(2, "a sand giant")), true);
+        let rows = rows(&module);
+        assert_eq!(rows.len(), 1, "one row per mob");
+        assert_eq!(rows[0]["cons"], 2);
+        assert!(rows[0]["knowledge"].is_object());
+        assert_eq!(recorder.asked.lock().expect("the recorder").len(), 1);
+    }
+
+    #[test]
+    fn the_first_live_tick_backfills_the_newest_rows_and_only_the_newest() {
+        // `onTick`'s whole job: the replay is over, so enrich what the user is about to look at.
+        // Bounded at CONSIDER_BACKFILL, and once — the second tick does nothing.
+        let recorder = Arc::new(Recorder::default());
+        let mut module = ConsiderModule::new();
+        module.install_knowledge(&(Arc::clone(&recorder) as Arc<dyn Knowledge>));
+        for seq in 0..(CONSIDER_BACKFILL as i64 + 5) {
+            module.on_event(&ev(&con(seq, &format!("mob number {seq}"))), false);
+        }
+        assert!(recorder.asked.lock().expect("the recorder").is_empty());
+
+        module.on_tick(1_787_181_708_000);
+        assert_eq!(
+            recorder.asked.lock().expect("the recorder").len(),
+            CONSIDER_BACKFILL,
+            "the newest handful, not the whole ring"
+        );
+        let rows = rows(&module);
+        assert_eq!(
+            rows[0].get("knowledge"),
+            None,
+            "the oldest rows resolve on demand"
+        );
+        assert!(rows[rows.len() - 1]["knowledge"].is_object());
+
+        module.on_tick(1_787_181_709_000);
+        assert_eq!(
+            recorder.asked.lock().expect("the recorder").len(),
+            CONSIDER_BACKFILL,
+            "the edge is an edge"
+        );
+    }
+
+    #[test]
+    fn the_own_loot_index_reads_back_what_it_folded_and_refuses_a_destroy() {
+        let mut module = ConsiderModule::new();
+        let loot = |seq: i64, item: &str, source: &str, count: i64, ts: i64| {
+            format!(
+                r#"{{"kind":"loot","item":"{item}","source":"{source}","count":{count},"seq":{seq},"ts":{ts},"raw":"x"}}"#
+            )
+        };
+        module.on_event(&ev(&loot(1, "Giant Toe", "a sand giant", 2, 100)), false);
+        module.on_event(&ev(&loot(2, "giant toe", "A Sand Giant", 1, 300)), false);
+        module.on_event(&ev(&loot(3, "Amber", "a sand giant", 1, 200)), false);
+        // A DESTROY NAMES NO MOB AND IS NOT A DROP (JOS-401) — and it is refused here, at the
+        // decision, rather than inferred from a guard two files away.
+        module.on_event(
+            &ev(
+                r#"{"kind":"loot","item":"Bone Chips","disposition":"destroyed","count":38,"seq":4,"ts":400,"raw":"x"}"#,
+            ),
+            false,
+        );
+
+        let index = module.as_own_loot().expect("consider owns the index");
+        let seen = index.drops_across(&["a sand giant".to_owned()]);
+        assert_eq!(
+            seen,
+            vec![
+                SeenDrop {
+                    item: "Giant Toe".into(),
+                    count: 3,
+                    last_ts: 300
+                },
+                SeenDrop {
+                    item: "Amber".into(),
+                    count: 1,
+                    last_ts: 200
+                },
+            ],
+            "case-folded onto one key, counts added, newest ts kept, most-looted first"
+        );
+        assert!(index
+            .drops_across(&["nothing at all".to_owned()])
+            .is_empty());
+
+        // …and a character rebirth drops the history with the ring: it belonged to a dead
+        // same-name character.
+        module.on_event(&ev(r#"{"kind":"epoch","seq":5,"ts":500,"raw":"x"}"#), false);
+        assert!(module
+            .as_own_loot()
+            .expect("the index")
+            .drops_across(&["a sand giant".to_owned()])
+            .is_empty());
+    }
+
+    #[test]
+    fn the_union_across_two_spellings_is_one_creatures_history() {
+        // The JOS-142 read: the index files a drop under the corpse's LOG name and a boss card asks
+        // with the ROSTER name. Counts ADD and `lastTs` takes the later.
+        let mut module = ConsiderModule::new();
+        for (seq, source, ts) in [(1_i64, "Cazic-Thule", 100_i64), (2, "Cazic Thule", 400)] {
+            module.on_event(
+                &ev(&format!(
+                    r#"{{"kind":"loot","item":"Glowing Black Stone","source":"{source}","seq":{seq},"ts":{ts},"raw":"x"}}"#
+                )),
+                false,
+            );
+        }
+        let index = module.as_own_loot().expect("the index");
+        let seen = index.drops_across(&["cazic thule".to_owned(), "cazic-thule".to_owned()]);
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].count, 2);
+        assert_eq!(seen[0].last_ts, 400);
     }
 }

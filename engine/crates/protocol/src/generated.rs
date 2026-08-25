@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:c38ce98fbccf84fe73f475efbb245c32cb5d18a64fdd595989c54a7ce94ab21b
+//! schema-digest: sha256:35aecb5d73df536ab00809aa780d6a5df370fa4c45d4dca7bc18681afb422444
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -490,6 +490,27 @@ impl ::std::convert::From<::std::collections::BTreeMap<::std::string::String, cr
 ///      "$ref": "#/$defs/RosterDefineRequest"
 ///    },
 ///    {
+///      "$ref": "#/$defs/CombatSnapshotRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/CombatSearchFightsRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/KnowledgeItemRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/KnowledgeMobRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/KnowledgeSpellRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/KnowledgeSearchRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/KnowledgeDefineRequest"
+///    },
+///    {
 ///      "$ref": "#/$defs/SessionMarkAddRequest"
 ///    }
 ///  ]
@@ -513,6 +534,13 @@ pub enum ClientMessage {
     RespawnDefineRequest(RespawnDefineRequest),
     ComboDefineRequest(ComboDefineRequest),
     RosterDefineRequest(RosterDefineRequest),
+    CombatSnapshotRequest(CombatSnapshotRequest),
+    CombatSearchFightsRequest(CombatSearchFightsRequest),
+    KnowledgeItemRequest(KnowledgeItemRequest),
+    KnowledgeMobRequest(KnowledgeMobRequest),
+    KnowledgeSpellRequest(KnowledgeSpellRequest),
+    KnowledgeSearchRequest(KnowledgeSearchRequest),
+    KnowledgeDefineRequest(KnowledgeDefineRequest),
     SessionMarkAddRequest(SessionMarkAddRequest),
 }
 impl ::std::convert::From<Hello> for ClientMessage {
@@ -585,9 +613,495 @@ impl ::std::convert::From<RosterDefineRequest> for ClientMessage {
         Self::RosterDefineRequest(value)
     }
 }
+impl ::std::convert::From<CombatSnapshotRequest> for ClientMessage {
+    fn from(value: CombatSnapshotRequest) -> Self {
+        Self::CombatSnapshotRequest(value)
+    }
+}
+impl ::std::convert::From<CombatSearchFightsRequest> for ClientMessage {
+    fn from(value: CombatSearchFightsRequest) -> Self {
+        Self::CombatSearchFightsRequest(value)
+    }
+}
+impl ::std::convert::From<KnowledgeItemRequest> for ClientMessage {
+    fn from(value: KnowledgeItemRequest) -> Self {
+        Self::KnowledgeItemRequest(value)
+    }
+}
+impl ::std::convert::From<KnowledgeMobRequest> for ClientMessage {
+    fn from(value: KnowledgeMobRequest) -> Self {
+        Self::KnowledgeMobRequest(value)
+    }
+}
+impl ::std::convert::From<KnowledgeSpellRequest> for ClientMessage {
+    fn from(value: KnowledgeSpellRequest) -> Self {
+        Self::KnowledgeSpellRequest(value)
+    }
+}
+impl ::std::convert::From<KnowledgeSearchRequest> for ClientMessage {
+    fn from(value: KnowledgeSearchRequest) -> Self {
+        Self::KnowledgeSearchRequest(value)
+    }
+}
+impl ::std::convert::From<KnowledgeDefineRequest> for ClientMessage {
+    fn from(value: KnowledgeDefineRequest) -> Self {
+        Self::KnowledgeDefineRequest(value)
+    }
+}
 impl ::std::convert::From<SessionMarkAddRequest> for ClientMessage {
     fn from(value: SessionMarkAddRequest) -> Self {
         Self::SessionMarkAddRequest(value)
+    }
+}
+///`CombatSearchFightsParams`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSearchFightsParams",
+///  "type": "object",
+///  "required": [
+///    "query"
+///  ],
+///  "properties": {
+///    "limit": {
+///      "description": "How many ranked hits to return. CLAMPED to the engine's own bounds rather than refused, which is `world.ts`'s rule kept verbatim: a renderer bug asking for an unbounded payload is a payload problem, not a conversation-ending one, and a search box that stopped answering because a number was silly would be the worse failure. Absent takes the engine's default.",
+///      "type": "integer"
+///    },
+///    "query": {
+///      "description": "What the user typed. Tokenized to lowercase alphanumerics; an empty or whitespace-only query answers NO hits rather than everything — the UI shows its ordinary browse list in that state, and returning the whole corpus would make the empty box the most expensive keystroke of all.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSearchFightsParams {
+    ///How many ranked hits to return. CLAMPED to the engine's own bounds rather than refused, which is `world.ts`'s rule kept verbatim: a renderer bug asking for an unbounded payload is a payload problem, not a conversation-ending one, and a search box that stopped answering because a number was silly would be the worse failure. Absent takes the engine's default.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub limit: ::std::option::Option<i64>,
+    ///What the user typed. Tokenized to lowercase alphanumerics; an empty or whitespace-only query answers NO hits rather than everything — the UI shows its ordinary browse list in that state, and returning the whole corpus would make the empty box the most expensive keystroke of all.
+    pub query: ::std::string::String,
+}
+///SEARCH THE FIGHT HISTORY (Task #61, moved server-side by JOS-485). `src/main/ipc/world.ts`'s `searchFights` handler, whose semantics are mirrored here exactly: a non-string query is the empty string, and a `limit` is CLAMPED rather than refused — see `CombatSearchFightsParams.limit`. The corpus is the engine's UNCAPPED encounter history plus the open fight, which is why this is an op and not a view: it is a ranked answer to a question, not a window over a collection, and its rows are the app's own `SegmentSummary` rather than cells.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSearchFightsRequest",
+///  "description": "SEARCH THE FIGHT HISTORY (Task #61, moved server-side by JOS-485). `src/main/ipc/world.ts`'s `searchFights` handler, whose semantics are mirrored here exactly: a non-string query is the empty string, and a `limit` is CLAMPED rather than refused — see `CombatSearchFightsParams.limit`. The corpus is the engine's UNCAPPED encounter history plus the open fight, which is why this is an op and not a view: it is a ranked answer to a question, not a window over a collection, and its rows are the app's own `SegmentSummary` rather than cells.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "combat.searchFights"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/CombatSearchFightsParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSearchFightsRequest {
+    pub id: RequestId,
+    pub op: CombatSearchFightsRequestOp,
+    pub params: CombatSearchFightsParams,
+}
+///`CombatSearchFightsRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "combat.searchFights"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CombatSearchFightsRequestOp {
+    #[serde(rename = "combat.searchFights")]
+    CombatSearchFights,
+}
+impl ::std::fmt::Display for CombatSearchFightsRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CombatSearchFights => f.write_str("combat.searchFights"),
+        }
+    }
+}
+impl ::std::str::FromStr for CombatSearchFightsRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "combat.searchFights" => Ok(Self::CombatSearchFights),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CombatSearchFightsRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for CombatSearchFightsRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CombatSearchFightsRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`src/shared/combat.ts FightSearchResult`. Ranked hits, best first, ties broken by recency and then by id so the order never depends on the corpus's arrival order.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSearchFightsResult",
+///  "description": "`src/shared/combat.ts FightSearchResult`. Ranked hits, best first, ties broken by recency and then by id so the order never depends on the corpus's arrival order.",
+///  "type": "object",
+///  "required": [
+///    "corpus",
+///    "hits"
+///  ],
+///  "properties": {
+///    "corpus": {
+///      "description": "How many fights were SEARCHED — the whole uncapped history plus the open fight. It lets a UI say `12 of 1,428` honestly instead of implying the corpus is the result set, and it is present even when `hits` is empty, because `no matches in 1,428` and `nothing to search` are different sentences.",
+///      "type": "integer"
+///    },
+///    "hits": {
+///      "description": "The ranked hits, already capped by `limit`.",
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/FightSearchHit"
+///      }
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSearchFightsResult {
+    ///How many fights were SEARCHED — the whole uncapped history plus the open fight. It lets a UI say `12 of 1,428` honestly instead of implying the corpus is the result set, and it is present even when `hits` is empty, because `no matches in 1,428` and `nothing to search` are different sentences.
+    pub corpus: i64,
+    ///The ranked hits, already capped by `limit`.
+    pub hits: ::std::vec::Vec<FightSearchHit>,
+}
+///`src/shared/combat.ts SnapshotOpts`, and OPEN rather than closed — the one shape in this schema where an unlisted key is IGNORED instead of refused. An option is a request for MORE work, so an engine that does not know one has already given the honest answer by not doing it; refusing the whole call would turn a client that learned a new option into a client that cannot ask for anything. That is the opposite of `AlertDefinition`'s openness, which exists because a definition ROUND-TRIPS and a dropped field would rewrite the user's data — nothing here comes back, so dropping an unknown key costs a caller nothing it can lose. Every field is absent-means-the-engine's-default; there is deliberately no `combinePets`, which the owner cut in 2026-08-04 and which lives in the renderer now.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSnapshotOpts",
+///  "description": "`src/shared/combat.ts SnapshotOpts`, and OPEN rather than closed — the one shape in this schema where an unlisted key is IGNORED instead of refused. An option is a request for MORE work, so an engine that does not know one has already given the honest answer by not doing it; refusing the whole call would turn a client that learned a new option into a client that cannot ask for anything. That is the opposite of `AlertDefinition`'s openness, which exists because a definition ROUND-TRIPS and a dropped field would rewrite the user's data — nothing here comes back, so dropping an unknown key costs a caller nothing it can lose. Every field is absent-means-the-engine's-default; there is deliberately no `combinePets`, which the owner cut in 2026-08-04 and which lives in the renderer now.",
+///  "type": "object",
+///  "properties": {
+///    "maxSegments": {
+///      "description": "Cap on finalized-fight summaries to serialize, newest-first. A PAYLOAD bound, never a retention one: the current encounter and the zone summary are always included, and a selected fight outside the cap still resolves fully through `selected`.",
+///      "type": "integer"
+///    },
+///    "selectedId": {
+///      "description": "Which fight or zone session to resolve `selected` against. An id this fold does not carry falls back to the default selection — the open fight, else the most recent finalized one, and NEVER the zone aggregate.",
+///      "type": "string"
+///    },
+///    "showUnparsed": {
+///      "description": "Include lines the engine could not classify. Reads the classification ring, which this fold never writes — see `fold/src/combat/state.rs` fact 2 — so it moves nothing here and is carried because the option is the app's and this op is its replacement.",
+///      "type": "boolean"
+///    },
+///    "timeline": {
+///      "description": "Include the SELECTED encounter's event timeline. Off by default because the timeline payload is heavier than the bar view.",
+///      "type": "boolean"
+///    }
+///  },
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+pub struct CombatSnapshotOpts {
+    ///Cap on finalized-fight summaries to serialize, newest-first. A PAYLOAD bound, never a retention one: the current encounter and the zone summary are always included, and a selected fight outside the cap still resolves fully through `selected`.
+    #[serde(
+        rename = "maxSegments",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub max_segments: ::std::option::Option<i64>,
+    ///Which fight or zone session to resolve `selected` against. An id this fold does not carry falls back to the default selection — the open fight, else the most recent finalized one, and NEVER the zone aggregate.
+    #[serde(
+        rename = "selectedId",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub selected_id: ::std::option::Option<::std::string::String>,
+    ///Include lines the engine could not classify. Reads the classification ring, which this fold never writes — see `fold/src/combat/state.rs` fact 2 — so it moves nothing here and is carried because the option is the app's and this op is its replacement.
+    #[serde(
+        rename = "showUnparsed",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub show_unparsed: ::std::option::Option<bool>,
+    ///Include the SELECTED encounter's event timeline. Off by default because the timeline payload is heavier than the bar view.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub timeline: ::std::option::Option<bool>,
+}
+impl ::std::default::Default for CombatSnapshotOpts {
+    fn default() -> Self {
+        Self {
+            max_segments: Default::default(),
+            selected_id: Default::default(),
+            show_unparsed: Default::default(),
+            timeline: Default::default(),
+        }
+    }
+}
+///`CombatSnapshotParams`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSnapshotParams",
+///  "type": "object",
+///  "properties": {
+///    "opts": {
+///      "$ref": "#/$defs/CombatSnapshotOpts"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSnapshotParams {
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub opts: ::std::option::Option<CombatSnapshotOpts>,
+}
+impl ::std::default::Default for CombatSnapshotParams {
+    fn default() -> Self {
+        Self {
+            opts: Default::default(),
+        }
+    }
+}
+///THE COMBAT ENGINE, ASKED (JOS-485). The whole of what `combat:snapshot` serves over IPC today — the selection, the segment list, the zone sessions, the stance and poison readouts, the roster and the hydration flag — from the fold that is running, through the same one door `module.snapshot` uses. It is NOT a `module.snapshot`: the combat engine is not in the registry (`WIRING_ORDER` does not name it), it is the post-registry subscriber, and asking for it by a module name would be asking the wrong authority. THE INSTANT IS THE ENGINE'S TO CHOOSE and the reply says which one it chose — see `CombatSnapshotResult.now`.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSnapshotRequest",
+///  "description": "THE COMBAT ENGINE, ASKED (JOS-485). The whole of what `combat:snapshot` serves over IPC today — the selection, the segment list, the zone sessions, the stance and poison readouts, the roster and the hydration flag — from the fold that is running, through the same one door `module.snapshot` uses. It is NOT a `module.snapshot`: the combat engine is not in the registry (`WIRING_ORDER` does not name it), it is the post-registry subscriber, and asking for it by a module name would be asking the wrong authority. THE INSTANT IS THE ENGINE'S TO CHOOSE and the reply says which one it chose — see `CombatSnapshotResult.now`.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "combat.snapshot"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/CombatSnapshotParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSnapshotRequest {
+    pub id: RequestId,
+    pub op: CombatSnapshotRequestOp,
+    pub params: CombatSnapshotParams,
+}
+///`CombatSnapshotRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "combat.snapshot"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CombatSnapshotRequestOp {
+    #[serde(rename = "combat.snapshot")]
+    CombatSnapshot,
+}
+impl ::std::fmt::Display for CombatSnapshotRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::CombatSnapshot => f.write_str("combat.snapshot"),
+        }
+    }
+}
+impl ::std::str::FromStr for CombatSnapshotRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "combat.snapshot" => Ok(Self::CombatSnapshot),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CombatSnapshotRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for CombatSnapshotRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CombatSnapshotRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///The snapshot, and the instant it was taken at. TWO FIELDS RATHER THAN ONE because `now` is not recoverable from the payload and the whole answer is a function of it: a fight closes on elapsed time, `inCombat` is a freshness test, and a summary's `active` flag is the same question per row. A client that could not see which clock the engine used could not tell a stale answer from a quiet log.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatSnapshotResult",
+///  "description": "The snapshot, and the instant it was taken at. TWO FIELDS RATHER THAN ONE because `now` is not recoverable from the payload and the whole answer is a function of it: a fight closes on elapsed time, `inCombat` is a freshness test, and a summary's `active` flag is the same question per row. A client that could not see which clock the engine used could not tell a stale answer from a quiet log.",
+///  "type": "object",
+///  "required": [
+///    "now",
+///    "snapshot"
+///  ],
+///  "properties": {
+///    "now": {
+///      "description": "THE INSTANT THE SNAPSHOT WAS TAKEN AT, in epoch millis, and the engine chose it: the process's own wall clock once the tail is LIVE, and the fold's own `lastTs` — the log's clock — at every moment before that. A REPLAY IS NOT A MOMENT IN TIME (`engine.ts`'s hydrating gate, ported): every line of a months-old log is weeks behind the host clock, so a mid-scan answer stamped `Date.now()` would finalize whatever fight was open and hand the rest of it to a fresh encounter — MEASURED app-side, one 53,577-damage fight splitting into 43,504 + 10,073 under load. It is stated rather than assumed because it is what makes a mid-fold answer a REAL PREFIX STATE: the same bytes asked at the same `seq` give the same snapshot, which is ruling 18 law 1 for this surface.",
+///      "type": "integer"
+///    },
+///    "snapshot": {
+///      "$ref": "#/$defs/CombatState"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSnapshotResult {
+    ///THE INSTANT THE SNAPSHOT WAS TAKEN AT, in epoch millis, and the engine chose it: the process's own wall clock once the tail is LIVE, and the fold's own `lastTs` — the log's clock — at every moment before that. A REPLAY IS NOT A MOMENT IN TIME (`engine.ts`'s hydrating gate, ported): every line of a months-old log is weeks behind the host clock, so a mid-scan answer stamped `Date.now()` would finalize whatever fight was open and hand the rest of it to a fresh encounter — MEASURED app-side, one 53,577-damage fight splitting into 43,504 + 10,073 under load. It is stated rather than assumed because it is what makes a mid-fold answer a REAL PREFIX STATE: the same bytes asked at the same `seq` give the same snapshot, which is ruling 18 law 1 for this surface.
+    pub now: i64,
+    pub snapshot: CombatState,
+}
+///THE COMBAT SNAPSHOT, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the `ModuleState` argument, one surface over. `src/shared/combat.ts CombatSnapshot` is ~14 fields of nested view builders (six of them, each with its own row types), it is the app's own contract with its renderer, and a meter growing a column must not be a protocol change or a `badParams` refusal. Typed-where-cheap is emphatically not cheap here: typify would lower every count in it to `f64`, which is the `Cell` defect at the scale of a whole damage meter. It is an OBJECT and always one, which is where it differs from `ModuleState` — the registry publishes both objects and arrays, `CombatEngine::snapshot` publishes an object and nothing else — so this says `object` and lowers to an ordered map of raw JSON in both languages, with every integer intact.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "CombatState",
+///  "description": "THE COMBAT SNAPSHOT, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the `ModuleState` argument, one surface over. `src/shared/combat.ts CombatSnapshot` is ~14 fields of nested view builders (six of them, each with its own row types), it is the app's own contract with its renderer, and a meter growing a column must not be a protocol change or a `badParams` refusal. Typed-where-cheap is emphatically not cheap here: typify would lower every count in it to `f64`, which is the `Cell` defect at the scale of a whole damage meter. It is an OBJECT and always one, which is where it differs from `ModuleState` — the registry publishes both objects and arrays, `CombatEngine::snapshot` publishes an object and nothing else — so this says `object` and lowers to an ordered map of raw JSON in both languages, with every integer intact.",
+///  "type": "object",
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct CombatState(pub ::serde_json::Map<::std::string::String, ::serde_json::Value>);
+impl ::std::ops::Deref for CombatState {
+    type Target = ::serde_json::Map<::std::string::String, ::serde_json::Value>;
+    fn deref(&self) -> &::serde_json::Map<::std::string::String, ::serde_json::Value> {
+        &self.0
+    }
+}
+impl ::std::convert::From<CombatState>
+    for ::serde_json::Map<::std::string::String, ::serde_json::Value>
+{
+    fn from(value: CombatState) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for CombatState
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self(value)
     }
 }
 ///`src/shared/classCombo.ts ComboCorrection` — a span the user re-labelled, and when they said so.
@@ -1497,6 +2011,9 @@ pub struct EchoResult {
 ///      "$ref": "#/$defs/FireMessage"
 ///    },
 ///    {
+///      "$ref": "#/$defs/KnowledgeMissMessage"
+///    },
+///    {
 ///      "$ref": "#/$defs/ConCardMessage"
 ///    },
 ///    {
@@ -1516,6 +2033,7 @@ pub enum EngineMessage {
     DiffMessage(DiffMessage),
     EpochMessage(EpochMessage),
     FireMessage(FireMessage),
+    KnowledgeMissMessage(KnowledgeMissMessage),
     ConCardMessage(ConCardMessage),
     ModuleChangedMessage(ModuleChangedMessage),
 }
@@ -1552,6 +2070,11 @@ impl ::std::convert::From<EpochMessage> for EngineMessage {
 impl ::std::convert::From<FireMessage> for EngineMessage {
     fn from(value: FireMessage) -> Self {
         Self::FireMessage(value)
+    }
+}
+impl ::std::convert::From<KnowledgeMissMessage> for EngineMessage {
+    fn from(value: KnowledgeMissMessage) -> Self {
+        Self::KnowledgeMissMessage(value)
     }
 }
 impl ::std::convert::From<ConCardMessage> for EngineMessage {
@@ -2018,6 +2541,74 @@ impl ::std::convert::TryFrom<::std::string::String> for ErrorReplyKind {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+///`FightSearchHit`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "FightSearchHit",
+///  "type": "object",
+///  "required": [
+///    "score",
+///    "summary"
+///  ],
+///  "properties": {
+///    "score": {
+///      "description": "0..1 relevance. Exact token matches outrank prefix, prefix substring, substring a bounded typo correction. A FLOAT and deliberately not a percentage: it is a ranking key the UI may show as a bar, and rounding it here would flatten ties the sort has already broken.",
+///      "type": "number"
+///    },
+///    "summary": {
+///      "$ref": "#/$defs/FightSummary"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct FightSearchHit {
+    ///0..1 relevance. Exact token matches outrank prefix, prefix substring, substring a bounded typo correction. A FLOAT and deliberately not a percentage: it is a ranking key the UI may show as a bar, and rounding it here would flatten ties the sort has already broken.
+    pub score: f64,
+    pub summary: FightSummary,
+}
+///One fight, EXACTLY AS THE ENGINE SUMMARIZES IT — `src/shared/combat.ts SegmentSummary`. Open for `CombatState`'s reason and read off the same builder, so a hit and the same fight inside a snapshot are byte-identical rather than two renderings of one row.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "FightSummary",
+///  "description": "One fight, EXACTLY AS THE ENGINE SUMMARIZES IT — `src/shared/combat.ts SegmentSummary`. Open for `CombatState`'s reason and read off the same builder, so a hit and the same fight inside a snapshot are byte-identical rather than two renderings of one row.",
+///  "type": "object",
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct FightSummary(pub ::serde_json::Map<::std::string::String, ::serde_json::Value>);
+impl ::std::ops::Deref for FightSummary {
+    type Target = ::serde_json::Map<::std::string::String, ::serde_json::Value>;
+    fn deref(&self) -> &::serde_json::Map<::std::string::String, ::serde_json::Value> {
+        &self.0
+    }
+}
+impl ::std::convert::From<FightSummary>
+    for ::serde_json::Map<::std::string::String, ::serde_json::Value>
+{
+    fn from(value: FightSummary) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for FightSummary
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self(value)
     }
 }
 ///AN ALERT FIRED (owner ruling 22). The engine evaluates the user's alert definitions against LIVE events — replay must never make a sound, which is the same boundary law the app-side evaluator has always obeyed — and this is what it says when one matches. CONNECTION-WIDE, and therefore carrying NO `id`: a fire belongs to the world rather than to any subscription, which is the `EpochMessage` precedent. It carries no `epoch` either, and that is the difference from an epoch message rather than an oversight: every other stream frame describes WINDOW STATE a client has to reconcile across a generation, while a fire is a thing that happened once — there is nothing to drop and nothing to re-request, so a generation number would be a field with no reader. IT IS FULLY RESOLVED SERVER-SIDE (the conCard principle): everything the app needs in order to make the identical noise is in these four fields, so no client ever has to hold the definition the fire came from.
@@ -2672,6 +3263,1071 @@ impl ::std::convert::TryFrom<&::std::string::String> for InsertOpOp {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for InsertOpOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`entry` is what the app learned. A record carrying `notFound: true` is a real negative and is a perfectly good answer — it is the app saying `I looked and the wiki has no page`, which stops the engine ever announcing that name again. That is the ONE thing this engine cannot conclude for itself, having no network to look with.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeDefineParams",
+///  "description": "`entry` is what the app learned. A record carrying `notFound: true` is a real negative and is a perfectly good answer — it is the app saying `I looked and the wiki has no page`, which stops the engine ever announcing that name again. That is the ONE thing this engine cannot conclude for itself, having no network to look with.",
+///  "type": "object",
+///  "required": [
+///    "domain",
+///    "entry",
+///    "name"
+///  ],
+///  "properties": {
+///    "domain": {
+///      "$ref": "#/$defs/KnowledgePushDomain"
+///    },
+///    "entry": {
+///      "$ref": "#/$defs/KnowledgeRecord"
+///    },
+///    "name": {
+///      "description": "The name the miss frame carried, echoed back unchanged. The engine folds it into the domain's own key on the way in, so the app never has to know how an item key differs from a mob key.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeDefineParams {
+    pub domain: KnowledgePushDomain,
+    pub entry: KnowledgeRecord,
+    ///The name the miss frame carried, echoed back unchanged. The engine folds it into the domain's own key on the way in, so the app never has to know how an item key differs from a mob key.
+    pub name: ::std::string::String,
+}
+/**THE ANSWER TO A MISS, PUSHED BACK (boundary verdict 5). The engine ships without a network stack; the app owns the wiki fetch and with it the scrape etiquette that is a LAW here (a serialized queue, 150 ms spacing, and the server's own `Retry-After` honoured across the whole queue). So the engine says `knowledgeMiss`, the app fetches, and this is how the answer arrives.
+
+IT IS NOT A FULL-SET REPLACE, and that is stated rather than slipped in. The other five `*.define` commands carry a WHOLE set because they carry user PREFERENCES — small, bounded, owned by a store that can restate them. This set is the WIKI: unbounded, not the app's to own, learned one entry at a time in answer to one miss at a time. A full-set replace would mean restating 11,288 item records on every push. What it KEEPS of the command law is the part the law is for: it is IDEMPOTENT and ORDER-INDEPENDENT per key — pushing the same entry twice leaves what pushing it once leaves, and two names commute — so a crash-respawn is still trivial (the overlay is empty, every name misses again, the app answers again) and the input is still hash-friendly for ruling 18's cache key, as the set of (key, entry) pairs. What it gives up is DELETE, which nothing asks for.*/
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeDefineRequest",
+///  "description": "THE ANSWER TO A MISS, PUSHED BACK (boundary verdict 5). The engine ships without a network stack; the app owns the wiki fetch and with it the scrape etiquette that is a LAW here (a serialized queue, 150 ms spacing, and the server's own `Retry-After` honoured across the whole queue). So the engine says `knowledgeMiss`, the app fetches, and this is how the answer arrives.\n\nIT IS NOT A FULL-SET REPLACE, and that is stated rather than slipped in. The other five `*.define` commands carry a WHOLE set because they carry user PREFERENCES — small, bounded, owned by a store that can restate them. This set is the WIKI: unbounded, not the app's to own, learned one entry at a time in answer to one miss at a time. A full-set replace would mean restating 11,288 item records on every push. What it KEEPS of the command law is the part the law is for: it is IDEMPOTENT and ORDER-INDEPENDENT per key — pushing the same entry twice leaves what pushing it once leaves, and two names commute — so a crash-respawn is still trivial (the overlay is empty, every name misses again, the app answers again) and the input is still hash-friendly for ruling 18's cache key, as the set of (key, entry) pairs. What it gives up is DELETE, which nothing asks for.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "knowledge.define"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/KnowledgeDefineParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeDefineRequest {
+    pub id: RequestId,
+    pub op: KnowledgeDefineRequestOp,
+    pub params: KnowledgeDefineParams,
+}
+///`KnowledgeDefineRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "knowledge.define"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum KnowledgeDefineRequestOp {
+    #[serde(rename = "knowledge.define")]
+    KnowledgeDefine,
+}
+impl ::std::fmt::Display for KnowledgeDefineRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::KnowledgeDefine => f.write_str("knowledge.define"),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgeDefineRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "knowledge.define" => Ok(Self::KnowledgeDefine),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgeDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for KnowledgeDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgeDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///WHICH COMMITTED CORPUS AN ANSWER CAME OUT OF. A CLOSED set, like every other enum here: both sides generate from this artifact, so a corpus this build has never heard of cannot arrive. `item` and `mob` are the two the engine can be pushed answers for; `spell` is the parser's own effective catalog, which has no live fallback anywhere in this app, and `quest` is the scraped quest catalog, which is reachable only through search (a quest is not a card this app draws on its own).
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeDomain",
+///  "description": "WHICH COMMITTED CORPUS AN ANSWER CAME OUT OF. A CLOSED set, like every other enum here: both sides generate from this artifact, so a corpus this build has never heard of cannot arrive. `item` and `mob` are the two the engine can be pushed answers for; `spell` is the parser's own effective catalog, which has no live fallback anywhere in this app, and `quest` is the scraped quest catalog, which is reachable only through search (a quest is not a card this app draws on its own).",
+///  "type": "string",
+///  "enum": [
+///    "item",
+///    "mob",
+///    "spell",
+///    "quest"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum KnowledgeDomain {
+    #[serde(rename = "item")]
+    Item,
+    #[serde(rename = "mob")]
+    Mob,
+    #[serde(rename = "spell")]
+    Spell,
+    #[serde(rename = "quest")]
+    Quest,
+}
+impl ::std::fmt::Display for KnowledgeDomain {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Item => f.write_str("item"),
+            Self::Mob => f.write_str("mob"),
+            Self::Spell => f.write_str("spell"),
+            Self::Quest => f.write_str("quest"),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgeDomain {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "item" => Ok(Self::Item),
+            "mob" => Ok(Self::Mob),
+            "spell" => Ok(Self::Spell),
+            "quest" => Ok(Self::Quest),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgeDomain {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for KnowledgeDomain {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgeDomain {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///One search hit: what it is, what it is called, and the wiki page that names it when a corpus states one. It is deliberately NOT a card — a hit is the handle a caller passes back to `knowledge.item`/`mob`/`spell`, and serving thirty-field records for twenty hits would be a type-ahead paying a card's payload per keystroke.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeHit",
+///  "description": "One search hit: what it is, what it is called, and the wiki page that names it when a corpus states one. It is deliberately NOT a card — a hit is the handle a caller passes back to `knowledge.item`/`mob`/`spell`, and serving thirty-field records for twenty hits would be a type-ahead paying a card's payload per keystroke.",
+///  "type": "object",
+///  "required": [
+///    "domain",
+///    "name"
+///  ],
+///  "properties": {
+///    "domain": {
+///      "$ref": "#/$defs/KnowledgeDomain"
+///    },
+///    "name": {
+///      "type": "string"
+///    },
+///    "page": {
+///      "description": "The wiki page title, when the corpus states one. Absent for a spell (the catalog is a scrape of the game's own table, not of pages).",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeHit {
+    pub domain: KnowledgeDomain,
+    pub name: ::std::string::String,
+    ///The wiki page title, when the corpus states one. Absent for a spell (the catalog is a scrape of the game's own table, not of pages).
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub page: ::std::option::Option<::std::string::String>,
+}
+///"What's this lore/quest item for" — `main/itemLookup.ts lookupItem`, served from the committed corpus the engine now holds (boundary verdict 5; ~12 MB leaves main's heap with this surface and the renderer's bundled copies follow). IT NEVER FAILS AND NEVER ANSWERS `notFound`: a name no corpus holds still comes back carrying every LOCAL association — the Plane of Sky dataset's quest uses and the scraped quest catalog's, which are facts a missing wiki page does not unmake — with `found: false` beside it. The engine also announces that name once on the stream (`knowledgeMiss`), because the fetch is the app's.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeItemRequest",
+///  "description": "\"What's this lore/quest item for\" — `main/itemLookup.ts lookupItem`, served from the committed corpus the engine now holds (boundary verdict 5; ~12 MB leaves main's heap with this surface and the renderer's bundled copies follow). IT NEVER FAILS AND NEVER ANSWERS `notFound`: a name no corpus holds still comes back carrying every LOCAL association — the Plane of Sky dataset's quest uses and the scraped quest catalog's, which are facts a missing wiki page does not unmake — with `found: false` beside it. The engine also announces that name once on the stream (`knowledgeMiss`), because the fetch is the app's.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "knowledge.item"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/KnowledgeNameParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeItemRequest {
+    pub id: RequestId,
+    pub op: KnowledgeItemRequestOp,
+    pub params: KnowledgeNameParams,
+}
+///`KnowledgeItemRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "knowledge.item"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum KnowledgeItemRequestOp {
+    #[serde(rename = "knowledge.item")]
+    KnowledgeItem,
+}
+impl ::std::fmt::Display for KnowledgeItemRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::KnowledgeItem => f.write_str("knowledge.item"),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgeItemRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "knowledge.item" => Ok(Self::KnowledgeItem),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgeItemRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for KnowledgeItemRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgeItemRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+/**THE ENGINE COULD NOT ANSWER A NAME, AND THE APP OWNS THE NETWORK (boundary verdict 5: "The wiki FETCH stays app-side in v1 — app fetches on an engine miss-event and pushes the result in — so the engine ships without a network stack. Scrape throttles preserved."). This is that miss-event, and the answer comes back as a `knowledge.define` command.
+
+CONNECTION-WIDE, AND THEREFORE CARRYING NO `id` — the `EpochMessage`/`FireMessage` precedent. A miss belongs to the PROCESS rather than to any subscription or any request: the same name is missing whether it was asked for by a `knowledge.item` op on one connection or by the fold's own probe on the ingest thread, and every window on this app would want the same fetch made once.
+
+IT CARRIES NO `epoch` EITHER, and that is the `FireMessage` argument exactly. Every frame that carries a generation describes WINDOW STATE a client has to reconcile across a bump; this describes the CORPUS, which is committed data plus an overlay that survives an attach (a character switch is not the app withdrawing what it fetched). There is nothing to drop and nothing to re-request, so a generation number would be a field with no reader.
+
+EACH NAME IS ANNOUNCED AT MOST ONCE PER PROCESS. A stacked loot burst probes one name many times and a `/con` ring re-cons the same mob three times in five seconds; asking the app to fetch each of those would be the engine breaking the etiquette law on the app's behalf. A `knowledge.define` for the name makes every later lookup a hit, so nothing has to un-remember anything.*/
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeMissMessage",
+///  "description": "THE ENGINE COULD NOT ANSWER A NAME, AND THE APP OWNS THE NETWORK (boundary verdict 5: \"The wiki FETCH stays app-side in v1 — app fetches on an engine miss-event and pushes the result in — so the engine ships without a network stack. Scrape throttles preserved.\"). This is that miss-event, and the answer comes back as a `knowledge.define` command.\n\nCONNECTION-WIDE, AND THEREFORE CARRYING NO `id` — the `EpochMessage`/`FireMessage` precedent. A miss belongs to the PROCESS rather than to any subscription or any request: the same name is missing whether it was asked for by a `knowledge.item` op on one connection or by the fold's own probe on the ingest thread, and every window on this app would want the same fetch made once.\n\nIT CARRIES NO `epoch` EITHER, and that is the `FireMessage` argument exactly. Every frame that carries a generation describes WINDOW STATE a client has to reconcile across a bump; this describes the CORPUS, which is committed data plus an overlay that survives an attach (a character switch is not the app withdrawing what it fetched). There is nothing to drop and nothing to re-request, so a generation number would be a field with no reader.\n\nEACH NAME IS ANNOUNCED AT MOST ONCE PER PROCESS. A stacked loot burst probes one name many times and a `/con` ring re-cons the same mob three times in five seconds; asking the app to fetch each of those would be the engine breaking the etiquette law on the app's behalf. A `knowledge.define` for the name makes every later lookup a hit, so nothing has to un-remember anything.",
+///  "type": "object",
+///  "required": [
+///    "domain",
+///    "kind",
+///    "name"
+///  ],
+///  "properties": {
+///    "domain": {
+///      "$ref": "#/$defs/KnowledgePushDomain"
+///    },
+///    "kind": {
+///      "type": "string",
+///      "enum": [
+///        "knowledgeMiss"
+///      ]
+///    },
+///    "name": {
+///      "description": "The name to look up, in the spelling the FETCH should use — the display name for an item (what `resolvePage(display)` searches for), and for a mob the CANONICAL spelling the raid roster states, because that is the spelling the wiki and the committed catalog use. Never a folded key: a key is a join handle and the wiki has no page for one.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeMissMessage {
+    pub domain: KnowledgePushDomain,
+    pub kind: KnowledgeMissMessageKind,
+    ///The name to look up, in the spelling the FETCH should use — the display name for an item (what `resolvePage(display)` searches for), and for a mob the CANONICAL spelling the raid roster states, because that is the spelling the wiki and the committed catalog use. Never a folded key: a key is a join handle and the wiki has no page for one.
+    pub name: ::std::string::String,
+}
+///`KnowledgeMissMessageKind`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "knowledgeMiss"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum KnowledgeMissMessageKind {
+    #[serde(rename = "knowledgeMiss")]
+    KnowledgeMiss,
+}
+impl ::std::fmt::Display for KnowledgeMissMessageKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::KnowledgeMiss => f.write_str("knowledgeMiss"),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgeMissMessageKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "knowledgeMiss" => Ok(Self::KnowledgeMiss),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgeMissMessageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for KnowledgeMissMessageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgeMissMessageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///"What does this thing drop" — `main/mobLookup.ts lookupMob`. FOUR SOURCES JOINED SERVER-SIDE, which is the whole reason this op is worth having rather than shipping the catalog to the renderer: the committed drop table, YOUR OWN LOOT HISTORY (read off the fold's own index — the mutual dependency verdict 5 names dissolves in-process), the quest catalog's `relatedNpcs`, and the era evidence each drop's ITEM page carries. The name is answered under every spelling the raid roster states for that creature (`mobAliases.ts`) and the record still reads back the spelling the CALLER used.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeMobRequest",
+///  "description": "\"What does this thing drop\" — `main/mobLookup.ts lookupMob`. FOUR SOURCES JOINED SERVER-SIDE, which is the whole reason this op is worth having rather than shipping the catalog to the renderer: the committed drop table, YOUR OWN LOOT HISTORY (read off the fold's own index — the mutual dependency verdict 5 names dissolves in-process), the quest catalog's `relatedNpcs`, and the era evidence each drop's ITEM page carries. The name is answered under every spelling the raid roster states for that creature (`mobAliases.ts`) and the record still reads back the spelling the CALLER used.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "knowledge.mob"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/KnowledgeNameParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeMobRequest {
+    pub id: RequestId,
+    pub op: KnowledgeMobRequestOp,
+    pub params: KnowledgeNameParams,
+}
+///`KnowledgeMobRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "knowledge.mob"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum KnowledgeMobRequestOp {
+    #[serde(rename = "knowledge.mob")]
+    KnowledgeMob,
+}
+impl ::std::fmt::Display for KnowledgeMobRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::KnowledgeMob => f.write_str("knowledge.mob"),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgeMobRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "knowledge.mob" => Ok(Self::KnowledgeMob),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgeMobRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for KnowledgeMobRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgeMobRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///ONE NAME, as the asker spells it. Never a canonical key: the engine folds the name itself (each corpus has its own fold — the ` +N` item-level suffix, the mob-name quote glyphs and copy numbers), and a caller that pre-folded would be a second opinion about a join key.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeNameParams",
+///  "description": "ONE NAME, as the asker spells it. Never a canonical key: the engine folds the name itself (each corpus has its own fold — the ` +N` item-level suffix, the mob-name quote glyphs and copy numbers), and a caller that pre-folded would be a second opinion about a join key.",
+///  "type": "object",
+///  "required": [
+///    "name"
+///  ],
+///  "properties": {
+///    "name": {
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeNameParams {
+    pub name: ::std::string::String,
+}
+///THE TWO CORPORA THE APP CAN ANSWER FOR — a strictly smaller set than `KnowledgeDomain`, and the difference is where the FETCHER lives (boundary verdict 5). `itemLookup`/`mobLookup` resolve a wiki page on demand app-side, so a name those corpora lack is a question somebody can go and answer. The spell catalog has no live fallback at all — it is regenerated by `npm run scrape:spells` and committed — so a spell the DB lacks is not a miss, and a `knowledge.define` naming `spell` would be asking the engine to take an answer nothing produced. Refused by SHAPE rather than by a runtime check.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgePushDomain",
+///  "description": "THE TWO CORPORA THE APP CAN ANSWER FOR — a strictly smaller set than `KnowledgeDomain`, and the difference is where the FETCHER lives (boundary verdict 5). `itemLookup`/`mobLookup` resolve a wiki page on demand app-side, so a name those corpora lack is a question somebody can go and answer. The spell catalog has no live fallback at all — it is regenerated by `npm run scrape:spells` and committed — so a spell the DB lacks is not a miss, and a `knowledge.define` naming `spell` would be asking the engine to take an answer nothing produced. Refused by SHAPE rather than by a runtime check.",
+///  "type": "string",
+///  "enum": [
+///    "item",
+///    "mob"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum KnowledgePushDomain {
+    #[serde(rename = "item")]
+    Item,
+    #[serde(rename = "mob")]
+    Mob,
+}
+impl ::std::fmt::Display for KnowledgePushDomain {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Item => f.write_str("item"),
+            Self::Mob => f.write_str("mob"),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgePushDomain {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "item" => Ok(Self::Item),
+            "mob" => Ok(Self::Mob),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgePushDomain {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for KnowledgePushDomain {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgePushDomain {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///ONE KNOWLEDGE CARD, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the `ModuleState`/`AlertDefinition` argument a third time, and here it is the strongest of the three. The field set belongs to the SCRAPER: `itemsDb.ts` says a stored record is *literally* the `ItemKnowledge` fields `parseItemWikitext` produces, no projection and no renaming, and that type carries a nested in-game stat block, recipe lists, craft trees with ingredient lines, drop sources and era banners — around thirty fields that grow whenever the wiki grows a field worth scraping. A typed protocol mirror of that would be a translation layer whose only job is to LOSE a field the day the scraper gains one, and it would do it silently, because a knowledge card degrades quietly rather than failing. Worse, a record ROUND-TRIPS: `knowledge.define` pushes one in and every later `knowledge.item` hands it back, so a generator that dropped an unlisted field would rewrite the answer the app just fetched. The engine reads the handful of fields it needs with its own reader (`knowledge::items::knowledge_from_db`, `is_notable`), exactly as the fold reads an event.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeRecord",
+///  "description": "ONE KNOWLEDGE CARD, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the `ModuleState`/`AlertDefinition` argument a third time, and here it is the strongest of the three. The field set belongs to the SCRAPER: `itemsDb.ts` says a stored record is *literally* the `ItemKnowledge` fields `parseItemWikitext` produces, no projection and no renaming, and that type carries a nested in-game stat block, recipe lists, craft trees with ingredient lines, drop sources and era banners — around thirty fields that grow whenever the wiki grows a field worth scraping. A typed protocol mirror of that would be a translation layer whose only job is to LOSE a field the day the scraper gains one, and it would do it silently, because a knowledge card degrades quietly rather than failing. Worse, a record ROUND-TRIPS: `knowledge.define` pushes one in and every later `knowledge.item` hands it back, so a generator that dropped an unlisted field would rewrite the answer the app just fetched. The engine reads the handful of fields it needs with its own reader (`knowledge::items::knowledge_from_db`, `is_notable`), exactly as the fold reads an event.",
+///  "type": "object",
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct KnowledgeRecord(pub ::serde_json::Map<::std::string::String, ::serde_json::Value>);
+impl ::std::ops::Deref for KnowledgeRecord {
+    type Target = ::serde_json::Map<::std::string::String, ::serde_json::Value>;
+    fn deref(&self) -> &::serde_json::Map<::std::string::String, ::serde_json::Value> {
+        &self.0
+    }
+}
+impl ::std::convert::From<KnowledgeRecord>
+    for ::serde_json::Map<::std::string::String, ::serde_json::Value>
+{
+    fn from(value: KnowledgeRecord) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for KnowledgeRecord
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self(value)
+    }
+}
+///One knowledge card. `found` and `record` are BOTH required and they answer different questions: `found` is whether a committed (or pushed-in) source states this name, and `record` is what to draw either way — a miss still carries every local association it could gather. A client that branched on `record` being absent would never see a miss, because a miss is not an absence.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeResult",
+///  "description": "One knowledge card. `found` and `record` are BOTH required and they answer different questions: `found` is whether a committed (or pushed-in) source states this name, and `record` is what to draw either way — a miss still carries every local association it could gather. A client that branched on `record` being absent would never see a miss, because a miss is not an absence.",
+///  "type": "object",
+///  "required": [
+///    "domain",
+///    "found",
+///    "name",
+///    "record"
+///  ],
+///  "properties": {
+///    "domain": {
+///      "$ref": "#/$defs/KnowledgeDomain"
+///    },
+///    "found": {
+///      "type": "boolean"
+///    },
+///    "name": {
+///      "description": "The name as it was asked for, echoed back so a caller holding several in flight needs no bookkeeping of its own.",
+///      "type": "string"
+///    },
+///    "record": {
+///      "$ref": "#/$defs/KnowledgeRecord"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeResult {
+    pub domain: KnowledgeDomain,
+    pub found: bool,
+    ///The name as it was asked for, echoed back so a caller holding several in flight needs no bookkeeping of its own.
+    pub name: ::std::string::String,
+    pub record: KnowledgeRecord,
+}
+///`domain` searches ONE corpus and its absence means all four; it is a FILTER and not a hint — an unranked hit from another corpus would be the same defect an accept-and-ignore filter field is on a view.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeSearchParams",
+///  "description": "`domain` searches ONE corpus and its absence means all four; it is a FILTER and not a hint — an unranked hit from another corpus would be the same defect an accept-and-ignore filter field is on a view.",
+///  "type": "object",
+///  "required": [
+///    "query"
+///  ],
+///  "properties": {
+///    "domain": {
+///      "$ref": "#/$defs/KnowledgeDomain"
+///    },
+///    "limit": {
+///      "description": "How many hits to return. Absent takes the engine's default; a number above its cap takes the cap, because this is a type-ahead rather than a page — the window/offset machinery belongs to `view.subscribe`, where a list is the product. `total` states how many matched, so a caller can say `1-20 of 143` without ever holding 143.",
+///      "type": "integer"
+///    },
+///    "query": {
+///      "description": "What to look for. Case-folded on both sides; an empty or whitespace-only query answers with no hits rather than with the whole corpus.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeSearchParams {
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub domain: ::std::option::Option<KnowledgeDomain>,
+    ///How many hits to return. Absent takes the engine's default; a number above its cap takes the cap, because this is a type-ahead rather than a page — the window/offset machinery belongs to `view.subscribe`, where a list is the product. `total` states how many matched, so a caller can say `1-20 of 143` without ever holding 143.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub limit: ::std::option::Option<i64>,
+    ///What to look for. Case-folded on both sides; an empty or whitespace-only query answers with no hits rather than with the whole corpus.
+    pub query: ::std::string::String,
+}
+///NAME SEARCH ACROSS EVERY CORPUS THE ENGINE HOLDS. It answers what the three lookups cannot: a lookup needs the exact name, and a person types three letters. THE RANKING IS THE ENGINE'S (ruling 4): hits arrive EXACT first, then PREFIX, then CONTAINS, and within a rank by name length then alphabetically — a search that handed back an unordered bag would be handing the renderer the munging the ruling forbids.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeSearchRequest",
+///  "description": "NAME SEARCH ACROSS EVERY CORPUS THE ENGINE HOLDS. It answers what the three lookups cannot: a lookup needs the exact name, and a person types three letters. THE RANKING IS THE ENGINE'S (ruling 4): hits arrive EXACT first, then PREFIX, then CONTAINS, and within a rank by name length then alphabetically — a search that handed back an unordered bag would be handing the renderer the munging the ruling forbids.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "knowledge.search"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/KnowledgeSearchParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeSearchRequest {
+    pub id: RequestId,
+    pub op: KnowledgeSearchRequestOp,
+    pub params: KnowledgeSearchParams,
+}
+///`KnowledgeSearchRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "knowledge.search"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum KnowledgeSearchRequestOp {
+    #[serde(rename = "knowledge.search")]
+    KnowledgeSearch,
+}
+impl ::std::fmt::Display for KnowledgeSearchRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::KnowledgeSearch => f.write_str("knowledge.search"),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgeSearchRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "knowledge.search" => Ok(Self::KnowledgeSearch),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgeSearchRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for KnowledgeSearchRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgeSearchRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`KnowledgeSearchResult`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeSearchResult",
+///  "type": "object",
+///  "required": [
+///    "hits",
+///    "query",
+///    "total"
+///  ],
+///  "properties": {
+///    "hits": {
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/KnowledgeHit"
+///      }
+///    },
+///    "query": {
+///      "type": "string"
+///    },
+///    "total": {
+///      "description": "How many names MATCHED, ignoring the limit — the one number a caller cannot compute from what it was handed.",
+///      "type": "integer"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeSearchResult {
+    pub hits: ::std::vec::Vec<KnowledgeHit>,
+    pub query: ::std::string::String,
+    ///How many names MATCHED, ignoring the limit — the one number a caller cannot compute from what it was handed.
+    pub total: i64,
+}
+///ONE SPELL, from the parser's own EFFECTIVE catalog — the committed scrape with removals, derived durations and corrections applied, which is the same table the fold classifies against, never a second load. A NAMED GAP RIDES THIS OP AND IS STATED HERE RATHER THAN DISCOVERED: it carries the DB's stated fields and not the JOIN half of `main/data/spellDetail.ts` — no derived effect classes, no rank lineage, and none of the metrics `spellMetricsAt` reads at a gain level, at a mote rank or with worn focus. Those need three inputs this engine does not have yet (the parsed `spells_us.txt` client table — boundary verdict 7, unbuilt; the observed-rank module's join; the planner's worn-focus reading), and half a card is a wrong answer wearing a right one's clothes. The op answers `found: false` for a rank-suffixed name the DB carries no row for, rather than answering it with the LINE's numbers and no note that they are the line's. The spell-surface ticket owns the rest.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "KnowledgeSpellRequest",
+///  "description": "ONE SPELL, from the parser's own EFFECTIVE catalog — the committed scrape with removals, derived durations and corrections applied, which is the same table the fold classifies against, never a second load. A NAMED GAP RIDES THIS OP AND IS STATED HERE RATHER THAN DISCOVERED: it carries the DB's stated fields and not the JOIN half of `main/data/spellDetail.ts` — no derived effect classes, no rank lineage, and none of the metrics `spellMetricsAt` reads at a gain level, at a mote rank or with worn focus. Those need three inputs this engine does not have yet (the parsed `spells_us.txt` client table — boundary verdict 7, unbuilt; the observed-rank module's join; the planner's worn-focus reading), and half a card is a wrong answer wearing a right one's clothes. The op answers `found: false` for a rank-suffixed name the DB carries no row for, rather than answering it with the LINE's numbers and no note that they are the line's. The spell-surface ticket owns the rest.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "knowledge.spell"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/KnowledgeNameParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeSpellRequest {
+    pub id: RequestId,
+    pub op: KnowledgeSpellRequestOp,
+    pub params: KnowledgeNameParams,
+}
+///`KnowledgeSpellRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "knowledge.spell"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum KnowledgeSpellRequestOp {
+    #[serde(rename = "knowledge.spell")]
+    KnowledgeSpell,
+}
+impl ::std::fmt::Display for KnowledgeSpellRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::KnowledgeSpell => f.write_str("knowledge.spell"),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgeSpellRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "knowledge.spell" => Ok(Self::KnowledgeSpell),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgeSpellRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for KnowledgeSpellRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgeSpellRequestOp {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -3665,6 +5321,18 @@ impl ::std::convert::TryFrom<::std::string::String> for ReplyKind {
 ///      "$ref": "#/$defs/DefineAck"
 ///    },
 ///    {
+///      "$ref": "#/$defs/CombatSnapshotResult"
+///    },
+///    {
+///      "$ref": "#/$defs/CombatSearchFightsResult"
+///    },
+///    {
+///      "$ref": "#/$defs/KnowledgeResult"
+///    },
+///    {
+///      "$ref": "#/$defs/KnowledgeSearchResult"
+///    },
+///    {
 ///      "$ref": "#/$defs/SessionMarkAck"
 ///    }
 ///  ]
@@ -3681,6 +5349,10 @@ pub enum ReplyResult {
     ModuleSnapshotResult(ModuleSnapshotResult),
     PerfSnapshotResult(PerfSnapshotResult),
     DefineAck(DefineAck),
+    CombatSnapshotResult(CombatSnapshotResult),
+    CombatSearchFightsResult(CombatSearchFightsResult),
+    KnowledgeResult(KnowledgeResult),
+    KnowledgeSearchResult(KnowledgeSearchResult),
     SessionMarkAck(SessionMarkAck),
 }
 impl ::std::convert::From<EchoResult> for ReplyResult {
@@ -3716,6 +5388,26 @@ impl ::std::convert::From<PerfSnapshotResult> for ReplyResult {
 impl ::std::convert::From<DefineAck> for ReplyResult {
     fn from(value: DefineAck) -> Self {
         Self::DefineAck(value)
+    }
+}
+impl ::std::convert::From<CombatSnapshotResult> for ReplyResult {
+    fn from(value: CombatSnapshotResult) -> Self {
+        Self::CombatSnapshotResult(value)
+    }
+}
+impl ::std::convert::From<CombatSearchFightsResult> for ReplyResult {
+    fn from(value: CombatSearchFightsResult) -> Self {
+        Self::CombatSearchFightsResult(value)
+    }
+}
+impl ::std::convert::From<KnowledgeResult> for ReplyResult {
+    fn from(value: KnowledgeResult) -> Self {
+        Self::KnowledgeResult(value)
+    }
+}
+impl ::std::convert::From<KnowledgeSearchResult> for ReplyResult {
+    fn from(value: KnowledgeSearchResult) -> Self {
+        Self::KnowledgeSearchResult(value)
     }
 }
 impl ::std::convert::From<SessionMarkAck> for ReplyResult {

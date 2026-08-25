@@ -46,6 +46,7 @@ import {
   type Hello,
   type HelloReply,
   type ModuleChangedMessage,
+  type KnowledgeMissMessage,
   type Reply,
   type ReplyResult,
   type RequestId,
@@ -129,6 +130,23 @@ export interface EngineClient {
    * the cursor, because "the newest number wins" is the only thing the coalescing promises.
    */
   onModuleChanged(listener: (changed: ModuleChangedMessage) => void): () => void
+  /**
+   * KNOWLEDGE MISSES (JOS-486, boundary verdict 5). Connection-wide, like fires and progress, and
+   * with the same shape for the same reason: a miss belongs to the PROCESS's corpus rather than to
+   * any subscription, so it carries no id and no epoch.
+   *
+   * IT IS A REQUEST FOR WORK, WHICH IS WHAT MAKES IT DIFFERENT FROM A FIRE. The engine ships with no
+   * network stack; the app owns the wiki fetch and the scrape etiquette that goes with it (one
+   * serialized queue, 150 ms spacing, `Retry-After` honoured across the whole queue), so this frame
+   * says "I could not answer this name" and the answer goes back as a `knowledge.define` command.
+   * The engine announces each name AT MOST ONCE per process — a listener that misses one will not
+   * be told again, which is the same honest shape a fire has.
+   *
+   * THIS CLIENT ONLY DELIVERS IT. Nothing here fetches anything: the handler belongs to whoever owns
+   * main's `itemLookup`/`mobLookup` queues, and putting a fetch in a shared transport module would
+   * put a network call in the renderer's copy of it.
+   */
+  onKnowledgeMiss(listener: (miss: KnowledgeMissMessage) => void): () => void
   close(): void
 }
 
@@ -165,6 +183,7 @@ interface ClientState {
   readonly fireListeners: Set<(fire: FireMessage) => void>
   readonly conCardListeners: Set<(card: ConCardMessage) => void>
   readonly moduleChangedListeners: Set<(changed: ModuleChangedMessage) => void>
+  readonly missListeners: Set<(miss: KnowledgeMissMessage) => void>
 }
 
 function setConnectionState(s: ClientState, next: ConnectionState): void {
@@ -487,6 +506,11 @@ function receive(s: ClientState, message: EngineMessage): void {
   else if (message.kind === 'conCard') for (const listener of s.conCardListeners) listener(message)
   else if (message.kind === 'moduleChanged')
     for (const listener of s.moduleChangedListeners) listener(message)
+  // …AND NEITHER DOES A KNOWLEDGE MISS, for the same two reasons and one more: it names no window,
+  // it carries no generation, and it is a statement about the process's CORPUS — committed data
+  // plus an overlay that survives an attach — which outlives every epoch this client will see.
+  else if (message.kind === 'knowledgeMiss')
+    for (const listener of s.missListeners) listener(message)
   else onDiff(s, message)
 }
 
@@ -505,7 +529,8 @@ export function createEngineClient(options: EngineClientOptions): EngineClient {
     progressListeners: new Set(),
     fireListeners: new Set(),
     conCardListeners: new Set(),
-    moduleChangedListeners: new Set()
+    moduleChangedListeners: new Set(),
+    missListeners: new Set()
   }
   return {
     get state() {
@@ -548,6 +573,12 @@ export function createEngineClient(options: EngineClientOptions): EngineClient {
       s.moduleChangedListeners.add(listener)
       return (): void => {
         s.moduleChangedListeners.delete(listener)
+      }
+    },
+    onKnowledgeMiss: (listener): (() => void) => {
+      s.missListeners.add(listener)
+      return (): void => {
+        s.missListeners.delete(listener)
       }
     },
     close: (): void => {

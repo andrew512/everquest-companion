@@ -247,6 +247,50 @@ pub trait EventSink {
         Vec::new()
     }
 
+    /// THE COMBAT ENGINE'S WHOLE SNAPSHOT, and the instant it was taken at (JOS-485).
+    ///
+    /// `None` when this sink folds no combat engine at all — a counting sink, or a fold built
+    /// without `Fold::with_combat` — which the world turns into `unavailable`, on the same terms
+    /// `module.snapshot` uses for a world with no fold: the request was fine, there is simply
+    /// nothing behind it.
+    ///
+    /// `&self`, AND THE INSTANT IS THE SINK'S TO CHOOSE. Both halves matter. A snapshot is a read,
+    /// so it can be answered at the same boundaries [`EventSink::snapshot`] is answered at and a
+    /// mid-scan answer is a real prefix state. And the instant is not a parameter because the
+    /// caller — a connection thread — is the one party that cannot know it: whether this fold has
+    /// reached its tail decides whether `now` is a wall clock or the log's own last stamp, and only
+    /// the thread holding the fold knows which.
+    fn combat_snapshot(&self, _opts: &CombatOpts) -> Option<CombatSnapshot> {
+        None
+    }
+
+    /// THE FIGHT-HISTORY SEARCH (JOS-485). `None` on the same terms as [`EventSink::combat_snapshot`].
+    ///
+    /// The corpus is the fold's uncapped encounter history plus the open fight; the ranking is
+    /// `crate::search`. It is a READ that allocates the corpus it ranks, so it is answered at the
+    /// same boundaries and is deliberately not on any cadence — a person typed into a box.
+    fn search_fights(&self, _query: &str, _limit: usize) -> Option<FightSearch> {
+        None
+    }
+
+    /// THE NAMES THE FOLD'S OWN KNOWLEDGE PROBES COULD NOT ANSWER (JOS-486), drained here and
+    /// announced connection-wide as `knowledgeMiss` frames.
+    ///
+    /// THE SAME SHAPE AS `take_fires` AND FOR THE SAME REASON: a lookup called from inside a fold
+    /// cannot reach the world, so it buffers and this thread drains at a boundary it already reaches.
+    /// Unlike a fire, a miss is not a thing that HAPPENED in the log — it is a fact about the
+    /// process's corpus, which is why the frame carries no epoch and why the drain is not
+    /// generation-gated on the way out (see `World::announce_knowledge_misses`).
+    fn take_knowledge_misses(&mut self) -> Vec<fold::knowledge::Miss> {
+        Vec::new()
+    }
+
+    /// WHAT YOU HAVE LOOTED OFF ONE CREATURE, for a `knowledge.mob` answer — the fold's half of a
+    /// join whose other half is committed data. A sink with no such index answers with no rows.
+    fn own_loot_drops(&self, _spellings: &[String]) -> Vec<fold::knowledge::SeenDrop> {
+        Vec::new()
+    }
+
     /// A monotonic signal that moves whenever `source` could have changed.
     ///
     /// THE WHOLE COST MODEL OF THE VIEW LAYER RESTS ON THIS. A subscription is re-cut only when its
@@ -285,6 +329,57 @@ pub struct ModuleSnapshot {
     /// `kills` publishes an object, `loot` publishes an array, and nothing between the module and
     /// the wire is allowed an opinion about which.
     pub state: serde_json::Value,
+}
+
+/// WHAT A COMBAT SNAPSHOT WAS ASKED FOR — `src/shared/combat.ts SnapshotOpts`, in the INGEST's own
+/// vocabulary.
+///
+/// A third spelling of one idea (the protocol's `CombatSnapshotOpts`, this, and
+/// `fold::combat::SnapshotOpts`), and it is the same three-layer shape [`Fire`] has for the same
+/// reason: this module must not learn what a fold is, and `ops.rs` must not learn what the fold's
+/// types are called. The op table validates and clamps; this carries; `crate::foldsink` converts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CombatOpts {
+    /// Which fight or zone session to resolve the selection against, or `None` for the default.
+    pub selected_id: Option<String>,
+    /// Include lines the engine could not classify.
+    pub show_unparsed: bool,
+    /// Cap on finalized-fight summaries. A PAYLOAD bound, never a retention one.
+    pub max_segments: usize,
+    /// Include the selected encounter's event timeline.
+    pub timeline: bool,
+}
+
+/// THE COMBAT ENGINE'S SNAPSHOT, and the instant it describes.
+///
+/// The pair rather than the state alone, because `now` is not recoverable from the payload and the
+/// whole answer is a function of it — see the protocol's `CombatSnapshotResult.now`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CombatSnapshot {
+    /// The instant the snapshot was taken at, in epoch millis.
+    pub now: i64,
+    /// The snapshot. THE SHAPE IS THE ENGINE'S, exactly as [`ModuleSnapshot::state`]'s is a
+    /// module's — nothing between the fold and the wire is allowed an opinion about it.
+    pub state: serde_json::Value,
+}
+
+/// ONE RANKED FIGHT.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FightHit {
+    /// The `SegmentSummary`, exactly as the fold published it.
+    pub summary: serde_json::Value,
+    /// 0..1 relevance.
+    pub score: f64,
+}
+
+/// WHAT A FIGHT SEARCH FOUND, and how much it looked through.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FightSearch {
+    /// The ranked hits, already capped by the caller's limit.
+    pub hits: Vec<FightHit>,
+    /// How many fights were SEARCHED — present even when nothing matched, because "no matches in
+    /// 1,428" and "nothing to search" are different sentences.
+    pub corpus: i64,
 }
 
 /// ONE ALERT FIRE, as the ingest hands it to the world.
@@ -363,6 +458,59 @@ pub enum Ask {
     Module(SnapshotAsk),
     /// What this ingest has cost — see [`PerfAsk`].
     Perf(PerfAsk),
+    /// The combat engine's whole snapshot — see [`CombatAsk`].
+    Combat(CombatAsk),
+    /// A ranked search of the fight history — see [`FightSearchAsk`].
+    Fights(FightSearchAsk),
+    /// What has been looted off one creature — see [`LootAsk`].
+    Loot(LootAsk),
+}
+
+/// ONE REQUEST FOR THE COMBAT ENGINE'S SNAPSHOT (JOS-485).
+///
+/// SAME DOOR, SAME REASON as [`SnapshotAsk`], and the argument does not weaken with size: the
+/// combat engine's state is the largest thing this fold holds, which makes a `Mutex` around it the
+/// worst of the three shapes rather than the most tempting — the fold's hot loop would take that
+/// lock on every damage line to serve a reader that asks once a second.
+pub struct CombatAsk {
+    /// What the caller asked for, already validated and clamped by the op table.
+    pub opts: CombatOpts,
+    /// Where the answer goes. `None` means this fold carries no combat engine.
+    pub answer: std::sync::mpsc::Sender<Option<CombatSnapshot>>,
+}
+
+/// ONE FIGHT-HISTORY SEARCH (JOS-485).
+///
+/// The one ask on this door that is USER-INITIATED, and it is the reason the door's boundary rule
+/// is stated as a ceiling rather than a budget: a person typing into a search box is not the
+/// "the app froze on its own" case, and `src/main/ipc/world.ts` makes the same distinction by
+/// leaving its own search handler out of the timed seams.
+pub struct FightSearchAsk {
+    /// What the user typed.
+    pub query: String,
+    /// How many ranked hits to return, already clamped by the op table.
+    pub limit: usize,
+    /// Where the answer goes. `None` means this fold carries no combat engine.
+    pub answer: std::sync::mpsc::Sender<Option<FightSearch>>,
+}
+
+/// ONE REQUEST FOR THE OWN-LOOT HALF OF A MOB ANSWER (JOS-486).
+///
+/// SAME DOOR, SAME REASON, AND A THIRD ARM RATHER THAN A SHORTCUT. The `knowledge.mob` op joins two
+/// things: the committed catalog, which the world can read for itself because it is process-wide
+/// committed data, and YOUR LOOT HISTORY, which lives inside the `consider` module on the ingest
+/// thread and is character-scoped and epoch-scoped. Reading the second one any other way would mean
+/// either sharing the fold (a second owner of state whose whole design is one door) or publishing a
+/// copy of it into the world after every loot line (a cache, which ruling 5 forbids). So the world
+/// posts an ask and the fold answers at a boundary it already reaches.
+///
+/// THE ANSWER IS NEVER `None`: a fold with no such index, and a creature nothing has been looted
+/// from, both answer with no rows — which is the same sentence and deserves the same value.
+pub struct LootAsk {
+    /// Every `mobKey` the creature answers to, canonical first — the corpus resolved them.
+    pub spellings: Vec<String>,
+    /// Where the answer goes.
+    pub answer: std::sync::mpsc::Sender<Vec<fold::knowledge::SeenDrop>>,
 }
 
 /// ONE REQUEST FOR THE INGEST'S OWN COST (owner ruling 19 surface, JOS-483).
@@ -690,7 +838,7 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
         character: character.as_deref(),
         db: Some(&db),
         clock: parser.clock(),
-        attached_at_ms: now_ms(),
+        attached_at_ms: wall_clock_ms(),
     });
 
     // ── APP KNOWLEDGE, APPLIED BEFORE THE FIRST BYTE (JOS-482, boundary verdict 3) ───────────────
@@ -926,6 +1074,12 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
                 return Ok(Ended::Preempted);
             }
         }
+        // …AND THE NAMES THE FOLD'S PROBES COULD NOT ANSWER (JOS-486), beside the fires and for the
+        // same reason: the app has to hear about a live loot line's unknown item on the tick that
+        // folded it, not on the next view cadence. Not generation-gated: a miss describes the
+        // PROCESS's corpus rather than this generation's world, and the answer that comes back
+        // (`knowledge.define`) survives an attach exactly as the world's other defines do.
+        world.announce_knowledge_misses(&sink.take_knowledge_misses());
         // THE VIEWS, AT THEIR OWN CADENCE. Everything the drain above folded collapses into at most
         // one frame per subscription per `views::SERVE_EVERY` — rule 2 of the diff protocol, held
         // as a cadence rather than as a per-event push.
@@ -980,7 +1134,7 @@ impl Ticking {
     /// Beat now, whatever the cadence says — the go-live sweep. Reads the wall clock ONCE and hands
     /// it in; nothing here interprets it, which is the whole of this seam's contract with the fold.
     fn beat(&mut self, sink: &mut dyn EventSink) {
-        sink.tick(now_ms());
+        sink.tick(wall_clock_ms());
     }
 }
 
@@ -1120,9 +1274,12 @@ fn nap(
 /// must never stall it. A send that fails is an asker that gave up (its deadline passed, or its
 /// connection closed) and is dropped without comment — there is nobody left to tell.
 ///
-/// BOTH ARMS ARE READS. A module snapshot takes `&self` on the sink and a perf snapshot peeks the
-/// meter, so nothing this function does can advance the fold or change what the next frame reports
-/// — which is what makes it safe to call at every boundary, including inside the nap.
+/// EVERY ARM IS A READ. A module snapshot, a combat snapshot, a fight search and an own-loot read
+/// all take `&self` on the sink, and a perf snapshot peeks the meter, so nothing this function does
+/// can advance the fold or change what the next frame reports — which is what makes it safe to call
+/// at every boundary, including inside the nap. That is a property of the `Ask` enum rather than of
+/// this loop: a new arm that needed `&mut` would not compile here, and would belong on the define
+/// door instead.
 fn answer_asks(answers: &Receiver<Ask>, sink: &dyn EventSink, serving: &Serving) {
     while let Ok(ask) = answers.try_recv() {
         match ask {
@@ -1131,6 +1288,15 @@ fn answer_asks(answers: &Receiver<Ask>, sink: &dyn EventSink, serving: &Serving)
             }
             Ask::Perf(ask) => {
                 let _dropped = ask.answer.send(serving.perf());
+            }
+            Ask::Combat(ask) => {
+                let _dropped = ask.answer.send(sink.combat_snapshot(&ask.opts));
+            }
+            Ask::Fights(ask) => {
+                let _dropped = ask.answer.send(sink.search_fights(&ask.query, ask.limit));
+            }
+            Ask::Loot(ask) => {
+                let _dropped = ask.answer.send(sink.own_loot_drops(&ask.spellings));
             }
         }
     }
@@ -1149,13 +1315,20 @@ fn answer_defines(defines: &Receiver<DefineAsk>, sink: &mut dyn EventSink) {
     }
 }
 
-/// The wall clock, in epoch millis — read ONCE per attach, for [`SinkInputs::attached_at_ms`].
+/// THE WALL CLOCK, in epoch millis — the process's one spelling of `Date.now()`.
 ///
-/// The only wall-clock read in this file that can reach a sink, and the module header's rule still
-/// holds around it: it measures WHEN THE WORLD WAS BUILT, never anything the fold computes. A clock
-/// before the epoch is not a thing this platform produces; `unwrap_or_default` answers 0 rather
-/// than panicking if one ever were.
-fn now_ms() -> i64 {
+/// THREE READERS AND THEY ARE ALL LIVE-WORLD READERS, which is the module header's rule holding
+/// rather than bending: [`SinkInputs::attached_at_ms`] (WHEN the world was built, read once per
+/// attach), [`Ticking`]'s beat (the app's own `registry.tick(Date.now())`, live only), and — since
+/// JOS-485 — a combat answer taken while the tail is running, which is `combat.snapshot(Date.now(),
+/// …)` app-side. Nothing a HISTORICAL fold computes can reach any of them: the scan does not
+/// construct, does not beat, and answers its combat questions at `fold.last_ts()` instead
+/// (`crate::foldsink`'s header carries that argument in full).
+///
+/// A clock before the epoch is not a thing this platform produces; `unwrap_or_default` answers 0
+/// rather than panicking if one ever were.
+#[must_use]
+pub fn wall_clock_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
@@ -1846,7 +2019,7 @@ mod tests {
             // this test's own reading of it. A bound loose enough never to be flaky and tight
             // enough that a log's `ts` — which is whatever the fixture says — could not pass it.
             assert!(
-                (beat.now_ms - super::now_ms()).abs() < 60_000,
+                (beat.now_ms - super::wall_clock_ms()).abs() < 60_000,
                 "{beat:?} is not this machine's clock"
             );
         }

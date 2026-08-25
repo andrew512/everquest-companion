@@ -282,6 +282,13 @@ From the connect-and-serve wave (JOS-478/479/480):
 
 1. `combat.snapshot(now, opts)` — the only wall-clock-parameterized read: the now-evaluation
    moves server-side; fight/scope selection become subscription parameters, not app state.
+   **SETTLED (JOS-485).** The op takes NO instant and the reply states the one the engine used:
+   the process's own wall clock while the tail is live, `fold.last_ts()` at every moment before
+   that. The discriminator is structural rather than a status copy — `EventSink::tick` is
+   unreachable from the historical scan, so "has this sink been ticked" IS "is this world live" —
+   which leaves the replay path a pure function of its bytes and the oracle untouched. Selection
+   is an OP parameter (`opts.selectedId`) today; making it a SUBSCRIPTION parameter is the
+   `combat.live` follow-up, whose source serves the default selection and nothing else so far.
 2. The conCard hook (fold synchronously calls INTO Electron today): inverts to a server-emitted
    `world.conCard` stream event carrying the fully resolved card (resist profile joined
    engine-side); main only opens the overlay window.
@@ -358,10 +365,21 @@ light, app connected with the parity probe, packaging signed). Remaining to buil
    `earlyWarnSec` defs are compiled out of the engine evaluator (needs the timer-row projection),
    and Rust's regex refuses lookaround/backreferences V8 accepts — measure against the owner's
    real def set before cutover.
-3. **The remaining view sources** — every list in the product: `combat.live` (the meter; where
-   update-op coverage arrives), encounters/drilldown, buff+timer rows (the overlays), respawn,
-   progression, kills, and the Knowledge surface (items/spells/mobs/quests move engine-side —
-   deletes ~12 MB from main's heap and the renderer-bundled corpora).
+3. **The remaining view sources** — every list in the product. ~~`combat.live`~~ **DONE** (JOS-485)
+   and it is where update-op coverage arrived: the meter's rows edit rather than append, so the
+   diff protocol's third op is proven over a socket at last. The two combat OPS landed with it —
+   `combat.snapshot` (verdict 1) and `combat.searchFights`. ONE NAMED GAP for the meter-cutover
+   ticket: `hydrating` is `true` until the snapshot-time sweep block ports (JOS-488, in flight).
+   ~~the Knowledge surface~~ **KNOWLEDGE DONE ENGINE-SIDE** (JOS-486): items/mobs/quests/posky
+   `include_str`'d into a `knowledge` crate, indexed on first use, served as
+   `knowledge.item/mob/spell/search`, with `consider`/`eventFeed` folding against the real lookups
+   in the PRODUCTION construction only (the parity construction cannot reach a corpus — the crate
+   depends on `fold`, never the reverse; the default oracle is green with the lookups in the
+   build). Remaining of this item: the ~12 MB still ALSO lives in main's heap and the renderer
+   bundle until the app's surfaces cut over; `knowledge.spell` carries a named gap (no effect
+   classes/rank lineage/metrics — boundary verdict 7's client table + joins). Still open:
+   encounters/drilldown, the INCOMING meter, buff+timer rows (the overlays), respawn, progression,
+   kills (JOS-487, in flight).
 4. **Streams**: `alerts.fires` DONE as a stream (JOS-482; the AUDIO cutover — app plays from the
    frame and the TS evaluator dies — is its own ticket, owning the two named gaps above);
    `world.conCard` fully resolved engine-side still open.
@@ -370,8 +388,14 @@ light, app connected with the parity probe, packaging signed). Remaining to buil
    one-by-one, `useModule` → `useView`.
 6. **Main's 18 sync readers rewired** (3 genuine queries → ops; mirrors → pushed streams);
    fold-owned persisted artifacts (resist ledger, message-overlay register) move their IO into
-   the engine; `sessionMarks` as a command; `spells_us.txt` parse engine-side; wiki-miss events
-   with app-side fetch pushing results in.
+   the engine; `sessionMarks` as a command; `spells_us.txt` parse engine-side. **Wiki-miss events
+   DONE engine-side** (JOS-486): the `knowledgeMiss` stream frame (connection-wide, no id, no epoch,
+   each name announced at most once per process) and the `knowledge.define` push-back into the
+   engine's runtime overlay both exist and are proven end to end. **THE APP-SIDE FETCH HANDLER IS
+   NOT BUILT** — the half that hears the frame, runs `itemLookup`/`mobLookup`'s existing serialized
+   queue with its 150 ms spacing and its `Retry-After` cooldown, and pushes the answer back. It is
+   deliberately left to the surface-cutover ticket, because that is where the app stops asking its
+   own lookups anything and the queue has one caller instead of two.
 7. **Ruling 19 surface**: the in-app performance panel section is DONE (JOS-483: engine
    CPU/memory row, `perf.snapshot`, serve table, parity summary); `perf.budgets`/`perf.timeline`
    ops, CI budgets, and bug-report attachment still open.

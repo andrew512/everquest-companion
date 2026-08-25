@@ -81,6 +81,7 @@
 //! (owner ruling 19).
 
 pub mod buffs;
+pub mod combat;
 pub mod diff;
 pub mod event_feed;
 pub mod kills;
@@ -236,24 +237,27 @@ pub struct SourceDef {
     pub default_limit: i64,
 }
 
-/// EVERY SOURCE THIS BUILD SERVES. The registry exists so that the SET is a fact the code states
+/// EVERY SOURCE THIS BUILD SERVES. The registry exists so that the LIST is a fact the code states
 /// rather than a gap a reader infers — an unknown source is `notFound`, which is only answerable
 /// because there is a list to be absent from.
 ///
-/// `eventFeed.recent` USED TO BE ABSENT FROM THIS LIST WITH AN ARGUMENT ATTACHED, and JOS-487
-/// registered it while agreeing with half of that argument. The ring is still empty in every fold
-/// this build can perform — every one of the feed's four sources sits behind an injected lookup or
-/// off the bus entirely — but the objection that followed ("no test could tell a working one from a
-/// broken one") turned out to be about where the test was pointed rather than about the source: the
-/// projection is a pure function of a ring, `views::event_feed` exercises it against a hand-built
-/// one, and a client subscribing during the cutover is told "nothing here yet" rather than "no such
-/// surface", which are different things.
+/// THEY ARE TWO DIFFERENT KINDS OF SOURCE and that is worth knowing before reading any of them.
+/// `loot.ledger`, `kills.recent`, `progression.recent` and `eventFeed.recent` APPEND: a row, once
+/// written, never changes, so a live window over one produces inserts and drops and never an
+/// `update`. `combat.live`, `timers.rows`, `buffs.active` and `respawn.watches` EDIT: the same keys
+/// sit in the window while their numbers move, which is what makes `combat.live` the source that
+/// exercises the diff protocol's third op against a real fold (JOS-485).
 ///
-/// THE COMBAT SOURCES ARE STILL ABSENT and are somebody else's ticket: `combat.live`, the
-/// encounters and the drill-down arrive with `Fold::with_combat`, which this crate's sink still
-/// does not call.
+/// `eventFeed.recent` USED TO BE ABSENT FROM THIS LIST WITH AN ARGUMENT ATTACHED — its ring could
+/// only ever be empty, so "no test could tell a working one from a broken one". JOS-487 registered
+/// it having answered the objection rather than dropped it: the projection is a pure function of a
+/// ring and `views::event_feed` pins every cell against a hand-built one, so a broken cell fails a
+/// test whether or not a fold can produce the entry it mangled. And JOS-486 took the first clause
+/// away as well — the loot source's item probe is a real in-process lookup now, so a live loot line
+/// puts a row in that ring.
 pub const SOURCES: &[SourceDef] = &[
     loot::LEDGER,
+    combat::LIVE,
     buffs::ACTIVE,
     timers::ROWS,
     respawn::WATCHES,
@@ -524,11 +528,17 @@ mod tests {
 
     #[test]
     fn an_unregistered_source_is_not_found_and_the_answer_names_what_is_served() {
-        let error = validate(&descriptor("combat.live"))
+        // THE STAND-IN KEEPS MOVING, WHICH IS THE REGISTRY WORKING. `combat.live` was this test's
+        // unserved source until JOS-485 served it; `eventFeed.recent` was until JOS-487 did. What is
+        // left is `combat.encounters` — named in the cutover ledger, arriving with the drill-down —
+        // and the day that is served this line moves again rather than the assertion weakening.
+        let error = validate(&descriptor("combat.encounters"))
             .err()
             .expect("a refusal");
         assert!(matches!(error.code, ErrorCode::NotFound));
         assert!(error.message.contains("loot.ledger"), "{}", error.message);
+        assert!(error.message.contains("combat.live"), "{}", error.message);
+        assert!(error.message.contains("timers.rows"), "{}", error.message);
         // …and `loot` — the MODULE id — is not a source either. The two vocabularies are separate
         // on purpose, and confusing them has to be told rather than guessed at.
         assert!(matches!(

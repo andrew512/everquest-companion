@@ -269,106 +269,7 @@ const validator = (def: string): ValidateFunction => {
 const isClientMessage = validator('ClientMessage')
 const isEngineMessage = validator('EngineMessage')
 
-/** Exhaustive over the union's tag. The `never` arm is the point: adding a message kind to the
- *  schema without teaching this switch is a TYPECHECK failure, not a runtime surprise. */
-function describeEngine(message: EngineMessage): string {
-  switch (message.kind) {
-    case 'hello':
-      return `hello ok=${String(message.ok)} v${String(message.protocolVersion)}`
-    case 'reply':
-      return `reply#${String(message.id)}`
-    case 'error':
-      return `error#${String(message.id)} ${message.error.code}`
-    case 'reset':
-      return `reset#${String(message.id)} epoch=${String(message.epoch)} rows=${String(message.rows.length)}`
-    case 'diff':
-      return `diff#${String(message.id)} epoch=${String(message.epoch)} ops=${String(message.ops.length)}`
-    case 'epoch':
-      return `epoch=${String(message.epoch)} ${message.reason}`
-    // NO id AND NO epoch, and the description says so: a fire belongs to the world rather than to a
-    // subscription, and it is a thing that happened rather than window state to reconcile.
-    case 'fire':
-      return `fire ${message.rule} [${message.sound}] at ${String(message.at)}`
-    // A CON CARD IS A FIRE'S TWIN on this axis — no id, no epoch — and its chips are always five,
-    // which is worth saying out loud here because "all five axes, always" is a contract rather than
-    // a coincidence of the fixture.
-    case 'conCard':
-      return `conCard ${message.name} L${String(message.level ?? 0)} chips=${String(message.chips.length)} spellData=${String(message.spellData)}`
-    // A NAME AND A CURSOR. If this description ever needs a third field, the frame has grown state
-    // it was designed not to carry.
-    case 'moduleChanged':
-      return `moduleChanged ${message.module}@${String(message.seq)}`
-    default: {
-      const unreachable: never = message
-      throw new Error(`unhandled engine message ${JSON.stringify(unreachable)}`)
-    }
-  }
-}
-
-/**
- * THE FIVE `*.define` COMMANDS (JOS-482), split out of `describeClient` rather than folded into it.
- *
- * A SPLIT, NOT A WILDCARD: the exhaustive-switch trick is the whole point of these two functions —
- * a message shape added to the schema without being described here is a TYPECHECK failure — and it
- * survives the split intact, because the two halves are disjoint by TYPE (`DefineMessage` and its
- * exclusion) rather than by a runtime string test. Each says the size of the set it replaced, which
- * is the one thing a full-set replace has to be readable as.
- */
-type DefineMessage = Extract<ClientMessage, { op: `${string}.define` }>
-
-function describeDefine(message: DefineMessage): string {
-  const at = `define#${String(message.id)}`
-  switch (message.op) {
-    case 'alerts.define':
-      return `${at} alerts×${String(message.params.defs.length)}`
-    case 'buffTrust.define':
-      return `${at} buffTrust×${String(message.params.trust.externals.length)}`
-    case 'respawn.define':
-      return `${at} respawn×${String(message.params.prefs.watches.length)}`
-    case 'combo.define':
-      return `${at} combo×${String(message.params.corrections.length)}`
-    case 'roster.define':
-      return `${at} roster×${String(message.params.edits.length)}`
-    default: {
-      const unreachable: never = message
-      throw new Error(`unhandled define ${JSON.stringify(unreachable)}`)
-    }
-  }
-}
-
-function isDefine(message: ClientMessage): message is DefineMessage {
-  return message.op.endsWith('.define')
-}
-
-/** Same trick on the client half. */
-function describeClient(message: ClientMessage): string {
-  if (isDefine(message)) return describeDefine(message)
-  switch (message.op) {
-    case 'hello':
-      return `hello v${String(message.protocolVersion)}`
-    case 'echo':
-      return `echo ${message.params.text}`
-    case 'session.attach':
-      return `attach ${message.params.logPath}`
-    case 'session.health':
-    case 'session.progress':
-      return `${message.op}#${String(message.id)}`
-    case 'module.snapshot':
-      return `snapshot#${String(message.id)} of ${message.params.module}`
-    case 'perf.snapshot':
-      return `perf#${String(message.id)}`
-    case 'view.subscribe':
-      return `subscribe#${String(message.id)} ${message.params.source}`
-    case 'view.unsubscribe':
-      return `unsubscribe#${String(message.id)} of ${String(message.params.subscription)}`
-    case 'sessionMarks.add':
-      return `mark#${String(message.id)} at ${String(message.params.at)}`
-    default: {
-      const unreachable: never = message
-      throw new Error(`unhandled client message ${JSON.stringify(unreachable)}`)
-    }
-  }
-}
+import { describeClient, describeEngine } from './protocolDescribe.mjs'
 
 test('THE FOUR WORKED MOMENTS from the plan doc are committed as fixtures', () => {
   const names = fixtures.map((f) => f.name)
@@ -429,12 +330,18 @@ test('every fixture message VALIDATES against the schema and narrows through the
     'respawn.define',
     'combo.define',
     'roster.define',
+    'knowledge.item', 'knowledge.mob', 'knowledge.spell',
+    'knowledge.search', 'knowledge.define',
     'reply',
     'error',
     'reset',
     'diff',
     'epoch',
-    'fire'
+    'fire',
+    'knowledgeMiss',
+    'sessionMarks.add',
+    'conCard',
+    'moduleChanged'
   ]) {
     assert.ok(seen.has(tag), `no fixture demonstrates \`${tag}\``)
   }
