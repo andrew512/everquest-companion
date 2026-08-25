@@ -8,19 +8,27 @@
 //!
 //! These are not simplifications taken for convenience; they are properties of the run the goldens
 //! were recorded under (`foldArm.mts construct()` + `goldenOracle.mts buildSnapshots`), and each one
-//! is checkable against the recorded artifact rather than asserted:
+//! is checkable against the recorded artifact rather than asserted. **THEY ARE FACTS ABOUT A
+//! HISTORICAL FOLD AND THEY SAY NOTHING ABOUT A LIVE ONE** — which is a distinction that cost
+//! nothing to make until JOS-488, because until then nothing called `set_live()`:
 //!
 //!   1. `hydrating` IS TRUE FOR THE WHOLE FOLD, on all six slices (verified in every
-//!      `<slice>.snapshots.json`: `combat.hydrating === true`). `setLive()` is what clears it and
+//!      `<slice>.snapshots.json`: `combat.hydrating === true`). `set_live()` is what clears it and
 //!      the golden recorder never calls it. So the whole snapshot-time sweep block is SKIPPED, and
 //!      `now` is used for nothing but the `inCombat` freshness test and the summaries' `active`
-//!      flag. A replay is not a moment in time.
+//!      flag. A replay is not a moment in time. **A LIVE ENGINE CLEARS IT** at the fold-landed
+//!      moment (`engined::foldsink`'s `tick`) and from the first live event, exactly as `session.ts`
+//!      does — and the sweeps then run, which is the whole of JOS-488.
 //!   2. `recording` IS FALSE FOR THE WHOLE FOLD, for the same reason. So the classification ring is
 //!      a no-op from the first byte to the last, and `recent` is `[]` in every one of the six
 //!      goldens. The ring is therefore not ported at all: porting a buffer that provably never
-//!      receives a line would be inventing a code path.
+//!      receives a line would be inventing a code path. `set_live()` sets the flag anyway, because
+//!      the flag is the state — and A LIVE ENGINE THEREFORE PUBLISHES AN EMPTY `recent` WHERE THE
+//!      APP PUBLISHES CLASSIFIED LINES. That is a NAMED GAP as of JOS-488 and no longer a proof; it
+//!      is the ring itself that is missing, and nothing else reads the flag.
 //!   3. NO SESSION MARK CAN ENTER. A mark is refused while hydrating and is a user action stored
-//!      nowhere — so `closedBy` is `'zone'` on every zone session in every golden.
+//!      nowhere — so `closedBy` is `'zone'` on every zone session in every golden. Unchanged by
+//!      going live: there is no op, no command and no caller for one anywhere in this engine.
 //!
 //! ── AND THREE SEAMS THE GOLDEN'S CONSTRUCTION DOES NOT INSTALL ─────────────────────────────────
 //!
@@ -41,8 +49,9 @@
 //! THE PET NUDGE is armed only by `if (!st.hydrating && isPetSummonSpell(...))`, and fact 1 says
 //! `hydrating` is true for the whole of every recorded slice — so its arm is never set, `view(now)`
 //! answers `undefined` in every state it can reach, and `JSON.stringify` drops the key. The goldens
-//! agree: no slice carries `combat.petNudge`. A model that provably cannot publish anything is not a
-//! gap in the snapshot.
+//! agree: no slice carries `combat.petNudge`. THAT ARGUMENT IS NOW MADE BY THE GATE RATHER THAN BY
+//! THE MODEL'S ABSENCE (JOS-488): `petnudge.rs` is real code, a live engine arms it, and the oracle
+//! is untouched because the oracle never goes live. The goldens still carry no `petNudge` key.
 //!
 //! THE COMBO PULL is a field that exists and is never installed (seam 1 above). `coat_class_checked_ts`
 //! is kept and advanced exactly where the TS advances it, because the THROTTLE is observable state even
@@ -56,6 +65,7 @@ use crate::combat::encounter::{
     MARKER_CAP, TIMELINE_CAP,
 };
 use crate::combat::others::{OtherCombatants, SpecialAttacks};
+use crate::combat::petnudge::PetNudgeState;
 use crate::combat::procdetect::RecentCasts;
 use crate::combat::roster::{RosterSnap, RosterSource};
 use crate::combat::statetimeline::StateTimeline;
@@ -200,6 +210,10 @@ pub struct EngineState {
     /// whole of every recorded slice and `castless_kind` is the identity function: not one lane name
     /// moves. That is a documented behaviour of the golden's construction, not a gap.
     pub held_clickies: HashSet<String>,
+    /// THE ONE-SENTENCE NUDGE FOR AN UNBOUND SUMMONED PET (JOS-258). ARMED ONLY WHEN LIVE, which is
+    /// the gate the whole feature rests on: a summon from four hours ago is not news. See
+    /// `petnudge.rs` — the model is pure and clock-injected, and this is its only instance.
+    pub pet_nudge: PetNudgeState,
     /// ts of the last `You activate Quick Buff.` (0 = never). That AA re-applies the player's memorized
     /// buffs and prints only their LANDINGS, so the burst it opens is cast evidence in a different
     /// shape and the heal side of the proc inference must not read those landings as procs.
@@ -252,6 +266,7 @@ impl EngineState {
             state_timeline: StateTimeline::new(),
             recent_casts: RecentCasts::new(),
             held_clickies: HashSet::new(),
+            pet_nudge: PetNudgeState::new(),
             quick_buff_ts: 0,
             roster: RosterFacts::default(),
         }
@@ -291,6 +306,27 @@ impl EngineState {
             self.player_key_injected = true;
             self.known_players.insert(name);
         }
+    }
+
+    /// THE HANDOVER FROM THE SCAN TO THE TAIL — `state.ts setLive()`, two field writes and the whole
+    /// difference between a replay and a present moment.
+    ///
+    /// `hydrating` FALSE is what opens the snapshot-time sweep block (`CombatEngine::snapshot`): from
+    /// here on every answer describes the real present, so a fight that ended while the log was quiet
+    /// is allowed to close on elapsed time and a display timer is allowed to come off the screen.
+    /// Before it, none of that may happen — a poll landing between two replay slices used to saw a
+    /// fight in half on a clock that has nothing to do with the log (the JOS-208 measurement).
+    ///
+    /// `recording` TRUE is the classification ring's gate over there. The ring is not ported (module
+    /// header, fact 2), so this flag drives nothing here; it is set anyway because it IS the state,
+    /// and a live engine that reported `recording: false` would be describing a different world than
+    /// the one it is.
+    ///
+    /// IDEMPOTENT, and it has to be: the go-live beat is one call, but nothing structural stops a
+    /// second, and `hydrating` is a latch rather than a toggle — nothing but `reset()` sets it back.
+    pub fn set_live(&mut self) {
+        self.recording = true;
+        self.hydrating = false;
     }
 
     /// Inject the player's own character name. Keyed canonically so it matches the `id_key` the heal

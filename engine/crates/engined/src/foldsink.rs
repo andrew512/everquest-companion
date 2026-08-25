@@ -85,6 +85,21 @@
 //! passes — so a mid-scan `combat.snapshot` is a pure function of the bytes folded so far (ruling
 //! 18 law 1) and re-asking it at the same `seq` gives the same answer. The wall clock enters
 //! exactly where it already entered: a live world, which the oracle has never described.
+//!
+//! ── …AND THE SAME TICK IS WHERE THE ENGINE IS TOLD (JOS-488) ───────────────────────────────────
+//!
+//! JOS-485 shipped the instant and left the flag: `hydrating` was true in every answer this engine
+//! gave, because the four snapshot-time sweeps were unported and clearing the flag without them
+//! would have promised a liveness the fold did not have. Both halves land here now. `EventSink::tick`
+//! calls `CombatEngine::set_live()` on its first beat — the same call `session.ts` makes at the end
+//! of its scan, in the same position relative to the heartbeat — and `fold::combat` runs the charm
+//! sweep, the ally-bind expiry, the pet nudge and the deferred encounter closure at the instant every
+//! live answer is taken.
+//!
+//! The discriminator does not change and neither does its argument: ONE FLAG, set by the one call a
+//! historical scan cannot reach, deciding both what `now` means and whether the model may be aged at
+//! it. That is why they are the same flag — a world entitled to a wall clock is exactly a world
+//! entitled to age itself against one.
 
 use std::collections::HashSet;
 
@@ -273,6 +288,26 @@ impl EventSink for FoldSink {
     /// cannot reach, which makes "am I live" a fact stated by the call graph rather than a second
     /// copy of the world's status that could drift from it.
     fn tick(&mut self, now_ms: i64) {
+        // …AND THE COMBAT ENGINE GOES LIVE HERE, ON THE FIRST BEAT AND ONLY ON IT (JOS-488). The
+        // beat this method is called from IS the go-live moment: one tick at the landing, before
+        // `report_fold_landed` publishes `status: "live"`, then ~1×/sec. `session.ts` orders the two
+        // the same way — `combat.setLive()` at the end of the scan, then `startHeartbeat()`'s single
+        // `registry.tick(Date.now())` — so the engine is told it is live BEFORE the model it owns is
+        // aged, on both sides, in the same order.
+        //
+        // GUARDED ON `self.live` RATHER THAN LEFT TO IDEMPOTENCE. `set_live` is idempotent and
+        // re-calling it would be harmless today; the guard says what this line MEANS, which is that
+        // going live happens once per attach. A new generation is a new sink and a new engine.
+        //
+        // WHAT IT COSTS AND WHERE IT LANDS: from here `hydrating` is false, so every `combat.snapshot`
+        // and every `combat.live` frame runs the four snapshot-time sweeps at the instant it is
+        // answered — the deferred encounter closure among them. A live meter that says a fight is
+        // over is this. A HISTORICAL scan reaches none of it: the scan cannot call `tick`.
+        if !self.live {
+            if let Some(combat) = self.fold.combat.as_mut() {
+                combat.set_live();
+            }
+        }
         self.live = true;
         self.beats = self.beats.saturating_add(1);
         self.fold.tick(now_ms);
