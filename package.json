@@ -58,6 +58,8 @@
     "smoke:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sandbox/run-smoke-feedback.ps1",
     "bench:replay": "node --import tsx tests/bench/replay.bench.mts",
     "bench:engine-oracle": "node --import tsx tests/bench/engineOracle.mts",
+    "oracle:record": "node --import tsx tests/bench/goldenCli.mts record",
+    "oracle:check": "node --import tsx tests/bench/goldenCli.mts check",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
