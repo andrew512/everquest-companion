@@ -46,6 +46,7 @@ pub fn scan_bytes(parser: &Parser, bytes: &[u8], mut emit: impl FnMut(&str)) -> 
 }
 
 /// `Buffer.indexOf(NEWLINE, …)`. Hand-rolled rather than a dependency: one byte, one scan.
-fn memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
+/// Shared with `tail.rs` so the scan and the live tail cannot split on different bytes.
+pub(crate) fn memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
     haystack.iter().position(|&b| b == needle)
 }
