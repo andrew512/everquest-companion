@@ -90,4 +90,15 @@ pub trait RosterSource {
     fn admitted(&self) -> Vec<String> {
         Vec::new()
     }
+
+    /// `RosterView.nameOf` — the roster's own spelling for a key, which is the one a user has seen
+    /// in the popover and therefore the label a recorded row prefers. Defaulted off `snap()` so 2b
+    /// implements one method and this stays a read of the same list rather than a second one.
+    fn name_of(&self, key: &str) -> Option<String> {
+        self.snap()
+            .members
+            .into_iter()
+            .find(|m| m.key == key)
+            .map(|m| m.name)
+    }
 }

@@ -84,6 +84,19 @@ impl Event {
             None => Vec::new(),
         }
     }
+
+    /// The `name` of every entry in an OBJECT array — the `candidates` list a `buffApply`, a `charm`
+    /// and a `cc` carry. That list IS the spell DB's own cast-on-other suffix table, and the only
+    /// thing any reader here wants from it is the names (`ev.candidates.map((c) => c.name)`).
+    pub fn candidate_names(&self, key: &str) -> Vec<String> {
+        match self.v.get(key).and_then(Value::as_array) {
+            Some(list) => list
+                .iter()
+                .filter_map(|v| v.get("name")?.as_str().map(str::to_string))
+                .collect(),
+            None => Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]

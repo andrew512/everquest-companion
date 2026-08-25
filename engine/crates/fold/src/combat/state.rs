@@ -12,35 +12,51 @@
 //!
 //!   1. `hydrating` IS TRUE FOR THE WHOLE FOLD, on all six slices (verified in every
 //!      `<slice>.snapshots.json`: `combat.hydrating === true`). `setLive()` is what clears it and
-//!      the golden recorder never calls it — there is no live tail behind a recorded slice. So the
-//!      whole snapshot-time sweep block (`sweepCharm`, `sweepAlly`, `petNudge.sweep`, `evalClosure`
-//!      at `now`) is SKIPPED by the gate at `engine.ts:377`, and `now` is used for nothing but the
-//!      `inCombat` freshness test and the summaries' `active` flag. This is JOS-208 phase 4's rule:
-//!      a replay is not a moment in time.
-//!   2. `recording` IS FALSE FOR THE WHOLE FOLD, for the same reason (`setLive()` sets both). So
-//!      `st.log(…)` — the classification ring — is a no-op from the first byte to the last, and
-//!      `recent` is `[]` in every one of the six goldens. The ring is therefore not ported at all:
-//!      porting a buffer that provably never receives a line would be inventing a code path.
-//!   3. NO SESSION MARK CAN ENTER. `sessionMark` refuses while hydrating, and a mark is a user
-//!      action stored nowhere — so `closedBy` is `'zone'` on every zone session in every golden,
-//!      and `unsplit()` has no boundary to remove.
+//!      the golden recorder never calls it. So the whole snapshot-time sweep block is SKIPPED, and
+//!      `now` is used for nothing but the `inCombat` freshness test and the summaries' `active`
+//!      flag. A replay is not a moment in time.
+//!   2. `recording` IS FALSE FOR THE WHOLE FOLD, for the same reason. So the classification ring is
+//!      a no-op from the first byte to the last, and `recent` is `[]` in every one of the six
+//!      goldens. The ring is therefore not ported at all: porting a buffer that provably never
+//!      receives a line would be inventing a code path.
+//!   3. NO SESSION MARK CAN ENTER. A mark is refused while hydrating and is a user action stored
+//!      nowhere — so `closedBy` is `'zone'` on every zone session in every golden.
 //!
 //! ── AND THREE SEAMS THE GOLDEN'S CONSTRUCTION DOES NOT INSTALL ─────────────────────────────────
 //!
-//! The ticket names five construction calls; `foldArm.mts construct()` — which is what actually
-//! recorded the goldens — makes THREE of them: `setRoster(modules.roster)`, `reset()`,
-//! `setPlayerName(character.name)`. It does NOT call `setCombo`, `setDerivedEmitter` or
-//! `setHeldClickies`. That is not an oversight to be corrected here: the golden IS the bar, and
-//! wiring a seam the recorder left unwired would make this fold fold something the TS did not.
-//! Each absence is a documented behaviour rather than a gap — `comboProvider` returning null means
-//! the class-swap coat clear never fires, an unwired `emitDerived` makes every emit site a no-op
-//! (the buffs module's own precedent), and an empty held-clicky set makes `castlessKind` the
-//! identity function so not one lane name moves.
+//! `foldArm.mts construct()` makes THREE of the five construction calls: `setRoster`, `reset()`,
+//! `setPlayerName`. It does NOT call `setCombo`, `setDerivedEmitter` or `setHeldClickies`. That is
+//! not an oversight to be corrected here — the golden IS the bar, and wiring a seam the recorder
+//! left unwired would make this fold fold something the TS did not. Each absence is a DOCUMENTED
+//! BEHAVIOUR rather than a gap: `comboProvider` returning null means the class-swap coat clear never
+//! fires, an unwired `emitDerived` makes every emit site a no-op (the buffs module's own precedent),
+//! and an empty held-clicky set makes `castlessKind` the identity function so not one lane name
+//! moves.
+//!
+//! ── WHAT IS STILL UNPORTED HERE (JOS-477, stated rather than implied) ──────────────────────────
+//!
+//! The BLADE COATS (`coatUtility` / `coatCombat` and `procRouting.ts`), the ACTIVE-STATE TIMELINE,
+//! the RECENT-CASTS ledger and the HELD-CLICKY set. All four feed the proc analytics and the view
+//! builders, which are the last stage of this port; the ONE consequence a snapshot can see today is
+//! that no pull qualifies for the rolling time-to-slow sample, so `poison.slow` reads
+//! `{pulls:0,landed:0,noLand:0,window:25}` — which is what five of the six goldens carry and is a
+//! genuine divergence on the sixth. Counted by the ledger, not papered over.
+//!
+//! THE PET NUDGE IS PORTED BY PROOF OF ABSENCE, which is different from being skipped. It is armed
+//! only by `if (!st.hydrating && isPetSummonSpell(...))`, and fact 1 says `hydrating` is true for the
+//! whole of every recorded slice — so its arm is never set, `view(now)` answers `undefined` in every
+//! state it can reach, and `JSON.stringify` drops the key. The goldens agree: no slice carries
+//! `combat.petNudge`. A model that provably cannot publish anything is not a gap in the snapshot.
 
 use crate::combat::aggregate::Agg;
-use crate::combat::encounter::{ZoneSession, ZoneSessionClose};
+use crate::combat::ally::AllyCharms;
+use crate::combat::charm::CharmModel;
+use crate::combat::encounter::{Encounter, ZoneSession, ZoneSessionClose, FALLBACK_IDLE_MS};
+use crate::combat::others::{OtherCombatants, SpecialAttacks};
 use crate::combat::roster::{RosterSnap, RosterSource};
+use crate::combat::world::{Resolved, WorldModel};
 use eqlog::names::id_key;
+use std::collections::HashSet;
 
 /// One half of the combat-modifier pair — the last stance (or invocation) the player committed to,
 /// with the ts of that commit. SESSION-scoped: a stance is not tied to a zone, so it survives every
@@ -51,47 +67,108 @@ pub struct Modifier {
     pub ts: i64,
 }
 
-/// Everything the engine folds into. Field-for-field with `state.ts` for what is ported; see the
-/// module header for what a historical fold makes unreachable and why it is therefore absent.
+/// THE ROSTER, PULLED ONCE PER EVENT rather than once per decision — and the two are EXACTLY
+/// equivalent, not merely close.
+///
+/// Over there `st.roster()` is a live pull and `classify()` makes one per damage, miss and resist
+/// probe. What makes hoisting it safe is the bus order, which `pipeline.ts` fixes: the roster module
+/// is registered BEFORE the engine, so by the time the engine folds a line the roster has ALREADY
+/// advanced for that same line, and nothing on the engine's own dispatch path can write it. So every
+/// pull inside one event returns the same three sets, and taking them once at the top of dispatch is
+/// the same answer read fewer times. The property the live pull exists for — "a user edit made
+/// between two log lines must reach the very next one" — is untouched, because the refresh happens
+/// on every event.
+#[derive(Debug, Default)]
+pub struct RosterFacts {
+    /// Keys CURRENTLY in the roster — the "never a hostile" test.
+    pub members: HashSet<String>,
+    /// Keys admitted since the last epoch or self-leave — the ATTRIBUTION test.
+    pub admitted: HashSet<String>,
+    /// The roster's own spelling for an admitted key, for the meter row's label.
+    pub names: std::collections::HashMap<String, String>,
+}
+
+impl RosterFacts {
+    fn pull(roster: Option<&dyn RosterSource>) -> RosterFacts {
+        let Some(r) = roster else {
+            return RosterFacts::default();
+        };
+        let snap = r.snap();
+        RosterFacts {
+            members: r.members().into_iter().collect(),
+            admitted: r.admitted().into_iter().collect(),
+            names: snap.members.into_iter().map(|m| (m.key, m.name)).collect(),
+        }
+    }
+}
+
+/// Everything the engine folds into.
 pub struct EngineState {
-    /// The player's own proper name key (e.g. `"primitive"`). INJECTED by `setPlayerName` from the
-    /// slice filename, which is the authoritative source and wins over any heal-line-learned name.
+    /// Canonical name keys of your LIVE PETS — charmed AND summoned alike. Kept in lockstep with the
+    /// world model's pet instances so the pure `classify()` (which only needs name membership) stays
+    /// cheap. This is an ATTRIBUTION set, NOT a charm roster: a summoned class pet belongs here
+    /// exactly as much as a charmed mob does, because both attribute as "your pet".
+    pub pet_names: HashSet<String>,
+    pub world: WorldModel,
+    /// OWNERSHIP for the two caster-less broadcasts. Nothing enters `pet_names` from a charm line,
+    /// and no CC hold opens, unless this model says the broadcast resolved one of the OWNER's casts.
+    pub charm: CharmModel,
+    /// OWNERSHIP FOR SOMEBODY ELSE'S CHARM PET. STRICTLY DISJOINT FROM YOUR ROWS: nothing here ever
+    /// enters `pet_names`, `ever_pet`, `known_players` or the world model's pet set; an ally pet
+    /// opens no encounter, engages no hostile and refreshes no presence. That disjointness is what
+    /// makes the whole feature law-8-safe.
+    pub ally: AllyCharms,
+    /// EVERY OTHER COMBATANT THE LOG NAMES — the refusal ladder that replaced the roster as the
+    /// thing deciding whether a player-vs-mob line is recorded at all. The WEAKEST model here, and
+    /// asked LAST on purpose.
+    pub others: OtherCombatants,
+    /// Canonical name keys of entities known to be PLAYERS — never hostiles, never a pet's target,
+    /// never enemy healers. TWO sources, both narrow on purpose: the tailed character, and anyone
+    /// who HEALED the owner (a mob cannot). See `note_player` for the mob lifetap that proves even
+    /// that needs three refusals in front of it.
+    pub known_players: HashSet<String>,
+    /// Every name key that has EVER been one of your pets this session. Small, never pruned, and the
+    /// reason `note_player` can never mistake a pet for a player.
+    pub ever_pet: HashSet<String>,
+    /// Every name key YOU have LANDED DAMAGE ON this session — the third absolute refusal
+    /// `note_player` runs. Written from your own outgoing damage and nothing else.
+    pub ever_struck: HashSet<String>,
     pub player_key: Option<String>,
-    /// True once `setPlayerName` injected the name, so heal-based learning cannot overwrite it.
     pub player_key_injected: bool,
-    /// Canonical name keys of entities known to be PLAYERS. Seeded with the tailed character.
-    pub known_players: std::collections::HashSet<String>,
 
     pub zone: Option<String>,
     pub seq: u64,
-    pub history_len: usize,
+    pub current: Option<Encounter>,
+    pub history: Vec<Encounter>,
     pub zone_agg: Agg,
     pub zone_finalized_ms: i64,
     pub zone_active_ms: i64,
     /// First/last attributed-damage ts in the LIVE zone session (0 = none yet).
     pub zone_start_ts: i64,
     pub zone_last_ts: i64,
-    /// Capped finalized-zone-session history. Newest last; the live `zone_agg` is NOT in here.
     pub zone_history: Vec<ZoneSession>,
     pub zone_seq: u64,
 
-    /// See the module header, fact 1. True from construction until `setLive()`, which a historical
-    /// fold never calls — so it is true for the whole of every recorded slice, and the snapshot
-    /// carries it so the UI renders a loading state instead of a churning fake-live meter.
+    /// See the module header, fact 1.
     pub hydrating: bool,
-    /// See the module header, fact 2. False for the whole of a historical fold, which is what makes
-    /// the classification ring a no-op and `recent` empty in all six goldens.
+    /// See the module header, fact 2.
     pub recording: bool,
+    /// ts of the last encounter-relevant activity (attributed damage OR a CC event). Drives the
+    /// `FALLBACK_IDLE_MS` closure independent of the damage timeline.
+    pub last_activity_ts: i64,
 
     pub stance: Option<Modifier>,
     pub invocation: Option<Modifier>,
+    pub specials: SpecialAttacks,
 
     /// ROLLING TIME-TO-SLOW samples, newest last, capped at `SLOW_SAMPLE_CAP`. One entry per
     /// FINALIZED pull that opened with a slow-capable coat on: the ms to the first slow landing, or
     /// `None` when the pull ended without one. The `None`s are the whole reason this is a list of
-    /// samples rather than a running mean — they are COUNTED (`noLand`) and never averaged in as
-    /// zero, because "0 ms to slow" would be a lie about a thing that never happened.
+    /// samples rather than a running mean — they are COUNTED and never averaged in as zero.
     pub slow_samples: Vec<Option<i64>>,
+
+    /// See `RosterFacts`. Refreshed once per ingested event and once per snapshot.
+    pub roster: RosterFacts,
 }
 
 impl Default for EngineState {
@@ -103,12 +180,20 @@ impl Default for EngineState {
 impl EngineState {
     pub fn new() -> Self {
         EngineState {
+            pet_names: HashSet::new(),
+            world: WorldModel::new(),
+            charm: CharmModel::new(),
+            ally: AllyCharms::new(),
+            others: OtherCombatants::new(),
+            known_players: HashSet::new(),
+            ever_pet: HashSet::new(),
+            ever_struck: HashSet::new(),
             player_key: None,
             player_key_injected: false,
-            known_players: std::collections::HashSet::new(),
             zone: None,
             seq: 0,
-            history_len: 0,
+            current: None,
+            history: Vec::new(),
             zone_agg: Agg::new(),
             zone_finalized_ms: 0,
             zone_active_ms: 0,
@@ -118,22 +203,23 @@ impl EngineState {
             zone_seq: 0,
             hydrating: true,
             recording: false,
+            last_activity_ts: 0,
             stance: None,
             invocation: None,
+            specials: SpecialAttacks::new(),
             slow_samples: Vec::new(),
+            roster: RosterFacts::default(),
         }
     }
 
-    /// `reset()` — a reset always precedes a fresh full-log scan (startup or a character switch),
-    /// so we are hydrating again until that scan hands off to a tail that, in this fold, never
-    /// comes.
+    /// `reset()` — a reset always precedes a fresh full-log scan (startup or a character switch), so
+    /// we are hydrating again until that scan hands off to a tail that, in this fold, never comes.
     pub fn reset(&mut self) {
         let injected = self.player_key.clone().filter(|_| self.player_key_injected);
         *self = EngineState::new();
-        // `setPlayerName` is called AFTER `reset()` by every construction path (`foldArm.mts`
-        // construct(), `pipeline.ts`), so this only ever matters for a reset that arrives later —
-        // and there the name is still this character's. Re-seeding rather than dropping it keeps
-        // the two orderings from meaning different things.
+        // `set_player_name` is called AFTER `reset()` by every construction path, so this only ever
+        // matters for a reset that arrives later — and there the name is still this character's.
+        // Re-seeding rather than dropping it keeps the two orderings from meaning different things.
         if let Some(name) = injected {
             self.player_key = Some(name.clone());
             self.player_key_injected = true;
@@ -141,8 +227,8 @@ impl EngineState {
         }
     }
 
-    /// Inject the player's own character name. Keyed canonically so it matches the `idKey()` the
-    /// heal path uses. Wins over any heal-line-learned name.
+    /// Inject the player's own character name. Keyed canonically so it matches the `id_key` the heal
+    /// path uses. Wins over any heal-line-learned name.
     pub fn set_player_name(&mut self, name: &str) {
         let key = id_key(name);
         self.known_players.insert(key.clone());
@@ -150,12 +236,412 @@ impl EngineState {
         self.player_key_injected = true;
     }
 
-    /// The roster as the SNAPSHOT serializes it. A pull, never a stored copy: the roster module has
-    /// already folded the same bus event by the time the engine is handed it, and a user edit made
-    /// between two log lines must reach the very next one. With no roster module registered this is
-    /// `EMPTY_ROSTER`, which is precisely what `rosterSnapProvider`'s default returns.
+    /// Refresh the per-event roster snapshot. See `RosterFacts` for why once per event is exactly
+    /// the live pull rather than an approximation of it.
+    pub fn refresh_roster(&mut self, roster: Option<&dyn RosterSource>) {
+        self.roster = RosterFacts::pull(roster);
+    }
+
+    /// The roster as the SNAPSHOT serializes it. A pull, never a stored copy.
     pub fn roster_snap(&self, roster: Option<&dyn RosterSource>) -> RosterSnap {
         roster.map_or_else(RosterSnap::empty, RosterSource::snap)
+    }
+
+    // ── The retirement queue (world.rs's header carries the argument) ─────────────────────────
+
+    /// DRAIN THE WORLD MODEL'S RETIREMENT ANNOUNCEMENTS. Called immediately after every world call
+    /// that can retire, which is what makes it equivalent to the TS's synchronous `onRetire`.
+    ///
+    /// A RETIRED INSTANCE CANNOT REDEEM ITS CC HOLD (JOS-176). The hold is a claim that a mez'd mob
+    /// is still alive and still in this fight; the moment the world model retires that instance the
+    /// claim is false forever, because a later sighting of the name spawns a fresh `nameKey#gen`.
+    pub fn drain_retirements(&mut self) {
+        if self.world.retired_ids.is_empty() {
+            return;
+        }
+        let ids = std::mem::take(&mut self.world.retired_ids);
+        let Some(enc) = self.current.as_mut() else {
+            return;
+        };
+        for id in ids {
+            enc.cc_active_until.remove(&id);
+        }
+    }
+
+    /// `world.resolve` with the retirement queue drained — the ONE door every routing path uses, so
+    /// staleness retirement can never leave a stale hold behind it.
+    pub fn resolve(&mut self, name: &str, ts: i64, prefer_charmed: bool) -> Resolved {
+        let r = self.world.resolve(name, ts, prefer_charmed);
+        self.drain_retirements();
+        r
+    }
+
+    // ── The membership questions the routing ladder asks ──────────────────────────────────────
+
+    /// True when `name_key` is a player (the owner, or someone the heal stream tied to them).
+    pub fn is_known_player(&self, name_key: &str) -> bool {
+        name_key == "you" || self.known_players.contains(name_key)
+    }
+
+    /// True when `name_key` is on the roster RIGHT NOW — the "never a hostile" test. `engage_hostile`
+    /// and the presence axis both consult it, because a group member's TARGET is what we are
+    /// fighting and the member never is: one friendly in `engaged` merged three of the owner's pulls
+    /// into a single 214-second segment.
+    ///
+    /// The LIVE roster rather than `admitted`: someone who genuinely left your group and is now
+    /// duelling you is not protected by having once been a member.
+    pub fn is_member(&self, name_key: &str) -> bool {
+        self.roster.members.contains(name_key)
+    }
+
+    /// True when `name_key` is someone the engine may book OUTGOING damage for as a group member.
+    /// The ADMISSION test — deliberately the wider `admitted` set, so a member who left mid-pull
+    /// keeps being recorded and a user REMOVING someone in the popover only ever hides a row.
+    pub fn is_admitted_member(&self, name_key: &str) -> bool {
+        if name_key == "you" {
+            return false;
+        }
+        // A PET IS NEVER A MEMBER. The same absolute guard `note_player` uses, and it matters for
+        // the same reason: a "member" is excluded from `engaged` and from presence, so one bad entry
+        // would silently delete a real pet's damage with no error anywhere.
+        if self.pet_names.contains(name_key) || self.ever_pet.contains(name_key) {
+            return false;
+        }
+        self.roster.admitted.contains(name_key)
+    }
+
+    /// True if `name_key` currently resolves to an engaged hostile instance.
+    pub fn is_engaged_hostile(&self, name_key: &str) -> bool {
+        let Some(enc) = &self.current else {
+            return false;
+        };
+        enc.engaged
+            .iter()
+            .any(|id| name_key_of(id) == Some(name_key))
+    }
+
+    /// The in-progress encounter, but only while it is FRESH — the same rule `route_miss` uses, so a
+    /// non-damage event can attach to the fight it belongs to without reviving a stale one (and
+    /// without ever OPENING one: only damage and CC do that).
+    pub fn fresh_encounter_id(&self, ts: i64) -> bool {
+        self.current
+            .as_ref()
+            .is_some_and(|e| ts - e.last_ts <= FALLBACK_IDLE_MS)
+    }
+
+    /// The fresh in-progress encounter, mutably. `None` both when nothing is open and when what is
+    /// open is stale.
+    pub fn fresh_encounter(&mut self, ts: i64) -> Option<&mut Encounter> {
+        match self.current.as_mut() {
+            Some(e) if ts - e.last_ts <= FALLBACK_IDLE_MS => Some(e),
+            _ => None,
+        }
+    }
+
+    // ── The evidence the routing paths read off a line ────────────────────────────────────────
+
+    /// Record player-shaped evidence for a name.
+    ///
+    /// A PET IS NEVER A PLAYER, and the guard is absolute in both directions: a name that is or has
+    /// ever been one of your pets — or that any charm broadcast has ever named — can never be filed
+    /// here. Getting this wrong is expensive and silent: a "player" is excluded from `engaged`, from
+    /// enemy healing and from a pet's target set, so one bad entry deletes real damage with no error
+    /// anywhere.
+    ///
+    /// SOMETHING YOU HAVE BEEN KILLING IS NEVER A PLAYER EITHER (JOS-48), and it is the same guard
+    /// for the same reason. The heal line the caller read is `<H> healed you for N`, and the belief
+    /// behind it — "a mob cannot heal the owner" — is FALSE: your OWN lifetap prints exactly that
+    /// shape and names the DRAINED MOB as the healer (`Lord of Loathing healed you for 509 hit
+    /// points by Leech Touch I.`). Five of those in one reporting slice; filing them as players
+    /// deleted every pet swing at them from that instant (measured: 18 hits, 398 points, one pet,
+    /// one pull).
+    ///
+    /// THE SIGNAL IS YOUR OWN SWING, AND THE NARROWNESS IS MEASURED, NOT TIMID. The wider rule —
+    /// "anything that was ever an engaged hostile" — is WRONG in the same corpus: a raid boss
+    /// mind-controls the reporter's own healer, so `Sonista slashes YOU` lands 27 seconds before
+    /// `Sonista healed you`. Being hit is something that HAPPENS to you; hitting is something you DO,
+    /// and only the second one names a mob.
+    pub fn note_player(&mut self, name_key: Option<&str>) {
+        let Some(name_key) = name_key else { return };
+        if name_key.is_empty() || name_key == "you" {
+            return;
+        }
+        if self.ever_pet.contains(name_key) || self.charm.ever_charmed(name_key) {
+            return;
+        }
+        if self.ever_struck.contains(name_key) {
+            return;
+        }
+        self.known_players.insert(name_key.to_string());
+        // …and a heal landing on YOU outranks a swing at you, so it also un-marks the
+        // record-everything ladder's hostile flag. The three refusals above make this safe.
+        self.others.clear_hostile(name_key);
+    }
+
+    /// Record that YOU landed damage on `name_key` — the only writer of `ever_struck`. Your PET's
+    /// swings are deliberately not evidence: a pet auto-attacks what it is pointed at, including a
+    /// charmed ally, so it carries no statement of intent.
+    pub fn note_struck(&mut self, name_key: &str) {
+        if name_key.is_empty() || name_key == "you" {
+            return;
+        }
+        self.ever_struck.insert(name_key.to_string());
+    }
+
+    /// Bind `name_key` into the attribution set. THE one door, so "was this ever a pet?" has a single
+    /// answer and a player can never shadow one.
+    pub fn note_pet(&mut self, name_key: &str) {
+        self.pet_names.insert(name_key.to_string());
+        self.ever_pet.insert(name_key.to_string());
+        self.known_players.remove(name_key);
+        self.retract_other(name_key);
+    }
+
+    /// A STRONGER MODEL HAS CLAIMED A NAME — take back the row the record-everything ladder booked
+    /// for it. The pet and charm models are authoritative for pet attribution, so a pet that swung a
+    /// few times before its binding line arrived must end up with ONE row (its own), never two.
+    ///
+    /// IT CANNOT LOSE A NUMBER THAT EXISTED BEFORE IT DID: an `Other` row is additive by construction
+    /// — it enters no you/pet total, no target ledger, no `engaged` set and no presence clock — so
+    /// deleting it moves exactly the damage this feature added and nothing else. The damage is not
+    /// discarded either; the same lines are re-booked under the pet's own row from the bind onward.
+    ///
+    /// A ROSTER MEMBER IS NEVER RETRACTED: their row is the roster's, not this ladder's, and both
+    /// `note_struck` and a charm broadcast can name a real group-mate.
+    ///
+    /// THE STATED LIMIT: it reaches the live aggregates — the open fight, the finalized fights still
+    /// in history (whose memoized summary is dropped so it re-derives) and the live zone session. A
+    /// zone session already FROZEN keeps the row: its aggregate is immutable by design and a pet
+    /// bound after you left the zone is not worth a thaw. Measured on the owner's whole log, every
+    /// retraction fires within the same fight as the swings it takes back.
+    pub fn retract_other(&mut self, name_key: &str) {
+        if name_key.is_empty() || self.roster.admitted.contains(name_key) {
+            return;
+        }
+        if !self.others.note_pet(name_key) {
+            return;
+        }
+        if !self.others.is_recorded(name_key) {
+            return;
+        }
+        self.others.forget(name_key);
+        let id = format!("member:{name_key}");
+        self.zone_agg.drop_out(&id);
+        if let Some(enc) = self.current.as_mut() {
+            if enc.agg.drop_out(&id) {
+                enc.summary = None;
+            }
+        }
+        for enc in &mut self.history {
+            if enc.agg.drop_out(&id) {
+                enc.summary = None;
+            }
+        }
+    }
+
+    /// RE-INDEX `pet_names` off the world model's live pets, and report the name keys that fell out.
+    ///
+    /// `pet_names` is not a second opinion about who your pets are — it is a fast NAME index of the
+    /// world model's pet INSTANCES, which is why every path that can retire one has to put the two
+    /// back in step. `ever_pet` is untouched by design: it records that a name was EVER yours, and a
+    /// retired pet is still a pet, never a candidate player.
+    pub fn sync_pet_names(&mut self) -> Vec<String> {
+        let live: HashSet<String> = self.world.pet_name_keys().into_iter().collect();
+        let dropped: Vec<String> = self
+            .pet_names
+            .iter()
+            .filter(|k| !live.contains(*k))
+            .cloned()
+            .collect();
+        for key in &dropped {
+            self.pet_names.remove(key);
+        }
+        dropped
+    }
+
+    /// DEMOTE the charm binds whose corroboration window has closed. Driven by the LOG clock — once
+    /// per ingested event, and (live only) once per snapshot — so a replay and a live tail demote at
+    /// exactly the same instants. Cheap: the guard is an emptiness read.
+    pub fn sweep_charm(&mut self, now: i64) {
+        if self.charm.idle() {
+            return;
+        }
+        for d in self.charm.sweep(now) {
+            self.world.uncharm(&d.display, now);
+            self.drain_retirements();
+            self.pet_names.remove(&d.name_key);
+        }
+    }
+
+    /// END the ally binds whose charm can no longer be running. Same clock, same two callers.
+    pub fn sweep_ally(&mut self, now: i64) {
+        if self.ally.idle() {
+            return;
+        }
+        self.ally.sweep(now);
+    }
+
+    /// MAY `name_key` BE A THIRD-PARTY CHARMER? The behavioural half of the caster gate — the name
+    /// shape answers the other half, and the ally model asks both.
+    ///
+    /// The three refusals are the SAME absolute guards `note_player` wears, for the same reason: a
+    /// name YOU have landed damage on is a mob, a name any charm broadcast has ever named is a mob,
+    /// and a name that is or was your pet is a pet. A single-word proper-named mob is exactly what
+    /// the shape test cannot refuse, and these are what catch it.
+    pub fn ally_caster_allowed(&self, name_key: &str) -> bool {
+        if name_key.is_empty() || name_key == "you" || Some(name_key) == self.player_key.as_deref()
+        {
+            return false;
+        }
+        if self.pet_names.contains(name_key) || self.ever_pet.contains(name_key) {
+            return false;
+        }
+        if self.ever_struck.contains(name_key) || self.charm.ever_charmed(name_key) {
+            return false;
+        }
+        true
+    }
+
+    /// IS `name_key` ON THE FRIENDLY SIDE OF AN ALLY CHARM? A bound ally pet swinging at one of these
+    /// is the SOFT-HOSTILE PROOF that its charm broke.
+    ///
+    /// Five sources, widest first: you, your own live pets, the group roster, anyone the heal stream
+    /// proved a player, and the ally model's own caster/charmer set. The last does the work in
+    /// practice, because the measured breaks are pets turning on the STRANGER who charmed them, and
+    /// a stranger is invisible to the other four.
+    pub fn ally_friendly(&self, name_key: &str) -> bool {
+        if name_key.is_empty() || name_key == "you" {
+            return true;
+        }
+        if self.pet_names.contains(name_key) {
+            return true;
+        }
+        if self.is_known_player(name_key) || self.is_member(name_key) {
+            return true;
+        }
+        self.ally.is_friendly(name_key)
+    }
+
+    /// Learn the player's proper name as a FALLBACK only (an injected name wins): `You healed
+    /// <Player>` where the target is not a pet and not an engaged hostile → that name IS the player.
+    /// EQ never writes literal "You" as a heal target; it uses the character name.
+    pub fn learn_player_key(
+        &mut self,
+        healer_key: Option<&str>,
+        t_key: &str,
+        is_you_tgt: bool,
+        is_pet_tgt: bool,
+    ) {
+        if !self.player_key_injected
+            && healer_key == Some("you")
+            && !is_you_tgt
+            && !is_pet_tgt
+            && !self.is_engaged_hostile(t_key)
+            && self.player_key.is_none()
+        {
+            self.player_key = Some(t_key.to_string());
+        }
+        if let Some(k) = self.player_key.clone() {
+            self.known_players.insert(k);
+        }
+    }
+
+    /// PRESENCE refresh — record that `name` is still in the current fight as of `ts`. The LIVENESS
+    /// axis ONLY: it moves nothing on the damage timeline, so DPS denominators and the fled-mob
+    /// fallback clock are unaffected.
+    ///
+    /// Deliberately conservative in both directions: it never ENGAGES anything (only instances
+    /// ALREADY engaged are refreshed, so a miss or resist still cannot open or join an encounter),
+    /// and it never resolves or creates a world instance — it matches the engaged instance ids by
+    /// NAME PREFIX — so a whiff at a mob we have never damaged has no side effect on the world model
+    /// at all. Name-level matching refreshes every engaged twin sharing the name: the log cannot tell
+    /// twins apart on a miss line, and a retired twin is "gone" via `is_retired` anyway.
+    pub fn note_presence(&mut self, name: &str, ts: i64) {
+        if self.current.is_none() {
+            return;
+        }
+        let key = id_key(name);
+        if self.is_known_player(&key) {
+            return;
+        }
+        // …and a GROUP MEMBER is never a hostile either. Members never reach `engaged`, so the loop
+        // below would find nothing to refresh anyway; the early return states the rule where a
+        // reader looks for it and keeps it from depending on that other guard staying correct.
+        if self.is_member(&key) {
+            return;
+        }
+        // Keep the WORLD's per-instance clock in lockstep with the encounter's presence axis, so
+        // staleness retirement ages an instance out on exactly the evidence closure calls presence.
+        self.world.note_seen(&key, ts);
+        self.drain_retirements();
+        let ids: Vec<String> = match &self.current {
+            Some(enc) => enc
+                .engaged
+                .iter()
+                .filter(|id| name_key_of(id) == Some(key.as_str()))
+                .cloned()
+                .collect(),
+            None => return,
+        };
+        for id in ids {
+            self.note_presence_id(&id, ts);
+        }
+    }
+
+    /// Presence refresh for an already-resolved engaged instance id.
+    ///
+    /// PRESENCE DISCIPLINE: a refresh may only ever describe a HOSTILE we are fighting. Two entities
+    /// can never be refreshed here, because keeping the fight alive on their account is what let a
+    /// stranger's 214-second brawl swallow three of the owner's pulls: a KNOWN PLAYER (never a
+    /// hostile) and a LIVE PET of ours (never something we are killing).
+    pub fn note_presence_id(&mut self, instance_id: &str, ts: i64) {
+        if self.world.is_live_pet(instance_id) {
+            return;
+        }
+        if let Some(name_key) = name_key_of(instance_id) {
+            if self.is_known_player(name_key) || self.is_member(name_key) {
+                return;
+            }
+        }
+        let Some(enc) = self.current.as_mut() else {
+            return;
+        };
+        if !enc.engaged.contains(instance_id) {
+            return;
+        }
+        let prev = enc.engaged_seen.get(instance_id).copied();
+        if prev.is_none_or(|p| ts > p) {
+            enc.engaged_seen.insert(instance_id.to_string(), ts);
+        }
+    }
+
+    /// INSTANCE-RESOLVED defender label for a damage-free instant (miss / resist).
+    ///
+    /// The damage path labels its defender through the world model, so twins read as `a deadly black
+    /// widow (7)` / `(8)`. Miss and resist ticks carried the RAW log name instead, which grew a
+    /// bare-named 0-damage ghost row alongside the two real instances in the per-mob panel.
+    ///
+    /// Resolution is GATED on the name already being engaged in this encounter. That keeps law 8
+    /// intact in both directions: `engaged` membership only ever comes from LANDED damage or heals,
+    /// so a whiff at a mob we have never damaged still has ZERO world-model side effects and simply
+    /// keeps its raw name — the honest label when no instance exists.
+    pub fn defender_label(&mut self, name: &str, ts: i64) -> String {
+        let key = id_key(name);
+        if key == "you" {
+            return "You".to_string();
+        }
+        let engaged = match &self.current {
+            Some(enc) => enc
+                .engaged
+                .iter()
+                .any(|id| name_key_of(id) == Some(key.as_str())),
+            None => false,
+        };
+        if engaged {
+            self.resolve(name, ts, false).label
+        } else {
+            name.to_string()
+        }
     }
 
     /// Freeze the LIVE zone aggregate into the capped history, called on a zone change (and on the
@@ -185,14 +671,76 @@ impl EngineState {
     }
 
     /// MINT FRESH ZONE ACCUMULATORS — the second half of every stay boundary, its own function
-    /// because there are two callers and one of them must not be allowed to drift: the zone line
-    /// and the session mark. THE MARK IS THIS AND NOTHING ELSE; everything the zone case does
-    /// besides this pair is a statement about the ROOM changing.
+    /// because there are two callers and one of them must not be allowed to drift: the zone line and
+    /// the session mark. THE MARK IS THIS AND NOTHING ELSE; everything the zone case does besides
+    /// this pair is a statement about the ROOM changing.
     pub fn reset_zone_accumulators(&mut self) {
         self.zone_agg = Agg::new();
         self.zone_finalized_ms = 0;
         self.zone_active_ms = 0;
         self.zone_start_ts = 0;
         self.zone_last_ts = 0;
+    }
+}
+
+/// The nameKey half of an instance id `<nameKey>#<gen>`. `None` when the id carries no `#` at a
+/// position that could split one — which is the `you` sentinel and nothing else.
+pub fn name_key_of(instance_id: &str) -> Option<&str> {
+    let hash = instance_id.rfind('#')?;
+    (hash > 0).then(|| &instance_id[..hash])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_instance_ids_name_key_is_everything_before_the_last_hash() {
+        assert_eq!(name_key_of("a spite golem#12"), Some("a spite golem"));
+        assert_eq!(name_key_of("you"), None);
+        assert_eq!(name_key_of("#3"), None);
+    }
+
+    /// The three absolute refusals: a pet, a charmed name and something you have struck can never be
+    /// filed as a player, whatever a heal line says.
+    #[test]
+    fn a_pet_a_charm_and_a_mob_you_struck_can_never_become_players() {
+        let mut st = EngineState::new();
+        st.note_pet("vebarn");
+        st.note_player(Some("vebarn"));
+        assert!(!st.known_players.contains("vebarn"));
+
+        let mut st = EngineState::new();
+        st.charm.charm_broadcast("a rock golem", "a rock golem", 0);
+        st.note_player(Some("a rock golem"));
+        assert!(!st.known_players.contains("a rock golem"));
+
+        let mut st = EngineState::new();
+        st.note_struck("lord of loathing");
+        st.note_player(Some("lord of loathing"));
+        assert!(!st.known_players.contains("lord of loathing"));
+    }
+
+    /// …and the one that DOES file: a stranger who healed you, with none of the three against them.
+    #[test]
+    fn a_healer_with_no_refusal_against_them_is_filed_a_player() {
+        let mut st = EngineState::new();
+        st.note_player(Some("sonista"));
+        assert!(st.is_known_player("sonista"));
+    }
+
+    /// A retired pet leaves the ATTRIBUTION set and stays in `ever_pet` — a retired pet is still a
+    /// pet, never a candidate player.
+    #[test]
+    fn syncing_pet_names_drops_the_retired_and_keeps_the_history() {
+        let mut st = EngineState::new();
+        st.world.claim("Jaber", 0);
+        st.note_pet("jaber");
+        st.world.claim("Gonekn", 1_000);
+        st.note_pet("gonekn");
+        let dropped = st.sync_pet_names();
+        assert_eq!(dropped, vec!["jaber".to_string()]);
+        assert!(!st.pet_names.contains("jaber"));
+        assert!(st.ever_pet.contains("jaber"));
     }
 }
