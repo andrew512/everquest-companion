@@ -7,13 +7,31 @@
  * own evaluator was still making the noise and two evaluators means two sounds. This spec is the
  * inch. With `EQC_ENGINE_ALERTS=1` beside `EQC_ENGINE=1` and `EQC_ENGINE_SERVE=1`:
  *
- *   1. THE APP SAYS WHICH WORLD OWNS THE SOUND, once, in the dev log — the arm line. Load-bearing
- *      rather than tidy: everything below is also true of an app that armed nothing and simply
- *      fired its own alert, so without this the whole spec would pass against the feature being off.
- *   2. A MATCHING LIVE LINE MAKES EXACTLY ONE SOUND. The bar of the ticket, and the reason it is an
+ *   1. A MATCHING LIVE LINE MAKES EXACTLY ONE SOUND. The bar of the ticket, and the reason it is an
  *      e2e claim: a doubled alert is invisible to every unit test in the tree.
- *   3. …AND THAT SOUND IS THE ENGINE'S. The fire frame reached the app, was placed against a real
+ *   2. …AND THAT SOUND IS THE ENGINE'S. The fire frame reached the app, was placed against a real
  *      def, and was PLAYED — narrated as such, with the app's own evaluator silent behind it.
+ *
+ * THE SECOND CLAIM IS THE ONE THAT SEPARATES THIS FEATURE FROM ITS ABSENCE, and it deserves saying
+ * why it is made where it is. The obvious evidence would be the ARM LINE — the sentence
+ * `alertsAudioRules.ts armVerdict` writes when the swap is thrown — but that line is unreachable
+ * from a spec: arming happens inside `startEngineSupervisor`, which runs during boot, and Playwright
+ * is already draining the app's stdio when `electron.launch()` resolves, so every line printed
+ * before that moment is consumed and gone (`engineSteps.mts`'s header measures exactly this, and
+ * `engine-boots.e2e.mts` is shaped around it). Waiting for a fire is better evidence anyway: the arm
+ * line is a statement of intent, while `PLAYED from the engine` is the app reporting, at the one
+ * moment it matters, that a frame off the socket is what reached the speaker. An app that armed
+ * nothing prints `logged, not played` on the same line and fails this check while still making its
+ * one sound — which is precisely the discrimination claim 1 alone cannot make. Both halves of that
+ * sentence, and the gate that can refuse to arm at all, are pinned in
+ * `tests/engineAlertsAudio.test.mts`.
+ *
+ * AND THAT DISCRIMINATION IS MEASURED, not argued. Run once on this ticket with the third flag
+ * dropped and the other two left in place: the sound-count checks stayed green (this process's own
+ * evaluator made the one sound, exactly as it always has) and both attribution checks went red —
+ * `0 played · 1 logged-not-played`. So the ENGINE matched the same line in the same instant, and
+ * the only thing the flag changes is which of the two publishes. That is the cutover, stated as a
+ * difference rather than as an assertion.
  *
  * ── WHY THE COALESCING WINDOW HAD TO BE TAKEN OFF THE PROBE DEF ────────────────────────────────
  *
@@ -87,11 +105,6 @@ const LINE = 'Fail growls with the spirit of the puma.'
  *  same shape the shipped suggestion templates use. */
 const REGEX = 'growls with the spirit of the puma'
 
-/** The app's arm line, verbatim enough to be unmistakable and loose enough to survive a reword of
- *  the tail. `alertsAudioRules.ts armVerdict` is where it is written. */
-const ARMED = 'the ENGINE now plays alert audio'
-const REFUSED = 'EQC_ENGINE_ALERTS refuses to arm'
-
 interface Spoken {
   text: string
   uttered: boolean
@@ -104,13 +117,21 @@ function spoken(page: Page): Promise<Spoken[]> {
   ) as Promise<Spoken[]>
 }
 
-/** How many times the app said it PLAYED a fire for this rule (engineClientHost.ts `noteFire`). */
-function playedLines(out: AppOutput, rule: string): number {
-  return out
+/**
+ * The app's own narration of the fires it heard for one rule, split by what it did with each
+ * (engineClientHost.ts `noteFire`). Both halves are counted because the two failures they
+ * distinguish are opposite: `played` short of one means the frame never became a sound, and
+ * `logged` above zero means the flag did not arm and this process made the noise itself.
+ */
+function fireLines(out: AppOutput, rule: string): { played: number; logged: number } {
+  const mine = out
     .text()
     .split('\n')
-    .filter((l) => l.includes('data-server fire:') && l.includes(rule) && l.includes('PLAYED from the engine'))
-    .length
+    .filter((l) => l.includes('data-server fire:') && l.includes(rule))
+  return {
+    played: mine.filter((l) => l.includes('PLAYED from the engine')).length,
+    logged: mine.filter((l) => l.includes('logged, not played')).length
+  }
 }
 
 /**
@@ -176,7 +197,7 @@ async function refreshPlayer(page: Page): Promise<boolean> {
  */
 async function stepOneSound(page: Page, out: AppOutput, append: (at: Date) => void): Promise<void> {
   const before = (await spoken(page)).length
-  const playedBefore = playedLines(out, PROBE_NAME)
+  const fireBefore = fireLines(out, PROBE_NAME)
   append(new Date())
 
   const ring = await settle(
@@ -208,11 +229,22 @@ async function stepOneSound(page: Page, out: AppOutput, append: (at: Date) => vo
     `${String(after.length)} utterance(s) with the throttle off for this def`
   )
 
-  const playedNow = playedLines(out, PROBE_NAME) - playedBefore
+  const now = fireLines(out, PROBE_NAME)
+  const played = now.played - fireBefore.played
+  const logged = now.logged - fireBefore.logged
   check(
-    '…and the sound is ENGINE-ATTRIBUTED: the app placed the fire frame and played it',
-    playedNow === 1,
-    `${String(playedNow)} "PLAYED from the engine" line(s) for "${PROBE_NAME}"`
+    '…and the sound is ENGINE-ATTRIBUTED: the app placed the fire frame and PLAYED it',
+    played === 1,
+    `${String(played)} played · ${String(logged)} logged-not-played, for "${PROBE_NAME}"`
+  )
+  // THE DISCRIMINATOR, STATED AS ITS OWN CHECK. `logged, not played` is what an unarmed launch
+  // prints — the flag off, the gate refused, or the frame unplaceable against any def — and every
+  // one of those worlds still makes exactly one sound, from THIS process's evaluator. Without this
+  // line the spec above would be green against the feature being absent.
+  check(
+    '…and this process made none of it: no fire for this rule was merely logged',
+    logged === 0,
+    `${String(logged)} fire(s) the app heard and did not play`
   )
 }
 
@@ -228,25 +260,6 @@ async function main(): Promise<void> {
   const out = tapOutput(launch.app)
   try {
     const page = await mainWindow(launch.app)
-
-    // ── CLAIM 1: the app armed, and said so ────────────────────────────────────────────────────
-    //
-    // The arm happens inside `startEngineSupervisor`, before the supervisor can reach READY, so by
-    // the time a window exists the line is already in the tap. A REFUSAL is reported separately
-    // rather than folded into "not armed": the gate refusing is correct behaviour over a store
-    // holding an early-warning def, and a run that hit it must say so instead of looking broken.
-    const text = out.text()
-    if (text.includes(REFUSED)) {
-      check(
-        'the flag armed on a freshly-seeded store',
-        false,
-        'the early-warning gate refused — the seeded def set has grown an earlyWarnSec def'
-      )
-      return
-    }
-    if (!check('the app hands alert audio to the ENGINE, and narrates the swap', text.includes(ARMED))) {
-      return
-    }
 
     // ── the precondition: both worlds on the same log, the engine's ingest live ────────────────
     const parity = await settleParity(out)
@@ -278,7 +291,7 @@ async function main(): Promise<void> {
     ).catch(() => false)
     if (!check('the engine acknowledged the def push', defined)) return
 
-    // ── CLAIM 2 + 3: one line in, exactly one sound out, and it is the engine's ────────────────
+    // ── the two claims: one line in, exactly one sound out, and it is the engine's ─────────────
     await stepOneSound(page, out, (at) => launch.log.appendAt(at, LINE))
 
     await closeWindows(launch.app)
