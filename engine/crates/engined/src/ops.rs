@@ -14,12 +14,13 @@
 
 use protocol::generated::{
     ClientMessage, EchoRequestOp, EchoResult, EngineMessage, ErrorCode, ErrorReply, ErrorReplyKind,
-    HelloOp, ProtocolError, Reply, ReplyKind, ReplyResult, RequestId, ResetMessage,
-    ResetMessageKind, SessionAttachRequestOp, SessionHealthRequestOp, SessionProgressRequestOp,
-    SubscribeAck, ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
+    HelloOp, ModuleSnapshotRequestOp, ModuleSnapshotResult, ProtocolError, Reply, ReplyKind,
+    ReplyResult, RequestId, ResetMessage, ResetMessageKind, SessionAttachRequestOp,
+    SessionHealthRequestOp, SessionProgressRequestOp, SubscribeAck, ViewSubscribeRequestOp,
+    ViewUnsubscribeRequestOp,
 };
 
-use crate::world::{ListenerId, World};
+use crate::world::{ListenerId, SnapshotAnswer, World};
 
 /// One connection's own state — everything that belongs to this conversation rather than to the
 /// world.
@@ -109,6 +110,41 @@ impl Session {
                         subscribed: true,
                     }),
                 )
+            }
+
+            // MODULE.SNAPSHOT — THE FIRST DATA-BEARING OP (JOS-478). Everything above this line is
+            // an envelope; this one carries the fold's own answer.
+            //
+            // THE ANSWER IS THE INGEST THREAD'S, fetched through the one door. This dispatch stays
+            // a pure function of (world, session, message) because `World::module_snapshot` returns
+            // a value rather than writing one — it is the WAIT that is new, and it is bounded and
+            // owned by the world (see that method for why the lock is not held across it).
+            //
+            // THREE OUTCOMES, THREE SENTENCES. A module the registry does not carry is `notFound`,
+            // because the registry is the authority and an empty state would be a lie about a
+            // module that does not exist. A world with no fold is `unavailable` — nothing is wrong
+            // with the request, there is simply nothing attached yet, and telling a client
+            // `notFound` there would send it hunting for a typo in a name that is perfectly good.
+            ClientMessage::ModuleSnapshotRequest(request) => {
+                let module = request.params.module;
+                match world.module_snapshot(&module) {
+                    SnapshotAnswer::Snapshot(snapshot) => reply(
+                        request.id,
+                        ReplyResult::ModuleSnapshotResult(ModuleSnapshotResult {
+                            module,
+                            seq: snapshot.seq,
+                            state: snapshot.state,
+                        }),
+                    ),
+                    SnapshotAnswer::NotFound => error(
+                        request.id,
+                        ErrorCode::NotFound,
+                        format!("this engine folds no module named {module:?}"),
+                    ),
+                    SnapshotAnswer::Unavailable(why) => {
+                        error(request.id, ErrorCode::Unavailable, why)
+                    }
+                }
             }
 
             // SUBSCRIBE. Acknowledge, then open the stream with a reset — reset-then-diffs is rule
@@ -292,6 +328,7 @@ fn is_known_op(op: &str) -> bool {
         SessionAttachRequestOp::SessionAttach.to_string(),
         SessionHealthRequestOp::SessionHealth.to_string(),
         SessionProgressRequestOp::SessionProgress.to_string(),
+        ModuleSnapshotRequestOp::ModuleSnapshot.to_string(),
         ViewSubscribeRequestOp::ViewSubscribe.to_string(),
         ViewUnsubscribeRequestOp::ViewUnsubscribe.to_string(),
     ]

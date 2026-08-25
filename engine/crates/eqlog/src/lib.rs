@@ -50,10 +50,13 @@ pub use timestamp::{host_timezone, Clock};
 /// THE CHARACTER NAME IS LOAD-BEARING and must be installed BEFORE the fold: the self-`/who` rule
 /// and the pet-leader carve-out both decline every line until it is set, exactly as `session.ts`
 /// (and `foldArm.mts`) arrange.
+/// THE CATALOG IS THE PROCESS'S ONE COPY (JOS-478, `spelldb::shared`). It was `spelldb::load()`
+/// here, which meant a second parser in one process paid the whole 386 ms build again for bytes
+/// compiled into the binary — the knot `engined`'s README measured and named for the integrator.
 pub fn parser_for(character: &str, tz: chrono_tz::Tz) -> Parser {
     Parser::new(
         Clock::new(tz),
-        Some(spelldb::load()),
+        Some(spelldb::shared()),
         Some(character.to_string()),
     )
 }

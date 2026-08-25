@@ -62,8 +62,15 @@ fn the_generated_file_carries_the_digest_of_the_schema_it_came_from() {
 fn every_definition_in_the_schema_became_a_rust_type() {
     // THE MERGE GUARD. The bundling step is mirrored in two languages (see this crate's header),
     // and this is where a drift between them would show: a definition that one merge dropped
-    // simply would not be here. `Cell` is the one deliberate absence - it is replaced by the
-    // hand-written `protocol::cell::Cell`, for the reason that module's header gives.
+    // simply would not be here.
+    //
+    // TWO DELIBERATE ABSENCES, and they are the same defect twice: typify lowers a multi-type
+    // schema to an enum whose number arm is `f64`, so a count comes back with a decimal point
+    // stapled to it. `Cell` is replaced by the hand-written `protocol::cell::Cell` (that module's
+    // header has the whole argument) and `ModuleState` by `serde_json::Value` (JOS-478 - the
+    // definition says "any JSON, the module owns the shape", and that sentence IS `Value` in Rust,
+    // so there is nothing to hand-write). Both are declared in this crate's `render_types` and both
+    // are named here and in tests/protocolSchema.test.mts, so a third cannot appear silently.
     let files = protocol_codegen::read_schema_files(&schema_dir()).expect("the schema reads");
     let bundle = protocol_codegen::bundle(&files).expect("the schema bundles");
     let on_disk = committed(&generated_path()).expect("the artifact is committed");
@@ -80,6 +87,13 @@ fn every_definition_in_the_schema_became_a_rust_type() {
             assert!(
                 on_disk.contains("crate::cell::Cell"),
                 "the hand-written Cell replacement is not being used"
+            );
+            continue;
+        }
+        if name == "ModuleState" {
+            assert!(
+                on_disk.contains("pub state: ::serde_json::Value"),
+                "the ModuleState replacement is not being used"
             );
             continue;
         }

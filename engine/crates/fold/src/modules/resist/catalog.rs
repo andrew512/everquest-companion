@@ -26,12 +26,14 @@
 //! cannot observe as different from a first. The TS side reaches the identical state by building
 //! its indexes at module-import time.
 //!
-//! THE SPELL FACTS ARE PROJECTED AND THE DATABASE IS DROPPED. `eqlog::spelldb::load()` is what
-//! `eqlog::parser_for` installs, byte for byte and by construction — a pure function of
-//! `spells.json`, the overlay sidecar and the committed message-overlay baseline — so building the
-//! projection from a second `load()` asks the same catalog the same questions the parser's copy
-//! would answer. Only the three booleans-and-a-level survive the call, which is what keeps a fold
-//! from borrowing anything the parser owns.
+//! THE SPELL FACTS ARE PROJECTED AND THE DATABASE IS DROPPED. `eqlog::spelldb::shared()` is what
+//! `eqlog::parser_for` installs, byte for byte and BY IDENTITY since JOS-478 — the catalog is a
+//! pure function of `spells.json`, the overlay sidecar and the committed message-overlay baseline,
+//! so the process builds it once and both readers get that one. It used to be a second `load()`
+//! here, which asked the same catalog the same questions and paid the entire 386 ms build to do
+//! it; the projection below is unchanged, and the one line that changed is which handle it reads.
+//! Only the three booleans-and-a-level survive the call, which is what keeps a fold from borrowing
+//! anything the parser owns.
 //!
 //! AND THE BIG JSON IS `include_str!`'d, NEVER COPIED. `mobs.json` is 3.2 MB and has exactly one
 //! home; the struct below names only `page`, `name` and `level`, which is what makes "we read
@@ -210,7 +212,7 @@ pub struct SpellFacts {
 fn spell_facts_table() -> &'static HashMap<String, SpellFacts> {
     static T: OnceLock<HashMap<String, SpellFacts>> = OnceLock::new();
     T.get_or_init(|| {
-        let db = eqlog::spelldb::load();
+        let db = eqlog::spelldb::shared();
         let mut out = HashMap::new();
         for (key, entry) in db.by_key_entries() {
             let levels = parse_spell_class_levels(entry.classes.as_deref());

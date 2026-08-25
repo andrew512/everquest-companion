@@ -36,6 +36,7 @@
 #![warn(missing_docs)]
 
 mod conn;
+mod foldsink;
 mod ingest;
 mod ops;
 mod spawn;
@@ -110,7 +111,13 @@ fn main() -> ExitCode {
     // outlives its parent.
     spawn::die_with_stdin();
 
-    let server = Arc::new(Server::new(World::new(), token));
+    // THE FOLD IS ON (JOS-478). One line, and it is the whole of what turns a counting engine into
+    // a data-bearing one: every attach now builds the twenty-module registry and folds into it, and
+    // `module.snapshot` answers off it. See `foldsink.rs` for what an attach constructs and why.
+    let server = Arc::new(Server::new(
+        World::with_ingest(ingest::starter(foldsink::folding_sinks())),
+        token,
+    ));
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
