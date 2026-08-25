@@ -1,10 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/protocol", "crates/protocol-codegen"]
+members = ["crates/engined", "crates/protocol", "crates/protocol-codegen"]
 
-# THE ENGINE (JOS-459). Today this workspace holds the protocol contract and nothing else:
-# phase 0's first ticket is the schema as a checked artifact, with no runtime, no socket and no
-# process. The tailer, parser, fold and API server land in later crates beside `protocol`.
+# THE ENGINE (JOS-459). Today this workspace holds the protocol contract (`protocol`, JOS-464) and
+# the process skeleton that answers it over loopback TCP (`engined`, JOS-466) — a spawn contract, a
+# handshake and echo-grade ops, with NO game logic anywhere. The tailer, parser and fold land in
+# later crates beside them.
 #
 # TWO STANDING RULES FOR EVERYTHING UNDER engine/:
 #   * Nothing here may shell out to powershell.exe, ever, at build time or at run time.
