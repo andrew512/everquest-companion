@@ -80,6 +80,21 @@ parses, aggregates, compresses, and serves; the UI becomes a query/subscribe cli
 20. *(2026-08-24)* **The owner is informed explicitly when the real client first tests against
     the server** — the moment a renderer surface reads the live engine (start of the phase-3
     cutover), not after. Standing notification obligation on the integrator.
+21. *(2026-08-25, answering the lastPlayed sheet item)* **The server owns log-file facts.** Owner:
+    "the server should be the one reading the log file, rather than the app reaching in… reported
+    so the app can use it to display and choose the correct character on launch." The engine stats
+    the file it owns and REPORTS the fact (health/attach surface, later a `logs.list` discovery
+    surface); `lastPlayed` leaves the app's fold path at cutover; an mtime never enters fold
+    state (it stays a served process fact, ruling 18 intact). Direction: log DISCOVERY itself
+    migrates server-side — launch-time character choice becomes a served answer.
+22. *(2026-08-25, answering the heartbeat sheet item)* **Thin client, ratified harder.** Owner:
+    "it seems more and more like most of that business logic should live in the rust server and
+    that the client should be relatively thin." The engine ticks its own modules while LIVE with
+    its own clock (historical replay stays clockless — the equivalence law is untouched); alerts
+    evaluate engine-side and FIRE over the stream; buff/timer/expiry logic lives engine-side and
+    renderers subscribe to served views; the app keeps only OS surfaces (audio/speech playback,
+    overlay windows, tray, presence, updater) per ruling 9. The app-side alert system reduces to
+    "receive fire → make sound/show window".
 
 ## The shape
 
@@ -327,6 +342,45 @@ re-derivable: byte-exact line-boundary cuts at first-line-of-day offsets). The b
   speed on the 200 MB fixture with main p95 < 50 ms concurrently); JOS-461's burst class
   dissolves; the GC-wave items (JOS-226 lossless combat compression, JOS-462 item-corpus heap)
   become engine-internal where they are cheap.
+
+## The cutover ledger (2026-08-25 — what remains to build, and what dies in the cutover release)
+
+State at writing: phases 0–2 COMPLETE (ingest, all 20 modules + combat proven, serve layer first
+light, app connected with the parity probe, packaging signed). Remaining to build, in rough order:
+
+1. **Engine live tick + file facts** (rulings 21–22; JOS-481): the engine ticks its modules while
+   live; health serves the log's mtime; later a `logs.list` discovery surface.
+2. **`*.define` commands** (boundary verdict 3): alert defs, buff trust, respawn prefs, combo
+   corrections, roster edits pushed on change; store stays persistence truth.
+3. **The remaining view sources** — every list in the product: `combat.live` (the meter; where
+   update-op coverage arrives), encounters/drilldown, buff+timer rows (the overlays), respawn,
+   progression, kills, and the Knowledge surface (items/spells/mobs/quests move engine-side —
+   deletes ~12 MB from main's heap and the renderer-bundled corpora).
+4. **Streams**: `alerts.fires` (app plays audio — the whole app-side alert system becomes
+   "receive fire → sound/window"), `world.conCard` fully resolved engine-side.
+5. **Renderer brokering** (ruling 7: main brokers a renderer's connection) + surfaces cut over
+   one-by-one behind the dev flag, `useModule` → `useView`.
+6. **Main's 18 sync readers rewired** (3 genuine queries → ops; mirrors → pushed streams);
+   fold-owned persisted artifacts (resist ledger, message-overlay register) move their IO into
+   the engine; `sessionMarks` as a command; `spells_us.txt` parse engine-side; wiki-miss events
+   with app-side fetch pushing results in.
+7. **Ruling 19 surface**: `perf.budgets`/`perf.timeline` ops, the in-app performance panel
+   section, bug-report attachment.
+8. **The no-munging lint** (ruling 4) failing builds on renderer sort/filter over domain data.
+9. Open owner item: the render-cell LOCALE (dates/numbers) as pushed app knowledge vs fixed en-US.
+
+**DELETED IN THE CUTOVER RELEASE** (ruling 12: once proven, move fully — one release):
+`src/main/modules/**` (registry, wiring, all twenty), `src/main/combat/**`, the TS parse path
+(`parser.ts`, `parse*.ts`, `scanHistory.ts`, `Tailer.ts`, `replaySlicer.ts`, `bus.ts`,
+`rulesets.ts`, epoch/session detectors), main's spellDb load, `pipeline.ts` fold construction,
+`session.ts` replay orchestration + heartbeat (attach forwarding remains), the replay gate, the
+`module:*`/`combat:*` IPC and per-window snapshot fan-out, the fold-derived IPC families, renderer
+`useModule` + client-side munging paths, renderer-bundled corpora. THE ORACLES RETIRE WITH THE TS
+FOLD — goldenOracle/rustParity exist to compare two implementations and the cutover leaves one;
+their successor is the engine's own budgets in CI against the pinned fixture (phase 4: G3 < 20 s
+for 128 MB, main p95 < 50 ms concurrently), plus the tail/scan invariance suites which are
+self-contained. App-side keeps: store/prefs, speech/sounds playback, overlay/window management,
+presence, tray, updater, planner, maps, feedback/telemetry, triage.
 
 ## Related tickets & instruments
 
