@@ -9,3 +9,5 @@ publish.workspace = true
 
 [dependencies]
 eqlog = { path = "../eqlog" }
+fold = { path = "../fold" }
+serde_json.workspace = true
