@@ -140,6 +140,72 @@ pub trait EqModule {
         None
     }
 
+    // ── THE REMAINING VIEW PULL SEAMS (JOS-487) ────────────────────────────────────────────────
+    //
+    // SIX MORE OF EXACTLY `as_loot`'s SHAPE, and the repetition is the design rather than a thing
+    // to factor away. A module is known here by WHAT IT CAN ANSWER, not by what it is; the
+    // alternative — one `as_any` and a downcast per source — would put `Any` on a contract whose
+    // whole point is that it does not have one, and it would move every "this module cannot answer
+    // that" from the compiler to a runtime `None`. Each is `None` for nineteen modules and the
+    // real thing for one.
+    //
+    // WHY A VIEW DOES NOT READ `snapshot()` INSTEAD is `as_loot`'s answer, and it is sharper here:
+    // `respawn.snapshot()` builds sixty rows AND forty candidates AND the whole preference blob to
+    // answer a question about sixty rows, and it would do it at the serve cadence.
+
+    /// The live buff instances — `buffs.active`, half of the timer-row projection.
+    fn as_buffs(&self) -> Option<&modules::buffs::BuffsModule> {
+        None
+    }
+
+    /// The crowd-control holds and ends — `buffTimers`, the other half.
+    fn as_buff_timers(&self) -> Option<&modules::buff_timers::BuffTimersModule> {
+        None
+    }
+
+    /// The respawn watch rows.
+    fn as_respawn(&self) -> Option<&modules::respawn::RespawnModule> {
+        None
+    }
+
+    /// The progression columns and the recent-kill ring.
+    fn as_progression(&self) -> Option<&modules::progression::ProgressionModule> {
+        None
+    }
+
+    /// The event feed's ring.
+    fn as_event_feed(&self) -> Option<&modules::event_feed::EventFeedModule> {
+        None
+    }
+
+    /// THE MODULE'S PUBLISHED CURSOR, WITHOUT BUILDING ITS STATE (JOS-487) — the module dirty bit.
+    ///
+    /// It is exactly the `seq` [`EqModule::snapshot`] puts in its answer: for most modules the seq
+    /// of the last event folded, and for the four that publish a private revision counter (combo,
+    /// character, respawn, buffTimers) that counter. THE POINT IS THAT IT IS CHEAP. The serve loop
+    /// asks every module this once per beat to decide which ones to announce, and asking through
+    /// `snapshot()` would serialize twenty modules' whole state ten times a second to compare
+    /// twenty integers.
+    ///
+    /// `None` MEANS "THIS MODULE DOES NOT ANNOUNCE", which is an honest answer rather than a
+    /// silent one: `Registry::published_seqs` reports what it was told and nothing about what it
+    /// was not, so a module that gains state without gaining this method goes quiet rather than
+    /// claiming to be unchanged. All twenty implement it.
+    fn published_seq(&self) -> Option<i64> {
+        None
+    }
+
+    /// THE LIVE `/con`s THIS MODULE SAW WHILE FOLDING THE EVENT IT WAS JUST HANDED (JOS-487,
+    /// boundary verdict 2).
+    ///
+    /// A HAND-BACK RATHER THAN A CALLBACK, exactly like [`EqModule::take_fires`] and for the same
+    /// ownership reason — and, over there, in place of the hook `pipeline.ts` installs INTO the
+    /// module. One producer (`consider`), defaulted empty for the other nineteen, and structurally
+    /// empty for every historical fold: a con card is live-only by the same boundary law a fire is.
+    fn take_cons(&mut self) -> Vec<modules::consider::ConEvent> {
+        Vec::new()
+    }
+
     /// THE APP-KNOWLEDGE SEAM (JOS-482, boundary verdict 3) — the one door a `*.define` command
     /// reaches a module through.
     ///
@@ -308,6 +374,54 @@ impl Registry {
     /// same linear scan `roster` is, made once per view service rather than once per event.
     pub fn loot(&self) -> Option<&modules::loot::LootModule> {
         self.mods.iter().find_map(|m| m.as_loot())
+    }
+
+    /// The registered module that answers the buff pull (JOS-487). Same linear scan as `loot`.
+    pub fn buffs(&self) -> Option<&modules::buffs::BuffsModule> {
+        self.mods.iter().find_map(|m| m.as_buffs())
+    }
+
+    /// The registered module that answers the crowd-control pull.
+    pub fn buff_timers(&self) -> Option<&modules::buff_timers::BuffTimersModule> {
+        self.mods.iter().find_map(|m| m.as_buff_timers())
+    }
+
+    /// The registered module that answers the respawn pull.
+    pub fn respawn(&self) -> Option<&modules::respawn::RespawnModule> {
+        self.mods.iter().find_map(|m| m.as_respawn())
+    }
+
+    /// The registered module that answers the progression pull.
+    pub fn progression(&self) -> Option<&modules::progression::ProgressionModule> {
+        self.mods.iter().find_map(|m| m.as_progression())
+    }
+
+    /// The registered module that answers the event-feed pull.
+    pub fn event_feed(&self) -> Option<&modules::event_feed::EventFeedModule> {
+        self.mods.iter().find_map(|m| m.as_event_feed())
+    }
+
+    /// EVERY REGISTERED MODULE'S PUBLISHED CURSOR, in delivery order — the module dirty bit's whole
+    /// read (JOS-487). See [`EqModule::published_seq`] for why it is not `snapshot()["seq"]`.
+    ///
+    /// A module that answers `None` is ABSENT from this list rather than present with a zero: the
+    /// serve loop announces a CHANGE, and a module that will not state a cursor has said nothing
+    /// that could have changed.
+    pub fn published_seqs(&self) -> Vec<(&'static str, i64)> {
+        self.mods
+            .iter()
+            .filter_map(|m| m.published_seq().map(|seq| (m.id(), seq)))
+            .collect()
+    }
+
+    /// EVERY LIVE `/con` ANY MODULE SAW SINCE THE LAST DRAIN, in registration order. Empty for
+    /// every historical fold — see [`EqModule::take_cons`].
+    pub fn take_cons(&mut self) -> Vec<modules::consider::ConEvent> {
+        let mut out = Vec::new();
+        for m in &mut self.mods {
+            out.append(&mut m.take_cons());
+        }
+        out
     }
 
     /// ONE MODULE'S PUBLISHED SNAPSHOT, by the id it answers to — `{ "seq": …, "state": … }`, the

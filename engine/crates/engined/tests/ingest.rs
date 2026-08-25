@@ -167,6 +167,10 @@ fn an_attach_folds_the_log_and_the_wire_says_so() {
                 landing = reset;
                 break;
             }
+            // THE MODULE DIRTY BITS (JOS-487) ARE CONNECTION-WIDE and interleave with everything
+            // else on this stream by design, so this test skips them rather than asserting an
+            // ordering it does not care about. Their own ordering is asserted in `module_changed`.
+            EngineMessage::ModuleChangedMessage(_) => {}
             other => panic!("nothing else belongs on this stream: {other:?}"),
         }
     }
@@ -209,9 +213,18 @@ fn an_attach_folds_the_log_and_the_wire_says_so() {
     );
 
     // …and health agrees, over the same connection.
+    //
+    // THE REPLY IS WAITED FOR RATHER THAN ASSUMED TO BE NEXT. A live tail publishes connection-wide
+    // frames on its own cadence — progress, and since JOS-487 the module dirty bits — so "the next
+    // message is my answer" was only ever true because nothing else was talking yet. A request/reply
+    // client correlates on the id, which is exactly what this now does.
     client.send(&health(4));
-    let EngineMessage::Reply(reply) = client.recv() else {
-        panic!("a reply");
+    let reply = loop {
+        match client.recv() {
+            EngineMessage::Reply(reply) if *reply.id == 4 => break reply,
+            EngineMessage::EpochMessage(_) | EngineMessage::ModuleChangedMessage(_) => {}
+            other => panic!("nothing else belongs on this stream: {other:?}"),
+        }
     };
     let ReplyResult::HealthResult(result) = &reply.result else {
         panic!("a health result");

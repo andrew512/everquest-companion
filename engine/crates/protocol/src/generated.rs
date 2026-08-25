@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:d27bc88f8048d384cf5b01d87b2df086cf5ef77a70c5a8a19b5f097ef7e0fd43
+//! schema-digest: sha256:c38ce98fbccf84fe73f475efbb245c32cb5d18a64fdd595989c54a7ce94ab21b
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -488,6 +488,9 @@ impl ::std::convert::From<::std::collections::BTreeMap<::std::string::String, cr
 ///    },
 ///    {
 ///      "$ref": "#/$defs/RosterDefineRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/SessionMarkAddRequest"
 ///    }
 ///  ]
 ///}
@@ -510,6 +513,7 @@ pub enum ClientMessage {
     RespawnDefineRequest(RespawnDefineRequest),
     ComboDefineRequest(ComboDefineRequest),
     RosterDefineRequest(RosterDefineRequest),
+    SessionMarkAddRequest(SessionMarkAddRequest),
 }
 impl ::std::convert::From<Hello> for ClientMessage {
     fn from(value: Hello) -> Self {
@@ -579,6 +583,11 @@ impl ::std::convert::From<ComboDefineRequest> for ClientMessage {
 impl ::std::convert::From<RosterDefineRequest> for ClientMessage {
     fn from(value: RosterDefineRequest) -> Self {
         Self::RosterDefineRequest(value)
+    }
+}
+impl ::std::convert::From<SessionMarkAddRequest> for ClientMessage {
+    fn from(value: SessionMarkAddRequest) -> Self {
+        Self::SessionMarkAddRequest(value)
     }
 }
 ///`src/shared/classCombo.ts ComboCorrection` — a span the user re-labelled, and when they said so.
@@ -763,6 +772,238 @@ impl ::std::convert::TryFrom<&::std::string::String> for ComboDefineRequestOp {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for ComboDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///ONE AXIS CHIP (`shared/conCard.ts ConCardChip`). IT CARRIES NUMBERS, NOT SENTENCES, and that is the same decision the app made: the words on the chip (`R 126 (110-144)`, `n=32`) are the mob page's own vocabulary, built by the one derivation both surfaces read, and a wire carrying finished strings would be a second copy of it that drifts the first time a word changes. This is the one place the render-ready rule bends, and it bends the way the app already bent it. ABSENT IS THE EMPTY CELL. `tag`, `benchmark` and `fit` are optional here where the app's type spells them `| null`, and the two say the same thing: a con card is a WHOLE CARD every time, so absence has no second meaning to be confused with — unlike a diff's `cells`, where absent means unchanged and null means cleared. The three travel together: a chip has all of them or none of them. `tag` is the guidance band, absent when nothing at all has been observed on this axis AND when the fit is PINNED — a posterior that slid off the end of the grid is the model saying it cannot answer, and a card that printed a band anyway would be inventing one. `benchmark` is the two landing chances behind that band at the viewer's level, plus the same pair at each end of the interval. `fit` is the estimate and its 95% interval, wide at a low `n`, which is the honest display of a thin cell rather than a reason to withhold it.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ConCardChip",
+///  "description": "ONE AXIS CHIP (`shared/conCard.ts ConCardChip`). IT CARRIES NUMBERS, NOT SENTENCES, and that is the same decision the app made: the words on the chip (`R 126 (110-144)`, `n=32`) are the mob page's own vocabulary, built by the one derivation both surfaces read, and a wire carrying finished strings would be a second copy of it that drifts the first time a word changes. This is the one place the render-ready rule bends, and it bends the way the app already bent it. ABSENT IS THE EMPTY CELL. `tag`, `benchmark` and `fit` are optional here where the app's type spells them `| null`, and the two say the same thing: a con card is a WHOLE CARD every time, so absence has no second meaning to be confused with — unlike a diff's `cells`, where absent means unchanged and null means cleared. The three travel together: a chip has all of them or none of them. `tag` is the guidance band, absent when nothing at all has been observed on this axis AND when the fit is PINNED — a posterior that slid off the end of the grid is the model saying it cannot answer, and a card that printed a band anyway would be inventing one. `benchmark` is the two landing chances behind that band at the viewer's level, plus the same pair at each end of the interval. `fit` is the estimate and its 95% interval, wide at a low `n`, which is the honest display of a thin cell rather than a reason to withhold it.",
+///  "type": "object",
+///  "required": [
+///    "axis",
+///    "empirical",
+///    "n",
+///    "nTotal",
+///    "npcOnly",
+///    "pinned"
+///  ],
+///  "properties": {
+///    "axis": {
+///      "$ref": "#/$defs/ResistAxis"
+///    },
+///    "benchmark": {
+///      "$ref": "#/$defs/ResistAxisBenchmark"
+///    },
+///    "empirical": {
+///      "$ref": "#/$defs/ResistEmpirical"
+///    },
+///    "fit": {
+///      "$ref": "#/$defs/ResistFit"
+///    },
+///    "n": {
+///      "description": "OBSERVATIONS THAT COULD HAVE GONE EITHER WAY — `ResistEstimate.nInformative`, not `n`. The two are the same number on most cells and part company exactly where a proc dominates, which is where an older chip claimed eighty observations off eight.",
+///      "type": "integer"
+///    },
+///    "nTotal": {
+///      "description": "Everything the fit saw, informative or not. Printed beside `n` when they differ.",
+///      "type": "integer"
+///    },
+///    "npcOnly": {
+///      "description": "Every observation behind this axis came from a pet or another creature. The chip says so.",
+///      "type": "boolean"
+///    },
+///    "pinned": {
+///      "description": "The fit ran out of grid: no number, no band, and the raw resist rate instead.",
+///      "type": "boolean"
+///    },
+///    "tag": {
+///      "$ref": "#/$defs/ResistTag"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConCardChip {
+    pub axis: ResistAxis,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub benchmark: ::std::option::Option<ResistAxisBenchmark>,
+    pub empirical: ResistEmpirical,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub fit: ::std::option::Option<ResistFit>,
+    ///OBSERVATIONS THAT COULD HAVE GONE EITHER WAY — `ResistEstimate.nInformative`, not `n`. The two are the same number on most cells and part company exactly where a proc dominates, which is where an older chip claimed eighty observations off eight.
+    pub n: i64,
+    ///Everything the fit saw, informative or not. Printed beside `n` when they differ.
+    #[serde(rename = "nTotal")]
+    pub n_total: i64,
+    ///Every observation behind this axis came from a pet or another creature. The chip says so.
+    #[serde(rename = "npcOnly")]
+    pub npc_only: bool,
+    ///The fit ran out of grid: no number, no band, and the raw resist rate instead.
+    pub pinned: bool,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub tag: ::std::option::Option<ResistTag>,
+}
+///ONE LIVE `/con`, AS A FINISHED CARD (boundary verdict 2). The fold used to call synchronously INTO Electron — `considerModule.setConCardHook` — and the verdict inverts that: the engine emits the card and main only opens the overlay window. CONNECTION-WIDE, carrying no `id` and no `epoch`, on the `FireMessage` precedent and for its reasons: a con belongs to the world rather than to any subscription, and it is a thing that HAPPENED once, with no window state to reconcile across a generation. LIVE ONLY, STRUCTURALLY — a historical fold reaches this nowhere, so a startup replay of a month of logs draws nothing. It is the same boundary law a fire obeys and the same one `main/conCard.ts` states as its third refusal. SELF-CONTAINED BY LAW: the overlay window has no knowledge service, no ledger and no store, so everything the card draws is in this frame and the window fetches nothing (`shared/conCard.ts ConCardPayload`, whose field set this is). TWO OF THE APP'S THREE REFUSALS ARE NOT HERE, and both absences are argued rather than overlooked. The re-open suppression is a fact about the PERSON — a card they closed within the last minute, measured on the wall clock they live on — and it is driven by a window event (`con:card-closed`) that never reaches the fold; it stays with the window that owns it. The PLAYER refusal (`conCardIsPlayer`) needs the committed mob catalog to answer, and applying only its name-shape half would refuse a card for every proper-named NPC the app draws one for today (Innoruuk, Blugurg) — a regression dressed as a port. It arrives with the knowledge surface; until then the app's own gate still stands in front of the overlay.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ConCardMessage",
+///  "description": "ONE LIVE `/con`, AS A FINISHED CARD (boundary verdict 2). The fold used to call synchronously INTO Electron — `considerModule.setConCardHook` — and the verdict inverts that: the engine emits the card and main only opens the overlay window. CONNECTION-WIDE, carrying no `id` and no `epoch`, on the `FireMessage` precedent and for its reasons: a con belongs to the world rather than to any subscription, and it is a thing that HAPPENED once, with no window state to reconcile across a generation. LIVE ONLY, STRUCTURALLY — a historical fold reaches this nowhere, so a startup replay of a month of logs draws nothing. It is the same boundary law a fire obeys and the same one `main/conCard.ts` states as its third refusal. SELF-CONTAINED BY LAW: the overlay window has no knowledge service, no ledger and no store, so everything the card draws is in this frame and the window fetches nothing (`shared/conCard.ts ConCardPayload`, whose field set this is). TWO OF THE APP'S THREE REFUSALS ARE NOT HERE, and both absences are argued rather than overlooked. The re-open suppression is a fact about the PERSON — a card they closed within the last minute, measured on the wall clock they live on — and it is driven by a window event (`con:card-closed`) that never reaches the fold; it stays with the window that owns it. The PLAYER refusal (`conCardIsPlayer`) needs the committed mob catalog to answer, and applying only its name-shape half would refuse a card for every proper-named NPC the app draws one for today (Innoruuk, Blugurg) — a regression dressed as a port. It arrives with the knowledge surface; until then the app's own gate still stands in front of the overlay.",
+///  "type": "object",
+///  "required": [
+///    "at",
+///    "chips",
+///    "id",
+///    "kind",
+///    "name",
+///    "spellData"
+///  ],
+///  "properties": {
+///    "at": {
+///      "description": "When the `/con` happened, on THE LOG'S OWN CLOCK — the `ts` of the consider event, never the host's. Spelled `at` here rather than `ts` because that is what every other connection-wide frame the engine sends calls its instant (`FireMessage.at`), and one vocabulary for one concept is worth a rename in the app-side shim.",
+///      "type": "integer"
+///    },
+///    "chips": {
+///      "description": "ALWAYS FIVE, ALWAYS IN `RESIST_AXES` ORDER (magic, fire, cold, poison, disease). All five are present whatever the ledger has seen, because `we have not seen fire cast on this` and `fire is fine` are different statements and a missing chip says neither.",
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/ConCardChip"
+///      }
+///    },
+///    "id": {
+///      "description": "QUEUE IDENTITY: the canonical mob key (`shared/mobKey.ts mobKey`). A re-con REFRESHES the card on screen rather than stacking a second one, which is what the overlay's card queue keys off.",
+///      "type": "string"
+///    },
+///    "kind": {
+///      "type": "string",
+///      "enum": [
+///        "conCard"
+///      ]
+///    },
+///    "level": {
+///      "description": "The level the con line stated. Every con line in the real log states one; absent when this one did not.",
+///      "type": "integer"
+///    },
+///    "name": {
+///      "description": "The mob's display name as the log printed it, whitespace-collapsed and capped (`cappedName`) — a rendering guarantee, not taste: a 40 kB mob name cannot push a card off the screen.",
+///      "type": "string"
+///    },
+///    "rare": {
+///      "description": "The ` - a rare creature - ` infix was on the line. Absent rather than false when it was not, which is the shape the app's payload has.",
+///      "type": "boolean"
+///    },
+///    "spellData": {
+///      "description": "FALSE WHEN THE CLIENT'S `spells_us.txt` COULD NOT BE READ, and the card says so instead of drawing five identical `not enough data` chips with no explanation. It is false in every frame this build sends: the spell-table parse is boundary verdict 7 and has not moved engine-side yet, so this engine takes the SAME branch `mobResistProfile` takes app-side when the table is absent — five empty chips and this flag down. That is the app's own honest answer under the same condition rather than a stub, and it is named in the engine README as the gap the con-card cutover waits on.",
+///      "type": "boolean"
+///    },
+///    "zone": {
+///      "description": "The zone the player was in when they conned. Absent before the first zone line of the fold.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConCardMessage {
+    ///When the `/con` happened, on THE LOG'S OWN CLOCK — the `ts` of the consider event, never the host's. Spelled `at` here rather than `ts` because that is what every other connection-wide frame the engine sends calls its instant (`FireMessage.at`), and one vocabulary for one concept is worth a rename in the app-side shim.
+    pub at: i64,
+    ///ALWAYS FIVE, ALWAYS IN `RESIST_AXES` ORDER (magic, fire, cold, poison, disease). All five are present whatever the ledger has seen, because `we have not seen fire cast on this` and `fire is fine` are different statements and a missing chip says neither.
+    pub chips: ::std::vec::Vec<ConCardChip>,
+    ///QUEUE IDENTITY: the canonical mob key (`shared/mobKey.ts mobKey`). A re-con REFRESHES the card on screen rather than stacking a second one, which is what the overlay's card queue keys off.
+    pub id: ::std::string::String,
+    pub kind: ConCardMessageKind,
+    ///The level the con line stated. Every con line in the real log states one; absent when this one did not.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub level: ::std::option::Option<i64>,
+    ///The mob's display name as the log printed it, whitespace-collapsed and capped (`cappedName`) — a rendering guarantee, not taste: a 40 kB mob name cannot push a card off the screen.
+    pub name: ::std::string::String,
+    ///The ` - a rare creature - ` infix was on the line. Absent rather than false when it was not, which is the shape the app's payload has.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub rare: ::std::option::Option<bool>,
+    ///FALSE WHEN THE CLIENT'S `spells_us.txt` COULD NOT BE READ, and the card says so instead of drawing five identical `not enough data` chips with no explanation. It is false in every frame this build sends: the spell-table parse is boundary verdict 7 and has not moved engine-side yet, so this engine takes the SAME branch `mobResistProfile` takes app-side when the table is absent — five empty chips and this flag down. That is the app's own honest answer under the same condition rather than a stub, and it is named in the engine README as the gap the con-card cutover waits on.
+    #[serde(rename = "spellData")]
+    pub spell_data: bool,
+    ///The zone the player was in when they conned. Absent before the first zone line of the fold.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub zone: ::std::option::Option<::std::string::String>,
+}
+///`ConCardMessageKind`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "conCard"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConCardMessageKind {
+    #[serde(rename = "conCard")]
+    ConCard,
+}
+impl ::std::fmt::Display for ConCardMessageKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ConCard => f.write_str("conCard"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConCardMessageKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "conCard" => Ok(Self::ConCard),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConCardMessageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ConCardMessageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConCardMessageKind {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -1254,6 +1495,12 @@ pub struct EchoResult {
 ///    },
 ///    {
 ///      "$ref": "#/$defs/FireMessage"
+///    },
+///    {
+///      "$ref": "#/$defs/ConCardMessage"
+///    },
+///    {
+///      "$ref": "#/$defs/ModuleChangedMessage"
 ///    }
 ///  ]
 ///}
@@ -1269,6 +1516,8 @@ pub enum EngineMessage {
     DiffMessage(DiffMessage),
     EpochMessage(EpochMessage),
     FireMessage(FireMessage),
+    ConCardMessage(ConCardMessage),
+    ModuleChangedMessage(ModuleChangedMessage),
 }
 impl ::std::convert::From<HelloReply> for EngineMessage {
     fn from(value: HelloReply) -> Self {
@@ -1303,6 +1552,16 @@ impl ::std::convert::From<EpochMessage> for EngineMessage {
 impl ::std::convert::From<FireMessage> for EngineMessage {
     fn from(value: FireMessage) -> Self {
         Self::FireMessage(value)
+    }
+}
+impl ::std::convert::From<ConCardMessage> for EngineMessage {
+    fn from(value: ConCardMessage) -> Self {
+        Self::ConCardMessage(value)
+    }
+}
+impl ::std::convert::From<ModuleChangedMessage> for EngineMessage {
+    fn from(value: ModuleChangedMessage) -> Self {
+        Self::ModuleChangedMessage(value)
     }
 }
 ///The world's generation. Monotonic within one engine process. A client that sees an epoch it did not expect DROPS ALL STATE and waits for the reset — it never reconciles across a bump.
@@ -2455,6 +2714,116 @@ pub struct LogMark {
     ///The end of the last complete line folded, counted from the start of the file.
     pub offset: i64,
 }
+///A MODULE'S PUBLISHED STATE MOVED — the dirty bit, and nothing more. CONNECTION-WIDE and carrying no `id`, on the `FireMessage` precedent: a module belongs to the world rather than to any subscription. IT CARRIES NO STATE, DELIBERATELY. The whole payload is a name and a cursor, so a client that is not showing that module pays one small frame and ignores it, and a client that is re-fetches through `module.snapshot` — which is the op that already exists and the only place a module's shape is stated. A frame that carried the state would be `module.snapshot` pushed at a cadence nobody asked for, which is the per-window snapshot fan-out this whole boundary exists to delete. IT IS COALESCED TO ONE PER MODULE PER SERVE BEAT (~10 Hz, `views::SERVE_EVERY`), not one per event: a busy tail moves a module's seq many times between two beats and the newest cursor is the whole answer — the same newest-wins rule rule 2 states for diffs. Nothing is sent for a module whose seq did not move, so an idle session pays nothing. IT IS NOT AN EPOCH AND DOES NOT REPLACE ONE: a bump still means drop-everything-and-take-the-reset, and a `moduleChanged` inside one generation means only `there is something newer to fetch`.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ModuleChangedMessage",
+///  "description": "A MODULE'S PUBLISHED STATE MOVED — the dirty bit, and nothing more. CONNECTION-WIDE and carrying no `id`, on the `FireMessage` precedent: a module belongs to the world rather than to any subscription. IT CARRIES NO STATE, DELIBERATELY. The whole payload is a name and a cursor, so a client that is not showing that module pays one small frame and ignores it, and a client that is re-fetches through `module.snapshot` — which is the op that already exists and the only place a module's shape is stated. A frame that carried the state would be `module.snapshot` pushed at a cadence nobody asked for, which is the per-window snapshot fan-out this whole boundary exists to delete. IT IS COALESCED TO ONE PER MODULE PER SERVE BEAT (~10 Hz, `views::SERVE_EVERY`), not one per event: a busy tail moves a module's seq many times between two beats and the newest cursor is the whole answer — the same newest-wins rule rule 2 states for diffs. Nothing is sent for a module whose seq did not move, so an idle session pays nothing. IT IS NOT AN EPOCH AND DOES NOT REPLACE ONE: a bump still means drop-everything-and-take-the-reset, and a `moduleChanged` inside one generation means only `there is something newer to fetch`.",
+///  "type": "object",
+///  "required": [
+///    "kind",
+///    "module",
+///    "seq"
+///  ],
+///  "properties": {
+///    "kind": {
+///      "type": "string",
+///      "enum": [
+///        "moduleChanged"
+///      ]
+///    },
+///    "module": {
+///      "description": "The module's id, exactly as the registry spells it and exactly as `module.snapshot` takes it — `loot`, `kills`, `buffTimers`.",
+///      "type": "string"
+///    },
+///    "seq": {
+///      "description": "The module's OWN published seq as of this beat — the same cursor `ModuleSnapshotResult.seq` carries, so a client holding a snapshot compares the two numbers and refetches only when this one is ahead. For the four modules that publish a private revision counter (combo, character, respawn, buffTimers) it is that counter, because a preference push advances no log seq.",
+///      "type": "integer"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ModuleChangedMessage {
+    pub kind: ModuleChangedMessageKind,
+    ///The module's id, exactly as the registry spells it and exactly as `module.snapshot` takes it — `loot`, `kills`, `buffTimers`.
+    pub module: ::std::string::String,
+    ///The module's OWN published seq as of this beat — the same cursor `ModuleSnapshotResult.seq` carries, so a client holding a snapshot compares the two numbers and refetches only when this one is ahead. For the four modules that publish a private revision counter (combo, character, respawn, buffTimers) it is that counter, because a preference push advances no log seq.
+    pub seq: i64,
+}
+///`ModuleChangedMessageKind`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "moduleChanged"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ModuleChangedMessageKind {
+    #[serde(rename = "moduleChanged")]
+    ModuleChanged,
+}
+impl ::std::fmt::Display for ModuleChangedMessageKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ModuleChanged => f.write_str("moduleChanged"),
+        }
+    }
+}
+impl ::std::str::FromStr for ModuleChangedMessageKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "moduleChanged" => Ok(Self::ModuleChanged),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ModuleChangedMessageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ModuleChangedMessageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ModuleChangedMessageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`ModuleSnapshotParams`
 ///
 /// <details><summary>JSON schema</summary>
@@ -3294,6 +3663,9 @@ impl ::std::convert::TryFrom<::std::string::String> for ReplyKind {
 ///    },
 ///    {
 ///      "$ref": "#/$defs/DefineAck"
+///    },
+///    {
+///      "$ref": "#/$defs/SessionMarkAck"
 ///    }
 ///  ]
 ///}
@@ -3309,6 +3681,7 @@ pub enum ReplyResult {
     ModuleSnapshotResult(ModuleSnapshotResult),
     PerfSnapshotResult(PerfSnapshotResult),
     DefineAck(DefineAck),
+    SessionMarkAck(SessionMarkAck),
 }
 impl ::std::convert::From<EchoResult> for ReplyResult {
     fn from(value: EchoResult) -> Self {
@@ -3343,6 +3716,11 @@ impl ::std::convert::From<PerfSnapshotResult> for ReplyResult {
 impl ::std::convert::From<DefineAck> for ReplyResult {
     fn from(value: DefineAck) -> Self {
         Self::DefineAck(value)
+    }
+}
+impl ::std::convert::From<SessionMarkAck> for ReplyResult {
+    fn from(value: SessionMarkAck) -> Self {
+        Self::SessionMarkAck(value)
     }
 }
 ///Client-chosen correlation id. A reply carries the id of its request; every stream message carries the id of the subscribe request that opened it.
@@ -3513,6 +3891,470 @@ impl ::std::convert::TryFrom<&::std::string::String> for ResetMessageKind {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for ResetMessageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`shared/resistTypes.ts ResistAxis`. The display order is this list's order and every surface uses all five of it.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistAxis",
+///  "description": "`shared/resistTypes.ts ResistAxis`. The display order is this list's order and every surface uses all five of it.",
+///  "type": "string",
+///  "enum": [
+///    "magic",
+///    "fire",
+///    "cold",
+///    "poison",
+///    "disease"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ResistAxis {
+    #[serde(rename = "magic")]
+    Magic,
+    #[serde(rename = "fire")]
+    Fire,
+    #[serde(rename = "cold")]
+    Cold,
+    #[serde(rename = "poison")]
+    Poison,
+    #[serde(rename = "disease")]
+    Disease,
+}
+impl ::std::fmt::Display for ResistAxis {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Magic => f.write_str("magic"),
+            Self::Fire => f.write_str("fire"),
+            Self::Cold => f.write_str("cold"),
+            Self::Poison => f.write_str("poison"),
+            Self::Disease => f.write_str("disease"),
+        }
+    }
+}
+impl ::std::str::FromStr for ResistAxis {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "magic" => Ok(Self::Magic),
+            "fire" => Ok(Self::Fire),
+            "cold" => Ok(Self::Cold),
+            "poison" => Ok(Self::Poison),
+            "disease" => Ok(Self::Disease),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ResistAxis {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ResistAxis {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ResistAxis {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`shared/resistTypes.ts ResistAxisBenchmark` — the answer at the estimate, and the answer at each end of the interval, so a surface prints the uncertainty in the reader's own units. `atLo` is the OPTIMISTIC end (the low R) and `atHi` the pessimistic one: the interval's ends CROSS when they are mapped through the level formula, and naming them after the R they came from is what stops a surface printing the range backwards.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistAxisBenchmark",
+///  "description": "`shared/resistTypes.ts ResistAxisBenchmark` — the answer at the estimate, and the answer at each end of the interval, so a surface prints the uncertainty in the reader's own units. `atLo` is the OPTIMISTIC end (the low R) and `atHi` the pessimistic one: the interval's ends CROSS when they are mapped through the level formula, and naming them after the R they came from is what stops a surface printing the range backwards.",
+///  "type": "object",
+///  "required": [
+///    "atHi",
+///    "atLo",
+///    "atMobLevel",
+///    "guidance",
+///    "level",
+///    "mobLevel",
+///    "pOver",
+///    "pPlain",
+///    "tag"
+///  ],
+///  "properties": {
+///    "atHi": {
+///      "$ref": "#/$defs/ResistBenchmark"
+///    },
+///    "atLo": {
+///      "$ref": "#/$defs/ResistBenchmark"
+///    },
+///    "atMobLevel": {
+///      "type": "boolean"
+///    },
+///    "guidance": {
+///      "$ref": "#/$defs/ResistGuidance"
+///    },
+///    "level": {
+///      "type": "integer"
+///    },
+///    "mobLevel": {
+///      "type": [
+///        "integer",
+///        "null"
+///      ]
+///    },
+///    "pOver": {
+///      "type": "number"
+///    },
+///    "pPlain": {
+///      "type": "number"
+///    },
+///    "tag": {
+///      "$ref": "#/$defs/ResistTag"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ResistAxisBenchmark {
+    #[serde(rename = "atHi")]
+    pub at_hi: ResistBenchmark,
+    #[serde(rename = "atLo")]
+    pub at_lo: ResistBenchmark,
+    #[serde(rename = "atMobLevel")]
+    pub at_mob_level: bool,
+    pub guidance: ResistGuidance,
+    pub level: i64,
+    #[serde(rename = "mobLevel")]
+    pub mob_level: ::std::option::Option<i64>,
+    #[serde(rename = "pOver")]
+    pub p_over: f64,
+    #[serde(rename = "pPlain")]
+    pub p_plain: f64,
+    pub tag: ResistTag,
+}
+///ONE EVALUATION OF THE BENCHMARK (`shared/resistTypes.ts ResistBenchmark`): the two probabilities the tag is drawn from, and how they were evaluated. `level` is the caster level `rc0` was computed at; `atMobLevel` says the viewer's own level was not known, so the benchmark is an EVEN-LEVEL cast and the surfaces say `at the mob's level`.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistBenchmark",
+///  "description": "ONE EVALUATION OF THE BENCHMARK (`shared/resistTypes.ts ResistBenchmark`): the two probabilities the tag is drawn from, and how they were evaluated. `level` is the caster level `rc0` was computed at; `atMobLevel` says the viewer's own level was not known, so the benchmark is an EVEN-LEVEL cast and the surfaces say `at the mob's level`.",
+///  "type": "object",
+///  "required": [
+///    "atMobLevel",
+///    "guidance",
+///    "level",
+///    "mobLevel",
+///    "pOver",
+///    "pPlain",
+///    "tag"
+///  ],
+///  "properties": {
+///    "atMobLevel": {
+///      "type": "boolean"
+///    },
+///    "guidance": {
+///      "$ref": "#/$defs/ResistGuidance"
+///    },
+///    "level": {
+///      "type": "integer"
+///    },
+///    "mobLevel": {
+///      "type": [
+///        "integer",
+///        "null"
+///      ]
+///    },
+///    "pOver": {
+///      "description": "The same, with the overchannel invocation up.",
+///      "type": "number"
+///    },
+///    "pPlain": {
+///      "description": "P(a rank-0, adjust-0, all-or-nothing spell lands), 0 to 1.",
+///      "type": "number"
+///    },
+///    "tag": {
+///      "$ref": "#/$defs/ResistTag"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ResistBenchmark {
+    #[serde(rename = "atMobLevel")]
+    pub at_mob_level: bool,
+    pub guidance: ResistGuidance,
+    pub level: i64,
+    #[serde(rename = "mobLevel")]
+    pub mob_level: ::std::option::Option<i64>,
+    ///The same, with the overchannel invocation up.
+    #[serde(rename = "pOver")]
+    pub p_over: f64,
+    ///P(a rank-0, adjust-0, all-or-nothing spell lands), 0 to 1.
+    #[serde(rename = "pPlain")]
+    pub p_plain: f64,
+    pub tag: ResistTag,
+}
+///What the informative observations said, with no model in the way: how many there were and how many of them resisted.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistEmpirical",
+///  "description": "What the informative observations said, with no model in the way: how many there were and how many of them resisted.",
+///  "type": "object",
+///  "required": [
+///    "resisted",
+///    "total"
+///  ],
+///  "properties": {
+///    "resisted": {
+///      "type": "integer"
+///    },
+///    "total": {
+///      "type": "integer"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ResistEmpirical {
+    pub resisted: i64,
+    pub total: i64,
+}
+///The posterior's point estimate and the ends of its 95% interval, in resist points. Clamped at zero for DISPLAY app-side — the grid runs below zero because `rc` does, and `R -150` is noise on a card while `R 0` is the same statement in the reader's units.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistFit",
+///  "description": "The posterior's point estimate and the ends of its 95% interval, in resist points. Clamped at zero for DISPLAY app-side — the grid runs below zero because `rc` does, and `R -150` is noise on a card while `R 0` is the same statement in the reader's units.",
+///  "type": "object",
+///  "required": [
+///    "R",
+///    "hi",
+///    "lo"
+///  ],
+///  "properties": {
+///    "R": {
+///      "type": "number"
+///    },
+///    "hi": {
+///      "type": "number"
+///    },
+///    "lo": {
+///      "type": "number"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ResistFit {
+    pub hi: f64,
+    pub lo: f64,
+    #[serde(rename = "R")]
+    pub r: f64,
+}
+///`shared/resistTypes.ts ResistGuidance` — the sentence under the word. The same three bands read twice: `resistant` means `needs overchannel`, every time, on every surface.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistGuidance",
+///  "description": "`shared/resistTypes.ts ResistGuidance` — the sentence under the word. The same three bands read twice: `resistant` means `needs overchannel`, every time, on every surface.",
+///  "type": "string",
+///  "enum": [
+///    "should land",
+///    "needs overchannel",
+///    "may not land even with overchannel"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ResistGuidance {
+    #[serde(rename = "should land")]
+    ShouldLand,
+    #[serde(rename = "needs overchannel")]
+    NeedsOverchannel,
+    #[serde(rename = "may not land even with overchannel")]
+    MayNotLandEvenWithOverchannel,
+}
+impl ::std::fmt::Display for ResistGuidance {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ShouldLand => f.write_str("should land"),
+            Self::NeedsOverchannel => f.write_str("needs overchannel"),
+            Self::MayNotLandEvenWithOverchannel => {
+                f.write_str("may not land even with overchannel")
+            }
+        }
+    }
+}
+impl ::std::str::FromStr for ResistGuidance {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "should land" => Ok(Self::ShouldLand),
+            "needs overchannel" => Ok(Self::NeedsOverchannel),
+            "may not land even with overchannel" => Ok(Self::MayNotLandEvenWithOverchannel),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ResistGuidance {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ResistGuidance {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ResistGuidance {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`shared/resistTypes.ts ResistTag` — the scannable word. NO ACRONYMS, EVER (owner ruling): the axis word is the only label this app prints for an axis, and these four are the only bands.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistTag",
+///  "description": "`shared/resistTypes.ts ResistTag` — the scannable word. NO ACRONYMS, EVER (owner ruling): the axis word is the only label this app prints for an axis, and these four are the only bands.",
+///  "type": "string",
+///  "enum": [
+///    "weak",
+///    "normal",
+///    "resistant",
+///    "very resistant"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ResistTag {
+    #[serde(rename = "weak")]
+    Weak,
+    #[serde(rename = "normal")]
+    Normal,
+    #[serde(rename = "resistant")]
+    Resistant,
+    #[serde(rename = "very resistant")]
+    VeryResistant,
+}
+impl ::std::fmt::Display for ResistTag {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Weak => f.write_str("weak"),
+            Self::Normal => f.write_str("normal"),
+            Self::Resistant => f.write_str("resistant"),
+            Self::VeryResistant => f.write_str("very resistant"),
+        }
+    }
+}
+impl ::std::str::FromStr for ResistTag {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "weak" => Ok(Self::Weak),
+            "normal" => Ok(Self::Normal),
+            "resistant" => Ok(Self::Resistant),
+            "very resistant" => Ok(Self::VeryResistant),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ResistTag {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ResistTag {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ResistTag {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -4282,6 +5124,269 @@ impl ::std::convert::TryFrom<&::std::string::String> for SessionHealthRequestOp 
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for SessionHealthRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///TAKEN, OR NOT TAKEN, AND WHAT THE WORLD WAS DOING. `accepted: false` IS NOT AN ERROR — it is the census's own semantics (boundary verdict 6) and it mirrors `combat/engine.ts sessionMark`, which returns false while the historical fold is still running. A mark cannot enter a replaying fold at all, which is what makes the JOS-208 replay-versus-live divergence class structurally impossible here rather than carefully avoided. THE CALLER MUST TREAT A REFUSAL AS `NEITHER HALF` (`pressNewSession`'s own law): a mark the engine never took is a boundary only half the app has, so the app records nothing either and leaves its loading state up. `status` is here rather than left to a follow-up `session.health` because the two would RACE — a fold that went live between the refusal and the question would explain the refusal with a state that no longer holds — and because a refusal that cannot say what it was refusing under is a bug report with a hole in it. WHETHER THE MARK MINTED A RECORD IS A DIFFERENT QUESTION and this ack deliberately does not answer it: an empty stay mints nothing, which is also what makes a double press harmless, and the honest answer to `did anything change` is the history itself.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "SessionMarkAck",
+///  "description": "TAKEN, OR NOT TAKEN, AND WHAT THE WORLD WAS DOING. `accepted: false` IS NOT AN ERROR — it is the census's own semantics (boundary verdict 6) and it mirrors `combat/engine.ts sessionMark`, which returns false while the historical fold is still running. A mark cannot enter a replaying fold at all, which is what makes the JOS-208 replay-versus-live divergence class structurally impossible here rather than carefully avoided. THE CALLER MUST TREAT A REFUSAL AS `NEITHER HALF` (`pressNewSession`'s own law): a mark the engine never took is a boundary only half the app has, so the app records nothing either and leaves its loading state up. `status` is here rather than left to a follow-up `session.health` because the two would RACE — a fold that went live between the refusal and the question would explain the refusal with a state that no longer holds — and because a refusal that cannot say what it was refusing under is a bug report with a hole in it. WHETHER THE MARK MINTED A RECORD IS A DIFFERENT QUESTION and this ack deliberately does not answer it: an empty stay mints nothing, which is also what makes a double press harmless, and the honest answer to `did anything change` is the history itself.",
+///  "type": "object",
+///  "required": [
+///    "accepted",
+///    "status"
+///  ],
+///  "properties": {
+///    "accepted": {
+///      "description": "True when the live fold took the instant. False ONLY when the world was not live — see `status`.",
+///      "type": "boolean"
+///    },
+///    "status": {
+///      "description": "What the engine's ingest was doing at the moment it decided, in `HealthResult.status`'s own words. `live` accompanies every acceptance; anything else accompanies a refusal.",
+///      "type": "string",
+///      "enum": [
+///        "starting",
+///        "attaching",
+///        "folding",
+///        "live",
+///        "idle"
+///      ]
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct SessionMarkAck {
+    ///True when the live fold took the instant. False ONLY when the world was not live — see `status`.
+    pub accepted: bool,
+    ///What the engine's ingest was doing at the moment it decided, in `HealthResult.status`'s own words. `live` accompanies every acceptance; anything else accompanies a refusal.
+    pub status: SessionMarkAckStatus,
+}
+///What the engine's ingest was doing at the moment it decided, in `HealthResult.status`'s own words. `live` accompanies every acceptance; anything else accompanies a refusal.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "description": "What the engine's ingest was doing at the moment it decided, in `HealthResult.status`'s own words. `live` accompanies every acceptance; anything else accompanies a refusal.",
+///  "type": "string",
+///  "enum": [
+///    "starting",
+///    "attaching",
+///    "folding",
+///    "live",
+///    "idle"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SessionMarkAckStatus {
+    #[serde(rename = "starting")]
+    Starting,
+    #[serde(rename = "attaching")]
+    Attaching,
+    #[serde(rename = "folding")]
+    Folding,
+    #[serde(rename = "live")]
+    Live,
+    #[serde(rename = "idle")]
+    Idle,
+}
+impl ::std::fmt::Display for SessionMarkAckStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Starting => f.write_str("starting"),
+            Self::Attaching => f.write_str("attaching"),
+            Self::Folding => f.write_str("folding"),
+            Self::Live => f.write_str("live"),
+            Self::Idle => f.write_str("idle"),
+        }
+    }
+}
+impl ::std::str::FromStr for SessionMarkAckStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "starting" => Ok(Self::Starting),
+            "attaching" => Ok(Self::Attaching),
+            "folding" => Ok(Self::Folding),
+            "live" => Ok(Self::Live),
+            "idle" => Ok(Self::Idle),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SessionMarkAckStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for SessionMarkAckStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SessionMarkAckStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`SessionMarkAddParams`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "SessionMarkAddParams",
+///  "type": "object",
+///  "required": [
+///    "at"
+///  ],
+///  "properties": {
+///    "at": {
+///      "description": "THE INSTANT THE PERSON PRESSED, in epoch milliseconds, on the app's WALL CLOCK — and it is the caller's clock rather than the engine's on purpose (JOS-436's rule, moved rather than re-decided). Marking at the live edge of the log would hand the stale minutes since the newest line — the zoning, the corpse run, the instance reset itself — to the session that had not started yet. It is also the one number that makes the two halves of the split share ONE boundary: the app applies the same value to its own ledger, so nothing looted in between can fall on the wrong side of one of them. This is NOT in tension with ruling 18 law 1: a mark is an IMPURE INPUT (law 4), pushed and named, never a clock the engine read for itself.",
+///      "type": "integer"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct SessionMarkAddParams {
+    ///THE INSTANT THE PERSON PRESSED, in epoch milliseconds, on the app's WALL CLOCK — and it is the caller's clock rather than the engine's on purpose (JOS-436's rule, moved rather than re-decided). Marking at the live edge of the log would hand the stale minutes since the newest line — the zoning, the corpse run, the instance reset itself — to the session that had not started yet. It is also the one number that makes the two halves of the split share ONE boundary: the app applies the same value to its own ledger, so nothing looted in between can fall on the wrong side of one of them. This is NOT in tension with ruling 18 law 1: a mark is an IMPURE INPUT (law 4), pushed and named, never a clock the engine read for itself.
+    pub at: i64,
+}
+///PRESS `NEW SESSION` (boundary verdict 6: `sessionMark` is a command with an accepted/refused reply; marks stay ephemeral for replay determinism). ONE INSTANT SPLITS EVERYTHING — the loot ledger app-side and the meter's engine records — so the app stamps the clock ONCE and hands that same number here, exactly as `src/main/sessionMarks.ts pressNewSession` hands it to `combat.sessionMark(ts)` today. THE ENGINE STORES NOTHING. A mark is a user action that is persisted nowhere, which is half of why a relaunch replays the log into the records the log alone describes; the other half is the refusal below. IT CAN BE REFUSED, and a refusal is not an error: the request is perfectly well formed and the honest answer is `not now` (see SessionMarkAck).
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "SessionMarkAddRequest",
+///  "description": "PRESS `NEW SESSION` (boundary verdict 6: `sessionMark` is a command with an accepted/refused reply; marks stay ephemeral for replay determinism). ONE INSTANT SPLITS EVERYTHING — the loot ledger app-side and the meter's engine records — so the app stamps the clock ONCE and hands that same number here, exactly as `src/main/sessionMarks.ts pressNewSession` hands it to `combat.sessionMark(ts)` today. THE ENGINE STORES NOTHING. A mark is a user action that is persisted nowhere, which is half of why a relaunch replays the log into the records the log alone describes; the other half is the refusal below. IT CAN BE REFUSED, and a refusal is not an error: the request is perfectly well formed and the honest answer is `not now` (see SessionMarkAck).",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "sessionMarks.add"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/SessionMarkAddParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct SessionMarkAddRequest {
+    pub id: RequestId,
+    pub op: SessionMarkAddRequestOp,
+    pub params: SessionMarkAddParams,
+}
+///`SessionMarkAddRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "sessionMarks.add"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SessionMarkAddRequestOp {
+    #[serde(rename = "sessionMarks.add")]
+    SessionMarksAdd,
+}
+impl ::std::fmt::Display for SessionMarkAddRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::SessionMarksAdd => f.write_str("sessionMarks.add"),
+        }
+    }
+}
+impl ::std::str::FromStr for SessionMarkAddRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "sessionMarks.add" => Ok(Self::SessionMarksAdd),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SessionMarkAddRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for SessionMarkAddRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SessionMarkAddRequestOp {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,

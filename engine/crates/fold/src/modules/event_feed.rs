@@ -45,6 +45,27 @@ impl EventFeedModule {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// THE FEED PULL SEAM (JOS-487) — the ring as the module keeps it, OLDEST FIRST. The view
+    /// reverses it, as the overlay does.
+    ///
+    /// IT IS EMPTY IN EVERY FOLD THIS BUILD CAN PERFORM, and that is the header's claim rather than
+    /// a caveat about this method: all four of the feed's sources sit behind an injected lookup or
+    /// off the bus entirely. The seam exists anyway because the PROJECTION over it is testable
+    /// without them — a view source that could only be exercised through a fold nobody can produce
+    /// would be a view source no test could tell working from broken, which is exactly the argument
+    /// that kept `eventFeed.recent` out of the registry until now.
+    #[must_use]
+    pub fn ring(&self) -> &[Value] {
+        &self.ring
+    }
+
+    /// THE CHANGE SIGNAL — the last event folded. Coarse, like `buffs`' and `progression`'s, and
+    /// harmless here in a way it is not there: a ring that never fills has nothing to re-cut.
+    #[must_use]
+    pub fn revision(&self) -> i64 {
+        self.seq
+    }
 }
 
 impl EqModule for EventFeedModule {
@@ -69,7 +90,18 @@ impl EqModule for EventFeedModule {
         self.seq = ev.seq();
     }
 
+    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
+    /// state to read it. See `EqModule::published_seq`.
+    fn published_seq(&self) -> Option<i64> {
+        Some(self.seq)
+    }
+
     fn snapshot(&self) -> Value {
         json!({ "seq": self.seq, "state": self.ring })
+    }
+
+    /// THE VIEW PULL SEAM (JOS-487). See `EqModule::as_event_feed`.
+    fn as_event_feed(&self) -> Option<&EventFeedModule> {
+        Some(self)
     }
 }

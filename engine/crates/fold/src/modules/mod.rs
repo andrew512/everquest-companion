@@ -27,6 +27,11 @@ pub mod alerts_rules;
 pub mod buff_anchors;
 pub mod buff_landing;
 pub mod buff_rounds;
+/// The TIMER-ROW PROJECTION (JOS-487) — `src/shared/buffTimers.ts`'s model half. A FOURTH shape in
+/// this folder and the only one whose TS twin lives in `shared/` rather than in `src/main/modules/`:
+/// it is a pure fold over two modules' published state, imported by the renderer over there and by
+/// the view layer and the alerts evaluator over here. It holds no `EqModule`.
+pub mod buff_timer_rows;
 pub mod buff_timers;
 pub mod buffs;
 pub mod buffs_entities;

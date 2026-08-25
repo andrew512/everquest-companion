@@ -15,9 +15,10 @@
 use protocol::generated::{
     AlertsDefineRequestOp, BuffTrustDefineRequestOp, ClientMessage, ComboDefineRequestOp,
     DefineAck, EchoRequestOp, EchoResult, EngineMessage, ErrorCode, ErrorReply, ErrorReplyKind,
-    HelloOp, ModuleSnapshotRequestOp, ModuleSnapshotResult, PerfSnapshotRequestOp, ProtocolError,
-    Reply, ReplyKind, ReplyResult, RequestId, ResetMessage, ResetMessageKind,
-    RespawnDefineRequestOp, RosterDefineRequestOp, SessionAttachRequestOp, SessionHealthRequestOp,
+    HealthResultStatus, HelloOp, ModuleSnapshotRequestOp, ModuleSnapshotResult,
+    PerfSnapshotRequestOp, ProtocolError, Reply, ReplyKind, ReplyResult, RequestId, ResetMessage,
+    ResetMessageKind, RespawnDefineRequestOp, RosterDefineRequestOp, SessionAttachRequestOp,
+    SessionHealthRequestOp, SessionMarkAck, SessionMarkAckStatus, SessionMarkAddRequestOp,
     SessionProgressRequestOp, SubscribeAck, ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
 };
 
@@ -289,7 +290,47 @@ impl Session {
                 &request.params.edits,
                 json(&request.params.edits),
             ),
+
+            // SESSIONMARKS.ADD — the one COMMAND in this table that can be refused without being
+            // wrong (boundary verdict 6, JOS-487).
+            //
+            // A REFUSAL IS NOT AN ERROR AND MUST NOT BE ONE. The frame deserialized, the op exists,
+            // the instant is well formed; the answer is "not now", and it is the world's own
+            // `hydrating` law wearing the status's clothes. Sending an `ErrorReply` here would make
+            // a client branch on `code` for a routine outcome and would put a normal press in every
+            // error log the app collects.
+            //
+            // THE INSTANT IS THE CALLER'S CLOCK and this arm does not second-guess it. `Date.now()`
+            // at the press is the number the app applies to its OWN half of the split, and the two
+            // halves sharing one boundary is the whole point — an engine that stamped its own would
+            // put everything looted between the two reads on the wrong side of one of them.
+            ClientMessage::SessionMarkAddRequest(request) => {
+                let (accepted, status) = world.session_mark(request.params.at);
+                reply(
+                    request.id,
+                    ReplyResult::SessionMarkAck(SessionMarkAck {
+                        accepted,
+                        status: mark_status(status),
+                    }),
+                )
+            }
         }
+    }
+}
+
+/// The health status as the mark ack spells it.
+///
+/// THE TWO ENUMS ARE GENERATED FROM TWO SCHEMA DEFINITIONS WITH THE SAME FIVE MEMBERS, so this
+/// mapping is exhaustive BY THE COMPILER — a member added to one and not the other stops the build
+/// rather than being quietly mapped to the wrong thing. Exactly the argument `world::perf_status`
+/// makes for the same shape one file over.
+fn mark_status(status: HealthResultStatus) -> SessionMarkAckStatus {
+    match status {
+        HealthResultStatus::Starting => SessionMarkAckStatus::Starting,
+        HealthResultStatus::Attaching => SessionMarkAckStatus::Attaching,
+        HealthResultStatus::Folding => SessionMarkAckStatus::Folding,
+        HealthResultStatus::Live => SessionMarkAckStatus::Live,
+        HealthResultStatus::Idle => SessionMarkAckStatus::Idle,
     }
 }
 
@@ -469,6 +510,7 @@ fn is_known_op(op: &str) -> bool {
         RespawnDefineRequestOp::RespawnDefine.to_string(),
         ComboDefineRequestOp::ComboDefine.to_string(),
         RosterDefineRequestOp::RosterDefine.to_string(),
+        SessionMarkAddRequestOp::SessionMarksAdd.to_string(),
     ]
     .iter()
     .any(|known| known == op)

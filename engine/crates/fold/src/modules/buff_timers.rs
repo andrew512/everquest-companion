@@ -173,31 +173,48 @@ struct RecentMint {
 
 /// The row the snapshot publishes. Every optional is skipped when absent — the golden was recorded
 /// through `JSON.stringify`.
-#[derive(Debug, Clone, Serialize)]
+///
+/// PUBLIC SINCE JOS-487, and the visibility is the whole of the change: `buff_timer_rows` folds
+/// these together with `buffs.active` into the rows the two timer windows draw, exactly as
+/// `shared/buffTimers.ts` does over there. Nothing about how a hold is built moved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CcHold {
-    key: String,
-    target: String,
-    started_ts: i64,
+pub struct CcHold {
+    /// The held entity's canonical key.
+    pub key: String,
+    /// Its display name.
+    pub target: String,
+    /// When the hold landed. The OLDEST of them when `count` is 2+.
+    pub started_ts: i64,
+    /// The resolved spell, when the model narrowed the landing sentence to one.
     #[serde(skip_serializing_if = "Option::is_none")]
-    spell: Option<String>,
-    candidates: Vec<String>,
-    duration_ms: Option<i64>,
+    pub spell: Option<String>,
+    /// Every spell the sentence could have been (JOS-84). Empty once `spell` is known.
+    pub candidates: Vec<String>,
+    /// The estimator's duration, or `None` for a hold that counts up.
+    pub duration_ms: Option<i64>,
+    /// Where that duration came from. Read by the Buffs tab, never by the bars (JOS-379).
     #[serde(skip_serializing_if = "Option::is_none")]
-    source: Option<EstimatorSource>,
+    pub source: Option<EstimatorSource>,
+    /// How many entities of this display name are held. Absent for the ordinary one.
     #[serde(skip_serializing_if = "Option::is_none")]
-    count: Option<i64>,
+    pub count: Option<i64>,
+    /// The allowlisted external who cast it; absent for your own.
     #[serde(skip_serializing_if = "Option::is_none")]
-    caster: Option<String>,
+    pub caster: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// One recorded END of a hold. Public for [`CcHold`]'s reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CcEnd {
-    key: String,
-    ts: i64,
+pub struct CcEnd {
+    /// The entity whose hold ended.
+    pub key: String,
+    /// When, on the log's own clock.
+    pub ts: i64,
+    /// Which spell, when the break line named one.
     #[serde(skip_serializing_if = "Option::is_none")]
-    spell: Option<String>,
+    pub spell: Option<String>,
 }
 
 pub struct BuffTimersModule {
@@ -890,6 +907,17 @@ impl BuffTimersModule {
     }
 
     fn build_snap(&self) -> Value {
+        json!({ "holds": self.holds(), "ends": self.ends })
+    }
+
+    /// THE CC-HOLD PULL SEAM (JOS-487) — every live hold, oldest first, in the module's own shape.
+    ///
+    /// Split out of [`Self::build_snap`] rather than duplicated: the timer-row projection wants the
+    /// TYPED rows and the snapshot wants them as JSON, and building them twice would be two answers
+    /// waiting to disagree about which holds are live. Same argument `loot`'s `rows()` makes — a
+    /// view that read `snapshot()` would serialize the whole thing to draw a window of it.
+    #[must_use]
+    pub fn holds(&self) -> Vec<CcHold> {
         let mut holds: Vec<CcHold> = Vec::new();
         for h in self.holds.values() {
             if h.group.is_empty() {
@@ -909,7 +937,20 @@ impl BuffTimersModule {
             });
         }
         holds.sort_by_key(|h| h.started_ts);
-        json!({ "holds": holds, "ends": self.ends })
+        holds
+    }
+
+    /// The recorded ENDS, which is the half of the projection's dedupe the buffs model cannot see.
+    #[must_use]
+    pub fn ends(&self) -> &[CcEnd] {
+        &self.ends
+    }
+
+    /// THE CHANGE SIGNAL — the same private revision counter this module publishes as its `seq`
+    /// (JOS-87), read by the view layer's cost model and by the module dirty bit.
+    #[must_use]
+    pub fn revision(&self) -> i64 {
+        self.rev
     }
 }
 
@@ -980,7 +1021,18 @@ impl EqModule for BuffTimersModule {
         self.sweep(now_ms);
     }
 
+    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
+    /// state to read it. See `EqModule::published_seq`.
+    fn published_seq(&self) -> Option<i64> {
+        Some(self.rev)
+    }
+
     fn snapshot(&self) -> Value {
         json!({ "seq": self.rev, "state": self.build_snap() })
+    }
+
+    /// THE VIEW PULL SEAM (JOS-487). See `EqModule::as_buff_timers`.
+    fn as_buff_timers(&self) -> Option<&BuffTimersModule> {
+        Some(self)
     }
 }

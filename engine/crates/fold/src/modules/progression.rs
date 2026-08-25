@@ -80,19 +80,28 @@ const TRIM_BATCH: usize = 1024;
 const KILL_EXP_JOIN_MS: i64 = 2500;
 
 /// A named row for a credited kill — a DISPLAY duplicate; no statistic reads it.
+///
+/// PUBLIC SINCE JOS-487: `kills.recent` is a view over this ring, and a view reads the module's own
+/// rows rather than a re-serialization of them.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProgressionKill {
-    ts: i64,
-    name: String,
-    credit: i64,
+pub struct ProgressionKill {
+    /// When, on the log's own clock.
+    pub ts: i64,
+    /// The mob's RAW display name — what the deep link into the Mobs surface is built from.
+    pub name: String,
+    /// `0` for your own killing blow, `1` for a bound pet's.
+    pub credit: i64,
     /// RAW zone name, or `''` before the first zone line — the same "unknown, never fabricated"
     /// rule the -1 zone index states in the column.
-    zone: String,
+    pub zone: String,
+    /// Bitfield: `1` the exp line stated no percentage, `2` it was party exp. ABSENT means there
+    /// was no exp line at all, which is a different sentence from "an exp line that said nothing".
     #[serde(skip_serializing_if = "Option::is_none")]
-    exp_flag: Option<i64>,
+    pub exp_flag: Option<i64>,
+    /// The percentage the line stated, when it stated one.
     #[serde(skip_serializing_if = "Option::is_none")]
-    exp_pct: Option<f64>,
+    pub exp_pct: Option<f64>,
 }
 
 /// An experience line waiting to be claimed by the kill line that follows it.
@@ -174,6 +183,41 @@ fn cap_drop(cap: usize, len: usize) -> usize {
 impl ProgressionModule {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// THE RECENT-KILLS PULL SEAM (JOS-487) — the ring the Overview's kill feed draws, OLDEST FIRST
+    /// as the module keeps it. The view reverses it; a module that reversed for a view would be a
+    /// module with an opinion about who is reading.
+    #[must_use]
+    pub fn recent_kills(&self) -> &[ProgressionKill] {
+        &self.s.recent_kills
+    }
+
+    /// THE LEVEL COLUMN — `(ts, level)` pairs, in fold order. UNCAPPED, because the chart needs
+    /// every ding; ~5k rows a year including the AA column beside it.
+    pub fn levels(&self) -> impl Iterator<Item = (i64, i64)> + '_ {
+        self.s
+            .level_ts
+            .iter()
+            .copied()
+            .zip(self.s.level_value.iter().copied())
+    }
+
+    /// THE AA COLUMN — `(ts, amount)` pairs, in fold order.
+    pub fn aa_gains(&self) -> impl Iterator<Item = (i64, i64)> + '_ {
+        self.s
+            .aa_gain_ts
+            .iter()
+            .copied()
+            .zip(self.s.aa_gain_amount.iter().copied())
+    }
+
+    /// THE CHANGE SIGNAL. This module has no revision counter — its published `seq` is the last
+    /// event it folded — so, like `buffs`, it over-reports and never under-reports. See that
+    /// module's `revision` for the argument and for what it costs.
+    #[must_use]
+    pub fn revision(&self) -> i64 {
+        self.seq
     }
 
     /// A pet addressed you as master. For a name never seen charmed this is the only binding
@@ -457,7 +501,18 @@ impl EqModule for ProgressionModule {
         self.fold(ev);
     }
 
+    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
+    /// state to read it. See `EqModule::published_seq`.
+    fn published_seq(&self) -> Option<i64> {
+        Some(self.seq)
+    }
+
     fn snapshot(&self) -> Value {
         json!({ "seq": self.seq, "state": self.s })
+    }
+
+    /// THE VIEW PULL SEAM (JOS-487). See `EqModule::as_progression`.
+    fn as_progression(&self) -> Option<&ProgressionModule> {
+        Some(self)
     }
 }

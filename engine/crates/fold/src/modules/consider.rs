@@ -122,6 +122,32 @@ struct ConsiderRow {
     cons: i64,
 }
 
+/// ONE LIVE `/con`, AS THE CON-CARD HOOK SAW IT (JOS-487, boundary verdict 2).
+///
+/// THE SEAM THE HEADER SAID WAS NOT PORTED, now ported the only way this crate can port it. Over
+/// there `pipeline.ts` installs `considerModule.setConCardHook((ev, zone) => …)` and the module
+/// calls INTO Electron mid-fold; the verdict inverts that, so this is a HAND-BACK rather than a
+/// callback — the same shape `take_fires` and `take_derived` already are, and for the same
+/// ownership reason: a module cannot hold a mutable reference to something the registry is
+/// iterating. It carries the four facts the card is built from and nothing derived, because
+/// deriving is the serve layer's job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConEvent {
+    /// The `ts` of the con line — THE LOG'S OWN CLOCK.
+    pub ts: i64,
+    /// The mob's display name, exactly as the line printed it. Uncapped and unfolded here: capping
+    /// is a rendering guarantee and folding is an identity, and both belong to whoever builds the
+    /// card rather than to the module that saw the line.
+    pub mob: String,
+    /// The level the con line stated, when it stated one.
+    pub level: Option<i64>,
+    /// The ` - a rare creature - ` infix was on the line.
+    pub rare: bool,
+    /// The zone the player was in — the module's own, which is the second argument the TS hook
+    /// takes and the reason this is not simply the event.
+    pub zone: Option<String>,
+}
+
 #[derive(Default)]
 pub struct ConsiderModule {
     /// Newest LAST (the UI reverses it), one entry per mob key. A linear scan is `indexOf`'s own
@@ -129,6 +155,9 @@ pub struct ConsiderModule {
     ring: Vec<ConsiderRow>,
     zone: Option<String>,
     seq: i64,
+    /// THE LIVE CONS FOLDED SINCE THE LAST DRAIN, in fold order, waiting for the ingest to take
+    /// them. Structurally empty for a historical fold — see [`ConEvent`] and `on_event`'s gate.
+    cons: Vec<ConEvent>,
     /// The shared own-loot index's ACCUMULATION, kept because this module owns its lifetime. It is
     /// published nowhere — see the header.
     own_loot: OwnLootIndex,
@@ -168,6 +197,18 @@ impl OwnLootIndex {
 impl ConsiderModule {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// THE LIVE CONS THIS MODULE SAW SINCE THE LAST DRAIN (JOS-487). See [`ConEvent`].
+    pub fn take_cons(&mut self) -> Vec<ConEvent> {
+        std::mem::take(&mut self.cons)
+    }
+
+    /// THE CHANGE SIGNAL — the last event folded, coarse like `buffs`' (this module keeps no
+    /// revision counter). It never misses a change to the ring.
+    #[must_use]
+    pub fn revision(&self) -> i64 {
+        self.seq
     }
 
     /// Fold ONE `consider` line into the ring: upsert the mob's single row (moving it to the front
@@ -217,9 +258,18 @@ impl EqModule for ConsiderModule {
         self.zone = None;
         self.seq = 0;
         self.own_loot.reset();
+        // A CARD FOR THE WORLD THAT JUST ENDED IS NOT A CARD. Anything the ingest had not drained
+        // by the time a rebirth or a character switch landed describes a creature the player was
+        // sizing up in a world nobody is looking at any more.
+        self.cons.clear();
     }
 
-    fn on_event(&mut self, ev: &Event, _live: bool) {
+    /// `live` IS READ NOW, and it is read in exactly one place (JOS-487). The ring itself is still
+    /// deliberately history-fed — this module is a STATE ("the mobs you've been conning") rather
+    /// than a feed — but the CON CARD is a thing that happens, and the third of `main/conCard.ts`'s
+    /// three refusals is that a historical line never draws one. That refusal is structural here:
+    /// a startup replay of a month of logs cannot reach the push below.
+    fn on_event(&mut self, ev: &Event, live: bool) {
         self.seq = ev.seq();
         match ev.kind() {
             // Character rebirth (Task #49): everything before the boundary belongs to a dead
@@ -244,12 +294,34 @@ impl EqModule for ConsiderModule {
                     ev.int("count").unwrap_or(1),
                 );
             }
-            "consider" => self.fold_consider(ev),
+            "consider" => {
+                self.fold_consider(ev);
+                if live {
+                    self.cons.push(ConEvent {
+                        ts: ev.ts(),
+                        mob: ev.str("mob").unwrap_or_default().to_owned(),
+                        level: ev.int("level"),
+                        rare: ev.bool("rare"),
+                        zone: self.zone.clone(),
+                    });
+                }
+            }
             _ => {}
         }
     }
 
+    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
+    /// state to read it. See `EqModule::published_seq`.
+    fn published_seq(&self) -> Option<i64> {
+        Some(self.seq)
+    }
+
     fn snapshot(&self) -> Value {
         json!({ "seq": self.seq, "state": self.ring })
+    }
+
+    /// THE CON-CARD SEAM (JOS-487). See `EqModule::take_cons`.
+    fn take_cons(&mut self) -> Vec<ConEvent> {
+        Self::take_cons(self)
     }
 }

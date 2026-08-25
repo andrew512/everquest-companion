@@ -221,6 +221,32 @@ pub trait EventSink {
         Vec::new()
     }
 
+    /// THE CON CARDS THIS SINK RESOLVED SINCE THE LAST DRAIN (JOS-487, boundary verdict 2).
+    ///
+    /// Structurally empty for a historical scan, exactly as [`EventSink::take_fires`] is and by the
+    /// same boundary law: a card is a thing that HAPPENS, and a startup replay of a month of logs
+    /// must draw none.
+    ///
+    /// IT HANDS BACK THE PROTOCOL'S OWN SHAPE, which is the one place this crate's vocabulary rule
+    /// bends and it bends because there is nothing to translate. A `Fire` exists as an ingest type
+    /// because the FOLD's alert shape is not the wire's and neither this module nor `world.rs` may
+    /// learn what an alert is; a con card is RESOLVED by this crate (`crate::concard`), so a third
+    /// struct in between would be a copy of the wire shape with a different spelling.
+    fn take_con_cards(&mut self) -> Vec<protocol::generated::ConCardMessage> {
+        Vec::new()
+    }
+
+    /// EVERY MODULE'S PUBLISHED CURSOR — the module dirty bit's whole read (JOS-487).
+    ///
+    /// CHEAP BY CONTRACT: a counter per module, never a serialization. The serve loop asks this once
+    /// per beat and announces the ones that moved, so the cost of the whole feature on an idle
+    /// session is twenty integer comparisons ten times a second.
+    ///
+    /// `&self` for [`EventSink::snapshot`]'s reason, and called at the same boundaries.
+    fn module_seqs(&self) -> Vec<(&'static str, i64)> {
+        Vec::new()
+    }
+
     /// A monotonic signal that moves whenever `source` could have changed.
     ///
     /// THE WHOLE COST MODEL OF THE VIEW LAYER RESTS ON THIS. A subscription is re-cut only when its
@@ -891,6 +917,15 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
                 return Ok(Ended::Preempted);
             }
         }
+        // THE CON CARDS, ON THE FIRES' TERMS AND FOR THE FIRES' REASON. A `/con` is a thing that
+        // happened, not state: two cons of two creatures are two cards, and coalescing them would
+        // drop the first — which is precisely what the overlay's queue exists to sequence. So they
+        // go out now, in fold order, and the view cadence never touches them either.
+        for card in sink.take_con_cards() {
+            if !world.report_con_card(generation, &card) {
+                return Ok(Ended::Preempted);
+            }
+        }
         // THE VIEWS, AT THEIR OWN CADENCE. Everything the drain above folded collapses into at most
         // one frame per subscription per `views::SERVE_EVERY` — rule 2 of the diff protocol, held
         // as a cadence rather than as a per-event push.
@@ -963,6 +998,18 @@ struct Serving {
     folded_at: Option<Instant>,
     /// What building this generation cost — filled in as each half of it is measured (JOS-483).
     cost: IngestCost,
+    /// THE MODULE CURSOR LAST ANNOUNCED, per module (JOS-487).
+    ///
+    /// IT LIVES HERE AND NOT IN THE WORLD, which is the same placement the meter has and for the
+    /// same two reasons. It is a property of THIS GENERATION — a new attach builds a new `Serving`
+    /// and the fresh fold announces every module on its first beat, which is exactly right, because
+    /// after an epoch bump a client has dropped everything anyway. And it is read and written only
+    /// on the ingest thread, so it costs no lock on the path every `report_*` already contends for.
+    ///
+    /// IT IS ALSO WHAT MAKES THE FRAME COALESCED. A busy tail moves a module's seq many times
+    /// between two beats; this map remembers the last number announced, so what goes out is one
+    /// frame per module per beat carrying the newest cursor — newest-wins, rule 2's own rule.
+    announced_seqs: std::collections::BTreeMap<&'static str, i64>,
 }
 
 impl Serving {
@@ -972,7 +1019,25 @@ impl Serving {
             meter: Meter::new(),
             folded_at: None,
             cost: IngestCost::default(),
+            announced_seqs: std::collections::BTreeMap::new(),
         }
+    }
+
+    /// Which modules have moved since the last beat, and record that they were told about.
+    ///
+    /// A MODULE ABSENT FROM `module_seqs` IS ABSENT FROM THE ANSWER and keeps whatever it last
+    /// announced: a fold that stopped reporting a cursor has said nothing, which is not the same as
+    /// saying it went back to zero.
+    fn changed_modules(&mut self, sink: &dyn EventSink) -> Vec<(&'static str, i64)> {
+        let mut changed = Vec::new();
+        for (module, seq) in sink.module_seqs() {
+            if self.announced_seqs.get(module) == Some(&seq) {
+                continue;
+            }
+            self.announced_seqs.insert(module, seq);
+            changed.push((module, seq));
+        }
+        changed
     }
 
     /// This ingest's own answer to `perf.snapshot`. A READ: the meter is peeked rather than
@@ -986,6 +1051,11 @@ impl Serving {
     }
 
     /// One cadence tick. `false` when this turn no longer owns the world.
+    ///
+    /// TWO THINGS RIDE THIS BEAT, and the ORDER between them is deliberate: the views first, then
+    /// the module dirty bits. A client that draws a view and also holds a module snapshot should
+    /// see the rows before it is told to refetch — the other order would send it to `module.snapshot`
+    /// for state the very next frame was about to hand it.
     fn tick(&mut self, world: &World, generation: u64, sink: &dyn EventSink) -> bool {
         if !self.cadence.due() {
             return true;
@@ -997,7 +1067,11 @@ impl Serving {
             &mut self.meter,
         );
         self.say(false);
-        served
+        if !served {
+            return false;
+        }
+        let changed = self.changed_modules(sink);
+        changed.is_empty() || world.report_modules_changed(generation, &changed)
     }
 
     /// Print whatever the meter owes. `force` ignores its cadence — what a landing fold does.
@@ -1588,7 +1662,6 @@ mod tests {
                 sort: Vec::new(),
                 window: None,
             })
-            .ok()
             .expect("loot.ledger is registered"),
         );
 

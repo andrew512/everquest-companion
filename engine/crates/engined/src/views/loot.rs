@@ -121,7 +121,7 @@ const MONTHS: [&str; 12] = [
 /// A ts of 0 renders EMPTY, which is `formatDate.ts`'s own rule stated in its header: "a falsy/0 ts
 /// renders as empty (unknown timestamp)". A stamp the parser could not read is 0, so this is the
 /// one place the two languages have to agree about an unknown instant, and they do.
-fn display_time(clock: &eqlog::Clock, ms: i64) -> String {
+pub(super) fn display_time(clock: &eqlog::Clock, ms: i64) -> String {
     if ms == 0 {
         return String::new();
     }
@@ -221,7 +221,6 @@ mod tests {
             sort: Vec::new(),
             window: None,
         })
-        .ok()
         .expect("a view");
         let (window, total) = cut(&view, &built);
         assert_eq!(total, 2);

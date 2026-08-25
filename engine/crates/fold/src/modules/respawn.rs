@@ -114,35 +114,52 @@ fn wiki() -> &'static std::collections::HashMap<String, WikiRespawn> {
 /// nothing to say — the golden was recorded through `JSON.stringify`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RespawnRow {
+pub struct RespawnRow {
     /// `<zone key>::<mob key>` — stable across ticks, and the same id the fold keys history by.
-    id: String,
-    key: String,
-    display: String,
-    zone: String,
-    base_ts: i64,
-    basis: &'static str,
-    source: &'static str,
-    samples: i64,
-    kills: i64,
+    pub id: String,
+    /// Canonical mob key.
+    pub key: String,
+    /// The name the row draws.
+    pub display: String,
+    /// The zone the clock is for. A mob is watched per zone.
+    pub zone: String,
+    /// The instant the clock counts from — a death, or a sighting.
+    pub base_ts: i64,
+    /// Which of those two it was: `death` or `sighting`.
+    pub basis: &'static str,
+    /// Where the estimate came from: `custom`, `observed`, `wiki` or `none`.
+    pub source: &'static str,
+    /// How many gaps the estimate was learned from.
+    pub samples: i64,
+    /// Kills recorded for this mob in this zone.
+    pub kills: i64,
+    /// When it was last SEEN alive, if it has been.
     #[serde(skip_serializing_if = "Option::is_none")]
-    seen_ts: Option<i64>,
+    pub seen_ts: Option<i64>,
+    /// How it was seen: `combat`, `consider`, `hold` or `spell`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    seen_via: Option<&'static str>,
+    pub seen_via: Option<&'static str>,
+    /// The respawn this row is counting toward.
     #[serde(skip_serializing_if = "Option::is_none")]
-    estimate_ms: Option<i64>,
+    pub estimate_ms: Option<i64>,
+    /// What the log itself has measured.
     #[serde(skip_serializing_if = "Option::is_none")]
-    observed_ms: Option<i64>,
+    pub observed_ms: Option<i64>,
+    /// The recent gaps behind `observed_ms`, newest first.
     #[serde(skip_serializing_if = "Option::is_none")]
-    gaps_ms: Option<Vec<i64>>,
+    pub gaps_ms: Option<Vec<i64>>,
+    /// The number the user typed, when they typed one.
     #[serde(skip_serializing_if = "Option::is_none")]
-    custom_ms: Option<i64>,
+    pub custom_ms: Option<i64>,
+    /// What the committed wiki data says, verbatim.
     #[serde(skip_serializing_if = "Option::is_none")]
-    wiki_text: Option<String>,
+    pub wiki_text: Option<String>,
+    /// The same, in milliseconds, when it could be read as a duration.
     #[serde(skip_serializing_if = "Option::is_none")]
-    wiki_ms: Option<i64>,
+    pub wiki_ms: Option<i64>,
+    /// The wiki page the text came from.
     #[serde(skip_serializing_if = "Option::is_none")]
-    wiki_page: Option<String>,
+    pub wiki_page: Option<String>,
 }
 
 /// A mob you recently killed, offered in the view as a one-click watch.
@@ -619,6 +636,46 @@ impl RespawnModule {
     }
 
     fn build(&self, now_ms: i64) -> Value {
+        let (rows, recent) = self.collect(now_ms);
+        json!({
+            "v": RESPAWN_SHAPE_VERSION,
+            "zone": self.zone,
+            "rows": rows,
+            "recent": recent,
+            "prefs": self.prefs,
+        })
+    }
+
+    /// THE WATCH-ROW PULL SEAM (JOS-487) — the rows the Timers surface draws, in the order it draws
+    /// them, typed rather than serialized.
+    ///
+    /// It goes through [`Self::collect`] rather than re-walking the history, which costs the
+    /// candidate list this caller throws away — forty small rows — and buys the one thing that
+    /// matters: there is no second opinion about which mobs are on a clock. The alternative was a
+    /// copy of a forty-line loop that could drift from the snapshot's.
+    #[must_use]
+    pub fn watch_rows(&self, now_ms: i64) -> Vec<RespawnRow> {
+        self.collect(now_ms).0
+    }
+
+    /// THE ORDERING CLOCK this module was last advanced to — the log's own `ts` while folding, and
+    /// the wall clock once a live tail is ticking it. The view layer needs it because respawn's
+    /// order is a function of `now` (a mob seen recently sorts to the top) and reading a SECOND
+    /// clock to cut the window would order the rows against an instant the module has never seen.
+    #[must_use]
+    pub fn now_ms(&self) -> i64 {
+        self.now_ms
+    }
+
+    /// THE CHANGE SIGNAL — the private revision counter this module publishes as its `seq` (JOS-87,
+    /// because a watch advances no log seq).
+    #[must_use]
+    pub fn revision(&self) -> i64 {
+        self.rev
+    }
+
+    /// The rows and the candidates, walked once. Both halves of [`Self::build`].
+    fn collect(&self, now_ms: i64) -> (Vec<RespawnRow>, Vec<RespawnCandidate>) {
         let mut rows: Vec<RespawnRow> = Vec::new();
         let mut recent: Vec<RespawnCandidate> = Vec::new();
         // The map iterates OLDEST-FIRST (the LRU order), so sort for "most recent". `sort_by` is
@@ -647,13 +704,7 @@ impl RespawnModule {
             }
         }
         Self::order_rows(&mut rows, now_ms);
-        json!({
-            "v": RESPAWN_SHAPE_VERSION,
-            "zone": self.zone,
-            "rows": rows,
-            "recent": recent,
-            "prefs": self.prefs,
-        })
+        (rows, recent)
     }
 }
 
@@ -728,11 +779,22 @@ impl EqModule for RespawnModule {
         self.now_ms = now_ms;
     }
 
+    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
+    /// state to read it. See `EqModule::published_seq`.
+    fn published_seq(&self) -> Option<i64> {
+        Some(self.rev)
+    }
+
     fn snapshot(&self) -> Value {
         json!({ "seq": self.rev, "state": self.build(self.now_ms) })
     }
 
     fn as_defines(&mut self) -> Option<&mut dyn crate::Defines> {
+        Some(self)
+    }
+
+    /// THE VIEW PULL SEAM (JOS-487). See `EqModule::as_respawn`.
+    fn as_respawn(&self) -> Option<&RespawnModule> {
         Some(self)
     }
 }

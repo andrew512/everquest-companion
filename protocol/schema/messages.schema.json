@@ -22,7 +22,8 @@
         { "$ref": "#/$defs/BuffTrustDefineRequest" },
         { "$ref": "#/$defs/RespawnDefineRequest" },
         { "$ref": "#/$defs/ComboDefineRequest" },
-        { "$ref": "#/$defs/RosterDefineRequest" }
+        { "$ref": "#/$defs/RosterDefineRequest" },
+        { "$ref": "#/$defs/SessionMarkAddRequest" }
       ]
     },
 
@@ -36,7 +37,9 @@
         { "$ref": "#/$defs/ResetMessage" },
         { "$ref": "#/$defs/DiffMessage" },
         { "$ref": "#/$defs/EpochMessage" },
-        { "$ref": "#/$defs/FireMessage" }
+        { "$ref": "#/$defs/FireMessage" },
+        { "$ref": "#/$defs/ConCardMessage" },
+        { "$ref": "#/$defs/ModuleChangedMessage" }
       ]
     },
 
@@ -178,7 +181,8 @@
         { "$ref": "#/$defs/SubscribeAck" },
         { "$ref": "#/$defs/ModuleSnapshotResult" },
         { "$ref": "#/$defs/PerfSnapshotResult" },
-        { "$ref": "#/$defs/DefineAck" }
+        { "$ref": "#/$defs/DefineAck" },
+        { "$ref": "#/$defs/SessionMarkAck" }
       ]
     },
 
@@ -747,6 +751,51 @@
       },
       "required": ["key", "name", "action", "setAt"],
       "additionalProperties": true
+    },
+
+    "SessionMarkAddRequest": {
+      "title": "SessionMarkAddRequest",
+      "description": "PRESS `NEW SESSION` (boundary verdict 6: `sessionMark` is a command with an accepted/refused reply; marks stay ephemeral for replay determinism). ONE INSTANT SPLITS EVERYTHING — the loot ledger app-side and the meter's engine records — so the app stamps the clock ONCE and hands that same number here, exactly as `src/main/sessionMarks.ts pressNewSession` hands it to `combat.sessionMark(ts)` today. THE ENGINE STORES NOTHING. A mark is a user action that is persisted nowhere, which is half of why a relaunch replays the log into the records the log alone describes; the other half is the refusal below. IT CAN BE REFUSED, and a refusal is not an error: the request is perfectly well formed and the honest answer is `not now` (see SessionMarkAck).",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["sessionMarks.add"] },
+        "params": { "$ref": "#/$defs/SessionMarkAddParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "SessionMarkAddParams": {
+      "title": "SessionMarkAddParams",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "THE INSTANT THE PERSON PRESSED, in epoch milliseconds, on the app's WALL CLOCK — and it is the caller's clock rather than the engine's on purpose (JOS-436's rule, moved rather than re-decided). Marking at the live edge of the log would hand the stale minutes since the newest line — the zoning, the corpse run, the instance reset itself — to the session that had not started yet. It is also the one number that makes the two halves of the split share ONE boundary: the app applies the same value to its own ledger, so nothing looted in between can fall on the wrong side of one of them. This is NOT in tension with ruling 18 law 1: a mark is an IMPURE INPUT (law 4), pushed and named, never a clock the engine read for itself.",
+          "type": "integer"
+        }
+      },
+      "required": ["at"],
+      "additionalProperties": false
+    },
+
+    "SessionMarkAck": {
+      "title": "SessionMarkAck",
+      "description": "TAKEN, OR NOT TAKEN, AND WHAT THE WORLD WAS DOING. `accepted: false` IS NOT AN ERROR — it is the census's own semantics (boundary verdict 6) and it mirrors `combat/engine.ts sessionMark`, which returns false while the historical fold is still running. A mark cannot enter a replaying fold at all, which is what makes the JOS-208 replay-versus-live divergence class structurally impossible here rather than carefully avoided. THE CALLER MUST TREAT A REFUSAL AS `NEITHER HALF` (`pressNewSession`'s own law): a mark the engine never took is a boundary only half the app has, so the app records nothing either and leaves its loading state up. `status` is here rather than left to a follow-up `session.health` because the two would RACE — a fold that went live between the refusal and the question would explain the refusal with a state that no longer holds — and because a refusal that cannot say what it was refusing under is a bug report with a hole in it. WHETHER THE MARK MINTED A RECORD IS A DIFFERENT QUESTION and this ack deliberately does not answer it: an empty stay mints nothing, which is also what makes a double press harmless, and the honest answer to `did anything change` is the history itself.",
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "description": "True when the live fold took the instant. False ONLY when the world was not live — see `status`.",
+          "type": "boolean"
+        },
+        "status": {
+          "description": "What the engine's ingest was doing at the moment it decided, in `HealthResult.status`'s own words. `live` accompanies every acceptance; anything else accompanies a refusal.",
+          "type": "string",
+          "enum": ["starting", "attaching", "folding", "live", "idle"]
+        }
+      },
+      "required": ["accepted", "status"],
+      "additionalProperties": false
     },
 
     "NoParams": {
