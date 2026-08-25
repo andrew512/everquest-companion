@@ -434,35 +434,53 @@ function moduleOf(golden: SnapshotGolden, path: string): string | undefined {
   return /^\.(combat|scopes)\b/.test(path) ? 'combat engine' : undefined
 }
 
-/** The first structural disagreement between two parsed JSON values, with its dotted path. */
-export function firstDiff(
-  a: unknown,
-  b: unknown,
+/** What `firstDiff` hands back: where two structures stopped agreeing, and what each said there. */
+export interface Diff {
   path: string
-): { path: string; expected: unknown; actual: unknown } | null {
+  expected: unknown
+  actual: unknown
+}
+
+/**
+ * The first structural disagreement between two parsed JSON values, with its dotted path.
+ *
+ * DEEP EQUALITY rather than a byte compare, and only on this half of the golden: a snapshot is
+ * assembled on demand out of maps and view builders, so key ORDER is not a claim the engine
+ * makes and pinning it would fail a Rust engine for being right in a different order. The event
+ * stream, where emission order IS the claim, is compared byte for byte instead.
+ */
+export function firstDiff(a: unknown, b: unknown, path: string): Diff | null {
   if (a === b) return null
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b)) return { path, expected: a, actual: b }
-    if (a.length !== b.length) return { path: `${path}.length`, expected: a.length, actual: b.length }
-    for (let i = 0; i < a.length; i++) {
-      const d = firstDiff(a[i], b[i], `${path}[${String(i)}]`)
-      if (d) return d
-    }
-    return null
-  }
+  if (Array.isArray(a) || Array.isArray(b)) return arrayDiff(a, b, path)
   if (a !== null && b !== null && typeof a === 'object' && typeof b === 'object') {
-    const ka = Object.keys(a as object)
-    const kb = new Set(Object.keys(b as object))
-    for (const k of ka) {
-      if (!kb.has(k)) return { path: `${path}.${k}`, expected: (a as Record<string, unknown>)[k], actual: undefined }
-      const d = firstDiff((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], `${path}.${k}`)
-      if (d) return d
-      kb.delete(k)
-    }
-    for (const k of kb) return { path: `${path}.${k}`, expected: undefined, actual: (b as Record<string, unknown>)[k] }
-    return null
+    return objectDiff(a as Record<string, unknown>, b as Record<string, unknown>, path)
   }
   return { path, expected: a, actual: b }
+}
+
+function arrayDiff(a: unknown, b: unknown, path: string): Diff | null {
+  if (!Array.isArray(a) || !Array.isArray(b)) return { path, expected: a, actual: b }
+  // LENGTH FIRST, and reported as its own path: "the buffs module published 41 actives where the
+  // golden has 40" is a diagnosis, and walking to the first index that happens to differ is not.
+  if (a.length !== b.length) return { path: `${path}.length`, expected: a.length, actual: b.length }
+  for (let i = 0; i < a.length; i++) {
+    const d = firstDiff(a[i], b[i], `${path}[${String(i)}]`)
+    if (d) return d
+  }
+  return null
+}
+
+function objectDiff(a: Record<string, unknown>, b: Record<string, unknown>, path: string): Diff | null {
+  const rest = new Set(Object.keys(b))
+  for (const k of Object.keys(a)) {
+    if (!rest.has(k)) return { path: `${path}.${k}`, expected: a[k], actual: undefined }
+    const d = firstDiff(a[k], b[k], `${path}.${k}`)
+    if (d) return d
+    rest.delete(k)
+  }
+  // Whatever `b` has that `a` never mentioned — a field the re-fold grew.
+  for (const k of rest) return { path: `${path}.${k}`, expected: undefined, actual: b[k] }
+  return null
 }
 
 /** sha256 of a file, streamed — used by the manifest and by nothing else. */

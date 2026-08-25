@@ -236,19 +236,27 @@ function runBelowNormal(): void {
   }
 }
 
+/**
+ * Refuse a check with nothing to check against, BY NAME. Without this the first missing artifact
+ * surfaces as an ENOENT from deep inside the line reader, and "no such file" is the one failure
+ * mode that must never be mistaken for a divergence — the goldens are gitignored, so a fresh
+ * worktree has none and this is the message it should get.
+ */
+function requireGoldens(names: string[]): void {
+  const missing = chosen(names)
+    .flatMap((s) => [eventsPath(s.name), snapshotsPath(s.name)].map((p) => ({ slice: s.name, p })))
+    .filter((r) => !existsSync(r.p))
+  if (missing.length === 0) return
+  const first = missing[0]
+  throw new Error(`no golden at ${first.p} — run \`npm run oracle:record -- ${first.slice}\` first`)
+}
+
 async function main(): Promise<void> {
   runBelowNormal()
   const [mode, ...rest] = process.argv.slice(2)
   const args = parseArgs(rest)
-  // Named so a missing golden reads as "record first", not as a stack trace.
-  if (mode !== 'record' && mode !== 'check') throw new Error(`goldenCli: expected "record" or "check", got "${mode ?? '(nothing)'}"`)
-  if (mode === 'check') {
-    for (const s of chosen(args.slices)) {
-      for (const p of [eventsPath(s.name), snapshotsPath(s.name)]) {
-        if (!existsSync(p)) throw new Error(`goldenCli: no golden at ${p} — run \`npm run oracle:record -- ${s.name}\` first`)
-      }
-    }
-  }
+  if (mode !== 'record' && mode !== 'check') throw new Error(`expected "record" or "check", got "${mode ?? '(nothing)'}"`)
+  if (mode === 'check') requireGoldens(args.slices)
   const bad = mode === 'record' ? await record(args) : await check(args)
   if (bad > 0) process.exitCode = 1
 }

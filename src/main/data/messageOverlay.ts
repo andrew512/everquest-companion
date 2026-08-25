@@ -173,16 +173,21 @@ interface MessageRecord {
 const SURROGATE_RE = /[\uD800-\uDFFF]/
 function byCodepoint(a: string, b: string): number {
   if (a === b) return 0
+  // No surrogate anywhere means code-UNIT order already IS codepoint order, and `<` is the
+  // fastest way to say so. Every EQ spell name and every log line takes this branch.
   if (!SURROGATE_RE.test(a) && !SURROGATE_RE.test(b)) return a < b ? -1 : 1
-  const ca = [...a]
-  const cb = [...b]
-  const n = Math.min(ca.length, cb.length)
-  for (let i = 0; i < n; i++) {
-    const pa = ca[i].codePointAt(0) ?? 0
-    const pb = cb[i].codePointAt(0) ?? 0
+  // Otherwise walk both by code POINT, stepping two units past a surrogate pair. An index walk
+  // rather than a spread: `[...s]` allocates an array per comparison, and this is a comparator.
+  let i = 0
+  let j = 0
+  while (i < a.length && j < b.length) {
+    const pa = a.codePointAt(i) ?? 0
+    const pb = b.codePointAt(j) ?? 0
     if (pa !== pb) return pa - pb
+    i += pa > 0xffff ? 2 : 1
+    j += pb > 0xffff ? 2 : 1
   }
-  return ca.length - cb.length
+  return a.length - i - (b.length - j)
 }
 
 /** Canonical spell key: lowercase, trimmed, trailing Roman rank stripped (mirrors parser). */
