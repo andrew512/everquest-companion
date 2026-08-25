@@ -29,5 +29,6 @@ pub mod leveling;
 pub mod loot;
 pub mod observed_spell_ranks;
 pub mod output_files;
+pub mod resist;
 pub mod spell_sets;
 pub mod turnins;

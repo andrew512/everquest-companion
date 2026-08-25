@@ -391,4 +391,17 @@ impl SpellDb {
     pub fn by_key_get(&self, key: &str) -> Option<&SpellEntry> {
         self.by_key.get(key).map(|&i| &self.spells[i])
     }
+
+    /// `db.byKey` as (canonical key, entry) PAIRS, for a consumer outside this crate.
+    ///
+    /// The one caller is the resist fold, which asks three questions of a named spell — is it a
+    /// song, does the catalog know its landing sentence, is it a resist debuff — and projects the
+    /// answers into an owned table at construction, so nothing in a fold borrows the parser.
+    /// Handing out the pairs rather than a `has()`/`get()` is what lets the projection be built in
+    /// one pass; the key is `db_canon_key`'s, which is the spelling a lookup has to be made with.
+    pub fn by_key_entries(&self) -> impl Iterator<Item = (&str, &SpellEntry)> {
+        self.by_key
+            .iter()
+            .map(move |(k, &i)| (k.as_str(), &self.spells[i]))
+    }
 }
