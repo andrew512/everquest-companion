@@ -34,7 +34,7 @@ use protocol::transport::{Transport, TransportError};
 use crate::ops::{self, Outcome, Session, Unreadable};
 use crate::spawn::DIAGNOSTIC_PREFIX;
 use crate::wire::{self, Outgoing};
-use crate::world::World;
+use crate::world::{ListenerId, World};
 
 /// The engine binary's own version, reported at hello. INFORMATIONAL ONLY — `protocolVersion` is
 /// the compatibility check, and the schema says so.
@@ -78,7 +78,7 @@ impl Server {
             return;
         };
 
-        let ending = self.converse(&mut incoming, &outbox);
+        let ending = self.converse(membership.id, &mut incoming, &outbox);
         if let Some(why) = ending {
             eprintln!("{DIAGNOSTIC_PREFIX} connection closed: {why}");
         }
@@ -99,6 +99,7 @@ impl Server {
     /// or [`None`] when the peer simply went away.
     fn converse(
         &self,
+        listener: ListenerId,
         incoming: &mut wire::Incoming,
         outbox: &Sender<EngineMessage>,
     ) -> Option<String> {
@@ -108,7 +109,10 @@ impl Server {
             Err(why) => return Some(why),
         }
 
-        let mut session = Session::default();
+        // THE SESSION IS THE MEMBERSHIP'S RECEIPT. Everything a connection owns that outlives one
+        // request — today its subscriptions — is keyed by this id inside the world, so a connection
+        // that dies takes them with it through `leave` and nothing has to be reconciled.
+        let mut session = Session::new(listener);
         loop {
             let raw = match incoming.recv() {
                 Ok(Some(raw)) => raw,

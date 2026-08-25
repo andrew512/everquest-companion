@@ -1,6 +1,6 @@
 [package]
 name = "engined"
-description = "The engine process (JOS-466, phase 0): the spawn contract, loopback TCP, and the protocol's ops answered from generated types. No game logic."
+description = "The engine process (JOS-466/JOS-474): the spawn contract, loopback TCP, the protocol's ops answered from generated types, and the ingest that folds one log — scan then live tail — behind one sink trait."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,3 +15,7 @@ publish.workspace = true
 # inside this crate and nothing above it moves.
 protocol = { path = "../protocol" }
 serde_json.workspace = true
+
+# THE PARSER AND THE TAIL, as a library. Both halves of ingest are proven standalone (JOS-469's
+# byte-identity oracle, JOS-472's scan-equivalence oracle) and this crate re-decides neither.
+eqlog = { path = "../eqlog" }

@@ -1,7 +1,12 @@
-//! `engined` — THE ENGINE PROCESS. Phase 0 of JOS-459: a process that can be spawned, handed a
-//! secret, talked to, and killed. There is NO GAME LOGIC in this crate and none may be added to it;
-//! the tailer, the parser and the fold arrive in later crates and are reached through the door in
-//! [`world`].
+//! `engined` — THE ENGINE PROCESS (JOS-459). A process that can be spawned, handed a secret, talked
+//! to, and killed (phase 0, JOS-466) — and, since JOS-474, one that INGESTS: `session.attach` opens
+//! the named log, scans it at full speed and follows it live, through `eqlog`.
+//!
+//! WHERE THE GAME LOGIC IS, AND IS NOT. Not here. `eqlog` owns what an event is (JOS-469, proven
+//! byte-identical to the TS parser) and what a line is (JOS-472, proven scan-equivalent); the fold
+//! that turns events into state arrives in `fold` (JOS-471) and reaches this crate through ONE
+//! trait, [`ingest::EventSink`]. This crate owns the process, the protocol, and the question of who
+//! is folding — see [`ingest`] for the generation law and [`world`] for the one door.
 //!
 //! THE SPAWN CONTRACT (binding, shared verbatim with the supervisor ticket JOS-467):
 //!
@@ -31,6 +36,7 @@
 #![warn(missing_docs)]
 
 mod conn;
+mod ingest;
 mod ops;
 mod spawn;
 mod wire;

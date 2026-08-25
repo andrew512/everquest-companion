@@ -40,7 +40,12 @@ pub const WRONG_TOKEN: &str = "0f7d2c9a4b1e6538aa03d7c5e9124f86b0d3a7c1e2f408596
 /// It is a FAILURE MECHANISM, not a synchronization one: nothing here waits for the clock, every
 /// assertion waits for a condition, and this is only what turns a deadlock into a red test instead
 /// of a cargo run that never returns.
-pub const PATIENCE: Duration = Duration::from_secs(10);
+///
+/// THIRTY SECONDS BECAUSE A FOLD IS A REAL PIECE OF WORK NOW (JOS-474). `tests/ingest.rs` waits for
+/// a debug-build engine to build the whole committed spell DB and scan ~900 KB of log before its
+/// first frame can exist — measured in seconds, not milliseconds — and a patience shorter than the
+/// work is a timeout pretending to be an assertion. It costs nothing on a passing run.
+pub const PATIENCE: Duration = Duration::from_secs(30);
 
 /// A spawned engine process, with its stdin, its stdout and the port it announced.
 pub struct Engine {
