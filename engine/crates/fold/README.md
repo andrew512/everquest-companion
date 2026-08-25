@@ -186,7 +186,9 @@ npm run oracle:rust-fold -- --keep-going \
 
 It prints PASS per module per slice, the first divergence (dotted path, both values, truncated) for
 each failure, and a SKIP line naming every module not compared — on green runs too, because "fifteen
-of twenty agreed" and "the fold agrees" are different sentences.
+of twenty agreed" and "the fold agrees" are different sentences. **On a DEFAULT run there is no SKIP
+line at all now**, which is the sentence phase 2 was for: twenty-two sections compared, nothing
+excused.
 
 **Check the harness still bites** after changing it. Two one-line faults are enough: bump
 `KILLS_SHAPE_VERSION` and change `SETTLE_MS`, rebuild, run one slice, and confirm you get
@@ -206,6 +208,31 @@ at .seq`). The other two — `WAKE_CENSOR_MS` 1 s→2 s and `CC_END_MEMORY_MS` 6
 all six slices, because nothing in this corpus exercises either constant in a way that reaches a
 published field. An inert injection is a fact about the CORPUS, not a pass, and it is worth writing
 down rather than mistaking for one.
+
+**THE JOS-477 RUN, one per file the final stage added, all on `mid-grind` unless named otherwise:**
+
+| injection | what moved |
+| --- | --- |
+| `rounds.rs` multi-round threshold 2 → 3 | `.roundStats.lanes[].multiRounds` / `multiPct` |
+| `aggregate.rs` `tally_modifiers` count += 2 | `.roundStats.modifiers[].count`, `ripostesGiven`, `incomingHealers[].count` |
+| `views.rs` `SKILL_CAP` 12 → 11 | `.entities[].skills.length` |
+| `healing.rs` `SPELL_CAP` 14 → 1 | `.healing.healers[].spells.length` (267 scopes) |
+| `procdetect.rs` cast window 12 s → 11 s | `.procs.lanes[].count`, `.procs.overall.count` and every rate |
+| `procwindows.rs` `MIN_ARM_WINDOWS` 20 → 21 | `.procs.attribution.effects[].note` |
+| `statetimeline.rs` `STATE_SPAN_CAP` 2000 → 40 | `.procs.states.length` / `startTs` / `endTs` |
+| `procrouting.rs` stance switch += 2 | `.procs.stanceSwitches` |
+| `procviews.rs` `strikeCount` = lane count | `.procs.strikeCount` |
+| `encounter.rs` `TIMELINE_BUDGET` 2000 → 10 | `.timeline.events.length` / `downsampled` (all six) |
+
+`collate.rs` needs no injection: the `hate-pets` golden is what FORCED it, and reverting it turns
+that slice red on `.healing.enemyHealers[].id`. `poisons.rs` is the same — it is what closed the
+`.poison.slow.*` class on `mid-grind`.
+
+**TWO INERT INJECTIONS, reported as facts about the corpus rather than counted as passes.**
+`SPELL_CAP` 14 → **13** does not bite: no healer on `mid-grind` carries more than thirteen heal
+lanes, so the cap never engages and the run is GREEN. `TIMELINE_BUDGET` 2000 → **1000** does not bite
+either: the selected fight on every slice holds fewer than a thousand instants, so the stride stays 1.
+Both only bit once pushed past what the corpus actually contains (1 and 10).
 
 House rules for the whole crate: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D
 warnings`, `cargo test -p fold`, and the Node side's `npm run typecheck && npm run lint && npm test`.
