@@ -9,45 +9,106 @@
       "title": "ClientMessage",
       "description": "Every message the app sends the engine. Internally tagged on `op`, so a new surface is a new branch and the envelope never changes.",
       "oneOf": [
-        { "$ref": "#/$defs/Hello" },
-        { "$ref": "#/$defs/EchoRequest" },
-        { "$ref": "#/$defs/SessionAttachRequest" },
-        { "$ref": "#/$defs/SessionHealthRequest" },
-        { "$ref": "#/$defs/SessionProgressRequest" },
-        { "$ref": "#/$defs/ModuleSnapshotRequest" },
-        { "$ref": "#/$defs/PerfSnapshotRequest" },
-        { "$ref": "#/$defs/ViewSubscribeRequest" },
-        { "$ref": "#/$defs/ViewUnsubscribeRequest" },
-        { "$ref": "#/$defs/AlertsDefineRequest" },
-        { "$ref": "#/$defs/BuffTrustDefineRequest" },
-        { "$ref": "#/$defs/RespawnDefineRequest" },
-        { "$ref": "#/$defs/ComboDefineRequest" },
-        { "$ref": "#/$defs/RosterDefineRequest" },
-        { "$ref": "#/$defs/CombatSnapshotRequest" },
-        { "$ref": "#/$defs/CombatSearchFightsRequest" }
+        {
+          "$ref": "#/$defs/Hello"
+        },
+        {
+          "$ref": "#/$defs/EchoRequest"
+        },
+        {
+          "$ref": "#/$defs/SessionAttachRequest"
+        },
+        {
+          "$ref": "#/$defs/SessionHealthRequest"
+        },
+        {
+          "$ref": "#/$defs/SessionProgressRequest"
+        },
+        {
+          "$ref": "#/$defs/ModuleSnapshotRequest"
+        },
+        {
+          "$ref": "#/$defs/PerfSnapshotRequest"
+        },
+        {
+          "$ref": "#/$defs/ViewSubscribeRequest"
+        },
+        {
+          "$ref": "#/$defs/ViewUnsubscribeRequest"
+        },
+        {
+          "$ref": "#/$defs/AlertsDefineRequest"
+        },
+        {
+          "$ref": "#/$defs/BuffTrustDefineRequest"
+        },
+        {
+          "$ref": "#/$defs/RespawnDefineRequest"
+        },
+        {
+          "$ref": "#/$defs/ComboDefineRequest"
+        },
+        {
+          "$ref": "#/$defs/RosterDefineRequest"
+        },
+        {
+          "$ref": "#/$defs/CombatSnapshotRequest"
+        },
+        {
+          "$ref": "#/$defs/CombatSearchFightsRequest"
+        },
+        {
+          "$ref": "#/$defs/KnowledgeItemRequest"
+        },
+        {
+          "$ref": "#/$defs/KnowledgeMobRequest"
+        },
+        {
+          "$ref": "#/$defs/KnowledgeSpellRequest"
+        },
+        {
+          "$ref": "#/$defs/KnowledgeSearchRequest"
+        },
+        {
+          "$ref": "#/$defs/KnowledgeDefineRequest"
+        }
       ]
     },
-
     "EngineMessage": {
       "title": "EngineMessage",
       "description": "Every message the engine sends the app. Internally tagged on `kind`.",
       "oneOf": [
-        { "$ref": "#/$defs/HelloReply" },
-        { "$ref": "#/$defs/Reply" },
-        { "$ref": "#/$defs/ErrorReply" },
-        { "$ref": "#/$defs/ResetMessage" },
-        { "$ref": "#/$defs/DiffMessage" },
-        { "$ref": "#/$defs/EpochMessage" },
-        { "$ref": "#/$defs/FireMessage" }
+        {
+          "$ref": "#/$defs/HelloReply"
+        },
+        {
+          "$ref": "#/$defs/Reply"
+        },
+        {
+          "$ref": "#/$defs/ErrorReply"
+        },
+        {
+          "$ref": "#/$defs/ResetMessage"
+        },
+        {
+          "$ref": "#/$defs/DiffMessage"
+        },
+        {
+          "$ref": "#/$defs/EpochMessage"
+        },
+        {
+          "$ref": "#/$defs/FireMessage"
+        },
+        {
+          "$ref": "#/$defs/KnowledgeMissMessage"
+        }
       ]
     },
-
     "RequestId": {
       "title": "RequestId",
       "description": "Client-chosen correlation id. A reply carries the id of its request; every stream message carries the id of the subscribe request that opened it.",
       "type": "integer"
     },
-
     "Token": {
       "title": "Token",
       "description": "The per-launch shared secret. Minted by Electron main at spawn, handed to the engine out of band, presented once at hello. It is never persisted and never reused across launches. Compare it in CONSTANT TIME (src/main/dataServer/token.ts, engine/crates/protocol/src/token.rs) - a byte-at-a-time compare over a loopback socket is a timing oracle. The shape rules are environment-neutral and live in src/shared/dataServer/token.ts.",
@@ -55,30 +116,46 @@
       "minLength": 32,
       "maxLength": 256
     },
-
     "Hello": {
       "title": "Hello",
       "description": "The FIRST message on a connection, always. The engine answers with HelloReply or closes the connection; nothing else may precede it.",
       "type": "object",
       "properties": {
-        "op": { "type": "string", "enum": ["hello"] },
-        "token": { "$ref": "#/$defs/Token" },
+        "op": {
+          "type": "string",
+          "enum": [
+            "hello"
+          ]
+        },
+        "token": {
+          "$ref": "#/$defs/Token"
+        },
         "protocolVersion": {
           "description": "The version the CLIENT was generated against. A mismatch is fatal by ruling: both sides log and the connection closes. Version skew is a build error, not a runtime state to recover from.",
           "type": "integer"
         }
       },
-      "required": ["op", "token", "protocolVersion"],
+      "required": [
+        "op",
+        "token",
+        "protocolVersion"
+      ],
       "additionalProperties": false
     },
-
     "HelloReply": {
       "title": "HelloReply",
       "description": "The handshake answer. `ok: false` is a courtesy sent immediately before the engine closes the connection — a client must treat a closed connection with no reply as the same outcome.",
       "type": "object",
       "properties": {
-        "kind": { "type": "string", "enum": ["hello"] },
-        "ok": { "type": "boolean" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "hello"
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        },
         "engineVersion": {
           "description": "The engine binary's own version (informational; it is NOT the compatibility check).",
           "type": "string"
@@ -88,52 +165,96 @@
           "type": "integer"
         }
       },
-      "required": ["kind", "ok", "engineVersion", "protocolVersion"],
+      "required": [
+        "kind",
+        "ok",
+        "engineVersion",
+        "protocolVersion"
+      ],
       "additionalProperties": false
     },
-
     "Reply": {
       "title": "Reply",
       "description": "A successful answer to one request.",
       "type": "object",
       "properties": {
-        "kind": { "type": "string", "enum": ["reply"] },
-        "id": { "$ref": "#/$defs/RequestId" },
-        "ok": { "type": "boolean", "enum": [true] },
-        "result": { "$ref": "#/$defs/ReplyResult" }
+        "kind": {
+          "type": "string",
+          "enum": [
+            "reply"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/ReplyResult"
+        }
       },
-      "required": ["kind", "id", "ok", "result"],
+      "required": [
+        "kind",
+        "id",
+        "ok",
+        "result"
+      ],
       "additionalProperties": false
     },
-
     "ErrorReply": {
       "title": "ErrorReply",
       "description": "A refused request. An error is always a reply to a request id — a failure with no request behind it closes the connection instead.",
       "type": "object",
       "properties": {
-        "kind": { "type": "string", "enum": ["error"] },
-        "id": { "$ref": "#/$defs/RequestId" },
-        "ok": { "type": "boolean", "enum": [false] },
-        "error": { "$ref": "#/$defs/ProtocolError" }
+        "kind": {
+          "type": "string",
+          "enum": [
+            "error"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            false
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ProtocolError"
+        }
       },
-      "required": ["kind", "id", "ok", "error"],
+      "required": [
+        "kind",
+        "id",
+        "ok",
+        "error"
+      ],
       "additionalProperties": false
     },
-
     "ProtocolError": {
       "title": "ProtocolError",
       "type": "object",
       "properties": {
-        "code": { "$ref": "#/$defs/ErrorCode" },
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
         "message": {
           "description": "Human-readable, for a log line and a bug report. Never parsed — branch on `code`.",
           "type": "string"
         }
       },
-      "required": ["code", "message"],
+      "required": [
+        "code",
+        "message"
+      ],
       "additionalProperties": false
     },
-
     "ErrorCode": {
       "title": "ErrorCode",
       "description": "A CLOSED set. Both sides generate from this artifact, so adding a member is a schema edit that regenerates both — there is no version of the app that can meet a code it has never heard of.",
@@ -148,65 +269,121 @@
         "internal"
       ]
     },
-
     "EchoRequest": {
       "title": "EchoRequest",
       "description": "The skeleton's own op: it proves a whole message travelled the seam and came back, with no game logic anywhere.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["echo"] },
-        "params": { "$ref": "#/$defs/EchoParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "echo"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/EchoParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "EchoParams": {
       "title": "EchoParams",
       "type": "object",
-      "properties": { "text": { "type": "string" } },
-      "required": ["text"],
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
       "additionalProperties": false
     },
-
     "ReplyResult": {
       "title": "ReplyResult",
       "description": "THE RESULT REGISTRY, and it is CLOSED. Which shape a reply carries is decided by the OP of the request whose id it names - the envelope does not repeat it, because a reply that had to restate its own op would be a second place for the two to disagree. This list is the additive seam for the eight API surfaces: a new op adds an arm and nothing else in the envelope moves. There is deliberately NO open arm for a shape this build does not know: both sides generate from this one artifact and a protocolVersion mismatch is fatal at hello, so an engine that could answer with an unnamed shape is an engine this client already refused to talk to. A wildcard arm would also make the whole list unusable - an open object matches every named shape too, so `oneOf` could never pick one.",
       "oneOf": [
-        { "$ref": "#/$defs/EchoResult" },
-        { "$ref": "#/$defs/HealthResult" },
-        { "$ref": "#/$defs/AttachResult" },
-        { "$ref": "#/$defs/SubscribeAck" },
-        { "$ref": "#/$defs/ModuleSnapshotResult" },
-        { "$ref": "#/$defs/PerfSnapshotResult" },
-        { "$ref": "#/$defs/DefineAck" },
-        { "$ref": "#/$defs/CombatSnapshotResult" },
-        { "$ref": "#/$defs/CombatSearchFightsResult" }
+        {
+          "$ref": "#/$defs/EchoResult"
+        },
+        {
+          "$ref": "#/$defs/HealthResult"
+        },
+        {
+          "$ref": "#/$defs/AttachResult"
+        },
+        {
+          "$ref": "#/$defs/SubscribeAck"
+        },
+        {
+          "$ref": "#/$defs/ModuleSnapshotResult"
+        },
+        {
+          "$ref": "#/$defs/PerfSnapshotResult"
+        },
+        {
+          "$ref": "#/$defs/DefineAck"
+        },
+        {
+          "$ref": "#/$defs/CombatSnapshotResult"
+        },
+        {
+          "$ref": "#/$defs/CombatSearchFightsResult"
+        },
+        {
+          "$ref": "#/$defs/KnowledgeResult"
+        },
+        {
+          "$ref": "#/$defs/KnowledgeSearchResult"
+        }
       ]
     },
-
     "EchoResult": {
       "title": "EchoResult",
       "type": "object",
-      "properties": { "text": { "type": "string" } },
-      "required": ["text"],
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
       "additionalProperties": false
     },
-
     "SessionAttachRequest": {
       "title": "SessionAttachRequest",
       "description": "Begins tail + fold of one log. PREEMPTS any in-flight attach — last pick wins, never queued (JOS-457's generation ownership, promoted to protocol law). A successful attach bumps the epoch.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["session.attach"] },
-        "params": { "$ref": "#/$defs/SessionAttachParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "session.attach"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/SessionAttachParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "SessionAttachParams": {
       "title": "SessionAttachParams",
       "type": "object",
@@ -216,36 +393,53 @@
           "type": "string"
         }
       },
-      "required": ["logPath"],
+      "required": [
+        "logPath"
+      ],
       "additionalProperties": false
     },
-
     "AttachResult": {
       "title": "AttachResult",
       "type": "object",
       "properties": {
-        "epoch": { "$ref": "#/$defs/Epoch" },
+        "epoch": {
+          "$ref": "#/$defs/Epoch"
+        },
         "accepted": {
           "description": "False when the attach was preempted by a later one before it began — the caller's own attach is the one that lost, and the epoch names the winner.",
           "type": "boolean"
         }
       },
-      "required": ["epoch", "accepted"],
+      "required": [
+        "epoch",
+        "accepted"
+      ],
       "additionalProperties": false
     },
-
     "SessionHealthRequest": {
       "title": "SessionHealthRequest",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["session.health"] },
-        "params": { "$ref": "#/$defs/NoParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "session.health"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/NoParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "HealthResult": {
       "title": "HealthResult",
       "description": "What the engine's ingest is doing, and where it has got to. THE LAST FOUR FIELDS ARE OPTIONAL AND THAT IS NOT A CONVENIENCE: a health answer given before any attach honestly has no mark, no event count, no log timestamp and no file to stat, and a zero would be a measurement nobody took. Absent means `this engine has not folded anything`; present means the numbers are the fold's own.",
@@ -253,11 +447,23 @@
       "properties": {
         "status": {
           "type": "string",
-          "enum": ["starting", "attaching", "folding", "live", "idle"]
+          "enum": [
+            "starting",
+            "attaching",
+            "folding",
+            "live",
+            "idle"
+          ]
         },
-        "epoch": { "$ref": "#/$defs/Epoch" },
-        "uptimeMs": { "type": "integer" },
-        "mark": { "$ref": "#/$defs/LogMark" },
+        "epoch": {
+          "$ref": "#/$defs/Epoch"
+        },
+        "uptimeMs": {
+          "type": "integer"
+        },
+        "mark": {
+          "$ref": "#/$defs/LogMark"
+        },
         "events": {
           "description": "Events folded in this generation. Counts EVENTS, not lines — a log line the parser declines is not one.",
           "type": "integer"
@@ -271,10 +477,13 @@
           "type": "integer"
         }
       },
-      "required": ["status", "epoch", "uptimeMs"],
+      "required": [
+        "status",
+        "epoch",
+        "uptimeMs"
+      ],
       "additionalProperties": false
     },
-
     "LogMark": {
       "title": "LogMark",
       "description": "THE ADDRESSABLE COORDINATE (owner ruling 18 law 3): state is addressed by (log identity, byte offset) and by nothing else — never by wall time, never by `current`. `offset` is the end of the last COMPLETE line folded, which is the same definition as the scan's end offset; a half-written line is not an event and the mark waits with it. THIS IS NOT A FRAMING CONCERN: it is a coordinate INSIDE the file the engine reads, and it would mean the same thing over any transport.",
@@ -289,23 +498,37 @@
           "type": "integer"
         }
       },
-      "required": ["log", "offset"],
+      "required": [
+        "log",
+        "offset"
+      ],
       "additionalProperties": false
     },
-
     "ModuleSnapshotRequest": {
       "title": "ModuleSnapshotRequest",
       "description": "THE FIRST DATA-BEARING OP. Asks the live fold for one module's published state — the same `{ seq, state }` the app's own module registry hydrates from today. The answer is a point-in-time read of the ingest's fold: mid-scan it is a real PREFIX state (every event up to `seq` and no part of another), because the fold answers between its own read boundaries and never inside one. An unknown module name is `notFound`: the registry is the authority on what a module is, and an empty state would be a lie about a module that does not exist.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["module.snapshot"] },
-        "params": { "$ref": "#/$defs/ModuleSnapshotParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "module.snapshot"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/ModuleSnapshotParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "ModuleSnapshotParams": {
       "title": "ModuleSnapshotParams",
       "type": "object",
@@ -315,10 +538,11 @@
           "type": "string"
         }
       },
-      "required": ["module"],
+      "required": [
+        "module"
+      ],
       "additionalProperties": false
     },
-
     "ModuleSnapshotResult": {
       "title": "ModuleSnapshotResult",
       "type": "object",
@@ -331,31 +555,54 @@
           "description": "The module's OWN published seq — for most modules the seq of the last event it folded, and for the four that publish a private revision counter (combo, character, respawn, buffTimers) that counter. It is a hydration cursor, not the fold's event count; `HealthResult.events` is the count.",
           "type": "integer"
         },
-        "state": { "$ref": "#/$defs/ModuleState" }
+        "state": {
+          "$ref": "#/$defs/ModuleState"
+        }
       },
-      "required": ["module", "seq", "state"],
+      "required": [
+        "module",
+        "seq",
+        "state"
+      ],
       "additionalProperties": false
     },
-
     "ModuleState": {
       "title": "ModuleState",
       "description": "THE MODULE'S PUBLISHED STATE, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the same argument Cells makes, one level up: the field set belongs to the thing that publishes it, so a module growing a field is not a protocol change. `type` NAMES EVERY JSON TYPE rather than being omitted, and that is not decoration: an omitted `type` lowers to an INDEX-SIGNATURE object in TypeScript, which would forbid the ARRAY half of the registry — `kills` publishes an object, `loot`, `consider` and `eventFeed` publish arrays of rows, and a schema that named one of those shapes would be a rule the fold already breaks. IT IS THE SECOND HAND-WRITTEN REPLACEMENT ON THE RUST SIDE, for exactly the reason `Cell` is: typify lowers a multi-type schema to an untagged enum whose number arm is `f64`, and a module state is FULL of counts. The replacement is `serde_json::Value`, which is the same claim this definition makes, spelled in Rust.",
-      "type": ["object", "array", "string", "number", "boolean", "null"]
+      "type": [
+        "object",
+        "array",
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ]
     },
-
     "PerfSnapshotRequest": {
       "title": "PerfSnapshotRequest",
       "description": "THE ENGINE'S OWN PERFORMANCE, ASKED FOR (owner ruling 19 surface, JOS-483). Everything `session.health` says about where the fold has got to, plus what the ingest cost to build and what the serve path has cost since — the counters `views::meter` already keeps, read WITHOUT resetting them so two asks read as a progression rather than as two disconnected windows. It is answered through the same one door `module.snapshot` uses: the meter lives on the ingest thread, the request arrives on a connection thread, and the ingest answers at a boundary it already reaches. THE APP MUST NOT POLL THIS IDLY. It is the in-app performance panel's data and the panel is open a few seconds at a time; a perf surface that costs a round trip a second while nobody is looking at it is the bug it exists to find.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["perf.snapshot"] },
-        "params": { "$ref": "#/$defs/NoParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "perf.snapshot"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/NoParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "PerfSnapshotResult": {
       "title": "PerfSnapshotResult",
       "description": "What the engine is doing and what it has cost. The first five fields are `HealthResult`'s and mean exactly what they mean there, restated rather than nested so a panel reads one object — and OPTIONAL on the same terms, because a health answer given before any attach honestly has no mark, no event count and no log timestamp. `ingest` is what building this generation cost; `serve` is one row per view source, cumulative for the generation.",
@@ -363,14 +610,24 @@
       "properties": {
         "status": {
           "type": "string",
-          "enum": ["starting", "attaching", "folding", "live", "idle"]
+          "enum": [
+            "starting",
+            "attaching",
+            "folding",
+            "live",
+            "idle"
+          ]
         },
-        "epoch": { "$ref": "#/$defs/Epoch" },
+        "epoch": {
+          "$ref": "#/$defs/Epoch"
+        },
         "uptimeMs": {
           "description": "How long THIS PROCESS has been up. Process metadata, never world state: it survives an attach, which the epoch does not.",
           "type": "integer"
         },
-        "mark": { "$ref": "#/$defs/LogMark" },
+        "mark": {
+          "$ref": "#/$defs/LogMark"
+        },
         "events": {
           "description": "Events folded in this generation. Counts EVENTS, not lines — the same number `HealthResult.events` carries.",
           "type": "integer"
@@ -379,17 +636,26 @@
           "description": "The `ts` of the last event folded — THE LOG'S OWN CLOCK, never the host's. Its distance from the host's clock is the freshness figure the panel draws, and that subtraction is the CALLER's to make: the engine does not read a wall clock to answer this.",
           "type": "integer"
         },
-        "ingest": { "$ref": "#/$defs/PerfIngest" },
+        "ingest": {
+          "$ref": "#/$defs/PerfIngest"
+        },
         "serve": {
           "description": "One row per view source that has served a frame in this generation. A source nobody has subscribed to is ABSENT rather than a row of zeros — the same rule the panel applies to a process type with no process behind it.",
           "type": "array",
-          "items": { "$ref": "#/$defs/PerfServeSource" }
+          "items": {
+            "$ref": "#/$defs/PerfServeSource"
+          }
         }
       },
-      "required": ["status", "epoch", "uptimeMs", "ingest", "serve"],
+      "required": [
+        "status",
+        "epoch",
+        "uptimeMs",
+        "ingest",
+        "serve"
+      ],
       "additionalProperties": false
     },
-
     "PerfIngest": {
       "title": "PerfIngest",
       "description": "WHAT STARTING THIS GENERATION COST. Every field is optional and absent means NOT YET MEASURED rather than zero: `scanMs` is unknown until the scan finishes, and a zero there would say a whole log folded instantly. The engine prints the same two numbers to stderr; this is the same measurement on the wire, so a panel does not have to scrape a log.",
@@ -410,7 +676,6 @@
       },
       "additionalProperties": false
     },
-
     "PerfServeSource": {
       "title": "PerfServeSource",
       "description": "ONE SOURCE'S SERVE PATH, cumulative for this generation — the counters `views::meter` keeps, exactly as ruling 19 names them. QUEUE TIME IS NEVER COUNTED AS COMPUTE: `foldToFrameUs*` is measured from the instant the fold produced what the frame reports to the instant the frame reached the connection's outbox, and a frame with no fold behind it (the fresh reset a just-opened subscription is owed) is COUNTED but not TIMED — which is why the two latency fields are optional and their absence means `no frame here had a fold behind it`, never `zero microseconds`.",
@@ -424,8 +689,12 @@
           "description": "Frames actually sent — `resets + diffs`. Reported rather than left to the caller's addition so the row reads without arithmetic.",
           "type": "integer"
         },
-        "resets": { "type": "integer" },
-        "diffs": { "type": "integer" },
+        "resets": {
+          "type": "integer"
+        },
+        "diffs": {
+          "type": "integer"
+        },
         "rows": {
           "description": "Rows carried by the resets. A diff carries ops, not rows.",
           "type": "integer"
@@ -463,93 +732,157 @@
       ],
       "additionalProperties": false
     },
-
     "SessionProgressRequest": {
       "title": "SessionProgressRequest",
       "description": "Asks to be told about fold progress. The ticks themselves arrive as connection-wide EpochMessage frames carrying `progress` — the same channel the epoch bump uses, which is why they are not a fourth stream kind.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["session.progress"] },
-        "params": { "$ref": "#/$defs/NoParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "session.progress"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/NoParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "ViewSubscribeRequest": {
       "title": "ViewSubscribeRequest",
       "description": "Opens a subscription. The reply acknowledges; the data starts with a `reset` carrying the whole window.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["view.subscribe"] },
-        "params": { "$ref": "#/$defs/ViewDescriptor" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "view.subscribe"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/ViewDescriptor"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "ViewUnsubscribeRequest": {
       "title": "ViewUnsubscribeRequest",
       "description": "Closes a subscription. `id` is this REQUEST's id; `params.subscription` names the subscribe request whose stream is to stop.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["view.unsubscribe"] },
-        "params": { "$ref": "#/$defs/ViewUnsubscribeParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "view.unsubscribe"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/ViewUnsubscribeParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "ViewUnsubscribeParams": {
       "title": "ViewUnsubscribeParams",
       "type": "object",
-      "properties": { "subscription": { "$ref": "#/$defs/RequestId" } },
-      "required": ["subscription"],
+      "properties": {
+        "subscription": {
+          "$ref": "#/$defs/RequestId"
+        }
+      },
+      "required": [
+        "subscription"
+      ],
       "additionalProperties": false
     },
-
     "SubscribeAck": {
       "title": "SubscribeAck",
       "type": "object",
       "properties": {
-        "subscription": { "$ref": "#/$defs/RequestId" },
-        "subscribed": { "type": "boolean" }
+        "subscription": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "subscribed": {
+          "type": "boolean"
+        }
       },
-      "required": ["subscription", "subscribed"],
+      "required": [
+        "subscription",
+        "subscribed"
+      ],
       "additionalProperties": false
     },
-
     "DefineAck": {
       "title": "DefineAck",
       "description": "The answer to every `*.define` command, and it is deliberately the SAME shape for all five. A define is an idempotent FULL-SET REPLACE (the cutover ledger's command law: replayable, order-collapsing, hash-friendly for ruling 18's cache key), so there is nothing per-family to report back — the engine either took the set or refused the frame. `count` is how many entries it took, which is the one number a caller can check its own push against; it is absent for a family whose payload is not a list (`buffTrust`, `respawn` push one object each).",
       "type": "object",
       "properties": {
-        "applied": { "type": "boolean", "enum": [true] },
+        "applied": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
         "count": {
           "description": "Entries taken, for a list-shaped payload. Absent means the payload was not a list, NEVER that nothing was taken — an empty list answers `count: 0`, which is how a caller clears a family and can tell it worked.",
           "type": "integer"
         }
       },
-      "required": ["applied"],
+      "required": [
+        "applied"
+      ],
       "additionalProperties": false
     },
-
     "AlertsDefineRequest": {
       "title": "AlertsDefineRequest",
       "description": "THE USER'S ALERT DEFINITIONS, pushed (boundary verdict 3). The store stays persistence truth app-side and the engine never reads a settings file; the app pushes the WHOLE set on connect and on every save/delete. Since ruling 22 the engine is also what EVALUATES them: a match on a LIVE event becomes a `FireMessage` on the stream, and the app-side alert system reduces to receive-fire-make-sound.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["alerts.define"] },
-        "params": { "$ref": "#/$defs/AlertsDefineParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "alerts.define"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/AlertsDefineParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "AlertsDefineParams": {
       "title": "AlertsDefineParams",
       "type": "object",
@@ -557,41 +890,60 @@
         "defs": {
           "description": "THE WHOLE SET, always. Not a delta: a define replaces what the engine holds, so a crash-respawn is a replay of the latest push and a command input is hash-friendly.",
           "type": "array",
-          "items": { "$ref": "#/$defs/AlertDefinition" }
+          "items": {
+            "$ref": "#/$defs/AlertDefinition"
+          }
         }
       },
-      "required": ["defs"],
+      "required": [
+        "defs"
+      ],
       "additionalProperties": false
     },
-
     "AlertDefinition": {
       "title": "AlertDefinition",
       "description": "One alert, EXACTLY AS THE STORE HOLDS IT — `src/shared/alertTypes.ts AlertDef`. The protocol states nothing about its shape, and that is the `ModuleState`/`Cells` argument at full strength rather than a shortcut. Two reasons, and the second is the load-bearing one. (1) The field set is the STORE's contract: a def carries an id, a name, an enabled flag, a trigger grammar and a sound reference that the engine's evaluator reads, plus volume, audio channel, speech phrase, banner colour, notes and the early-warning offset that belong entirely to the app — and an alert growing a field must not be a protocol change or turn a whole push into `badParams`. (2) A DEFINITION ROUND-TRIPS: the fold republishes the pushed list as the `alerts` module's own `defs`, which is what the app's alert list is drawn from, so a typed protocol shape that quietly dropped an unlisted field would REWRITE THE USER'S ALERTS as they passed through the engine. Typed-where-cheap is not cheap here. The engine reads what it needs with its own reader (`fold::modules::alerts_rules::Rule::compile`), exactly as the fold reads an event.",
       "type": "object",
       "additionalProperties": true
     },
-
     "BuffTrustDefineRequest": {
       "title": "BuffTrustDefineRequest",
       "description": "WHOSE CASTS, BESIDES YOUR OWN, MAY ANCHOR A LANDING (JOS-140). Pushed like every other piece of app knowledge; it ships empty and stays empty for almost everybody.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["buffTrust.define"] },
-        "params": { "$ref": "#/$defs/BuffTrustDefineParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "buffTrust.define"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/BuffTrustDefineParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "BuffTrustDefineParams": {
       "title": "BuffTrustDefineParams",
       "type": "object",
-      "properties": { "trust": { "$ref": "#/$defs/BuffTrustPrefs" } },
-      "required": ["trust"],
+      "properties": {
+        "trust": {
+          "$ref": "#/$defs/BuffTrustPrefs"
+        }
+      },
+      "required": [
+        "trust"
+      ],
       "additionalProperties": false
     },
-
     "BuffTrustPrefs": {
       "title": "BuffTrustPrefs",
       "description": "`src/shared/buffTrust.ts BuffTrustPrefs`. Typed because it is cheap to type: one list of display spellings, in the order the user added them.",
@@ -599,34 +951,54 @@
       "properties": {
         "externals": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["externals"],
+      "required": [
+        "externals"
+      ],
       "additionalProperties": true
     },
-
     "RespawnDefineRequest": {
       "title": "RespawnDefineRequest",
       "description": "WHICH MOBS GET A CLOCK (JOS-194) — tracking is opt-in per mob, so this list is the whole of what the respawn fold knows that the log did not tell it.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["respawn.define"] },
-        "params": { "$ref": "#/$defs/RespawnDefineParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "respawn.define"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/RespawnDefineParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "RespawnDefineParams": {
       "title": "RespawnDefineParams",
       "type": "object",
-      "properties": { "prefs": { "$ref": "#/$defs/RespawnPrefs" } },
-      "required": ["prefs"],
+      "properties": {
+        "prefs": {
+          "$ref": "#/$defs/RespawnPrefs"
+        }
+      },
+      "required": [
+        "prefs"
+      ],
       "additionalProperties": false
     },
-
     "RespawnPrefs": {
       "title": "RespawnPrefs",
       "description": "`src/shared/respawn.ts RespawnPrefs`. An object rather than a bare array because that is the shape the store holds and the shape a later preference would grow into.",
@@ -634,13 +1006,16 @@
       "properties": {
         "watches": {
           "type": "array",
-          "items": { "$ref": "#/$defs/RespawnWatch" }
+          "items": {
+            "$ref": "#/$defs/RespawnWatch"
+          }
         }
       },
-      "required": ["watches"],
+      "required": [
+        "watches"
+      ],
       "additionalProperties": true
     },
-
     "RespawnWatch": {
       "title": "RespawnWatch",
       "description": "One mob the user chose to watch, and the number they typed if they typed one.",
@@ -650,92 +1025,137 @@
           "description": "Canonical (lowercased) mob name — what a death line's name canonicalizes to.",
           "type": "string"
         },
-        "display": { "type": "string" },
+        "display": {
+          "type": "string"
+        },
         "customSec": {
           "description": "The user's own respawn, in SECONDS. Absent means `use what you learn`, which is a different statement from zero.",
           "type": "integer"
         }
       },
-      "required": ["key", "display"],
+      "required": [
+        "key",
+        "display"
+      ],
       "additionalProperties": true
     },
-
     "ComboDefineRequest": {
       "title": "ComboDefineRequest",
       "description": "THE USER'S CLASS-COMBO CORRECTIONS — the one input to the loadout model that the log cannot state. Character-scoped app-side; the engine holds whatever the app last pushed for the character it is folding.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["combo.define"] },
-        "params": { "$ref": "#/$defs/ComboDefineParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "combo.define"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/ComboDefineParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "ComboDefineParams": {
       "title": "ComboDefineParams",
       "type": "object",
       "properties": {
         "corrections": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ComboCorrection" }
+          "items": {
+            "$ref": "#/$defs/ComboCorrection"
+          }
         }
       },
-      "required": ["corrections"],
+      "required": [
+        "corrections"
+      ],
       "additionalProperties": false
     },
-
     "ComboCorrection": {
       "title": "ComboCorrection",
       "description": "`src/shared/classCombo.ts ComboCorrection` — a span the user re-labelled, and when they said so.",
       "type": "object",
       "properties": {
-        "startTs": { "type": "integer" },
+        "startTs": {
+          "type": "integer"
+        },
         "endTs": {
           "description": "`null` means `from startTs onward`, i.e. it applies to the open interval too. REQUIRED AND NULLABLE rather than optional, because the store's own type says `number | null` and its only writer always writes one of the two — and because an optional nullable is a field that does not survive a round trip: a generator lowers it to `Option`, drops the null on the way back out, and a fixture that carried the store's own shape stops matching itself.",
-          "type": ["integer", "null"]
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "classes": {
           "description": "One to three class codes, as the `/who` row spells them.",
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "setAt": {
           "description": "When the user set it — a later correction wins over an earlier overlapping one.",
           "type": "integer"
         }
       },
-      "required": ["startTs", "endTs", "classes", "setAt"],
+      "required": [
+        "startTs",
+        "endTs",
+        "classes",
+        "setAt"
+      ],
       "additionalProperties": true
     },
-
     "RosterDefineRequest": {
       "title": "RosterDefineRequest",
       "description": "THE USER'S GROUP-ROSTER EDITS — names they added the log never named, and names they removed that it did.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["roster.define"] },
-        "params": { "$ref": "#/$defs/RosterDefineParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "roster.define"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/RosterDefineParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "RosterDefineParams": {
       "title": "RosterDefineParams",
       "type": "object",
       "properties": {
         "edits": {
           "type": "array",
-          "items": { "$ref": "#/$defs/RosterEdit" }
+          "items": {
+            "$ref": "#/$defs/RosterEdit"
+          }
         }
       },
-      "required": ["edits"],
+      "required": [
+        "edits"
+      ],
       "additionalProperties": false
     },
-
     "RosterEdit": {
       "title": "RosterEdit",
       "description": "`src/shared/progressState.ts RosterEdit` — one name, one verb, and the instant the user said it. The instant is load-bearing rather than provenance: an edit older than the last character rebirth, or older than the last `You have been removed from the group.`, described a group that no longer exists and is dropped by the fold rather than by the pusher.",
@@ -745,34 +1165,63 @@
           "description": "The canonical identity key — `idKey(name)`.",
           "type": "string"
         },
-        "name": { "type": "string" },
-        "action": { "type": "string", "enum": ["add", "remove"] },
-        "setAt": { "type": "integer" }
+        "name": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "add",
+            "remove"
+          ]
+        },
+        "setAt": {
+          "type": "integer"
+        }
       },
-      "required": ["key", "name", "action", "setAt"],
+      "required": [
+        "key",
+        "name",
+        "action",
+        "setAt"
+      ],
       "additionalProperties": true
     },
-
     "CombatSnapshotRequest": {
       "title": "CombatSnapshotRequest",
       "description": "THE COMBAT ENGINE, ASKED (JOS-485). The whole of what `combat:snapshot` serves over IPC today — the selection, the segment list, the zone sessions, the stance and poison readouts, the roster and the hydration flag — from the fold that is running, through the same one door `module.snapshot` uses. It is NOT a `module.snapshot`: the combat engine is not in the registry (`WIRING_ORDER` does not name it), it is the post-registry subscriber, and asking for it by a module name would be asking the wrong authority. THE INSTANT IS THE ENGINE'S TO CHOOSE and the reply says which one it chose — see `CombatSnapshotResult.now`.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["combat.snapshot"] },
-        "params": { "$ref": "#/$defs/CombatSnapshotParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "combat.snapshot"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/CombatSnapshotParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "CombatSnapshotParams": {
       "title": "CombatSnapshotParams",
       "type": "object",
-      "properties": { "opts": { "$ref": "#/$defs/CombatSnapshotOpts" } },
+      "properties": {
+        "opts": {
+          "$ref": "#/$defs/CombatSnapshotOpts"
+        }
+      },
       "additionalProperties": false
     },
-
     "CombatSnapshotOpts": {
       "title": "CombatSnapshotOpts",
       "description": "`src/shared/combat.ts SnapshotOpts`, and OPEN rather than closed — the one shape in this schema where an unlisted key is IGNORED instead of refused. An option is a request for MORE work, so an engine that does not know one has already given the honest answer by not doing it; refusing the whole call would turn a client that learned a new option into a client that cannot ask for anything. That is the opposite of `AlertDefinition`'s openness, which exists because a definition ROUND-TRIPS and a dropped field would rewrite the user's data — nothing here comes back, so dropping an unknown key costs a caller nothing it can lose. Every field is absent-means-the-engine's-default; there is deliberately no `combinePets`, which the owner cut in 2026-08-04 and which lives in the renderer now.",
@@ -797,7 +1246,6 @@
       },
       "additionalProperties": true
     },
-
     "CombatSnapshotResult": {
       "title": "CombatSnapshotResult",
       "description": "The snapshot, and the instant it was taken at. TWO FIELDS RATHER THAN ONE because `now` is not recoverable from the payload and the whole answer is a function of it: a fight closes on elapsed time, `inCombat` is a freshness test, and a summary's `active` flag is the same question per row. A client that could not see which clock the engine used could not tell a stale answer from a quiet log.",
@@ -807,32 +1255,47 @@
           "description": "THE INSTANT THE SNAPSHOT WAS TAKEN AT, in epoch millis, and the engine chose it: the process's own wall clock once the tail is LIVE, and the fold's own `lastTs` — the log's clock — at every moment before that. A REPLAY IS NOT A MOMENT IN TIME (`engine.ts`'s hydrating gate, ported): every line of a months-old log is weeks behind the host clock, so a mid-scan answer stamped `Date.now()` would finalize whatever fight was open and hand the rest of it to a fresh encounter — MEASURED app-side, one 53,577-damage fight splitting into 43,504 + 10,073 under load. It is stated rather than assumed because it is what makes a mid-fold answer a REAL PREFIX STATE: the same bytes asked at the same `seq` give the same snapshot, which is ruling 18 law 1 for this surface.",
           "type": "integer"
         },
-        "snapshot": { "$ref": "#/$defs/CombatState" }
+        "snapshot": {
+          "$ref": "#/$defs/CombatState"
+        }
       },
-      "required": ["now", "snapshot"],
+      "required": [
+        "now",
+        "snapshot"
+      ],
       "additionalProperties": false
     },
-
     "CombatState": {
       "title": "CombatState",
       "description": "THE COMBAT SNAPSHOT, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the `ModuleState` argument, one surface over. `src/shared/combat.ts CombatSnapshot` is ~14 fields of nested view builders (six of them, each with its own row types), it is the app's own contract with its renderer, and a meter growing a column must not be a protocol change or a `badParams` refusal. Typed-where-cheap is emphatically not cheap here: typify would lower every count in it to `f64`, which is the `Cell` defect at the scale of a whole damage meter. It is an OBJECT and always one, which is where it differs from `ModuleState` — the registry publishes both objects and arrays, `CombatEngine::snapshot` publishes an object and nothing else — so this says `object` and lowers to an ordered map of raw JSON in both languages, with every integer intact.",
       "type": "object",
       "additionalProperties": true
     },
-
     "CombatSearchFightsRequest": {
       "title": "CombatSearchFightsRequest",
       "description": "SEARCH THE FIGHT HISTORY (Task #61, moved server-side by JOS-485). `src/main/ipc/world.ts`'s `searchFights` handler, whose semantics are mirrored here exactly: a non-string query is the empty string, and a `limit` is CLAMPED rather than refused — see `CombatSearchFightsParams.limit`. The corpus is the engine's UNCAPPED encounter history plus the open fight, which is why this is an op and not a view: it is a ranked answer to a question, not a window over a collection, and its rows are the app's own `SegmentSummary` rather than cells.",
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/RequestId" },
-        "op": { "type": "string", "enum": ["combat.searchFights"] },
-        "params": { "$ref": "#/$defs/CombatSearchFightsParams" }
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "combat.searchFights"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/CombatSearchFightsParams"
+        }
       },
-      "required": ["id", "op", "params"],
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
       "additionalProperties": false
     },
-
     "CombatSearchFightsParams": {
       "title": "CombatSearchFightsParams",
       "type": "object",
@@ -846,10 +1309,11 @@
           "type": "integer"
         }
       },
-      "required": ["query"],
+      "required": [
+        "query"
+      ],
       "additionalProperties": false
     },
-
     "CombatSearchFightsResult": {
       "title": "CombatSearchFightsResult",
       "description": "`src/shared/combat.ts FightSearchResult`. Ranked hits, best first, ties broken by recency and then by id so the order never depends on the corpus's arrival order.",
@@ -858,43 +1322,334 @@
         "hits": {
           "description": "The ranked hits, already capped by `limit`.",
           "type": "array",
-          "items": { "$ref": "#/$defs/FightSearchHit" }
+          "items": {
+            "$ref": "#/$defs/FightSearchHit"
+          }
         },
         "corpus": {
           "description": "How many fights were SEARCHED — the whole uncapped history plus the open fight. It lets a UI say `12 of 1,428` honestly instead of implying the corpus is the result set, and it is present even when `hits` is empty, because `no matches in 1,428` and `nothing to search` are different sentences.",
           "type": "integer"
         }
       },
-      "required": ["hits", "corpus"],
+      "required": [
+        "hits",
+        "corpus"
+      ],
       "additionalProperties": false
     },
-
     "FightSearchHit": {
       "title": "FightSearchHit",
       "type": "object",
       "properties": {
-        "summary": { "$ref": "#/$defs/FightSummary" },
+        "summary": {
+          "$ref": "#/$defs/FightSummary"
+        },
         "score": {
           "description": "0..1 relevance. Exact token matches outrank prefix, prefix substring, substring a bounded typo correction. A FLOAT and deliberately not a percentage: it is a ranking key the UI may show as a bar, and rounding it here would flatten ties the sort has already broken.",
           "type": "number"
         }
       },
-      "required": ["summary", "score"],
+      "required": [
+        "summary",
+        "score"
+      ],
       "additionalProperties": false
     },
-
     "FightSummary": {
       "title": "FightSummary",
       "description": "One fight, EXACTLY AS THE ENGINE SUMMARIZES IT — `src/shared/combat.ts SegmentSummary`. Open for `CombatState`'s reason and read off the same builder, so a hit and the same fight inside a snapshot are byte-identical rather than two renderings of one row.",
       "type": "object",
       "additionalProperties": true
     },
-
     "NoParams": {
       "title": "NoParams",
       "description": "An op that takes nothing still sends `params: {}`. The envelope keeps one shape, so adding a parameter later is a schema edit rather than an envelope change.",
       "type": "object",
       "properties": {},
+      "additionalProperties": false
+    },
+    "KnowledgeDomain": {
+      "title": "KnowledgeDomain",
+      "description": "WHICH COMMITTED CORPUS AN ANSWER CAME OUT OF. A CLOSED set, like every other enum here: both sides generate from this artifact, so a corpus this build has never heard of cannot arrive. `item` and `mob` are the two the engine can be pushed answers for; `spell` is the parser's own effective catalog, which has no live fallback anywhere in this app, and `quest` is the scraped quest catalog, which is reachable only through search (a quest is not a card this app draws on its own).",
+      "type": "string",
+      "enum": [
+        "item",
+        "mob",
+        "spell",
+        "quest"
+      ]
+    },
+    "KnowledgePushDomain": {
+      "title": "KnowledgePushDomain",
+      "description": "THE TWO CORPORA THE APP CAN ANSWER FOR — a strictly smaller set than `KnowledgeDomain`, and the difference is where the FETCHER lives (boundary verdict 5). `itemLookup`/`mobLookup` resolve a wiki page on demand app-side, so a name those corpora lack is a question somebody can go and answer. The spell catalog has no live fallback at all — it is regenerated by `npm run scrape:spells` and committed — so a spell the DB lacks is not a miss, and a `knowledge.define` naming `spell` would be asking the engine to take an answer nothing produced. Refused by SHAPE rather than by a runtime check.",
+      "type": "string",
+      "enum": [
+        "item",
+        "mob"
+      ]
+    },
+    "KnowledgeRecord": {
+      "title": "KnowledgeRecord",
+      "description": "ONE KNOWLEDGE CARD, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the `ModuleState`/`AlertDefinition` argument a third time, and here it is the strongest of the three. The field set belongs to the SCRAPER: `itemsDb.ts` says a stored record is *literally* the `ItemKnowledge` fields `parseItemWikitext` produces, no projection and no renaming, and that type carries a nested in-game stat block, recipe lists, craft trees with ingredient lines, drop sources and era banners — around thirty fields that grow whenever the wiki grows a field worth scraping. A typed protocol mirror of that would be a translation layer whose only job is to LOSE a field the day the scraper gains one, and it would do it silently, because a knowledge card degrades quietly rather than failing. Worse, a record ROUND-TRIPS: `knowledge.define` pushes one in and every later `knowledge.item` hands it back, so a generator that dropped an unlisted field would rewrite the answer the app just fetched. The engine reads the handful of fields it needs with its own reader (`knowledge::items::knowledge_from_db`, `is_notable`), exactly as the fold reads an event.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "KnowledgeItemRequest": {
+      "title": "KnowledgeItemRequest",
+      "description": "\"What's this lore/quest item for\" — `main/itemLookup.ts lookupItem`, served from the committed corpus the engine now holds (boundary verdict 5; ~12 MB leaves main's heap with this surface and the renderer's bundled copies follow). IT NEVER FAILS AND NEVER ANSWERS `notFound`: a name no corpus holds still comes back carrying every LOCAL association — the Plane of Sky dataset's quest uses and the scraped quest catalog's, which are facts a missing wiki page does not unmake — with `found: false` beside it. The engine also announces that name once on the stream (`knowledgeMiss`), because the fetch is the app's.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "knowledge.item"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/KnowledgeNameParams"
+        }
+      },
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "KnowledgeMobRequest": {
+      "title": "KnowledgeMobRequest",
+      "description": "\"What does this thing drop\" — `main/mobLookup.ts lookupMob`. FOUR SOURCES JOINED SERVER-SIDE, which is the whole reason this op is worth having rather than shipping the catalog to the renderer: the committed drop table, YOUR OWN LOOT HISTORY (read off the fold's own index — the mutual dependency verdict 5 names dissolves in-process), the quest catalog's `relatedNpcs`, and the era evidence each drop's ITEM page carries. The name is answered under every spelling the raid roster states for that creature (`mobAliases.ts`) and the record still reads back the spelling the CALLER used.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "knowledge.mob"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/KnowledgeNameParams"
+        }
+      },
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "KnowledgeSpellRequest": {
+      "title": "KnowledgeSpellRequest",
+      "description": "ONE SPELL, from the parser's own EFFECTIVE catalog — the committed scrape with removals, derived durations and corrections applied, which is the same table the fold classifies against, never a second load. A NAMED GAP RIDES THIS OP AND IS STATED HERE RATHER THAN DISCOVERED: it carries the DB's stated fields and not the JOIN half of `main/data/spellDetail.ts` — no derived effect classes, no rank lineage, and none of the metrics `spellMetricsAt` reads at a gain level, at a mote rank or with worn focus. Those need three inputs this engine does not have yet (the parsed `spells_us.txt` client table — boundary verdict 7, unbuilt; the observed-rank module's join; the planner's worn-focus reading), and half a card is a wrong answer wearing a right one's clothes. The op answers `found: false` for a rank-suffixed name the DB carries no row for, rather than answering it with the LINE's numbers and no note that they are the line's. The spell-surface ticket owns the rest.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "knowledge.spell"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/KnowledgeNameParams"
+        }
+      },
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "KnowledgeNameParams": {
+      "title": "KnowledgeNameParams",
+      "description": "ONE NAME, as the asker spells it. Never a canonical key: the engine folds the name itself (each corpus has its own fold — the ` +N` item-level suffix, the mob-name quote glyphs and copy numbers), and a caller that pre-folded would be a second opinion about a join key.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "KnowledgeSearchRequest": {
+      "title": "KnowledgeSearchRequest",
+      "description": "NAME SEARCH ACROSS EVERY CORPUS THE ENGINE HOLDS. It answers what the three lookups cannot: a lookup needs the exact name, and a person types three letters. THE RANKING IS THE ENGINE'S (ruling 4): hits arrive EXACT first, then PREFIX, then CONTAINS, and within a rank by name length then alphabetically — a search that handed back an unordered bag would be handing the renderer the munging the ruling forbids.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "knowledge.search"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/KnowledgeSearchParams"
+        }
+      },
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "KnowledgeSearchParams": {
+      "title": "KnowledgeSearchParams",
+      "description": "`domain` searches ONE corpus and its absence means all four; it is a FILTER and not a hint — an unranked hit from another corpus would be the same defect an accept-and-ignore filter field is on a view.",
+      "type": "object",
+      "properties": {
+        "query": {
+          "description": "What to look for. Case-folded on both sides; an empty or whitespace-only query answers with no hits rather than with the whole corpus.",
+          "type": "string"
+        },
+        "domain": {
+          "$ref": "#/$defs/KnowledgeDomain"
+        },
+        "limit": {
+          "description": "How many hits to return. Absent takes the engine's default; a number above its cap takes the cap, because this is a type-ahead rather than a page — the window/offset machinery belongs to `view.subscribe`, where a list is the product. `total` states how many matched, so a caller can say `1-20 of 143` without ever holding 143.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "KnowledgeResult": {
+      "title": "KnowledgeResult",
+      "description": "One knowledge card. `found` and `record` are BOTH required and they answer different questions: `found` is whether a committed (or pushed-in) source states this name, and `record` is what to draw either way — a miss still carries every local association it could gather. A client that branched on `record` being absent would never see a miss, because a miss is not an absence.",
+      "type": "object",
+      "properties": {
+        "domain": {
+          "$ref": "#/$defs/KnowledgeDomain"
+        },
+        "name": {
+          "description": "The name as it was asked for, echoed back so a caller holding several in flight needs no bookkeeping of its own.",
+          "type": "string"
+        },
+        "found": {
+          "type": "boolean"
+        },
+        "record": {
+          "$ref": "#/$defs/KnowledgeRecord"
+        }
+      },
+      "required": [
+        "domain",
+        "name",
+        "found",
+        "record"
+      ],
+      "additionalProperties": false
+    },
+    "KnowledgeSearchResult": {
+      "title": "KnowledgeSearchResult",
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "total": {
+          "description": "How many names MATCHED, ignoring the limit — the one number a caller cannot compute from what it was handed.",
+          "type": "integer"
+        },
+        "hits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/KnowledgeHit"
+          }
+        }
+      },
+      "required": [
+        "query",
+        "total",
+        "hits"
+      ],
+      "additionalProperties": false
+    },
+    "KnowledgeHit": {
+      "title": "KnowledgeHit",
+      "description": "One search hit: what it is, what it is called, and the wiki page that names it when a corpus states one. It is deliberately NOT a card — a hit is the handle a caller passes back to `knowledge.item`/`mob`/`spell`, and serving thirty-field records for twenty hits would be a type-ahead paying a card's payload per keystroke.",
+      "type": "object",
+      "properties": {
+        "domain": {
+          "$ref": "#/$defs/KnowledgeDomain"
+        },
+        "name": {
+          "type": "string"
+        },
+        "page": {
+          "description": "The wiki page title, when the corpus states one. Absent for a spell (the catalog is a scrape of the game's own table, not of pages).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "domain",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "KnowledgeDefineRequest": {
+      "title": "KnowledgeDefineRequest",
+      "description": "THE ANSWER TO A MISS, PUSHED BACK (boundary verdict 5). The engine ships without a network stack; the app owns the wiki fetch and with it the scrape etiquette that is a LAW here (a serialized queue, 150 ms spacing, and the server's own `Retry-After` honoured across the whole queue). So the engine says `knowledgeMiss`, the app fetches, and this is how the answer arrives.\n\nIT IS NOT A FULL-SET REPLACE, and that is stated rather than slipped in. The other five `*.define` commands carry a WHOLE set because they carry user PREFERENCES — small, bounded, owned by a store that can restate them. This set is the WIKI: unbounded, not the app's to own, learned one entry at a time in answer to one miss at a time. A full-set replace would mean restating 11,288 item records on every push. What it KEEPS of the command law is the part the law is for: it is IDEMPOTENT and ORDER-INDEPENDENT per key — pushing the same entry twice leaves what pushing it once leaves, and two names commute — so a crash-respawn is still trivial (the overlay is empty, every name misses again, the app answers again) and the input is still hash-friendly for ruling 18's cache key, as the set of (key, entry) pairs. What it gives up is DELETE, which nothing asks for.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "knowledge.define"
+          ]
+        },
+        "params": {
+          "$ref": "#/$defs/KnowledgeDefineParams"
+        }
+      },
+      "required": [
+        "id",
+        "op",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "KnowledgeDefineParams": {
+      "title": "KnowledgeDefineParams",
+      "description": "`entry` is what the app learned. A record carrying `notFound: true` is a real negative and is a perfectly good answer — it is the app saying `I looked and the wiki has no page`, which stops the engine ever announcing that name again. That is the ONE thing this engine cannot conclude for itself, having no network to look with.",
+      "type": "object",
+      "properties": {
+        "domain": {
+          "$ref": "#/$defs/KnowledgePushDomain"
+        },
+        "name": {
+          "description": "The name the miss frame carried, echoed back unchanged. The engine folds it into the domain's own key on the way in, so the app never has to know how an item key differs from a mob key.",
+          "type": "string"
+        },
+        "entry": {
+          "$ref": "#/$defs/KnowledgeRecord"
+        }
+      },
+      "required": [
+        "domain",
+        "name",
+        "entry"
+      ],
       "additionalProperties": false
     }
   }

@@ -55,7 +55,31 @@ struct Staged {
 }
 
 impl Staged {
+    /// A SESSION THAT IS STILL GOING ON — the eight seconds behind us is load-bearing twice over,
+    /// and the two constraints pin it from both sides (JOS-488):
+    ///
+    ///   NOT IN THE FUTURE. The lines below are written seconds apart in LOG time, so the session
+    ///     has to start far enough back that its last line is not stamped ahead of this instant. A
+    ///     log no game writes is a log that proves nothing.
+    ///   NOT STALE EITHER, which is new. A live meter now runs the snapshot-time sweeps, so a fight
+    ///     whose mob has not been seen for `PRESENCE_GONE_MS` (20 s) IS OVER and the engine says so
+    ///     — correctly. This suite's subject is a live fight in progress: the update ops a moving
+    ///     meter produces, the open fight in the search corpus. Staging it a minute ago used to be
+    ///     harmless because `now` decided almost nothing; it would now stage a fight that ended
+    ///     before the first question was asked.
+    ///
+    /// [`Staged::stale`] is the other side of that coin, and it is a claim rather than a hazard.
     fn new(tag: &str) -> Self {
+        Staged::aged(tag, 8_000)
+    }
+
+    /// A SESSION THAT STOPPED — every line minutes old, which is what a log looks like when the
+    /// player has walked away or the fight is long finished.
+    fn stale(tag: &str) -> Self {
+        Staged::aged(tag, 180_000)
+    }
+
+    fn aged(tag: &str, back_ms: i64) -> Self {
         static N: AtomicU32 = AtomicU32::new(0);
         let dir = std::env::temp_dir().join(format!(
             "engined-combat-{}-{}-{tag}",
@@ -65,9 +89,7 @@ impl Staged {
         std::fs::create_dir_all(&dir).expect("a scratch dir");
         Self {
             dir,
-            // A MINUTE AGO, not this instant: the lines below are written seconds apart in LOG
-            // time, and a log whose last line is stamped in the future is a log no game writes.
-            started_ms: wall_clock_ms() - 60_000,
+            started_ms: wall_clock_ms() - back_ms,
             clock: eqlog::Clock::new(eqlog::host_timezone()),
         }
     }
@@ -383,10 +405,74 @@ fn a_live_meter_is_stamped_with_the_engines_own_clock_and_agrees_with_a_second_f
     assert_eq!(entities[0]["total"], 500);
     assert_eq!(entities[1]["name"], "Rowel");
     assert_eq!(entities[1]["total"], 60);
-    // A REPLAY NEVER LEAVES HYDRATION IN THIS PORT, and the flag says so rather than promising a
-    // liveness the fold does not have — `fold/src/combat/state.rs` fact 1. The meter-cutover ticket
-    // is where that changes, and it changes by porting the sweeps rather than by clearing a flag.
-    assert_eq!(answer.snapshot["hydrating"], serde_json::json!(true));
+    // …AND THE METER IS LIVE, WHICH IS THE FLAG AND THE FOUR SWEEPS TOGETHER (JOS-488). JOS-485
+    // answered `hydrating: true` here on purpose — the sweeps were unported, and clearing the flag
+    // without them would have promised a liveness the fold did not have. Both halves are in now:
+    // the tail's go-live beat calls `set_live()`, and every answer past it ages the model at the
+    // instant it was asked for. The fight above is still open because the log is still talking.
+    assert_eq!(answer.snapshot["hydrating"], serde_json::json!(false));
+    assert_eq!(mine["segments"][0]["kind"], "current");
+    // A NUDGE IS ABSENT, NOT NULL: nothing summoned a pet in this session, and the key is dropped in
+    // every state but the one. It is the same rule the goldens pin for a historical fold, held on
+    // the live side where the model can actually arm.
+    assert!(
+        answer.snapshot.0.get("petNudge").is_none(),
+        "no summon, no nudge"
+    );
+}
+
+#[test]
+fn a_live_meter_closes_a_fight_the_log_stopped_talking_about() {
+    // THE SWEEP, END TO END, OVER THE SOCKET (JOS-488) — and the claim no unit test can make: that
+    // the go-live beat reached the combat engine inside the ingest thread, and that a snapshot taken
+    // afterwards evaluated deferred closure at the wall clock it was answered at.
+    //
+    // THE SESSION IS THREE MINUTES OLD AND NOTHING KILLED THE MOB. There is no death line, so the
+    // fight can only end on ELAPSED TIME: the mob has not been seen for `PRESENCE_GONE_MS` and the
+    // linger has passed, which is the death-close arm of `eval_closure`. Not one byte of this log
+    // says the fight is over; the clock does.
+    let staged = Staged::stale("stale");
+    staged.stage_a_fight();
+    let engine = Engine::start();
+    let mut client = live_client(&engine, &staged);
+
+    let answer = snapshot(&mut client, 2, Some(full()));
+    assert_eq!(answer.snapshot["hydrating"], serde_json::json!(false));
+    assert_eq!(
+        answer.snapshot["segments"][0]["kind"],
+        serde_json::json!("fight"),
+        "a poll past every deadline finalizes the fight: {:?}",
+        answer.snapshot["segments"][0]
+    );
+    assert_eq!(answer.snapshot["inCombat"], serde_json::json!(false));
+    // FINALIZED AT THE FIGHT'S OWN CLOCK, never at the poll's: the numbers are the log's, and the
+    // span is the four seconds the log describes rather than the three minutes since.
+    assert_eq!(
+        answer.snapshot["segments"][0]["total"],
+        serde_json::json!(560)
+    );
+    assert_eq!(
+        answer.snapshot["segments"][0]["durationSec"],
+        serde_json::json!(4.0)
+    );
+    // …and nothing is in front of you any more, which is the half of the sweep the header pill reads.
+    assert!(
+        answer.snapshot.0.get("currentTarget").is_none(),
+        "a fight that just closed reports no target"
+    );
+    // THE SAME BYTES, FOLDED BESIDE IT AND HANDED THE SAME INSTANT, agree — closure included. The
+    // sweep is a function of `now` and the fold, and of nothing else.
+    let oracle = fold_beside(&staged.log());
+    let mine = oracle
+        .combat
+        .as_ref()
+        .expect("the oracle carries a combat engine")
+        .snapshot(
+            answer.now,
+            &fold::combat::SnapshotOpts::full(),
+            oracle.registry.roster(),
+        );
+    assert_eq!(serde_json::Value::Object(answer.snapshot.0.clone()), mine);
 }
 
 #[test]
@@ -476,6 +562,14 @@ fn fold_beside(log: &Path) -> fold::Fold {
     engine.set_player_name("Primitive");
     let mut folder = fold::Fold::new(fold::registered(deps), launch_ms).with_combat(engine);
     folder.fold_bytes(&parser, &bytes);
+    // …AND THEN THE HANDOVER, because the engine beside it has had one (JOS-488). `FoldSink::tick`
+    // calls `set_live()` on its go-live beat, so a second fold that skipped it would be a REPLAY
+    // being compared to a LIVE world: it would answer `hydrating: true` and it would refuse the four
+    // snapshot-time sweeps, which is a difference in every field a closed fight touches. The
+    // construction this function restates is the whole construction, and going live is part of it.
+    if let Some(combat) = folder.combat.as_mut() {
+        combat.set_live();
+    }
     folder
 }
 
