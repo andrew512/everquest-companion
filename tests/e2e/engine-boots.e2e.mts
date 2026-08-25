@@ -10,9 +10,11 @@
  * can see the thing this file is about: THE TWO REAL BINARIES, agreeing, in the running product.
  *
  * WHY THE APP HAS TO BE ASKED FOR AN ENGINE. `EQC_ENGINE=1` is the only switch (engineHost.ts), and
- * `EQ_E2E` is deliberately NOT a second gate there — the harness sets nothing, so every other spec
- * in this suite runs with no engine at all and this one opts in by naming the variable. That is why
- * the absence half below is not a contrivance: it is what the other forty specs are doing.
+ * `EQ_E2E` is deliberately NOT a second gate there — the flag is a thing a developer sets in a
+ * shell, and since JOS-490 the harness is a developer who always sets it (`appWindow.mts ENGINE_ON`,
+ * which is what makes the whole suite a regression proof for the cutover). So this spec's opt-in is
+ * now redundant and kept anyway, because a spec whose subject IS the flag should name it; and the
+ * absence half at step 5 opts OUT by name (`ENGINE_OFF`) rather than by the harness's silence.
  *
  * HOW READINESS IS OBSERVED, and why the spec KILLS the engine to see it.
  * `supervisor.ts reachedReady` narrates through `logInfo`, i.e. `console.log` in the main process,
@@ -59,7 +61,7 @@ import {
   reportRun,
   sleep
 } from './appHarness.mjs'
-import { closeWindows, mainWindow } from './appWindow.mjs'
+import { ENGINE_OFF, closeWindows, mainWindow } from './appWindow.mjs'
 import { launchOnFixture, type FixtureLaunch } from './logFixture.mjs'
 import {
   engineDescendantsOf,
@@ -221,17 +223,31 @@ async function stepQuit(launch: FixtureLaunch, out: AppOutput, pids: readonly nu
 }
 
 /**
- * STEP 5 — the DEFAULT launch, which is every other spec in this suite: no engine, anywhere.
+ * STEP 5 — a launch that ASKS FOR NO ENGINE, and gets none anywhere.
+ *
+ * IT USED TO BE THE DEFAULT AND NOW IT IS THE EXCEPTION (JOS-490). Until this ticket the harness set
+ * nothing, so "no engine" was what every other spec in the suite was doing and this step merely
+ * described it. The suite now launches every app with `EQC_ENGINE=1` and `EQC_ENGINE_SERVE=1`
+ * (`appWindow.mts ENGINE_ON`), so absence has to be ASKED FOR — `ENGINE_OFF`, named and greppable —
+ * and the contract is tested inverted rather than deleted.
+ *
+ * WHICH MAKES IT A BETTER TEST, not a preserved one. An absence assertion that rode on the harness
+ * doing nothing could not fail the day the harness quietly changed; this one names the flag it is
+ * turning off, so it is about the PRODUCT'S gate (`engineHost.ts engineEnabled`) and nothing else.
  *
  * Asserted at both ends on purpose. The process table is the claim while it runs; the quit
  * narration is the claim about the window this harness cannot see (the lines printed before the tap
  * was attached). An engine that had been spawned and then reached ready before the tap existed
  * would still be in the table AND would still say goodbye — so a silent, invisible engine is not a
  * shape these two assertions leave room for.
+ *
+ * `EQC_ENGINE_SERVE=1` IS STILL IN THIS LAUNCH'S ENVIRONMENT and that is deliberate: the serve flag
+ * is meaningless without the engine flag by `serveShim.ts`'s own one-gate rule, so a launch that
+ * carries it and still spawns nothing is that rule holding, observed.
  */
 async function stepAbsence(): Promise<void> {
   const before = engineTable().pids
-  const launch = await launchOnFixture(FIXTURE)
+  const launch = await launchOnFixture(FIXTURE, { env: { ...ENGINE_OFF } })
   const out = tapOutput(launch.app)
   try {
     await mainWindow(launch.app)
@@ -240,7 +256,7 @@ async function stepAbsence(): Promise<void> {
     const table = engineTable()
     const kin = engineDescendantsOf(table, appPid) ?? table.pids.filter((pid) => !before.includes(pid))
     check(
-      'without EQC_ENGINE — the DEFAULT, and what every other spec runs — no engine is spawned at all',
+      'with EQC_ENGINE=0 — the harness’s named opt-out from an engine-on suite — no engine is spawned at all',
       kin.length === 0,
       kin.length === 0 ? `none, ${String(ABSENCE_WINDOW_MS / 1000)}s after the window came up` : kin.join(', ')
     )

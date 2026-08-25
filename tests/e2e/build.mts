@@ -82,10 +82,12 @@ function isFresh(): boolean {
 // honestly answer for both: a `.rs` edit leaves the bundle perfectly fresh, and a `.ts` edit leaves
 // the binary perfectly fresh. Asking the two questions separately is what lets each answer be true.
 //
-// AND THE ENGINE GATE IS ONLY ASKED BY THE ONE SPEC THAT NEEDS IT (`engine-boots.e2e.mts`), not by
-// the runner's up-front `buildIfStale()`. `npm run test:e2e -- leveling` must not compile Rust, and
-// a full run must not serialize forty specs behind a cargo build that thirty-nine of them will
-// never look at. When it IS fresh — the common case — this costs a handful of `stat` calls.
+// AND SINCE JOS-490 EVERY SPEC NEEDS THE BINARY, so `buildIfStale()` asks both gates (see its own
+// comment). It used to be asked by the ONE spec that opted in, on the argument that thirty-nine
+// specs must not serialize behind a cargo build they will never look at — an argument that ended the
+// moment the harness began launching every app with `EQC_ENGINE=1`. A spec that ran engine-on
+// against a missing or stale binary would take the ABSENCE path and go green, which is precisely the
+// silent pass this suite's engine work exists to make impossible.
 //
 // NO LOCK OF ITS OWN, unlike the bundle above, and for a reason rather than an oversight: cargo
 // takes a file lock on its own target directory, so two concurrent invocations already queue behind
@@ -191,7 +193,21 @@ function acquireBuildLock(): boolean {
   throw new Error(`e2e: the build lock at ${BUILD_LOCK} never cleared`)
 }
 
+/**
+ * THE SUITE'S BINARIES, BOTH OF THEM (JOS-490).
+ *
+ * The engine gate goes FIRST and unconditionally — ahead of the bundle's own `isFresh()` early
+ * return, which is the whole trick: a checkout whose `out-e2e/` is fresh and whose `engined.exe` is
+ * stale is the ordinary state after a `.rs` edit, and an early return that skipped the engine would
+ * hand every spec a binary older than the Rust it is supposed to be proving.
+ *
+ * THE RUNNER PAYS FOR IT ONCE. `run-all.mts` calls this before it spawns a single spec, so the one
+ * cargo build that a stale checkout needs happens with nothing else running; the per-spec call that
+ * every spec still makes then finds both outputs fresh and costs a handful of `stat`s. That ordering
+ * is also what keeps four parallel specs from meeting at the cargo lock.
+ */
 export function buildIfStale(): void {
+  buildEngineIfStale()
   if (isFresh()) {
     console.log(`build: ${OUT_DIR}/ is fresh — reusing it`)
     return
