@@ -1,0 +1,137 @@
+// ============================================================================
+// alertsAudio.ts — THE ALERTS AUDIO CUTOVER, WIRED (JOS-491, phase 3).
+// ============================================================================
+//
+// Owner ruling 9 says speech and audio stay app-side; owner ruling 22 says the ENGINE is what
+// evaluates the user's alert definitions. Together they leave the app one job — RECEIVE FIRE,
+// MAKE SOUND — and JOS-482 built everything but the last inch of it: the defs are pushed, the
+// engine matches them against live events, and `engineClientHost.ts` has been logging the frames
+// without playing them because this process's own evaluator was still the thing making noise.
+// This file is that last inch. `alertsAudioRules.ts` holds the decisions; this holds the world —
+// the flags, the store read, the alerts module, the dev log.
+//
+// ── THE THIRD FLAG, AND WHY IT IS A THIRD FLAG ─────────────────────────────────────────────────
+//
+// `EQC_ENGINE=1` runs an engine. `EQC_ENGINE_SERVE=1` lets it answer the app's READS. This one,
+// `EQC_ENGINE_ALERTS=1`, lets it make a SOUND — and a sound is not a read. A wrong read draws a
+// wrong number on a panel somebody is looking at; a wrong fire interrupts a raid, and a MISSING one
+// is worse and invisible. The owner is the regression test for this whole program and the thing
+// being risked is the evidence itself, so the switch that risks it is the developer's own rather
+// than a change of meaning for a flag they already have in a shell. It is MEANINGLESS ALONE for
+// `serveShim.ts`'s reason and by the same construction: `armEngineAlerts` is reached only from
+// inside `engineHost.ts`'s own `engineEnabled()` guard, and it reads the serve flag before arming.
+//
+// ── THE SINGLE-AUDIO GUARANTEE, STRUCTURALLY ───────────────────────────────────────────────────
+//
+// Exactly one thing may publish a firing, and arming swaps which one it is. `AlertsModule.publish`
+// becomes a no-op (`setEngineOwnsAudio`) and `AlertsModule.engineFired` starts being called — one
+// switch, both halves, in one statement pair, so there is no window in which both or neither is
+// live. Everything downstream is untouched: the frame becomes a `FiredAlert` on the alerts delta,
+// the renderer's always-mounted player plays it through the same `playAlertNow`, the recent-fires
+// ring records it and `pipeline.ts feedAlertDelta` folds it into an event-feed row. NO SECOND AUDIO
+// PATH EXISTS, which is the point — an app that could play a fire two ways eventually would.
+//
+// ── THE VERDICT IS TAKEN ONCE, AT ARM TIME ─────────────────────────────────────────────────────
+//
+// …and that is a decision rather than an omission. The flag is an environment variable, which is
+// already a restart-shaped thing; a gate that re-opened mid-session would mean the app could start
+// playing from the engine halfway through a raid because a def was deleted, which is a worse
+// surprise than "set it and relaunch". A def edited to carry an early warning while an armed launch
+// runs is therefore a def whose warning still speaks from this process — its fire was never the
+// engine's to make (the engine compiles it out and says nothing).
+
+import { logInfo } from '../errorLog'
+import { alertsModule, registry } from '../pipeline'
+import { getAlerts } from '../store'
+import { armVerdict, fireToFiring } from './alertsAudioRules'
+import type { FireMessage } from '../../shared/dataServer/protocol.generated'
+
+/**
+ * IS THE ENGINE ALLOWED TO MAKE THE SOUND ON THIS LAUNCH? Read once, at module load, for
+ * `serveShim.ts SERVING`'s reason: an environment variable is a fact about how the process was
+ * started, and re-reading it per call would invite the belief that it can change. `EQC_ENGINE` is
+ * deliberately not read here — the only caller is inside its guard.
+ */
+const WANTED = process.env.EQC_ENGINE_SERVE === '1' && process.env.EQC_ENGINE_ALERTS === '1'
+
+/** True once the swap has actually happened. `WANTED` is what the developer asked for; this is what
+ *  the gate allowed, and the two differ on any store holding an early-warning def. */
+let armed = false
+
+/** Whether this launch is playing alerts from engine fires. */
+export function engineAlertsArmed(): boolean {
+  return armed
+}
+
+/** The dev log's voice for this file. `logInfo` is `console.log` verbatim, which is what a
+ *  developer watching `npm run dev` reads and what the e2e harness taps. */
+function note(line: string): void {
+  logInfo(`[everquest-companion] ${line}`)
+}
+
+/**
+ * ARM THE CUTOVER, OR SAY WHY NOT. Called once per launch from `engineHost.ts`, inside its
+ * `EQC_ENGINE` guard and before the supervisor can reach READY — so the swap is in place before any
+ * fire can arrive, and there is no interval in which a frame lands on an app that has not yet
+ * decided who owns the sound.
+ *
+ * IT READS THE STORE, not the module's compiled copy, because the store is what the engine was
+ * handed (`appKnowledge.ts readDefine`): a gate asked about a different def set than the engine
+ * compiled is a gate answering a different question.
+ */
+export function armEngineAlerts(): void {
+  if (!WANTED || armed) return
+  const verdict = armVerdict(getAlerts())
+  note(verdict.line)
+  if (!verdict.arm) return
+  armed = true
+  alertsModule.setEngineOwnsAudio(true)
+}
+
+/** Give the sound back. Called from the supervisor teardown so a stopped engine cannot leave a
+ *  silenced app behind — idempotent, and a no-op on a launch that never armed. */
+export function disarmEngineAlerts(): void {
+  if (!armed) return
+  armed = false
+  alertsModule.setEngineOwnsAudio(false)
+  note('data-server alerts: the engine is gone; this process’s evaluator is making sounds again')
+}
+
+/** Fires this launch actually PLAYED, and frames no def answered to. Both are reported on the line
+ *  a drop prints, so a silence carries a number beside it rather than an absence. */
+let played = 0
+let unplaceable = 0
+
+/**
+ * ONE FIRE FROM THE ENGINE, PLAYED. Answers whether it was, so the caller's log line can say which
+ * world made the noise.
+ *
+ * `registry.flushNow()` is what puts it on the wire now rather than at the next heartbeat — the
+ * same trailing flush `ipc/alerts.ts` gives a renderer-reported app fire, and for the same reason:
+ * an alert that arrives a second late is a different product than one that arrives.
+ *
+ * IT IS NEVER THE REASON A CONNECTION BREAKS. This runs inside the client's frame dispatch, where a
+ * throw would surface as a transport fault, so the one honest failure — no def answers to the label
+ * — is a line and a `false` rather than an exception.
+ */
+export function playEngineFire(fire: FireMessage): boolean {
+  if (!armed) return false
+  const firing = fireToFiring(fire, getAlerts())
+  if (firing === null) {
+    unplaceable += 1
+    note(
+      `data-server alerts: nothing in the store answers to "${fire.rule}" — ` +
+        `the fire is dropped (unplaceable this launch: ${String(unplaceable)})`
+    )
+    return false
+  }
+  played += 1
+  alertsModule.engineFired(firing)
+  registry.flushNow()
+  return true
+}
+
+/** How many engine fires this launch has played. */
+export function enginePlayedCount(): number {
+  return played
+}
