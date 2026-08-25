@@ -130,16 +130,18 @@ impl ingest::EventSink for fold::Fold {
 }
 
 // 2. one line in main.rs
-let world = World::with_ingest(ingest::starter(Arc::new(|| {
-    Box::new(fold::Fold::new(fold::cluster_2a(known_spell()), LAUNCH_MS))
+let world = World::with_ingest(ingest::starter(Arc::new(move || {
+    Box::new(fold::Fold::new(fold::cluster_2a_2b(deps()), deps().launch_ms))
 })));
 ```
 
-Two questions that construction raises and this crate does not answer, both for the integrator:
-`cluster_2a` wants the spell DB's key set, which today is built **inside** the ingest thread (see
-the measured note above — that is the same knot); and `Fold::new` wants the launch instant, which
-is app knowledge and therefore a `*.define` command's job rather than a constant (boundary verdict
-3: the engine never reads a settings file).
+Two questions that construction raises and this crate does not answer, both for the integrator.
+`ClusterDeps` wants the spell DB's key set and its class index — both built off the DB that today
+is built **inside** the ingest thread, which is the same knot as the per-attach rebuild measured
+above; a sink factory cannot see it. And several of its fields are app knowledge (`launch_ms`,
+`construction_now_ms`, `character`, `self_name`, `respawn_prefs`), so they arrive as `*.define`
+commands rather than as constants — boundary verdict 3: the engine never reads a settings file.
+Both are wiring decisions for the ticket that turns the fold on, not for the seam.
 
 Three things worth knowing before writing that impl:
 
