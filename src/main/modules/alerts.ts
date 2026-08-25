@@ -846,12 +846,11 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
     // of (JOS-378). It is carried only here, on the early-warning path, because it is only here
     // that a deadline exists — see FiredAlert.dueAt.
     //
-    // IT GOES THROUGH `publish` LIKE EVERY OTHER FIRING, which under `EQC_ENGINE_ALERTS=1` means
-    // it makes no sound. That is defence in depth rather than a behaviour anybody can reach: the
-    // flag REFUSES to arm at all while a def carries `earlyWarnSec` (dataServer/alertsAudio.ts —
-    // the engine compiles those defs out and would be silent about them), so a silenced launch has
-    // no armed warnings to deliver. Routing it here anyway means the silence cannot be defeated by
-    // a future path that arms one.
+    // IT GOES THROUGH `publish` LIKE EVERY OTHER FIRING, which under engine-owned audio (the
+    // default since JOS-495) means it makes no sound — the engine's own evaluator honours
+    // `earlyWarnSec` end to end since JOS-492 and its fire is the one that plays. Routing this
+    // process's copy through `publish` anyway is defence in depth: the silence cannot be defeated
+    // by a future path that arms one.
     this.publish({ ...due.fired, ts: nowMs, dueAt: due.dueAt }, due.fired.matchedText)
   }
 

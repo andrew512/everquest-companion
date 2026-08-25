@@ -49,8 +49,9 @@
 // already a restart-shaped thing; a gate that re-opened mid-session would mean the app could start
 // playing from the engine halfway through a raid because a def was deleted, which is a worse
 // surprise than "set it and relaunch". A def edited to carry an early warning while an armed launch
-// runs is therefore a def whose warning still speaks from this process — its fire was never the
-// engine's to make (the engine compiles it out and says nothing).
+// runs is therefore a def whose warning still speaks from this process until the next launch —
+// the engine honours `earlyWarnSec` end to end since JOS-492 (the timer projection evaluates it
+// at the engine's own heartbeat), so on relaunch the engine's evaluator carries it.
 
 import { logInfo } from '../errorLog'
 import { engineFlagOn } from '../../shared/dataServer/engineFlags'
