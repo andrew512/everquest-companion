@@ -1574,26 +1574,26 @@ function talk(port) {
 ```console
 $ cargo build --release -p engined
 $ node scratch/drive487.mjs C:/Users/jmoye/everquest-companion 20
-# staged C:\Users\…\Temp\engined-487-QUI4nN\eqlog_Primitive_freeport.txt (9185424 bytes)
-EQC-ENGINE PORT=63081 PROTOCOL=1
+# staged C:\Users\…\Temp\engined-487-2VZKHE\eqlog_Primitive_freeport.txt (9185424 bytes)
+EQC-ENGINE PORT=61565 PROTOCOL=1
 -> {"op":"hello","token":"0f7d…7089","protocolVersion":1}
 -> {"id":3,"op":"session.attach","params":{"logPath":"C:\\Users\\…\\eqlog_Primitive_freeport.txt"}}
--> {"id":4,"op":"sessionMarks.add","params":{"at":1787689804657}}
+-> {"id":4,"op":"sessionMarks.add","params":{"at":1787692441556}}
 -> {"id":7,"op":"view.subscribe","params":{"source":"timers.rows","filter":{"surface":"debuffs"}}}
 <- {"engineVersion":"0.1.0","kind":"hello","ok":true,"protocolVersion":1}
 <- {"epoch":2,"kind":"epoch","reason":"attach"}
 <- {"id":3,"kind":"reply","ok":true,"result":{"accepted":true,"epoch":2}}
-<- {"id":4,"kind":"reply","ok":true,"result":{"accepted":false,"status":"starting"}}
+<- {"id":4,"kind":"reply","ok":true,"result":{"accepted":false,"status":"attaching"}}
 <- {"id":7,"kind":"reply","ok":true,"result":{"subscribed":true,"subscription":7}}
 <- {"epoch":2,"id":7,"kind":"reset","rows":[],"total":0}
 [eqc-engine] ingest: spell db ready in 392 ms
 <- {"epoch":2,"kind":"epoch","progress":{"events":15932,"pct":11.415172560352142},"reason":"progress"}
-<- {"epoch":2,"kind":"epoch","progress":{"events":79788,"pct":57.07811637220013},"reason":"progress"}
-<- {"epoch":2,"kind":"epoch","progress":{"events":139863,"pct":100.0},"reason":"progress"}
+<- {"epoch":2,"kind":"epoch","progress":{"events":63844,"pct":45.6623776975347},"reason":"progress"}
+<- {"epoch":2,"kind":"epoch","progress":{"events":111763,"pct":79.90908204128628},"reason":"progress"}
 <- {"epoch":2,"kind":"epoch","progress":{"events":139863,"pct":100.0},"reason":"progress"}
 [eqc-engine] fold landed: 139863 events, mark 9185424 of C:\Users\…\eqlog_Primitive_freeport.txt, now live
-[eqc-engine] views: timers.rows 1 frames (1 reset / 0 diff), 1 rows, 0 ops, 440 B (widest 440 B); fold->frame mean 8.0 ms max 8.0 ms over 1
-<- {"epoch":2,"id":7,"kind":"reset","rows":[{"cells":{"ambiguous":false,"calmsTarget":false,"caster":null,"count":null,"durationMs":24000,"endsAt":1787689798000,"flat":0,"group":"target","inferredTarget":false,"kind":"cc","mode":"countdown","name":"Mesmerization","order":0,"rank":null,"startedTs":1787689774000,"surface":"debuffs","target":"a lava guardian","targetKey":"a lava guardian"},"key":"cc|a lava guardian|mesmerization"}],"total":1}
+[eqc-engine] views: timers.rows 1 frames (1 reset / 0 diff), 1 rows, 0 ops, 440 B (widest 440 B); fold->frame mean 8.8 ms max 8.8 ms over 1
+<- {"epoch":2,"id":7,"kind":"reset","rows":[{"cells":{"ambiguous":false,"calmsTarget":false,"caster":null,"count":null,"durationMs":24000,"endsAt":1787692435000,"flat":0,"group":"target","inferredTarget":false,"kind":"cc","mode":"countdown","name":"Mesmerization","order":0,"rank":null,"startedTs":1787692411000,"surface":"debuffs","target":"a lava guardian","targetKey":"a lava guardian"},"key":"cc|a lava guardian|mesmerization"}],"total":1}
 <- {"kind":"moduleChanged","module":"combo","seq":139343}
 <- {"kind":"moduleChanged","module":"roster","seq":139862}
 <- {"kind":"moduleChanged","module":"loot","seq":139862}
@@ -1614,11 +1614,12 @@ EQC-ENGINE PORT=63081 PROTOCOL=1
 <- {"kind":"moduleChanged","module":"consider","seq":139862}
 <- {"kind":"moduleChanged","module":"resist","seq":139862}
 <- {"kind":"moduleChanged","module":"eventFeed","seq":139862}
--> {"id":8,"op":"sessionMarks.add","params":{"at":1787689806225}}
+-> {"id":8,"op":"sessionMarks.add","params":{"at":1787692443380}}
 # the game writes a /con and a loot line
 <- {"id":8,"kind":"reply","ok":true,"result":{"accepted":true,"status":"live"}}
 <- {"epoch":2,"kind":"epoch","progress":{"events":139865,"pct":100.0},"reason":"progress"}
-<- {"at":1787689805000,"chips":[{"axis":"magic","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false},{"axis":"fire","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false},{"axis":"cold","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false},{"axis":"poison","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false},{"axis":"disease","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false}],"id":"a fire giant warlord","kind":"conCard","level":52,"name":"A fire giant warlord","spellData":false,"zone":"Nagafen's Lair"}
+<- {"at":1787692442000,"chips":[{"axis":"magic","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false},{"axis":"fire","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false},{"axis":"cold","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false},{"axis":"poison","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false},{"axis":"disease","empirical":{"resisted":0,"total":0},"n":0,"nTotal":0,"npcOnly":false,"pinned":false}],"id":"a fire giant warlord","kind":"conCard","level":52,"name":"A fire giant warlord","spellData":false,"zone":"Nagafen's Lair"}
+<- {"domain":"mob","kind":"knowledgeMiss","name":"A fire giant warlord"}
 <- {"kind":"moduleChanged","module":"roster","seq":139864}
 <- {"kind":"moduleChanged","module":"loot","seq":139864}
 <- {"kind":"moduleChanged","module":"turnins","seq":139864}
@@ -1637,16 +1638,19 @@ EQC-ENGINE PORT=63081 PROTOCOL=1
 <- {"kind":"moduleChanged","module":"eventFeed","seq":139864}
 ```
 
-Eight things in that transcript are this ticket:
+Nine things in that transcript are this ticket:
 
-1. **The same press, refused and then taken.** `{"accepted":false,"status":"starting"}` at request 4
+1. **The same press, refused and then taken.** `{"accepted":false,"status":"attaching"}` at request 4
    and `{"accepted":true,"status":"live"}` at request 8. Neither is an error; the status is what
-   makes the first one readable without a follow-up question that would race the fold.
-2. **A timer row, cut off a 139,863-event fold in 8.0 ms.** One hold, in the debuffs window, because
+   makes the first one readable without a follow-up question that would race the fold — and *which*
+   not-live state it names is itself a race the ack settles honestly, because the same press against
+   the same script has answered `starting` on other runs. Any of the four is a refusal; the ack says
+   which one it was, in the same critical section as the decision.
+2. **A timer row, cut off a 139,863-event fold in 8.8 ms.** One hold, in the debuffs window, because
    the descriptor said `{"surface":"debuffs"}` — the routing decision made engine-side and served as
    a cell, so the two floating windows are one model filtered rather than two.
 3. **The row carries the three numbers a countdown is read from and none of the reading.**
-   `"startedTs":1787689774000`, `"durationMs":24000`, `"mode":"countdown"` — and `"endsAt"`, which is
+   `"startedTs":1787692411000`, `"durationMs":24000`, `"mode":"countdown"` — and `"endsAt"`, which is
    `startedTs + durationMs` and is the number the early-warning offset is computed from. There is no
    `remaining`, and there is not going to be one.
 4. **Both presentation orders are on the row.** `"order":0` and `"flat":0`: the grouped order and the
@@ -1668,6 +1672,12 @@ Eight things in that transcript are this ticket:
    which is the app's own no-spell-table branch rather than a stub. `"rare"` is ABSENT rather than
    false, which is the payload's own shape. The historical `/con`s in nine megabytes of fixture drew
    nothing at all.
+9. **And the frame right after it belongs to somebody else, which is the point.**
+   `{"domain":"mob","kind":"knowledgeMiss","name":"A fire giant warlord"}` is JOS-486's: the same con
+   that produced the card also asked the corpus about that creature and did not get an answer. Two
+   connection-wide frames, from two tickets, one live line — they interleave on the stream without
+   either knowing about the other, which is what "connection-wide, no id, no epoch" buys and why
+   `broadcasts.ts` routes all four of them in one place.
 
 ## Tests
 
