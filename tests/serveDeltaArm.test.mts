@@ -17,7 +17,10 @@
 //   2. EACH FOLDER RIDES EXACTLY ONE OF THEM, and the SNAPSHOT decides which. A hook that read a
 //      flag instead would hold a stale opinion the moment the shim fell back mid-session.
 //   3. THE MARK IS STILL ONE INSTANT. The engine's command must carry the number main already
-//      stamped — a second clock read here would be a third boundary.
+//      stamped — a second clock read here would be a third boundary. AND ITS SIBLING CARRIES NONE
+//      (JOS-494): `respawn.confirmSighting` names a ROW, because the instant it re-bases onto is
+//      one the fold already holds — so the pin there is the params shape and the ORDER, which is
+//      the mark's "both halves or neither" applied to one half.
 //   4. THE SERVED FACT IS QUOTED, NEVER RE-DERIVED (owner ruling 21). The shim grafts the mtime the
 //      ENGINE reported; a `statSync` in that file would prove nothing about who owns the fact.
 //
@@ -246,6 +249,57 @@ test('the press never waits on the socket, and a refusal is not an error', () =>
 test('the command is gated by the SAME answer the read path uses', () => {
   const command = code('../src/main/dataServer/serveCommands.ts')
   assert.match(command, /if \(!shimServing\(\)\) return/, 'the command invented its own gate')
+})
+
+// ── 3b. the second command (JOS-494) ───────────────────────────────────────────────────
+
+test('THE CONFIRM CARRIES A ROW AND NEVER AN INSTANT', () => {
+  // The mark's whole subject is a moment main stamped; this one's is a ROW, and the instant it
+  // re-bases onto is the row's own `seenTs` — a LOG timestamp the fold already holds. A clock read
+  // anywhere on this path would be the app moving an engine clock to a moment the engine's log
+  // never stated, which is the pin above from the other direction. `Date.now()` in this file is
+  // already forbidden by the mark's test; this is the params shape.
+  const command = code('../src/main/dataServer/serveCommands.ts')
+  assert.match(command, /engineRequest\('respawn\.confirmSighting', \{ rowId \}\)/)
+  assert.match(command, /export function serveConfirmSighting\(rowId: string\): void/)
+  // Both commands ask the same gate — a second one would be a second opinion about whether this
+  // launch's answers are the engine's.
+  assert.equal(
+    (command.match(/if \(!shimServing\(\)\) return/g) ?? []).length,
+    2,
+    'a command in this file stopped asking the serve gate'
+  )
+})
+
+test('…and it is pushed only AFTER this process applied it, and only when it took', () => {
+  // `serveCommands.ts`'s own law, the mark's "both halves or neither" applied to one half: a press
+  // this app itself read as a no-op — a stale click, a row that died between the render and the
+  // button — must not be announced to a second world as though it happened.
+  const ipc = code('../src/main/ipc/respawn.ts')
+  const applied = ipc.indexOf('const applied = respawnModule.confirmSighting(id)')
+  const told = ipc.indexOf('serveConfirmSighting(id)')
+  assert.ok(applied >= 0 && told >= 0, 'the confirm handler no longer has both halves')
+  assert.ok(applied < told, 'the engine is told before this process has an answer of its own')
+  // INSIDE the `if`, not beside it — the flush and the push share the gate that the apply took.
+  const guarded = /if \(applied\) \{([\s\S]*?)\n {4}\}/.exec(ipc)
+  assert.ok(guarded, 'the confirm handler stopped guarding its follow-up duties')
+  assert.match(guarded[1], /serveConfirmSighting\(id\)/, 'a refused press is announced anyway')
+})
+
+test('a confirm is a COMMAND, not app knowledge — it does not ride the define push', () => {
+  // The line between the two files is what a push MEANS. A define is a preference the engine's
+  // world RECORDS and re-applies at the next attach; a command is a thing that happened and is
+  // stored by nobody. The same ipc file uses both doors, one per duty, and `respawn.define` is
+  // still the only family it names.
+  const ipc = code('../src/main/ipc/respawn.ts')
+  assert.equal(
+    (ipc.match(/pushAppKnowledge\('respawn\.define'\)/g) ?? []).length,
+    2,
+    'the two preference setters stopped announcing the family'
+  )
+  assert.doesNotMatch(ipc, /pushAppKnowledge\('respawn\.confirmSighting'/)
+  const push = code('../src/main/dataServer/definePush.ts')
+  assert.doesNotMatch(push, /confirmSighting/, 'a command joined the define family')
 })
 
 // ── 4. the served fact is quoted, never re-derived ─────────────────────────────────────
