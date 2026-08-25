@@ -45,10 +45,11 @@
 //! ## WHAT READS A CLOCK, AND WHAT MAY NOT (ruling 18 law 1)
 //!
 //! Nothing event-derived reads a wall clock. `pct` is bytes over bytes; `events` is a count; the
-//! mark is a byte offset; `lastTs` is the LOG's own timestamp. The only [`Instant`] in this file
-//! paces the PROGRESS CADENCE — how often a measurement is announced, never what it measures — and
-//! a frame that is skipped changes no state at all. That is the same argument `world.rs` makes for
-//! `uptimeMs`: process metadata, never world state.
+//! mark is a byte offset; `lastTs` is the LOG's own timestamp. There are exactly two [`Instant`]s
+//! here and both are process metadata in the sense `world.rs` means it for `uptimeMs`: one paces
+//! the PROGRESS CADENCE — how often a measurement is announced, never what it measures, and a frame
+//! that is skipped changes no state at all — and one times the spell-DB build for a stderr
+//! diagnostic. Neither can reach a sink.
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -438,11 +439,16 @@ fn run(
     let mut tail = FileTail::open(log, TailStart::At(landed.checkpoint));
 
     // ---- the tail: live, until something newer takes the world ------------------------------
+    //
+    // WHAT HAS BEEN ANNOUNCED, not what has been folded. The cadence may DEFER a frame but must
+    // never DROP one: an event whose arrival was announced by nobody is an event the client cannot
+    // know about at all, and "the count did not change since the last poll" is not the same
+    // question as "the count did not change since the last frame".
+    let mut announced = seq;
     loop {
         if !world.owns(generation) {
             return Ok(Ended::Preempted);
         }
-        let before = seq;
         let polled = tail.poll(|line| {
             if parser.parse_event(line, seq, &mut ev) {
                 sink.event(&Event {
@@ -467,7 +473,7 @@ fn run(
         // phase 3, so it is emitted when the fold ADVANCED and the cadence allows — never on an
         // idle poll, which is what keeps an idle session silent. `pct` stays honest: the mark over
         // the bytes read, which is 100 exactly when the game is not mid-line.
-        if seq != before && cadence.due() {
+        if seq != announced && cadence.due() {
             let live_total = tail.read_offset();
             let advanced = FoldMark {
                 checkpoint: tail.checkpoint_offset(),
@@ -475,6 +481,7 @@ fn run(
                 pct: pct_of(tail.checkpoint_offset(), live_total),
                 last_ts: sink.report().last_ts,
             };
+            announced = seq;
             if !world.report_progress(generation, advanced) {
                 return Ok(Ended::Preempted);
             }

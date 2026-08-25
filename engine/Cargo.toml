@@ -10,10 +10,11 @@ members = [
 ]
 
 # THE ENGINE (JOS-459). Today this workspace holds the protocol contract (`protocol`, JOS-464), the
-# process skeleton that answers it over loopback TCP (`engined`, JOS-466) — a spawn contract, a
-# handshake and echo-grade ops, with NO game logic anywhere — and the PARSER (`eqlog`, JOS-469),
-# proven byte-identical against the TS pipeline's recorded event streams by the `parity` binary
-# beside it. The tailer and the fold land in later crates.
+# PARSER and TAILER (`eqlog`, JOS-469/JOS-472) — proven byte-identical against the TS pipeline's
+# recorded event streams by the `parity` binary beside it — and the process that answers the
+# protocol over loopback TCP and INGESTS through them (`engined`, JOS-466/JOS-474): a spawn
+# contract, a handshake, the ops, and one attach that scans a log and then tails it. The FOLD lands
+# in a later crate and reaches `engined` through one sink trait.
 #
 # TWO STANDING RULES FOR EVERYTHING UNDER engine/:
 #   * Nothing here may shell out to powershell.exe, ever, at build time or at run time.
