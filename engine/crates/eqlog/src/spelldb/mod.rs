@@ -102,6 +102,16 @@ impl SpellDb {
         self.cast_on_you.get(text).map(|v| v.as_slice())
     }
 
+    /// Every key `by_key` carries — i.e. `db.byKey.keys()`.
+    ///
+    /// It exists for ONE consumer outside this crate: `wiring.ts` hands the observedSpellRanks
+    /// module `knownSpell: (key) => spellDb.byKey.has(key)`, which is what tells a merged spell
+    /// scroll from a merged item whose name happens to end in a roman numeral. Exposed as the KEYS
+    /// rather than as a `has()` so a fold can take an owned set and borrow nothing from the parser.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.by_key.keys().map(String::as_str)
+    }
+
     pub fn wears_off(&self, text: &str) -> Option<&[usize]> {
         self.wears_off.get(text).map(|v| v.as_slice())
     }

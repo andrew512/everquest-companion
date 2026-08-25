@@ -1,6 +1,6 @@
 [package]
-name = "parity"
-description = "Prints (or diffs) the eqlog parser's serialized event stream for one log file (JOS-469)"
+name = "fold"
+description = "The module fold: eqlog events in, per-module published snapshots out (JOS-459 phase 2)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,5 +9,6 @@ publish.workspace = true
 
 [dependencies]
 eqlog = { path = "../eqlog" }
-fold = { path = "../fold" }
+serde.workspace = true
 serde_json.workspace = true
+regex = "1"

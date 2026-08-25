@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/engined",
   "crates/eqlog",
+  "crates/fold",
   "crates/parity",
   "crates/protocol",
   "crates/protocol-codegen",
