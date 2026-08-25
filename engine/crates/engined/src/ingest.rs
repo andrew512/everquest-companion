@@ -265,6 +265,64 @@ pub struct SnapshotAsk {
     pub answer: std::sync::mpsc::Sender<Option<ModuleSnapshot>>,
 }
 
+/// EVERY QUESTION THE ONE DOOR CARRIES. Adding a reader means adding an arm here and nowhere else.
+///
+/// It is one channel rather than one per question deliberately: the door's whole property is that
+/// the fold is asked at a boundary it already reaches, and a second channel would be a second place
+/// the ingest loop has to remember to drain — which is how one of them ends up drained only during
+/// the tail, and a request answered in 25 ms while live hangs for a whole megabyte mid-scan.
+pub enum Ask {
+    /// One module's published state — see [`SnapshotAsk`].
+    Module(SnapshotAsk),
+    /// What this ingest has cost — see [`PerfAsk`].
+    Perf(PerfAsk),
+}
+
+/// ONE REQUEST FOR THE INGEST'S OWN COST (owner ruling 19 surface, JOS-483).
+///
+/// SAME DOOR, SAME REASON, and it is worth saying why the meter is not simply shared instead. The
+/// meter is `&mut` on the ingest thread by construction — it is written on the serve path, which is
+/// the hottest thing this thread does after the parse — and putting it behind a lock would make
+/// every frame pay for a reader that asks twice a second while a panel happens to be open. Posting
+/// an ask costs the fold one `try_recv` at a boundary it was reaching anyway.
+///
+/// The answer is never `None`: an ingest that has served nothing still has an honest answer (no
+/// rows, and whatever of the scan has been measured so far), which is a different sentence from the
+/// `unavailable` a world with no fold at all gives.
+pub struct PerfAsk {
+    /// Where the answer goes.
+    pub answer: std::sync::mpsc::Sender<EnginePerf>,
+}
+
+/// WHAT THE INGEST THREAD SAYS ABOUT ITSELF: what starting this generation cost, and what serving
+/// it has cost since.
+///
+/// NOT THE GENERATED TYPE. The mapping onto `PerfSnapshotResult` happens in `world.rs`, where the
+/// world's own half of the answer (status, epoch, mark, subscriber counts) is merged in — this
+/// thread knows nothing about either.
+#[derive(Debug, Clone, Default)]
+pub struct EnginePerf {
+    /// What building this generation cost.
+    pub ingest: IngestCost,
+    /// One row per source that has served a frame, ordered by name.
+    pub serve: Vec<views::SourceMeter>,
+}
+
+/// WHAT STARTING ONE GENERATION COST, measured rather than modelled.
+///
+/// EVERY FIELD IS AN OPTION AND ABSENT MEANS NOT YET MEASURED. A `scan_ms` of zero would say a
+/// whole log folded instantly, which is the report of a scan that has not finished rather than of a
+/// fast one — the same rule `HealthResult`'s last three fields keep.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct IngestCost {
+    /// How long the spell catalog took to become available for this attach.
+    pub spell_db_ms: Option<u64>,
+    /// Wall time from the first byte read to the fold landing.
+    pub scan_ms: Option<u64>,
+    /// Bytes the scan read, up to the mark it landed on.
+    pub scan_bytes: Option<u64>,
+}
+
 /// What a sink volunteers about itself.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct SinkReport {
@@ -518,10 +576,17 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
     // is still printed rather than assumed.
     let building = Instant::now();
     let db = spelldb::shared();
-    eprintln!(
-        "{DIAGNOSTIC_PREFIX} ingest: spell db ready in {} ms",
-        building.elapsed().as_millis()
-    );
+    let spell_db_ms = u64::try_from(building.elapsed().as_millis()).unwrap_or(u64::MAX);
+    eprintln!("{DIAGNOSTIC_PREFIX} ingest: spell db ready in {spell_db_ms} ms");
+
+    // WHAT THIS GENERATION HAS COST, from before the first byte. `Serving` is built HERE rather
+    // than at the fold landing (where the view layer first needs it) because it is now also the
+    // answer to `perf.snapshot`, and a door that opens before the scan must have something behind
+    // it during the scan — otherwise the one moment a panel most wants to see the engine, the whole
+    // minute it spends folding a 200 MB log, is the one moment it can report nothing. Its cadence
+    // is not ticked until the tail, so building it early costs a struct.
+    let mut serving = Serving::new();
+    serving.cost.spell_db_ms = Some(spell_db_ms);
     let parser = Parser::new(
         Clock::new(host_timezone()),
         Some(Arc::clone(&db)),
@@ -551,8 +616,8 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
     // THE SNAPSHOT DOOR OPENS BEFORE THE FIRST BYTE IS FOLDED, so `module.snapshot` can be asked
     // DURING the scan and answered with a real prefix state. Installed through a `report_*` method
     // like every other statement an ingest makes, so a turn that has already lost installs nothing.
-    let (asks, answers) = channel::<SnapshotAsk>();
-    if !world.serve_snapshots(generation, asks) {
+    let (asks, answers) = channel::<Ask>();
+    if !world.serve_asks(generation, asks) {
         return Ok(Ended::Preempted);
     }
 
@@ -568,6 +633,7 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
     let mut seq: i64 = 0;
     let mut buf = vec![0u8; SCAN_READ_BYTES];
     let mut cadence = Cadence::new();
+    let scanning = Instant::now();
     loop {
         let got = file.read(&mut buf)?;
         if got == 0 {
@@ -593,7 +659,7 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
         if cadence.due() && !world.report_progress(generation, mark(&core, size, seq, &*sink)) {
             return Ok(Ended::Preempted);
         }
-        answer_snapshots(&answers, &*sink);
+        answer_asks(&answers, &*sink, &serving);
     }
 
     // THE FINAL MEASUREMENT IS NOT OPTIONAL and does not ask the cadence. It is the one frame that
@@ -601,6 +667,11 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
     // loading bar depends on it must never lose it to a fold that finished inside one interval.
     let landed = mark(&core, size, seq, &*sink);
     let landed_at = Instant::now();
+    // THE SCAN'S OWN BILL, closed at the instant it landed. `read_offset` rather than the file's
+    // size at open: the file may have grown under the scan, and what this measurement is about is
+    // the bytes this fold actually read.
+    serving.cost.scan_ms = Some(u64::try_from(scanning.elapsed().as_millis()).unwrap_or(u64::MAX));
+    serving.cost.scan_bytes = Some(core.read_offset());
     if !world.report_progress(generation, landed) {
         return Ok(Ended::Preempted);
     }
@@ -628,7 +699,10 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
     // first publish, on both sides, in the same order.
     let mut ticking = Ticking::new();
     ticking.beat(&mut *sink);
-    let mut serving = Serving::new();
+    // `serving` was built before the scan (JOS-483) rather than here, because it now also holds
+    // this generation's cost and answers `perf.snapshot` — and a door that opens before the first
+    // byte must have something behind it DURING the scan, which is the whole minute a panel most
+    // wants to see the engine. Its cadence is not ticked until the tail either way.
     if !world.report_fold_landed(
         generation,
         landed,
@@ -717,7 +791,7 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
                 return Ok(Ended::Preempted);
             }
         }
-        answer_snapshots(&answers, &*sink);
+        answer_asks(&answers, &*sink, &serving);
         // THE VIEWS, AT THEIR OWN CADENCE. Everything the drain above folded collapses into at most
         // one frame per subscription per `views::SERVE_EVERY` — rule 2 of the diff protocol, held
         // as a cadence rather than as a per-event push.
@@ -787,6 +861,8 @@ struct Serving {
     /// nothing since the last one. TAKEN by a frame, never merely read: a second frame with no new
     /// events behind it must not be timed against the first one's fold.
     folded_at: Option<Instant>,
+    /// What building this generation cost — filled in as each half of it is measured (JOS-483).
+    cost: IngestCost,
 }
 
 impl Serving {
@@ -795,6 +871,17 @@ impl Serving {
             cadence: Cadence::every(views::SERVE_EVERY),
             meter: Meter::new(),
             folded_at: None,
+            cost: IngestCost::default(),
+        }
+    }
+
+    /// This ingest's own answer to `perf.snapshot`. A READ: the meter is peeked rather than
+    /// drained, so a panel polling every two seconds cannot zero the counters under the stderr
+    /// report or make one poll's numbers depend on the last one (see `views::meter`).
+    fn perf(&self) -> EnginePerf {
+        EnginePerf {
+            ingest: self.cost,
+            serve: self.meter.peek(),
         }
     }
 
@@ -831,7 +918,7 @@ fn nap(
     interval: Duration,
     world: &World,
     generation: u64,
-    answers: &Receiver<SnapshotAsk>,
+    answers: &Receiver<Ask>,
     sink: &dyn EventSink,
     serving: &mut Serving,
 ) {
@@ -839,7 +926,7 @@ fn nap(
     while slept < interval && world.owns(generation) {
         thread::sleep(TAIL_NAP);
         slept += TAIL_NAP;
-        answer_snapshots(answers, sink);
+        answer_asks(answers, sink, serving);
         // A SUBSCRIPTION OPENED WHILE THE TAIL IS NAPPING IS OWED A RESET, and the nap is where a
         // live engine spends almost all of its time — the same argument `answer_snapshots` makes
         // one line up. Serving here makes the wait for a full window one nap instead of one poll.
@@ -848,14 +935,25 @@ fn nap(
     }
 }
 
-/// Answer every snapshot asked for since the last boundary, and block on none of them.
+/// Answer everything asked of the fold since the last boundary, and block on none of it.
 ///
 /// `try_recv` UNTIL EMPTY rather than a blocking read: this is called from the fold's own loop and
 /// must never stall it. A send that fails is an asker that gave up (its deadline passed, or its
 /// connection closed) and is dropped without comment — there is nobody left to tell.
-fn answer_snapshots(answers: &Receiver<SnapshotAsk>, sink: &dyn EventSink) {
+///
+/// BOTH ARMS ARE READS. A module snapshot takes `&self` on the sink and a perf snapshot peeks the
+/// meter, so nothing this function does can advance the fold or change what the next frame reports
+/// — which is what makes it safe to call at every boundary, including inside the nap.
+fn answer_asks(answers: &Receiver<Ask>, sink: &dyn EventSink, serving: &Serving) {
     while let Ok(ask) = answers.try_recv() {
-        let _dropped = ask.answer.send(sink.snapshot(&ask.module));
+        match ask {
+            Ask::Module(ask) => {
+                let _dropped = ask.answer.send(sink.snapshot(&ask.module));
+            }
+            Ask::Perf(ask) => {
+                let _dropped = ask.answer.send(serving.perf());
+            }
+        }
     }
 }
 

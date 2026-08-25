@@ -14,13 +14,13 @@
 
 use protocol::generated::{
     ClientMessage, EchoRequestOp, EchoResult, EngineMessage, ErrorCode, ErrorReply, ErrorReplyKind,
-    HelloOp, ModuleSnapshotRequestOp, ModuleSnapshotResult, ProtocolError, Reply, ReplyKind,
-    ReplyResult, RequestId, ResetMessage, ResetMessageKind, SessionAttachRequestOp,
-    SessionHealthRequestOp, SessionProgressRequestOp, SubscribeAck, ViewSubscribeRequestOp,
-    ViewUnsubscribeRequestOp,
+    HelloOp, ModuleSnapshotRequestOp, ModuleSnapshotResult, PerfSnapshotRequestOp, ProtocolError,
+    Reply, ReplyKind, ReplyResult, RequestId, ResetMessage, ResetMessageKind,
+    SessionAttachRequestOp, SessionHealthRequestOp, SessionProgressRequestOp, SubscribeAck,
+    ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
 };
 
-use crate::world::{ListenerId, SnapshotAnswer, World};
+use crate::world::{ListenerId, PerfAnswer, SnapshotAnswer, World};
 
 /// One connection's own state — everything that belongs to this conversation rather than to the
 /// world.
@@ -146,6 +146,20 @@ impl Session {
                     }
                 }
             }
+
+            // PERF.SNAPSHOT — THE ENGINE APPEARS IN THE APP'S PERFORMANCE PANEL (ruling 19 surface,
+            // JOS-483). The one op whose subject is this process rather than the game.
+            //
+            // TWO OUTCOMES, NOT THREE. There is nothing here that could be `notFound` — the request
+            // names no module, no source, nothing that might be absent — and an engine with nothing
+            // attached is NOT `unavailable` either: it is an idle engine, and it answers with its
+            // real status, epoch and uptime beside an empty serve list. The single refusal is a fold
+            // that had a door and did not answer through it, which is a wedged ingest, and telling a
+            // panel that is far more useful than drawing it a row of zeros.
+            ClientMessage::PerfSnapshotRequest(request) => match world.perf_snapshot() {
+                PerfAnswer::Perf(perf) => reply(request.id, ReplyResult::PerfSnapshotResult(*perf)),
+                PerfAnswer::Unavailable(why) => error(request.id, ErrorCode::Unavailable, why),
+            },
 
             // SUBSCRIBE. Validate the descriptor, acknowledge, then open the stream with a reset —
             // reset-then-diffs is rule 1 of the diff protocol, and it holds even when the window is
@@ -343,6 +357,7 @@ fn is_known_op(op: &str) -> bool {
         SessionHealthRequestOp::SessionHealth.to_string(),
         SessionProgressRequestOp::SessionProgress.to_string(),
         ModuleSnapshotRequestOp::ModuleSnapshot.to_string(),
+        PerfSnapshotRequestOp::PerfSnapshot.to_string(),
         ViewSubscribeRequestOp::ViewSubscribe.to_string(),
         ViewUnsubscribeRequestOp::ViewUnsubscribe.to_string(),
     ]
@@ -356,11 +371,11 @@ mod tests {
     use crate::world::World;
     use protocol::generated::{
         ClientMessage, EchoParams, EchoRequest, EchoRequestOp, EngineMessage, ErrorCode, Hello,
-        HelloOp, ModuleSnapshotParams, ModuleSnapshotRequest, ModuleSnapshotRequestOp, ReplyResult,
-        RequestId, SessionAttachParams, SessionAttachRequest, SessionAttachRequestOp,
-        SessionHealthRequest, SessionHealthRequestOp, Token, ViewDescriptor, ViewSubscribeRequest,
-        ViewSubscribeRequestOp, ViewUnsubscribeParams, ViewUnsubscribeRequest,
-        ViewUnsubscribeRequestOp,
+        HelloOp, ModuleSnapshotParams, ModuleSnapshotRequest, ModuleSnapshotRequestOp,
+        PerfSnapshotRequest, PerfSnapshotRequestOp, ReplyResult, RequestId, SessionAttachParams,
+        SessionAttachRequest, SessionAttachRequestOp, SessionHealthRequest, SessionHealthRequestOp,
+        Token, ViewDescriptor, ViewSubscribeRequest, ViewSubscribeRequestOp, ViewUnsubscribeParams,
+        ViewUnsubscribeRequest, ViewUnsubscribeRequestOp,
     };
 
     fn echo(id: i64, text: &str) -> ClientMessage {
@@ -620,6 +635,102 @@ mod tests {
         };
         assert_eq!(*refusal.id, 12);
         assert!(matches!(refusal.error.code, ErrorCode::Unavailable));
+    }
+
+    #[test]
+    fn perf_snapshot_is_an_op_this_build_knows() {
+        // Same pin as `module_snapshot_is_an_op_this_build_knows`, and for the same failure: an op
+        // missing from the known-op list answers `unknownOp` to a request with a typo'd param,
+        // which sends a client hunting for a feature that is right there.
+        let raw = serde_json::json!({"id": 45, "op": "perf.snapshot", "params": {"who": "me"}});
+        let Some(EngineMessage::ErrorReply(refusal)) = refuse(&classify(&raw)) else {
+            panic!("a refusal");
+        };
+        assert!(matches!(refusal.error.code, ErrorCode::BadParams));
+    }
+
+    #[test]
+    fn a_perf_snapshot_with_no_fold_answers_rather_than_refusing() {
+        // THE ASYMMETRY WITH `module.snapshot` IS THE POINT. A world with no fold cannot answer a
+        // module question at all, so that op says `unavailable`; a perf question names nothing that
+        // could be absent, and an engine that has not attached yet is simply IDLE. A panel drawing
+        // the engine on every launch depends on this being an answer.
+        let (world, mut session) = table();
+        let messages = sent(session.dispatch(
+            &world,
+            ClientMessage::PerfSnapshotRequest(PerfSnapshotRequest {
+                id: RequestId(13),
+                op: PerfSnapshotRequestOp::PerfSnapshot,
+                params: protocol::generated::NoParams {},
+            }),
+        ));
+        let [EngineMessage::Reply(reply)] = messages.as_slice() else {
+            panic!("one reply");
+        };
+        assert_eq!(*reply.id, 13);
+        let ReplyResult::PerfSnapshotResult(result) = &reply.result else {
+            panic!("a perf snapshot result");
+        };
+        assert!(matches!(
+            result.status,
+            protocol::generated::PerfSnapshotResultStatus::Idle
+        ));
+        assert_eq!(*result.epoch, 1);
+        assert!(result.serve.is_empty());
+        // Absent, not zero — nothing has been measured.
+        assert_eq!(result.ingest.scan_ms, None);
+        assert_eq!(result.ingest.scan_bytes, None);
+        assert_eq!(result.ingest.spell_db_ms, None);
+    }
+
+    #[test]
+    fn a_perf_snapshot_counts_the_subscriptions_that_are_open_right_now() {
+        // The world's own half of the answer, and the half no meter could give: the meter counts
+        // frames that were sent and knows nothing about who is still listening. A source with a
+        // subscriber and no frames yet is a row, because "opened and nothing came" and "never
+        // opened" are different things to be looking at.
+        let (world, mut session) = table();
+        sent(session.dispatch(&world, subscribe(7)));
+        let messages = sent(session.dispatch(
+            &world,
+            ClientMessage::PerfSnapshotRequest(PerfSnapshotRequest {
+                id: RequestId(14),
+                op: PerfSnapshotRequestOp::PerfSnapshot,
+                params: protocol::generated::NoParams {},
+            }),
+        ));
+        let [EngineMessage::Reply(reply)] = messages.as_slice() else {
+            panic!("one reply");
+        };
+        let ReplyResult::PerfSnapshotResult(result) = &reply.result else {
+            panic!("a perf snapshot result");
+        };
+        let [row] = result.serve.as_slice() else {
+            panic!("one watched source, got {:?}", result.serve);
+        };
+        assert_eq!(row.source, "loot.ledger");
+        assert_eq!(row.subscribers, 1);
+        assert_eq!(row.frames, 0, "the serve pass has not run");
+        assert_eq!(row.fold_to_frame_us_mean, None, "nothing was timed");
+
+        // …and the count is LIVE: closing the window drops it, and the row goes with it because
+        // nothing was ever served over it either.
+        sent(session.dispatch(&world, unsubscribe(8, 7)));
+        let after = sent(session.dispatch(
+            &world,
+            ClientMessage::PerfSnapshotRequest(PerfSnapshotRequest {
+                id: RequestId(15),
+                op: PerfSnapshotRequestOp::PerfSnapshot,
+                params: protocol::generated::NoParams {},
+            }),
+        ));
+        let [EngineMessage::Reply(reply)] = after.as_slice() else {
+            panic!("one reply");
+        };
+        let ReplyResult::PerfSnapshotResult(result) = &reply.result else {
+            panic!("a perf snapshot result");
+        };
+        assert!(result.serve.is_empty());
     }
 
     #[test]

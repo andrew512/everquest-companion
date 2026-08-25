@@ -306,6 +306,8 @@ function describeClient(message: ClientMessage): string {
       return `${message.op}#${String(message.id)}`
     case 'module.snapshot':
       return `snapshot#${String(message.id)} of ${message.params.module}`
+    case 'perf.snapshot':
+      return `perf#${String(message.id)}`
     case 'view.subscribe':
       return `subscribe#${String(message.id)} ${message.params.source}`
     case 'view.unsubscribe':

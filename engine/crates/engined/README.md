@@ -46,6 +46,7 @@ never the process.
 | `echo` | `EchoResult` | Returns the text it was given. |
 | `session.health` | `HealthResult` | The **ingest's** status — `idle` / `starting` / `attaching` / `folding` / `live` — plus the epoch, the process uptime, and, once a log is attached, **the mark** (`{log, offset}`), the folded event count, the log's own last timestamp and **the log file's mtime** (`logMtimeMs`, JOS-481). Those four are OPTIONAL and absent before the first attach: a zero would be a measurement nobody took. See "The file facts". |
 | `module.snapshot` | `ModuleSnapshotResult` | **The first data-bearing op.** One module's published `{seq, state}`, straight off the fold on the ingest thread. `notFound` for a name the registry does not carry; `unavailable` when nothing is attached. See "The fold seam". |
+| `perf.snapshot` | `PerfSnapshotResult` | **What the engine costs** (owner ruling 19, JOS-483). The five facts `session.health` gives, plus `ingest` (spell-db time, scan time, scan bytes) and `serve` — one row per view source, cumulative for the generation, off the `views::meter` counters. **Answered through the same one door** as `module.snapshot`, and the meter is PEEKED rather than drained. **Do not poll it idly** — see "The polling discipline". |
 | `session.attach` | `AttachResult` | Bumps the epoch, broadcasts an `EpochMessage { reason: "attach" }` to every connection, replies `accepted: true`, and **starts an ingest** over `logPath`. Preempts any in-flight attach. |
 | `session.progress` | `SubscribeAck` | Acknowledges the connection-wide progress channel. Its frames are `EpochMessage { reason: "progress", progress: { pct, events } }` — the schema says progress is not a fourth stream kind, it is this. Connection-wide, so an attach on *another* connection is heard here too. |
 | `view.subscribe` | `SubscribeAck`, then a `reset`, then diffs | **The heart of the protocol** (JOS-480). The descriptor is validated against the SOURCE REGISTRY — an unknown source is `notFound`, a term over a field the source does not carry is `badParams` — then acknowledged, then opened with a reset. The opening reset is EMPTY even over a live fold, because the rows live on the ingest thread; the fold answers with the full window at its next boundary. See "Views". |
@@ -59,6 +60,40 @@ failure with no request behind it has nowhere to put an error.
 On the attaching connection the epoch announcement arrives **before** the reply, because the bump
 and its broadcast happen in one critical section. That ordering is pinned by test: a client can
 never see a reply naming a generation it has not been told about.
+
+### The polling discipline (`perf.snapshot`)
+
+**A perf surface must not become a perf cost.** `perf.snapshot` is cheap but it is not free: it posts
+an ask through the one door and waits for the ingest thread to answer at a boundary it already
+reaches (one nap of the tail while live, one megabyte of the scan mid-fold), and the app pairs it
+with a native per-pid read of the engine's CPU and working set. That is nothing at a two-second
+cadence for the seconds a panel is open, and it is a permanent wasted tax if it runs for the hours
+an app is up.
+
+So **the app polls it only while the performance panel is open**, and the arming signal comes from
+the renderer:
+
+* `PerfChip`'s popover mounts `useEnginePerf(open)` (`src/renderer/src/lib/enginePerfHud.ts`), which
+  sends `perf:engineWatch true` on mount and `false` on unmount.
+* `src/main/enginePerfWatch.ts` creates **no timer at all** until it is armed, emits one sample
+  immediately so the section is populated rather than blank, and pushes a single `null` when it
+  stops — the same "hide entirely, never freeze on stale numbers" contract the HUD's own sampler has.
+* A build with **no engine** (the flag is off, or no binary was found) arms nothing: the first emit
+  answers `null` and returns without a timer.
+* Two polls never overlap. A request during a historical fold can outlast its own interval, and
+  stacking those would put several asks on one connection for a panel that can only draw the last.
+
+A session that never opens the popover therefore pays **zero timers, zero round trips and zero
+bytes of native code mapped**. If you add another reader of this op, keep the same rule.
+
+Two properties of the answer are worth knowing before you read one:
+
+* **The meter is peeked, never drained.** `Meter::peek` takes `&self`. Two panels open at once see
+  the same session, and a poll cannot steal the interval the engine's own stderr report was about to
+  print.
+* **Absent is never zero.** `scanMs`/`scanBytes` are missing until the scan finishes; a source whose
+  every frame was an owed reset (no fold instant behind it) reports **no** `foldToFrameUs*` at all
+  rather than `0`. Queue time is never counted as compute.
 
 ## What an attach does
 

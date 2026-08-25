@@ -21,11 +21,12 @@ use std::time::{Duration, Instant};
 
 use protocol::generated::{
     ClientMessage, EchoParams, EchoRequest, EchoRequestOp, EngineMessage, Hello, HelloOp,
-    ModuleSnapshotParams, ModuleSnapshotRequest, ModuleSnapshotRequestOp, NoParams, RequestId,
-    SessionAttachParams, SessionAttachRequest, SessionAttachRequestOp, SessionHealthRequest,
-    SessionHealthRequestOp, SessionProgressRequest, SessionProgressRequestOp, Token,
-    ViewDescriptor, ViewSubscribeRequest, ViewSubscribeRequestOp, ViewUnsubscribeParams,
-    ViewUnsubscribeRequest, ViewUnsubscribeRequestOp,
+    ModuleSnapshotParams, ModuleSnapshotRequest, ModuleSnapshotRequestOp, NoParams,
+    PerfSnapshotRequest, PerfSnapshotRequestOp, RequestId, SessionAttachParams,
+    SessionAttachRequest, SessionAttachRequestOp, SessionHealthRequest, SessionHealthRequestOp,
+    SessionProgressRequest, SessionProgressRequestOp, Token, ViewDescriptor, ViewSubscribeRequest,
+    ViewSubscribeRequestOp, ViewUnsubscribeParams, ViewUnsubscribeRequest,
+    ViewUnsubscribeRequestOp,
 };
 use protocol::transport::ndjson::NdjsonTransport;
 use protocol::transport::{Transport, TransportError};
@@ -496,6 +497,16 @@ pub fn module_snapshot(id: i64, module: &str) -> ClientMessage {
         params: ModuleSnapshotParams {
             module: module.to_owned(),
         },
+    })
+}
+
+/// One `perf.snapshot` request — what the engine is doing and what it has cost (JOS-483).
+#[must_use]
+pub fn perf_snapshot(id: i64) -> ClientMessage {
+    ClientMessage::PerfSnapshotRequest(PerfSnapshotRequest {
+        id: RequestId(id),
+        op: PerfSnapshotRequestOp::PerfSnapshot,
+        params: NoParams {},
     })
 }
 

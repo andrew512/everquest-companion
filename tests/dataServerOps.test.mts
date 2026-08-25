@@ -41,6 +41,7 @@ const EVERY_OP: RequestOp[] = [
   'session.health',
   'session.progress',
   'module.snapshot',
+  'perf.snapshot',
   'view.subscribe',
   'view.unsubscribe'
 ]
@@ -63,6 +64,11 @@ test('EVERY GUARD IS DISCRIMINATING — no two ops accept each other’s result'
     'session.health': { status: 'live', epoch: 2, uptimeMs: 925 },
     'session.progress': { subscription: 4, subscribed: true },
     'module.snapshot': { module: 'kills', seq: 139859, state: { v: 3, mobs: {} } },
+    // The engine's own numbers (JOS-483). `status` is deliberately present and deliberately NOT
+    // what the guard reads: `session.health` owns that field too, and a guard two arms both pass
+    // is a guard that cannot tell them apart — so `serve` is the discriminator, and this shape
+    // carrying `status` is what makes that a real assertion in the matrix below.
+    'perf.snapshot': { status: 'live', epoch: 2, uptimeMs: 925, ingest: {}, serve: [] },
     'view.subscribe': { subscription: 7, subscribed: true },
     'view.unsubscribe': { subscription: 7, subscribed: false }
   }

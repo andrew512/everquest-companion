@@ -22,10 +22,17 @@ decision a test can watch being made rather than an absence nobody can observe.
 | `engineHost.ts` | The composition root's half: which binary, which spawn, which socket, which clock, where a line goes. The only file anyone would rewrite to run the engine some other way. |
 | `socketChannel.ts` | The only file in the feature that knows a socket exists. |
 | `engineHealth.ts` | "Is it actually serving?", asked as `hello` + `session.health` over the product's own door. |
-| `engineClientHost.ts` | **The app as a CLIENT** (JOS-479): connect, attach, re-attach, and run the parity probe. |
+| `engineClientHost.ts` | **The app as a CLIENT** (JOS-479): connect, attach, re-attach, and run the parity probe. Since JOS-483 it also answers two READS for the performance panel — `enginePerfSnapshot()` and `lastParitySummary()` — and still owns no channel. |
 | `parityProbe.ts` | The probe's pure half — two snapshots in, one verdict out, one line. |
 | `byteRelay.ts` | **The pump** (JOS-484): chunks between a socket and a MessagePort. Electron-free, so every teardown path is a unit test. |
 | `rendererBroker.ts` | **The brokerage** (JOS-484): the `engine:connect` handler, the port handover, and the live-connection lifecycle. |
+
+The engine's row in the app's performance panel is assembled **outside this directory**, in
+`src/main/enginePerfWatch.ts`: it joins `enginePerfSnapshot()` with a native per-pid read
+(`src/main/processSample.ts` — `app.getAppMetrics()` is Chromium's own process list and the engine
+is not in it) and pushes one object over the perf IPC family. **It polls only while the panel is
+open** — see "The polling discipline" in `engine/crates/engined/README.md` for the rule and why it
+exists. The renderer never speaks to the engine; brokering a client into a window is a later ticket.
 
 ## The connect flow (JOS-479, phase 3)
 
@@ -267,5 +274,6 @@ closes the spec goes red and somebody deletes the exemption. Neither is a fold d
 | `tests/dataServerParity.test.mts` | The probe's judgement: agreement, divergence, drift-is-a-skip, the two refusal sentences, the line's shape. |
 | `tests/dataServerEngineChild.test.mts` | The real child, pipe and socket against a Node fake engine. |
 | `tests/e2e/engine-boots.e2e.mts` | The real binary under the real app: spawn, ready, respawn, wrong token, quit, absence. |
-| `tests/e2e/engine-parity.e2e.mts` | The connect flow and the probe end to end on a staged fixture. |
+| `tests/enginePerf.test.mts` | The performance panel's engine row above the FFI boundary: the per-pid CPU arithmetic over a fake pid, the formatters' absent cases, and `useEnginePerf` run for real (arming, disarming, the null push). |
+| `tests/e2e/engine-parity.e2e.mts` | The connect flow and the probe end to end on a staged fixture — **and** (`enginePerfSteps.mts`) the ENGINE section of the in-app performance panel, whose verbatim text the run prints. |
 | `npm run oracle:rust-fold` | The semantics bar: twenty modules, six slices of the owner's real log. |

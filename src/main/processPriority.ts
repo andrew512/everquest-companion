@@ -241,6 +241,22 @@ export function setEnginePid(pid: number | null): void {
   if (state) applyNow(state, enginePid === null ? 'engine gone' : 'engine spawned')
 }
 
+/**
+ * Which process is the engine right now, or `null` when none is running.
+ *
+ * A SECOND READER OF A FACT THIS MODULE ALREADY TRACKS (JOS-483). The performance panel wants the
+ * engine's CPU and working set beside main's and the renderers', and `app.getAppMetrics()` cannot
+ * give it: that is Chromium's own process list and the engine is not in it. The pid it needs is
+ * exactly the one this module is already told about on both edges, so exporting the read is
+ * cheaper — and one fact fewer to keep true — than a second subscription to the supervisor.
+ *
+ * IT IS A READ AND NOTHING ELSE. Nothing about priority happens here; a caller that wanted to
+ * change the class would still go through `setEnginePid`/`setYieldToGame`.
+ */
+export function getEnginePid(): number | null {
+  return enginePid
+}
+
 /** The pids to act on RIGHT NOW: main, every live renderer, and the engine if it is running. Read
  *  at each apply rather than cached, because a renderer's pid does not exist until its process is
  *  spawned — and the engine's changes on every respawn. */

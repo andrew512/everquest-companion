@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:6da5b2bfe7d19e9c2c0068ec71786617b9c5d7e13d777293c6b09910a50e050d
+//! schema-digest: sha256:36e6cac9ad8c2f5c752f2e97c32a391593942b825ee1c32dc17c2ea3657a8686
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -135,6 +135,9 @@ impl ::std::convert::From<::std::collections::BTreeMap<::std::string::String, cr
 ///      "$ref": "#/$defs/ModuleSnapshotRequest"
 ///    },
 ///    {
+///      "$ref": "#/$defs/PerfSnapshotRequest"
+///    },
+///    {
 ///      "$ref": "#/$defs/ViewSubscribeRequest"
 ///    },
 ///    {
@@ -153,6 +156,7 @@ pub enum ClientMessage {
     SessionHealthRequest(SessionHealthRequest),
     SessionProgressRequest(SessionProgressRequest),
     ModuleSnapshotRequest(ModuleSnapshotRequest),
+    PerfSnapshotRequest(PerfSnapshotRequest),
     ViewSubscribeRequest(ViewSubscribeRequest),
     ViewUnsubscribeRequest(ViewUnsubscribeRequest),
 }
@@ -184,6 +188,11 @@ impl ::std::convert::From<SessionProgressRequest> for ClientMessage {
 impl ::std::convert::From<ModuleSnapshotRequest> for ClientMessage {
     fn from(value: ModuleSnapshotRequest) -> Self {
         Self::ModuleSnapshotRequest(value)
+    }
+}
+impl ::std::convert::From<PerfSnapshotRequest> for ClientMessage {
+    fn from(value: PerfSnapshotRequest) -> Self {
+        Self::PerfSnapshotRequest(value)
     }
 }
 impl ::std::convert::From<ViewSubscribeRequest> for ClientMessage {
@@ -1905,6 +1914,441 @@ impl ::std::default::Default for NoParams {
         Self {}
     }
 }
+///WHAT STARTING THIS GENERATION COST. Every field is optional and absent means NOT YET MEASURED rather than zero: `scanMs` is unknown until the scan finishes, and a zero there would say a whole log folded instantly. The engine prints the same two numbers to stderr; this is the same measurement on the wire, so a panel does not have to scrape a log.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "PerfIngest",
+///  "description": "WHAT STARTING THIS GENERATION COST. Every field is optional and absent means NOT YET MEASURED rather than zero: `scanMs` is unknown until the scan finishes, and a zero there would say a whole log folded instantly. The engine prints the same two numbers to stderr; this is the same measurement on the wire, so a panel does not have to scrape a log.",
+///  "type": "object",
+///  "properties": {
+///    "scanBytes": {
+///      "description": "Bytes read by the scan, up to the mark it landed on. Absent while the scan is still running.",
+///      "type": "integer"
+///    },
+///    "scanMs": {
+///      "description": "Wall time from the first byte read to the fold landing. Absent while the scan is still running.",
+///      "type": "integer"
+///    },
+///    "spellDbMs": {
+///      "description": "How long the parser's spell catalog took to become available for this attach. Near zero after the first attach of a process — the catalog is built once per process — and the number is reported rather than assumed.",
+///      "type": "integer"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PerfIngest {
+    ///Bytes read by the scan, up to the mark it landed on. Absent while the scan is still running.
+    #[serde(
+        rename = "scanBytes",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub scan_bytes: ::std::option::Option<i64>,
+    ///Wall time from the first byte read to the fold landing. Absent while the scan is still running.
+    #[serde(
+        rename = "scanMs",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub scan_ms: ::std::option::Option<i64>,
+    ///How long the parser's spell catalog took to become available for this attach. Near zero after the first attach of a process — the catalog is built once per process — and the number is reported rather than assumed.
+    #[serde(
+        rename = "spellDbMs",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub spell_db_ms: ::std::option::Option<i64>,
+}
+impl ::std::default::Default for PerfIngest {
+    fn default() -> Self {
+        Self {
+            scan_bytes: Default::default(),
+            scan_ms: Default::default(),
+            spell_db_ms: Default::default(),
+        }
+    }
+}
+///ONE SOURCE'S SERVE PATH, cumulative for this generation — the counters `views::meter` keeps, exactly as ruling 19 names them. QUEUE TIME IS NEVER COUNTED AS COMPUTE: `foldToFrameUs*` is measured from the instant the fold produced what the frame reports to the instant the frame reached the connection's outbox, and a frame with no fold behind it (the fresh reset a just-opened subscription is owed) is COUNTED but not TIMED — which is why the two latency fields are optional and their absence means `no frame here had a fold behind it`, never `zero microseconds`.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "PerfServeSource",
+///  "description": "ONE SOURCE'S SERVE PATH, cumulative for this generation — the counters `views::meter` keeps, exactly as ruling 19 names them. QUEUE TIME IS NEVER COUNTED AS COMPUTE: `foldToFrameUs*` is measured from the instant the fold produced what the frame reports to the instant the frame reached the connection's outbox, and a frame with no fold behind it (the fresh reset a just-opened subscription is owed) is COUNTED but not TIMED — which is why the two latency fields are optional and their absence means `no frame here had a fold behind it`, never `zero microseconds`.",
+///  "type": "object",
+///  "required": [
+///    "diffs",
+///    "frames",
+///    "payloadWeight",
+///    "resets",
+///    "rows",
+///    "source",
+///    "subscribers",
+///    "widestPayloadWeight"
+///  ],
+///  "properties": {
+///    "diffs": {
+///      "type": "integer"
+///    },
+///    "foldToFrameUsMax": {
+///      "description": "The worst timed frame, in microseconds.",
+///      "type": "integer"
+///    },
+///    "foldToFrameUsMean": {
+///      "description": "Mean fold-to-frame latency in MICROSECONDS, over the timed frames only. Microseconds rather than milliseconds because cutting a fifty-row window off a fold takes tens of them, and a serve path reporting `0 ms` reads as a measurement nobody took.",
+///      "type": "integer"
+///    },
+///    "frames": {
+///      "description": "Frames actually sent — `resets + diffs`. Reported rather than left to the caller's addition so the row reads without arithmetic.",
+///      "type": "integer"
+///    },
+///    "payloadWeight": {
+///      "description": "HOW MUCH THIS SOURCE HAS SENT, cumulative — the payload budget ruling 4 asks for, weighed off the frames' own serializations. THE UNIT IS IN THIS SENTENCE AND NOT IN THE NAME, and that is this schema keeping its own law rather than dodging it: a property name here may not carry a wire unit, because a schema that grew a byte count would quietly make the transport unswappable (the owner's constraint, enforced structurally in tests/protocolSchema.test.mts) — while the prose is exactly where a measurement is allowed to say what it measured. It is bytes of the JSON this engine serialized, so a different encoding would weigh the same frames differently: a client compares this against itself over time, never against a constant. `weight` is the vocabulary this repo already uses for the size of a committed thing (scripts/gen-data-weight.mts).",
+///      "type": "integer"
+///    },
+///    "resets": {
+///      "type": "integer"
+///    },
+///    "rows": {
+///      "description": "Rows carried by the resets. A diff carries ops, not rows.",
+///      "type": "integer"
+///    },
+///    "source": {
+///      "description": "The view source's name, exactly as the source registry spells it.",
+///      "type": "string"
+///    },
+///    "subscribers": {
+///      "description": "Open subscriptions over this source RIGHT NOW, across every connection — a live count, not a cumulative one, and the world's answer rather than the meter's. It is what makes a row with no recent frames readable: nobody is watching, as against nothing is moving.",
+///      "type": "integer"
+///    },
+///    "widestPayloadWeight": {
+///      "description": "The largest single frame, weighed the same way. The budget number that matters — a mean hides the one frame that stalled a window.",
+///      "type": "integer"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PerfServeSource {
+    pub diffs: i64,
+    ///The worst timed frame, in microseconds.
+    #[serde(
+        rename = "foldToFrameUsMax",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub fold_to_frame_us_max: ::std::option::Option<i64>,
+    ///Mean fold-to-frame latency in MICROSECONDS, over the timed frames only. Microseconds rather than milliseconds because cutting a fifty-row window off a fold takes tens of them, and a serve path reporting `0 ms` reads as a measurement nobody took.
+    #[serde(
+        rename = "foldToFrameUsMean",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub fold_to_frame_us_mean: ::std::option::Option<i64>,
+    ///Frames actually sent — `resets + diffs`. Reported rather than left to the caller's addition so the row reads without arithmetic.
+    pub frames: i64,
+    ///HOW MUCH THIS SOURCE HAS SENT, cumulative — the payload budget ruling 4 asks for, weighed off the frames' own serializations. THE UNIT IS IN THIS SENTENCE AND NOT IN THE NAME, and that is this schema keeping its own law rather than dodging it: a property name here may not carry a wire unit, because a schema that grew a byte count would quietly make the transport unswappable (the owner's constraint, enforced structurally in tests/protocolSchema.test.mts) — while the prose is exactly where a measurement is allowed to say what it measured. It is bytes of the JSON this engine serialized, so a different encoding would weigh the same frames differently: a client compares this against itself over time, never against a constant. `weight` is the vocabulary this repo already uses for the size of a committed thing (scripts/gen-data-weight.mts).
+    #[serde(rename = "payloadWeight")]
+    pub payload_weight: i64,
+    pub resets: i64,
+    ///Rows carried by the resets. A diff carries ops, not rows.
+    pub rows: i64,
+    ///The view source's name, exactly as the source registry spells it.
+    pub source: ::std::string::String,
+    ///Open subscriptions over this source RIGHT NOW, across every connection — a live count, not a cumulative one, and the world's answer rather than the meter's. It is what makes a row with no recent frames readable: nobody is watching, as against nothing is moving.
+    pub subscribers: i64,
+    ///The largest single frame, weighed the same way. The budget number that matters — a mean hides the one frame that stalled a window.
+    #[serde(rename = "widestPayloadWeight")]
+    pub widest_payload_weight: i64,
+}
+///THE ENGINE'S OWN PERFORMANCE, ASKED FOR (owner ruling 19 surface, JOS-483). Everything `session.health` says about where the fold has got to, plus what the ingest cost to build and what the serve path has cost since — the counters `views::meter` already keeps, read WITHOUT resetting them so two asks read as a progression rather than as two disconnected windows. It is answered through the same one door `module.snapshot` uses: the meter lives on the ingest thread, the request arrives on a connection thread, and the ingest answers at a boundary it already reaches. THE APP MUST NOT POLL THIS IDLY. It is the in-app performance panel's data and the panel is open a few seconds at a time; a perf surface that costs a round trip a second while nobody is looking at it is the bug it exists to find.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "PerfSnapshotRequest",
+///  "description": "THE ENGINE'S OWN PERFORMANCE, ASKED FOR (owner ruling 19 surface, JOS-483). Everything `session.health` says about where the fold has got to, plus what the ingest cost to build and what the serve path has cost since — the counters `views::meter` already keeps, read WITHOUT resetting them so two asks read as a progression rather than as two disconnected windows. It is answered through the same one door `module.snapshot` uses: the meter lives on the ingest thread, the request arrives on a connection thread, and the ingest answers at a boundary it already reaches. THE APP MUST NOT POLL THIS IDLY. It is the in-app performance panel's data and the panel is open a few seconds at a time; a perf surface that costs a round trip a second while nobody is looking at it is the bug it exists to find.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "perf.snapshot"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/NoParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PerfSnapshotRequest {
+    pub id: RequestId,
+    pub op: PerfSnapshotRequestOp,
+    pub params: NoParams,
+}
+///`PerfSnapshotRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "perf.snapshot"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum PerfSnapshotRequestOp {
+    #[serde(rename = "perf.snapshot")]
+    PerfSnapshot,
+}
+impl ::std::fmt::Display for PerfSnapshotRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::PerfSnapshot => f.write_str("perf.snapshot"),
+        }
+    }
+}
+impl ::std::str::FromStr for PerfSnapshotRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "perf.snapshot" => Ok(Self::PerfSnapshot),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for PerfSnapshotRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for PerfSnapshotRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for PerfSnapshotRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///What the engine is doing and what it has cost. The first five fields are `HealthResult`'s and mean exactly what they mean there, restated rather than nested so a panel reads one object — and OPTIONAL on the same terms, because a health answer given before any attach honestly has no mark, no event count and no log timestamp. `ingest` is what building this generation cost; `serve` is one row per view source, cumulative for the generation.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "PerfSnapshotResult",
+///  "description": "What the engine is doing and what it has cost. The first five fields are `HealthResult`'s and mean exactly what they mean there, restated rather than nested so a panel reads one object — and OPTIONAL on the same terms, because a health answer given before any attach honestly has no mark, no event count and no log timestamp. `ingest` is what building this generation cost; `serve` is one row per view source, cumulative for the generation.",
+///  "type": "object",
+///  "required": [
+///    "epoch",
+///    "ingest",
+///    "serve",
+///    "status",
+///    "uptimeMs"
+///  ],
+///  "properties": {
+///    "epoch": {
+///      "$ref": "#/$defs/Epoch"
+///    },
+///    "events": {
+///      "description": "Events folded in this generation. Counts EVENTS, not lines — the same number `HealthResult.events` carries.",
+///      "type": "integer"
+///    },
+///    "ingest": {
+///      "$ref": "#/$defs/PerfIngest"
+///    },
+///    "lastEventTs": {
+///      "description": "The `ts` of the last event folded — THE LOG'S OWN CLOCK, never the host's. Its distance from the host's clock is the freshness figure the panel draws, and that subtraction is the CALLER's to make: the engine does not read a wall clock to answer this.",
+///      "type": "integer"
+///    },
+///    "mark": {
+///      "$ref": "#/$defs/LogMark"
+///    },
+///    "serve": {
+///      "description": "One row per view source that has served a frame in this generation. A source nobody has subscribed to is ABSENT rather than a row of zeros — the same rule the panel applies to a process type with no process behind it.",
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/PerfServeSource"
+///      }
+///    },
+///    "status": {
+///      "type": "string",
+///      "enum": [
+///        "starting",
+///        "attaching",
+///        "folding",
+///        "live",
+///        "idle"
+///      ]
+///    },
+///    "uptimeMs": {
+///      "description": "How long THIS PROCESS has been up. Process metadata, never world state: it survives an attach, which the epoch does not.",
+///      "type": "integer"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PerfSnapshotResult {
+    pub epoch: Epoch,
+    ///Events folded in this generation. Counts EVENTS, not lines — the same number `HealthResult.events` carries.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub events: ::std::option::Option<i64>,
+    pub ingest: PerfIngest,
+    ///The `ts` of the last event folded — THE LOG'S OWN CLOCK, never the host's. Its distance from the host's clock is the freshness figure the panel draws, and that subtraction is the CALLER's to make: the engine does not read a wall clock to answer this.
+    #[serde(
+        rename = "lastEventTs",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub last_event_ts: ::std::option::Option<i64>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub mark: ::std::option::Option<LogMark>,
+    ///One row per view source that has served a frame in this generation. A source nobody has subscribed to is ABSENT rather than a row of zeros — the same rule the panel applies to a process type with no process behind it.
+    pub serve: ::std::vec::Vec<PerfServeSource>,
+    pub status: PerfSnapshotResultStatus,
+    ///How long THIS PROCESS has been up. Process metadata, never world state: it survives an attach, which the epoch does not.
+    #[serde(rename = "uptimeMs")]
+    pub uptime_ms: i64,
+}
+///`PerfSnapshotResultStatus`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "starting",
+///    "attaching",
+///    "folding",
+///    "live",
+///    "idle"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum PerfSnapshotResultStatus {
+    #[serde(rename = "starting")]
+    Starting,
+    #[serde(rename = "attaching")]
+    Attaching,
+    #[serde(rename = "folding")]
+    Folding,
+    #[serde(rename = "live")]
+    Live,
+    #[serde(rename = "idle")]
+    Idle,
+}
+impl ::std::fmt::Display for PerfSnapshotResultStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Starting => f.write_str("starting"),
+            Self::Attaching => f.write_str("attaching"),
+            Self::Folding => f.write_str("folding"),
+            Self::Live => f.write_str("live"),
+            Self::Idle => f.write_str("idle"),
+        }
+    }
+}
+impl ::std::str::FromStr for PerfSnapshotResultStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "starting" => Ok(Self::Starting),
+            "attaching" => Ok(Self::Attaching),
+            "folding" => Ok(Self::Folding),
+            "live" => Ok(Self::Live),
+            "idle" => Ok(Self::Idle),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for PerfSnapshotResultStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for PerfSnapshotResultStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for PerfSnapshotResultStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`ProtocolError`
 ///
 /// <details><summary>JSON schema</summary>
@@ -2110,6 +2554,9 @@ impl ::std::convert::TryFrom<::std::string::String> for ReplyKind {
 ///    },
 ///    {
 ///      "$ref": "#/$defs/ModuleSnapshotResult"
+///    },
+///    {
+///      "$ref": "#/$defs/PerfSnapshotResult"
 ///    }
 ///  ]
 ///}
@@ -2123,6 +2570,7 @@ pub enum ReplyResult {
     AttachResult(AttachResult),
     SubscribeAck(SubscribeAck),
     ModuleSnapshotResult(ModuleSnapshotResult),
+    PerfSnapshotResult(PerfSnapshotResult),
 }
 impl ::std::convert::From<EchoResult> for ReplyResult {
     fn from(value: EchoResult) -> Self {
@@ -2147,6 +2595,11 @@ impl ::std::convert::From<SubscribeAck> for ReplyResult {
 impl ::std::convert::From<ModuleSnapshotResult> for ReplyResult {
     fn from(value: ModuleSnapshotResult) -> Self {
         Self::ModuleSnapshotResult(value)
+    }
+}
+impl ::std::convert::From<PerfSnapshotResult> for ReplyResult {
+    fn from(value: PerfSnapshotResult) -> Self {
+        Self::PerfSnapshotResult(value)
     }
 }
 ///Client-chosen correlation id. A reply carries the id of its request; every stream message carries the id of the subscribe request that opened it.

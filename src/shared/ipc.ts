@@ -734,6 +734,26 @@ export const IPC = {
   // startup phase, which only the renderer can observe. Sent once per window lifetime; a
   // repeat is refused by the phase accounting itself (shared/perf.ts `addMark`).
   perfRendererHydrated: 'perf:rendererHydrated',
+  // ---- the ENGINE's row in that panel (JOS-483, owner ruling 19) ------------------------
+  //
+  // > "i want to see the server in the cpu/performance overlay in app."
+  //
+  // TWO CHANNELS, AND THE WATCH ONE IS THE INTERESTING HALF. The engine's numbers cost a
+  // loopback round trip (`perf.snapshot`) plus a native per-pid read, and the ENGINE section
+  // is a few hundred pixels inside a popover that is open for seconds at a time. So main
+  // polls ONLY while the renderer says the panel is open: a perf surface that cost a round
+  // trip a second while nobody was looking at it would be the bug it exists to find.
+  //
+  // renderer -> main: "the performance panel is open" / "it is closed". Starts and stops the
+  // engine poll in the SAME call, so the panel and this session's timers can never disagree —
+  // the `perf:setEnabled` discipline. A non-boolean is ignored. Arg: boolean. Returns void.
+  perfEngineWatch: 'perf:engineWatch',
+  // main -> renderer, PUSH: one `EnginePerfSample` every 2 s while the panel is being watched
+  // AND an engine exists — or `null`, which is the honest "there is nothing to draw here":
+  // the flag is off, this build has no engine binary, or the watch just stopped. The section
+  // hides on it rather than freezing on the last numbers it saw.
+  onEnginePerf: 'perf:engine',
+
   // renderer -> main: the persisted "yield CPU to the game" pref ({yieldToGame}). ON by default.
   // Returns ProcessPriorityPrefs.
   processPriorityGet: 'processPriority:get',

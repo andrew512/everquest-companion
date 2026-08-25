@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:6da5b2bfe7d19e9c2c0068ec71786617b9c5d7e13d777293c6b09910a50e050d
+// schema-digest: sha256:36e6cac9ad8c2f5c752f2e97c32a391593942b825ee1c32dc17c2ea3657a8686
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -24,6 +24,7 @@ export type ClientMessage =
   | SessionHealthRequest
   | SessionProgressRequest
   | ModuleSnapshotRequest
+  | PerfSnapshotRequest
   | ViewSubscribeRequest
   | ViewUnsubscribeRequest
 /**
@@ -54,7 +55,12 @@ export type EngineMessage =
  * THE RESULT REGISTRY, and it is CLOSED. Which shape a reply carries is decided by the OP of the request whose id it names - the envelope does not repeat it, because a reply that had to restate its own op would be a second place for the two to disagree. This list is the additive seam for the eight API surfaces: a new op adds an arm and nothing else in the envelope moves. There is deliberately NO open arm for a shape this build does not know: both sides generate from this one artifact and a protocolVersion mismatch is fatal at hello, so an engine that could answer with an unnamed shape is an engine this client already refused to talk to. A wildcard arm would also make the whole list unusable - an open object matches every named shape too, so `oneOf` could never pick one.
  */
 export type ReplyResult =
-  EchoResult | HealthResult | AttachResult | SubscribeAck | ModuleSnapshotResult
+  | EchoResult
+  | HealthResult
+  | AttachResult
+  | SubscribeAck
+  | ModuleSnapshotResult
+  | PerfSnapshotResult
 /**
  * The world's generation. Monotonic within one engine process. A client that sees an epoch it did not expect DROPS ALL STATE and waits for the reset — it never reconciles across a bump.
  */
@@ -147,6 +153,14 @@ export interface ModuleSnapshotParams {
    * The module's id, exactly as the registry spells it — `loot`, `kills`, `buffTimers`. Not a view source: a view is filtered, sorted and windowed, and this is the module's whole state.
    */
   module: string
+}
+/**
+ * THE ENGINE'S OWN PERFORMANCE, ASKED FOR (owner ruling 19 surface, JOS-483). Everything `session.health` says about where the fold has got to, plus what the ingest cost to build and what the serve path has cost since — the counters `views::meter` already keeps, read WITHOUT resetting them so two asks read as a progression rather than as two disconnected windows. It is answered through the same one door `module.snapshot` uses: the meter lives on the ingest thread, the request arrives on a connection thread, and the ingest answers at a boundary it already reaches. THE APP MUST NOT POLL THIS IDLY. It is the in-app performance panel's data and the panel is open a few seconds at a time; a perf surface that costs a round trip a second while nobody is looking at it is the bug it exists to find.
+ */
+export interface PerfSnapshotRequest {
+  id: RequestId
+  op: 'perf.snapshot'
+  params: NoParams
 }
 /**
  * Opens a subscription. The reply acknowledges; the data starts with a `reset` carrying the whole window.
@@ -271,6 +285,87 @@ export interface ModuleSnapshotResult {
    */
   seq: number
   state: ModuleState
+}
+/**
+ * What the engine is doing and what it has cost. The first five fields are `HealthResult`'s and mean exactly what they mean there, restated rather than nested so a panel reads one object — and OPTIONAL on the same terms, because a health answer given before any attach honestly has no mark, no event count and no log timestamp. `ingest` is what building this generation cost; `serve` is one row per view source, cumulative for the generation.
+ */
+export interface PerfSnapshotResult {
+  status: 'starting' | 'attaching' | 'folding' | 'live' | 'idle'
+  epoch: Epoch
+  /**
+   * How long THIS PROCESS has been up. Process metadata, never world state: it survives an attach, which the epoch does not.
+   */
+  uptimeMs: number
+  mark?: LogMark
+  /**
+   * Events folded in this generation. Counts EVENTS, not lines — the same number `HealthResult.events` carries.
+   */
+  events?: number
+  /**
+   * The `ts` of the last event folded — THE LOG'S OWN CLOCK, never the host's. Its distance from the host's clock is the freshness figure the panel draws, and that subtraction is the CALLER's to make: the engine does not read a wall clock to answer this.
+   */
+  lastEventTs?: number
+  ingest: PerfIngest
+  /**
+   * One row per view source that has served a frame in this generation. A source nobody has subscribed to is ABSENT rather than a row of zeros — the same rule the panel applies to a process type with no process behind it.
+   */
+  serve: PerfServeSource[]
+}
+/**
+ * WHAT STARTING THIS GENERATION COST. Every field is optional and absent means NOT YET MEASURED rather than zero: `scanMs` is unknown until the scan finishes, and a zero there would say a whole log folded instantly. The engine prints the same two numbers to stderr; this is the same measurement on the wire, so a panel does not have to scrape a log.
+ */
+export interface PerfIngest {
+  /**
+   * How long the parser's spell catalog took to become available for this attach. Near zero after the first attach of a process — the catalog is built once per process — and the number is reported rather than assumed.
+   */
+  spellDbMs?: number
+  /**
+   * Wall time from the first byte read to the fold landing. Absent while the scan is still running.
+   */
+  scanMs?: number
+  /**
+   * Bytes read by the scan, up to the mark it landed on. Absent while the scan is still running.
+   */
+  scanBytes?: number
+}
+/**
+ * ONE SOURCE'S SERVE PATH, cumulative for this generation — the counters `views::meter` keeps, exactly as ruling 19 names them. QUEUE TIME IS NEVER COUNTED AS COMPUTE: `foldToFrameUs*` is measured from the instant the fold produced what the frame reports to the instant the frame reached the connection's outbox, and a frame with no fold behind it (the fresh reset a just-opened subscription is owed) is COUNTED but not TIMED — which is why the two latency fields are optional and their absence means `no frame here had a fold behind it`, never `zero microseconds`.
+ */
+export interface PerfServeSource {
+  /**
+   * The view source's name, exactly as the source registry spells it.
+   */
+  source: string
+  /**
+   * Frames actually sent — `resets + diffs`. Reported rather than left to the caller's addition so the row reads without arithmetic.
+   */
+  frames: number
+  resets: number
+  diffs: number
+  /**
+   * Rows carried by the resets. A diff carries ops, not rows.
+   */
+  rows: number
+  /**
+   * HOW MUCH THIS SOURCE HAS SENT, cumulative — the payload budget ruling 4 asks for, weighed off the frames' own serializations. THE UNIT IS IN THIS SENTENCE AND NOT IN THE NAME, and that is this schema keeping its own law rather than dodging it: a property name here may not carry a wire unit, because a schema that grew a byte count would quietly make the transport unswappable (the owner's constraint, enforced structurally in tests/protocolSchema.test.mts) — while the prose is exactly where a measurement is allowed to say what it measured. It is bytes of the JSON this engine serialized, so a different encoding would weigh the same frames differently: a client compares this against itself over time, never against a constant. `weight` is the vocabulary this repo already uses for the size of a committed thing (scripts/gen-data-weight.mts).
+   */
+  payloadWeight: number
+  /**
+   * The largest single frame, weighed the same way. The budget number that matters — a mean hides the one frame that stalled a window.
+   */
+  widestPayloadWeight: number
+  /**
+   * Mean fold-to-frame latency in MICROSECONDS, over the timed frames only. Microseconds rather than milliseconds because cutting a fifty-row window off a fold takes tens of them, and a serve path reporting `0 ms` reads as a measurement nobody took.
+   */
+  foldToFrameUsMean?: number
+  /**
+   * The worst timed frame, in microseconds.
+   */
+  foldToFrameUsMax?: number
+  /**
+   * Open subscriptions over this source RIGHT NOW, across every connection — a live count, not a cumulative one, and the world's answer rather than the meter's. It is what makes a row with no recent frames readable: nobody is watching, as against nothing is moving.
+   */
+  subscribers: number
 }
 /**
  * A refused request. An error is always a reply to a request id — a failure with no request behind it closes the connection instead.
