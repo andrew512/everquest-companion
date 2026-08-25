@@ -19,3 +19,8 @@ serde_json.workspace = true
 # THE PARSER AND THE TAIL, as a library. Both halves of ingest are proven standalone (JOS-469's
 # byte-identity oracle, JOS-472's scan-equivalence oracle) and this crate re-decides neither.
 eqlog = { path = "../eqlog" }
+
+# THE FOLD, as a library (JOS-478). Twenty modules proven against the TS snapshots on all six
+# slices; this crate re-decides none of that either. It reaches ingest through ONE trait, and the
+# whole of the join is `src/foldsink.rs`.
+fold = { path = "../fold" }

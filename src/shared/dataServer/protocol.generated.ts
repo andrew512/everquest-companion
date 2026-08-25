@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:2ebec8b610d4d05c702b55585f8d4c695680cf01ce6be4bce2f747a0a17b9654
+// schema-digest: sha256:c1059126b392d7caf5ddbad9ddc61cb8540f9a2ae3057dd6df10fbfe716b3328
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -23,6 +23,7 @@ export type ClientMessage =
   | SessionAttachRequest
   | SessionHealthRequest
   | SessionProgressRequest
+  | ModuleSnapshotRequest
   | ViewSubscribeRequest
   | ViewUnsubscribeRequest
 /**
@@ -52,11 +53,16 @@ export type EngineMessage =
 /**
  * THE RESULT REGISTRY, and it is CLOSED. Which shape a reply carries is decided by the OP of the request whose id it names - the envelope does not repeat it, because a reply that had to restate its own op would be a second place for the two to disagree. This list is the additive seam for the eight API surfaces: a new op adds an arm and nothing else in the envelope moves. There is deliberately NO open arm for a shape this build does not know: both sides generate from this one artifact and a protocolVersion mismatch is fatal at hello, so an engine that could answer with an unnamed shape is an engine this client already refused to talk to. A wildcard arm would also make the whole list unusable - an open object matches every named shape too, so `oneOf` could never pick one.
  */
-export type ReplyResult = EchoResult | HealthResult | AttachResult | SubscribeAck
+export type ReplyResult =
+  EchoResult | HealthResult | AttachResult | SubscribeAck | ModuleSnapshotResult
 /**
  * The world's generation. Monotonic within one engine process. A client that sees an epoch it did not expect DROPS ALL STATE and waits for the reset — it never reconciles across a bump.
  */
 export type Epoch = number
+/**
+ * THE MODULE'S PUBLISHED STATE, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the same argument Cells makes, one level up: the field set belongs to the thing that publishes it, so a module growing a field is not a protocol change. `type` NAMES EVERY JSON TYPE rather than being omitted, and that is not decoration: an omitted `type` lowers to an INDEX-SIGNATURE object in TypeScript, which would forbid the ARRAY half of the registry — `kills` publishes an object, `loot`, `consider` and `eventFeed` publish arrays of rows, and a schema that named one of those shapes would be a rule the fold already breaks. IT IS THE SECOND HAND-WRITTEN REPLACEMENT ON THE RUST SIDE, for exactly the reason `Cell` is: typify lowers a multi-type schema to an untagged enum whose number arm is `f64`, and a module state is FULL of counts. The replacement is `serde_json::Value`, which is the same claim this definition makes, spelled in Rust.
+ */
+export type ModuleState = {} | unknown[] | string | number | boolean | null
 /**
  * A CLOSED set. Both sides generate from this artifact, so adding a member is a schema edit that regenerates both — there is no version of the app that can meet a code it has never heard of.
  */
@@ -129,6 +135,20 @@ export interface SessionProgressRequest {
   params: NoParams
 }
 /**
+ * THE FIRST DATA-BEARING OP. Asks the live fold for one module's published state — the same `{ seq, state }` the app's own module registry hydrates from today. The answer is a point-in-time read of the ingest's fold: mid-scan it is a real PREFIX state (every event up to `seq` and no part of another), because the fold answers between its own read boundaries and never inside one. An unknown module name is `notFound`: the registry is the authority on what a module is, and an empty state would be a lie about a module that does not exist.
+ */
+export interface ModuleSnapshotRequest {
+  id: RequestId
+  op: 'module.snapshot'
+  params: ModuleSnapshotParams
+}
+export interface ModuleSnapshotParams {
+  /**
+   * The module's id, exactly as the registry spells it — `loot`, `kills`, `buffTimers`. Not a view source: a view is filtered, sorted and windowed, and this is the module's whole state.
+   */
+  module: string
+}
+/**
  * Opens a subscription. The reply acknowledges; the data starts with a `reset` carrying the whole window.
  */
 export interface ViewSubscribeRequest {
@@ -196,10 +216,35 @@ export interface Reply {
 export interface EchoResult {
   text: string
 }
+/**
+ * What the engine's ingest is doing, and where it has got to. THE LAST THREE FIELDS ARE OPTIONAL AND THAT IS NOT A CONVENIENCE: a health answer given before any attach honestly has no mark, no event count and no log timestamp, and a zero would be a measurement nobody took. Absent means `this engine has not folded anything`; present means the numbers are the fold's own.
+ */
 export interface HealthResult {
   status: 'starting' | 'attaching' | 'folding' | 'live' | 'idle'
   epoch: Epoch
   uptimeMs: number
+  mark?: LogMark
+  /**
+   * Events folded in this generation. Counts EVENTS, not lines — a log line the parser declines is not one.
+   */
+  events?: number
+  /**
+   * The `ts` of the last event folded — THE LOG'S OWN CLOCK, never the host's. Absent when nothing folded, or when no event so far carried a stamp the parser could read.
+   */
+  lastEventTs?: number
+}
+/**
+ * THE ADDRESSABLE COORDINATE (owner ruling 18 law 3): state is addressed by (log identity, byte offset) and by nothing else — never by wall time, never by `current`. `offset` is the end of the last COMPLETE line folded, which is the same definition as the scan's end offset; a half-written line is not an event and the mark waits with it. THIS IS NOT A FRAMING CONCERN: it is a coordinate INSIDE the file the engine reads, and it would mean the same thing over any transport.
+ */
+export interface LogMark {
+  /**
+   * The log being folded, as the path the app handed the engine at attach. The engine never discovers a path of its own.
+   */
+  log: string
+  /**
+   * The end of the last complete line folded, counted from the start of the file.
+   */
+  offset: number
 }
 export interface AttachResult {
   epoch: Epoch
@@ -211,6 +256,17 @@ export interface AttachResult {
 export interface SubscribeAck {
   subscription: RequestId
   subscribed: boolean
+}
+export interface ModuleSnapshotResult {
+  /**
+   * The module that answered, echoed back so a caller holding several in flight needs no bookkeeping of its own.
+   */
+  module: string
+  /**
+   * The module's OWN published seq — for most modules the seq of the last event it folded, and for the four that publish a private revision counter (combo, character, respawn, buffTimers) that counter. It is a hydration cursor, not the fold's event count; `HealthResult.events` is the count.
+   */
+  seq: number
+  state: ModuleState
 }
 /**
  * A refused request. An error is always a reply to a request id — a failure with no request behind it closes the connection instead.

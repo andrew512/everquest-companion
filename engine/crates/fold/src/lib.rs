@@ -190,6 +190,24 @@ impl Registry {
         self.mods.iter().find_map(|m| m.as_roster())
     }
 
+    /// ONE MODULE'S PUBLISHED SNAPSHOT, by the id it answers to — `{ "seq": …, "state": … }`, the
+    /// same pair [`Registry::snapshots`] collects and the same one the goldens join on.
+    ///
+    /// `None` for a name nothing registered, and that is the ANSWER rather than an absence to be
+    /// papered over: the registry is the authority on what a module is (JOS-478's `module.snapshot`
+    /// turns this into the protocol's `notFound`), and an empty state would be a lie about a module
+    /// that does not exist. Note that a `WIRING_ORDER` name this build has not registered answers
+    /// `None` too — a module that is not folding has no state, whatever the wiring says it will.
+    ///
+    /// A LINEAR SCAN over at most twenty entries, made once per request rather than once per event,
+    /// exactly as `Registry::roster` is.
+    pub fn snapshot_of(&self, id: &str) -> Option<Value> {
+        self.mods
+            .iter()
+            .find(|m| m.id() == id)
+            .map(|m| m.snapshot())
+    }
+
     /// Every id `WIRING_ORDER` names that nothing registered — the harness's SKIPPED list.
     pub fn missing(&self) -> Vec<&'static str> {
         let have: HashSet<&str> = self.ids().into_iter().collect();

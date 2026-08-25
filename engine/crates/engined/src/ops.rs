@@ -14,12 +14,13 @@
 
 use protocol::generated::{
     ClientMessage, EchoRequestOp, EchoResult, EngineMessage, ErrorCode, ErrorReply, ErrorReplyKind,
-    HelloOp, ProtocolError, Reply, ReplyKind, ReplyResult, RequestId, ResetMessage,
-    ResetMessageKind, SessionAttachRequestOp, SessionHealthRequestOp, SessionProgressRequestOp,
-    SubscribeAck, ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
+    HelloOp, ModuleSnapshotRequestOp, ModuleSnapshotResult, ProtocolError, Reply, ReplyKind,
+    ReplyResult, RequestId, ResetMessage, ResetMessageKind, SessionAttachRequestOp,
+    SessionHealthRequestOp, SessionProgressRequestOp, SubscribeAck, ViewSubscribeRequestOp,
+    ViewUnsubscribeRequestOp,
 };
 
-use crate::world::{ListenerId, World};
+use crate::world::{ListenerId, SnapshotAnswer, World};
 
 /// One connection's own state — everything that belongs to this conversation rather than to the
 /// world.
@@ -109,6 +110,41 @@ impl Session {
                         subscribed: true,
                     }),
                 )
+            }
+
+            // MODULE.SNAPSHOT — THE FIRST DATA-BEARING OP (JOS-478). Everything above this line is
+            // an envelope; this one carries the fold's own answer.
+            //
+            // THE ANSWER IS THE INGEST THREAD'S, fetched through the one door. This dispatch stays
+            // a pure function of (world, session, message) because `World::module_snapshot` returns
+            // a value rather than writing one — it is the WAIT that is new, and it is bounded and
+            // owned by the world (see that method for why the lock is not held across it).
+            //
+            // THREE OUTCOMES, THREE SENTENCES. A module the registry does not carry is `notFound`,
+            // because the registry is the authority and an empty state would be a lie about a
+            // module that does not exist. A world with no fold is `unavailable` — nothing is wrong
+            // with the request, there is simply nothing attached yet, and telling a client
+            // `notFound` there would send it hunting for a typo in a name that is perfectly good.
+            ClientMessage::ModuleSnapshotRequest(request) => {
+                let module = request.params.module;
+                match world.module_snapshot(&module) {
+                    SnapshotAnswer::Snapshot(snapshot) => reply(
+                        request.id,
+                        ReplyResult::ModuleSnapshotResult(ModuleSnapshotResult {
+                            module,
+                            seq: snapshot.seq,
+                            state: snapshot.state,
+                        }),
+                    ),
+                    SnapshotAnswer::NotFound => error(
+                        request.id,
+                        ErrorCode::NotFound,
+                        format!("this engine folds no module named {module:?}"),
+                    ),
+                    SnapshotAnswer::Unavailable(why) => {
+                        error(request.id, ErrorCode::Unavailable, why)
+                    }
+                }
             }
 
             // SUBSCRIBE. Acknowledge, then open the stream with a reset — reset-then-diffs is rule
@@ -292,6 +328,7 @@ fn is_known_op(op: &str) -> bool {
         SessionAttachRequestOp::SessionAttach.to_string(),
         SessionHealthRequestOp::SessionHealth.to_string(),
         SessionProgressRequestOp::SessionProgress.to_string(),
+        ModuleSnapshotRequestOp::ModuleSnapshot.to_string(),
         ViewSubscribeRequestOp::ViewSubscribe.to_string(),
         ViewUnsubscribeRequestOp::ViewUnsubscribe.to_string(),
     ]
@@ -305,10 +342,11 @@ mod tests {
     use crate::world::World;
     use protocol::generated::{
         ClientMessage, EchoParams, EchoRequest, EchoRequestOp, EngineMessage, ErrorCode, Hello,
-        HelloOp, ReplyResult, RequestId, SessionAttachParams, SessionAttachRequest,
-        SessionAttachRequestOp, SessionHealthRequest, SessionHealthRequestOp, Token,
-        ViewDescriptor, ViewSubscribeRequest, ViewSubscribeRequestOp, ViewUnsubscribeParams,
-        ViewUnsubscribeRequest, ViewUnsubscribeRequestOp,
+        HelloOp, ModuleSnapshotParams, ModuleSnapshotRequest, ModuleSnapshotRequestOp, ReplyResult,
+        RequestId, SessionAttachParams, SessionAttachRequest, SessionAttachRequestOp,
+        SessionHealthRequest, SessionHealthRequestOp, Token, ViewDescriptor, ViewSubscribeRequest,
+        ViewSubscribeRequestOp, ViewUnsubscribeParams, ViewUnsubscribeRequest,
+        ViewUnsubscribeRequestOp,
     };
 
     fn echo(id: i64, text: &str) -> ClientMessage {
@@ -532,6 +570,42 @@ mod tests {
             assert!(matches!(what, Unreadable::Uncorrelatable), "{raw}");
             assert!(refuse(&what).is_none());
         }
+    }
+
+    #[test]
+    fn module_snapshot_is_an_op_this_build_knows() {
+        // THE KNOWN-OP LIST IS BUILT FROM THE GENERATED TAG ENUMS and a new op must be added to it,
+        // or a request with a typo'd param gets `unknownOp` — which sends a client hunting for a
+        // missing feature instead of for its own mistake. This is the pin for the op JOS-478 added.
+        let raw =
+            serde_json::json!({"id": 44, "op": "module.snapshot", "params": {"modul": "loot"}});
+        let Some(EngineMessage::ErrorReply(refusal)) = refuse(&classify(&raw)) else {
+            panic!("a refusal");
+        };
+        assert!(matches!(refusal.error.code, ErrorCode::BadParams));
+    }
+
+    #[test]
+    fn a_module_snapshot_with_no_fold_is_unavailable_rather_than_not_found() {
+        // A world whose attaches start NOTHING has no ingest to ask, and the two refusals mean
+        // different things to a client — see the dispatch arm.
+        let (world, mut session) = table();
+        world.attach(A_LOG);
+        let messages = sent(session.dispatch(
+            &world,
+            ClientMessage::ModuleSnapshotRequest(ModuleSnapshotRequest {
+                id: RequestId(12),
+                op: ModuleSnapshotRequestOp::ModuleSnapshot,
+                params: ModuleSnapshotParams {
+                    module: "loot".to_owned(),
+                },
+            }),
+        ));
+        let [EngineMessage::ErrorReply(refusal)] = messages.as_slice() else {
+            panic!("a refusal");
+        };
+        assert_eq!(*refusal.id, 12);
+        assert!(matches!(refusal.error.code, ErrorCode::Unavailable));
     }
 
     #[test]

@@ -257,10 +257,22 @@ pub fn render_types(bundle: &serde_json::Value) -> Result<String> {
     // them in an order that changes from process to process, which makes a wire capture
     // unreproducible and a golden test a coin flip. A BTreeMap costs nothing at these sizes.
     settings.with_map_type("::std::collections::BTreeMap");
-    // THE ONE REPLACEMENT. See `protocol::cell` for the whole argument: typify lowers the schema's
-    // `["string","number","boolean","null"]` to an enum whose number arm is `f64`, which turns
-    // `184220` into `184220.0` on the way back out. Every other type in the contract is generated.
+    // THE TWO REPLACEMENTS, and they are the same defect twice. typify lowers a MULTI-TYPE schema
+    // to an untagged enum whose number arm is `f64`, which turns `184220` into `184220.0` on the
+    // way back out — and both of these types carry counts.
+    //
+    //   * `Cell` — see `protocol::cell` for the whole argument. Hand-written because it is also a
+    //     CLOSED type: it must refuse an object and an array.
+    //   * `ModuleState` (JOS-478) — a module's published state, whose shape is the MODULE's
+    //     contract and not the protocol's. There is nothing to hand-write: the definition says
+    //     "any JSON", and `serde_json::Value` is that sentence in Rust. It also keeps a state's
+    //     integers integral through a deserialize/serialize round trip, which the generated enum
+    //     would not.
+    //
+    // Every other type in the contract is generated. `tests/protocolSchema.test.mts` knows both
+    // names by exception, so a third replacement cannot be added without saying so out loud.
     settings.with_replacement("Cell", "crate::cell::Cell", std::iter::empty());
+    settings.with_replacement("ModuleState", "::serde_json::Value", std::iter::empty());
     let mut space = typify::TypeSpace::new(&settings);
     space
         .add_root_schema(root)

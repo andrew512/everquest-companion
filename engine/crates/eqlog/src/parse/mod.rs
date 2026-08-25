@@ -22,6 +22,7 @@ use crate::event::Ev;
 use crate::spelldb::SpellDb;
 use crate::timestamp::Clock;
 use regex::Regex;
+use std::sync::Arc;
 
 /// One log line, pre-split — `ClassifyCtx`. `text` is the message with the `[timestamp] ` prefix
 /// removed.
@@ -34,9 +35,16 @@ pub struct Ctx<'a> {
 
 /// The parser, and everything a parse is a pure function of: the bytes, the spell DB, and the
 /// character name (docs/plans/data-server.md ruling 18 — no globals that outlive a parse).
+///
+/// THE DATABASE IS HELD BY `Arc` RATHER THAN BY VALUE (JOS-478), and that is the whole of that
+/// change: a parser still OWNS its view of the catalog and nothing here can mutate it, but two
+/// parsers in one process can now be handed the same one. Held by value it could not be, which is
+/// what made `engined` rebuild the entire catalog on every attach — 386 ms in a release build, of
+/// bytes compiled into the binary. See [`crate::spelldb::shared`] for the argument that a
+/// process-wide copy of committed data is not a cache.
 pub struct Parser {
     clock: Clock,
-    db: Option<SpellDb>,
+    db: Option<Arc<SpellDb>>,
     character: Option<String>,
     line: Regex,
     combat: combat::CombatRes,
@@ -56,10 +64,21 @@ impl Parser {
     /// database the parser is emitting `candidates` out of — two loads is two answers waiting to
     /// disagree after an overlay change.
     pub fn spell_db(&self) -> Option<&SpellDb> {
-        self.db.as_ref()
+        // `as_deref` rather than `as_ref`: the `Arc` is how the catalog is HELD, never part of what
+        // a caller is handed, so nothing downstream of this crate learns that it is shared.
+        self.db.as_deref()
     }
 
-    pub fn new(clock: Clock, db: Option<SpellDb>, character: Option<String>) -> Self {
+    /// THE CLOCK THIS PARSER STAMPS WITH. Read by the FOLD (JOS-478): `epochDetector`'s launch
+    /// anchor is a local-time instant, and it has to be resolved through the SAME zone the events
+    /// it is compared against were parsed in — `fold::epoch::launch_ms`'s header is emphatic about
+    /// it. Handing over the parser's own is what makes "the same zone" true by construction rather
+    /// than by two callers agreeing to pass the same argument.
+    pub fn clock(&self) -> &Clock {
+        &self.clock
+    }
+
+    pub fn new(clock: Clock, db: Option<Arc<SpellDb>>, character: Option<String>) -> Self {
         Parser {
             clock,
             db,
@@ -111,7 +130,7 @@ impl Parser {
     /// The ordered line-shape cascade. Each entry is offered the line and either claims it or
     /// declines. A line matching nothing is `{kind:'unknown'}`.
     fn classify(&self, c: &Ctx, out: &mut Ev) {
-        let db = self.db.as_ref();
+        let db = self.db.as_deref();
         let name = self.character.as_deref();
         let claimed = combat::classify_miss(&self.combat, c, out)
             || combat::classify_mitigation(&self.combat, c, out)

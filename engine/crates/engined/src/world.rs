@@ -47,7 +47,7 @@ use std::time::Instant;
 
 use protocol::generated::{
     AttachResult, EngineMessage, Epoch, EpochMessage, EpochMessageKind, EpochReason, FoldProgress,
-    HealthResult, HealthResultStatus, RequestId, ResetMessage, ResetMessageKind,
+    HealthResult, HealthResultStatus, LogMark, RequestId, ResetMessage, ResetMessageKind,
 };
 
 use crate::ingest::{self, Starter};
@@ -58,6 +58,34 @@ use crate::ingest::{self, Starter};
 /// read as "no world yet" to anybody skimming a log. A launch is generation 1 and the first attach
 /// makes it 2.
 const FIRST_EPOCH: i64 = 1;
+
+/// How long [`World::module_snapshot`] waits for the ingest thread before calling it unreachable.
+///
+/// GENEROUS ON PURPOSE, AND THE ARITHMETIC IS THE REASON. The ingest answers at a boundary it
+/// already reaches: one 1 MiB read of the scan, or one 25 ms nap of the tail. A release build folds
+/// ~9 MB/s through the twenty modules, so that boundary is ~110 ms; a DEBUG build is an order of
+/// magnitude slower, which puts one slice near a second, and a loaded machine further still. Five
+/// seconds clears all of that by a wide margin while still being short enough that a client's
+/// request does not look hung — and every millisecond above the real wait is spent only on a fold
+/// that is not coming back.
+const SNAPSHOT_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// What [`World::module_snapshot`] found.
+///
+/// THREE OUTCOMES AND NOT TWO, because "this engine has no such module" and "this engine has no
+/// fold" are different sentences and a client branches on them differently: the first is a caller
+/// bug (or a build skew), the second is a session that has not attached yet and will.
+#[derive(Debug)]
+pub enum SnapshotAnswer {
+    /// The module answered with its published state.
+    Snapshot(ingest::ModuleSnapshot),
+    /// The fold carries no module by that name. The REGISTRY is the authority — see
+    /// [`ingest::EventSink::snapshot`].
+    NotFound,
+    /// Nothing is folding, or the fold could not be reached. The string is the diagnostic that
+    /// reaches the client's `ErrorReply.message`.
+    Unavailable(String),
+}
 
 /// A handle on the process's whole state. Cheap to clone; every clone is the same world.
 #[derive(Clone)]
@@ -89,6 +117,13 @@ struct State {
     status: HealthResultStatus,
     /// What the current ingest has folded, in the only coordinates law 3 allows.
     fold: Fold,
+    /// THE WAY TO ASK THE CURRENT FOLD A QUESTION, or `None` when nothing is folding.
+    ///
+    /// It is a SENDER and not the fold, which is the whole design (see [`ingest::SnapshotAsk`]):
+    /// the world holds a way to reach the ingest thread, never a second handle on its state. A
+    /// preemption drops it — `attach` clears the field under the same lock that bumps the epoch —
+    /// so a reader can never be answered by a fold the world has already disowned.
+    snapshots: Option<Sender<ingest::SnapshotAsk>>,
 }
 
 /// What the world's fold has consumed. A COORDINATE PAIR plus what was counted along the way.
@@ -188,6 +223,7 @@ impl World {
                     next_listener: 0,
                     status: HealthResultStatus::Idle,
                     fold: Fold::default(),
+                    snapshots: None,
                 }),
             }),
         }
@@ -248,18 +284,84 @@ impl World {
     /// accepted, `attaching` while the log is opened and the parse's inputs are built, `folding`
     /// for the length of the historical scan, and `live` once the tail owns the file.
     ///
-    /// A SCHEMA GAP, STATED RATHER THAN WORKED AROUND: `HealthResult` carries `status`, `epoch` and
-    /// `uptimeMs` and has nowhere to put the mark, the event count or the log's last timestamp. The
-    /// engine owns all three (boundary verdict 4) and answers them through [`World::mark`] to its
-    /// own callers; putting them on the wire is a schema change, which goes through the integrator.
-    /// The one measurement that does reach a client today is `pct`/`events` on a progress frame.
+    /// THE MARK IS ON THE WIRE NOW (JOS-478), and the schema gap phase 2 wrote down here is closed:
+    /// `HealthResult` carries the mark — the addressable coordinate of ruling 18 law 3, a log
+    /// identity and the byte offset of the last complete line folded — plus the event count and the
+    /// log's own last timestamp. The engine still OWNS all three (boundary verdict 4); it merely
+    /// answers them to a client as well as to itself.
+    ///
+    /// ALL THREE ARE ABSENT BEFORE THE FIRST ATTACH, and absent is not zero. A fresh process has no
+    /// log, so it has no coordinate; publishing `offset: 0` would be a measurement nobody took, and
+    /// a client cannot tell "nothing folded" from "folded nothing" if the two look the same. The
+    /// discriminator is the LOG: the world knows one from the instant an attach is accepted, and
+    /// from that instant the count and the mark are real answers even while they read zero.
     #[must_use]
     pub fn health(&self) -> HealthResult {
         let state = self.lock();
+        let mark = state.fold.log.as_ref().map(|log| LogMark {
+            log: log.to_string_lossy().into_owned(),
+            offset: i64::try_from(state.fold.checkpoint).unwrap_or(i64::MAX),
+        });
         HealthResult {
             status: state.status,
             epoch: Epoch(state.epoch),
             uptime_ms: i64::try_from(self.inner.started.elapsed().as_millis()).unwrap_or(i64::MAX),
+            // `events` rides with the mark, because they are one measurement read two ways: the
+            // count and the coordinate it was reached at. One present and the other absent would
+            // be a pair a reader has to reason about.
+            events: mark.as_ref().map(|_| state.fold.events),
+            // …and `lastEventTs` does NOT, because it has its own reason to be missing: a fold that
+            // has folded nothing yet, or whose events so far carried no stamp the parser could
+            // read, honestly has no log clock to report.
+            last_event_ts: state.fold.last_ts,
+            mark,
+        }
+    }
+
+    /// Answer `module.snapshot` — one module's published state, from the fold that is running.
+    ///
+    /// THE ANSWER COMES FROM THE INGEST THREAD AND FROM NOWHERE ELSE. This method holds the world's
+    /// lock only long enough to copy the way IN (see [`State::snapshots`]); the wait happens with
+    /// the lock released, or the fold's own `report_progress` would deadlock against the reader
+    /// waiting for it.
+    ///
+    /// THE DEADLINE IS A FAILURE MECHANISM, not a latency budget. In the shapes that exist the
+    /// answer arrives within one read boundary of a scan or one nap of a tail; [`SNAPSHOT_PATIENCE`]
+    /// exists so that a fold wedged on a pathological file turns into an `unavailable` reply rather
+    /// than a connection that never answers — the same argument the ingest suite's own deadline
+    /// makes.
+    #[must_use]
+    pub fn module_snapshot(&self, module: &str) -> SnapshotAnswer {
+        // THE LOCK IS TAKEN AND RELEASED IN THESE THREE LINES, and they are three lines rather than
+        // one so that nothing about drop order has to be reasoned about: the guard is a named
+        // binding inside a block, and the block ends before anything below can block.
+        let asks = {
+            let state = self.lock();
+            state.snapshots.clone()
+        };
+        let Some(asks) = asks else {
+            return SnapshotAnswer::Unavailable(
+                "no log is attached, so there is no fold to ask".to_owned(),
+            );
+        };
+        let (answer, wait) = channel();
+        let ask = ingest::SnapshotAsk {
+            module: module.to_owned(),
+            answer,
+        };
+        if asks.send(ask).is_err() {
+            // The receiver is gone: the ingest ended between the copy above and this send. That is
+            // the same outcome as never having had one, and it is stated differently because the
+            // two are different things to read in a bug report.
+            return SnapshotAnswer::Unavailable("the fold that was answering has ended".to_owned());
+        }
+        match wait.recv_timeout(SNAPSHOT_PATIENCE) {
+            Ok(Some(snapshot)) => SnapshotAnswer::Snapshot(snapshot),
+            Ok(None) => SnapshotAnswer::NotFound,
+            Err(_) => SnapshotAnswer::Unavailable(format!(
+                "the fold did not answer within {} ms",
+                SNAPSHOT_PATIENCE.as_millis()
+            )),
         }
     }
 
@@ -313,6 +415,11 @@ impl World {
                 log: Some(log.clone()),
                 ..Fold::default()
             };
+            // THE OLD FOLD STOPS BEING ASKABLE AT THE BUMP, in the same critical section that
+            // strips it of its ownership. Not when it notices, not when its thread ends: a reader
+            // must never be answered by a generation the world has already replaced, and the
+            // preempted ingest's own `report_*` calls already cannot write anything.
+            state.snapshots = None;
             let announcement = EngineMessage::EpochMessage(EpochMessage {
                 kind: EpochMessageKind::Epoch,
                 epoch: Epoch(state.epoch),
@@ -334,6 +441,22 @@ impl World {
     #[must_use]
     pub fn owns(&self, generation: u64) -> bool {
         self.inner.generation.load(Ordering::SeqCst) == generation
+    }
+
+    /// THE INGEST OFFERS TO ANSWER QUESTIONS: install this turn's snapshot channel.
+    ///
+    /// A `report_*` method like every other statement an ingest makes, and for the same reason —
+    /// ownership is re-asked INSIDE the lock, so a turn that has already lost cannot install a door
+    /// onto a fold nobody wants. It is called once per attach, before the first byte is folded, so
+    /// that `module.snapshot` during the historical scan is answerable rather than merely
+    /// eventually answerable.
+    pub fn serve_snapshots(&self, generation: u64, asks: Sender<ingest::SnapshotAsk>) -> bool {
+        let mut state = self.lock();
+        if !self.owns(generation) {
+            return false;
+        }
+        state.snapshots = Some(asks);
+        true
     }
 
     /// Move the health status, if this turn still owns the world.
@@ -420,6 +543,10 @@ impl World {
             return false;
         }
         state.status = HealthResultStatus::Idle;
+        // AND NOTHING IS ASKABLE ANY MORE. The ingest's receiver is about to be dropped with its
+        // thread; clearing the sender here makes the world say "no fold" rather than making every
+        // reader discover it one failed send at a time.
+        state.snapshots = None;
         true
     }
 

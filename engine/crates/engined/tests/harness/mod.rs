@@ -20,10 +20,11 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use protocol::generated::{
-    ClientMessage, EchoParams, EchoRequest, EchoRequestOp, EngineMessage, Hello, HelloOp, NoParams,
-    RequestId, SessionAttachParams, SessionAttachRequest, SessionAttachRequestOp,
-    SessionHealthRequest, SessionHealthRequestOp, SessionProgressRequest, SessionProgressRequestOp,
-    Token, ViewDescriptor, ViewSubscribeRequest, ViewSubscribeRequestOp, ViewUnsubscribeParams,
+    ClientMessage, EchoParams, EchoRequest, EchoRequestOp, EngineMessage, Hello, HelloOp,
+    ModuleSnapshotParams, ModuleSnapshotRequest, ModuleSnapshotRequestOp, NoParams, RequestId,
+    SessionAttachParams, SessionAttachRequest, SessionAttachRequestOp, SessionHealthRequest,
+    SessionHealthRequestOp, SessionProgressRequest, SessionProgressRequestOp, Token,
+    ViewDescriptor, ViewSubscribeRequest, ViewSubscribeRequestOp, ViewUnsubscribeParams,
     ViewUnsubscribeRequest, ViewUnsubscribeRequestOp,
 };
 use protocol::transport::ndjson::NdjsonTransport;
@@ -425,6 +426,18 @@ pub fn progress(id: i64) -> ClientMessage {
         id: RequestId(id),
         op: SessionProgressRequestOp::SessionProgress,
         params: NoParams {},
+    })
+}
+
+/// One `module.snapshot` request naming a module id.
+#[must_use]
+pub fn module_snapshot(id: i64, module: &str) -> ClientMessage {
+    ClientMessage::ModuleSnapshotRequest(ModuleSnapshotRequest {
+        id: RequestId(id),
+        op: ModuleSnapshotRequestOp::ModuleSnapshot,
+        params: ModuleSnapshotParams {
+            module: module.to_owned(),
+        },
     })
 }
 

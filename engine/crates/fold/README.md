@@ -33,6 +33,19 @@ landing the world model, the whole attribution ladder, the encounter lifecycle a
 sums/lanes are in, and the VIEW BUILDERS are what is left. Prove it with `--ledger` (below), never
 by eye.
 
+**THE REGISTRY IS PLUGGED IN** (JOS-478). `engined` builds it on its ingest thread — one
+`ClusterDeps` assembled from the parser's own catalog and clock, in `engine/crates/engined/src/
+foldsink.rs` — and serves one module's `{seq, state}` over the wire as `module.snapshot`, answered
+through `Registry::snapshot_of`. Two consequences for anyone editing this crate:
+
+* **A module's published state is now a wire shape**, and the protocol deliberately says nothing
+  about it (`ModuleState` is "any JSON"). Both shapes this registry publishes are load-bearing —
+  `kills` publishes an object, `loot`/`consider`/`eventFeed` publish arrays — and the app side reads
+  them unchanged.
+* **The spell catalog is `eqlog::spelldb::shared()`**, one `Arc` per process. `modules/resist/
+  catalog.rs` used to `load()` a second whole database behind its lazy table; it reads the shared
+  handle now. The tables it builds are unchanged and the six-slice gate proves it.
+
 The constructor takes a `ClusterDeps` struct (JOS-475). Add a FIELD to it and a `register` line at
 your module's `WIRING_ORDER` position; do not re-thread the call sites. The function itself has been
 renamed twice — `cluster_2a`, then `cluster_2a_2b`, now `registered` — for the same reason each

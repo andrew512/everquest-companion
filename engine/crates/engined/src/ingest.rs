@@ -27,14 +27,20 @@
 //! defect JOS-457 was (character A's history landing in character B's freshly reset modules), made
 //! impossible by construction rather than by ordering.
 //!
-//! ## THE SINK IS THE PHASE-2a SEAM
+//! ## THE SINK IS THE FOLD SEAM (and since JOS-478 the fold is on the other side of it)
 //!
-//! Ingest terminates in a trait object. Today that is [`CountingSink`] — events in, a counter out.
-//! When the fold registry (JOS-471, `engine/crates/fold`) lands, the only edit is the CONSTRUCTION:
-//! one `impl EventSink for …` (which must live in this crate anyway, by the orphan rule) and one
-//! [`SinkFactory`] handed to [`starter`] in `main.rs`. The ingest loops, the generation law, the
-//! progress cadence and the mark do not move. See the crate README's "The sink seam" for the
-//! drop-in recipe.
+//! Ingest terminates in a trait object. [`CountingSink`] is still the honest floor — events in, a
+//! counter out — and `crate::foldsink` is what production hands [`starter`]: the twenty-module
+//! registry, folding on this thread and answering [`EventSink::snapshot`] from it.
+//!
+//! THE FACTORY TAKES THE PARSE'S INPUTS (JOS-478), which is the one thing about this seam that
+//! moved. It used to take nothing, and that was the knot the crate README named for the
+//! integrator: `fold::ClusterDeps` wants the spell DB's key set and its class index, both built
+//! off a database that exists only INSIDE this thread, so a sink factory that could not see it
+//! could not build a fold. It sees it now — [`SinkInputs`] — and the sink is built here, on the
+//! ingest thread, rather than on the connection thread that asked for the attach. That second half
+//! matters as much as the first: building a fold is tens of milliseconds of index projection, and
+//! doing it inside `World::attach` would have put it in front of the `accepted` reply.
 //!
 //! THE EVENT IS ITS SERIALIZED JSON, and that is not laziness: `eqlog::event::Ev` writes an event
 //! key by key in the TS's insertion order because the phase-1 bar is byte identity with
@@ -50,11 +56,19 @@
 //! the PROGRESS CADENCE — how often a measurement is announced, never what it measures, and a frame
 //! that is skipped changes no state at all — and one times the spell-DB build for a stderr
 //! diagnostic. Neither can reach a sink.
+//!
+//! **THERE IS EXACTLY ONE WALL-CLOCK READ THAT DOES REACH A SINK** (JOS-478), and it is named
+//! rather than hidden: [`now_ms`], read ONCE per attach into
+//! [`SinkInputs::attached_at_ms`] — the world's CONSTRUCTION clock. It measures when this world was
+//! built and nothing else; over there `WorldOpts.constructionNowMs` defaults to `Date.now()` at
+//! construction for the same reason. Once a fold exists, every time-based rule inside it advances
+//! off LOG timestamps, and `on_tick` — the live tail's heartbeat — is not called from here at all.
 
 use std::fs::File;
 use std::io::{self, Read};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -110,13 +124,20 @@ pub struct Event<'a> {
     pub live: bool,
 }
 
-/// WHERE INGEST ENDS. The phase-2a seam: one trait, events in.
+/// WHERE INGEST ENDS. The fold seam: one trait, events in, state out.
 ///
 /// The fold registry implements this (in an `impl` block in THIS crate — the orphan rule requires
-/// it, and it is the whole extent of the edit); its factory reaches the world as
-/// `World::with_ingest(ingest::starter(<factory>))`. Nothing else about ingest changes when it
-/// arrives.
-pub trait EventSink: Send {
+/// it: `crate::foldsink`); its factory reaches the world as
+/// `World::with_ingest(ingest::starter(<factory>))`.
+///
+/// **IT IS NO LONGER `Send`, AND THAT IS THE SAME EDIT AS THE FACTORY'S** (JOS-478). A sink used to
+/// be built on the connection thread and MOVED into the ingest thread, which is what required the
+/// bound. It is built on the ingest thread now and never crosses a thread boundary at all, so the
+/// bound is not merely unnecessary — keeping it would forbid the fold: `fold::Fold` holds the
+/// buffs/buffTimers shared core in an `Rc<RefCell<…>>`, which is exactly the right choice for state
+/// that provably lives on one thread and exactly what `Send` refuses. The single-threadedness is
+/// now stated by the type rather than promised by a comment.
+pub trait EventSink {
     /// One event, in emission order. Called once per event, on the ingest thread, and on no other.
     fn event(&mut self, event: &Event<'_>);
 
@@ -128,6 +149,60 @@ pub trait EventSink: Send {
     fn report(&self) -> SinkReport {
         SinkReport::default()
     }
+
+    /// One module's published state, or `None` when this sink folds no module by that name.
+    ///
+    /// `&self` AND NOT `&mut self`, DELIBERATELY: reading a module's state is a read, and a
+    /// snapshot that could advance the fold would make the answer depend on who asked. Defaulted to
+    /// `None` because a sink that folds nothing — [`CountingSink`] — honestly has no module, and
+    /// `None` becomes the protocol's `notFound`: the registry is the authority, and an empty state
+    /// would be a lie about a module that does not exist.
+    ///
+    /// CALLED ON THE INGEST THREAD, between events, and on no other — see [`SnapshotAsk`].
+    fn snapshot(&self, _module: &str) -> Option<ModuleSnapshot> {
+        None
+    }
+}
+
+/// One module's published state, exactly as `EqModule::snapshot` publishes it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModuleSnapshot {
+    /// The module's OWN seq — for most modules the seq of the last event it folded, and for the
+    /// four that publish a private revision counter (JOS-87) that counter. A hydration cursor,
+    /// never the fold's event count.
+    pub seq: i64,
+    /// The module's state. THE SHAPE IS THE MODULE'S, not this crate's and not the protocol's:
+    /// `kills` publishes an object, `loot` publishes an array, and nothing between the module and
+    /// the wire is allowed an opinion about which.
+    pub state: serde_json::Value,
+}
+
+/// ONE REQUEST FOR ONE MODULE'S STATE, and the way back.
+///
+/// WHY A CHANNEL AND NOT A LOCK — the load-bearing paragraph of this seam. The fold lives on the
+/// ingest thread; a `module.snapshot` request arrives on a connection thread. Three shapes were
+/// available and two of them are wrong here:
+///
+///   * A `Mutex<Fold>` shared between the threads. It would make the fold's own hot loop take a
+///     lock per event, for the benefit of a reader that asks a few times a minute — and it would
+///     put a second owner on state whose whole design (`world.rs`'s header, ruling 18 law 2) is
+///     that reads go through ONE DOOR. A fold behind a mutex is a fold two things can hold.
+///   * A snapshot COPY the ingest publishes into the world after every event. That is a cache, and
+///     ruling 5 says build none — and it would pay for twenty modules' serialization on every line
+///     to answer a question nobody asked.
+///   * This: the reader posts an ask and waits; the ingest answers it at a boundary it already
+///     reaches — between two reads of the scan, or between two polls of the tail. The fold is
+///     never shared, never locked, and never interrupted mid-event, so the answer is a REAL PREFIX
+///     STATE: every event up to `seq` and no part of another. Mid-scan that is the whole claim.
+///
+/// The cost is a bounded wait on the asking thread — one 1 MiB read during a scan, one tail nap
+/// while live — and `World::module_snapshot` owns the deadline that turns a wedged ingest into an
+/// `unavailable` reply rather than a connection that never answers.
+pub struct SnapshotAsk {
+    /// The module id the client named.
+    pub module: String,
+    /// Where the answer goes. `None` means the sink folds no such module.
+    pub answer: std::sync::mpsc::Sender<Option<ModuleSnapshot>>,
 }
 
 /// What a sink volunteers about itself.
@@ -183,13 +258,41 @@ impl EventSink for CountingSink {
     }
 }
 
+/// EVERYTHING AN ATTACH KNOWS BY THE TIME IT COULD BUILD A FOLD, handed to the sink factory.
+///
+/// It is exactly the set the parse is a pure function of, plus the one wall-clock instant a world
+/// is constructed at. Nothing here is discovered by the engine: the log path came from the app, the
+/// character comes off that path's file name, and the catalog is committed data.
+pub struct SinkInputs<'a> {
+    /// The log this attach opened.
+    pub log: &'a Path,
+    /// The character whose log it is, off the FILE NAME. `None` when the name is not a log's.
+    pub character: Option<&'a str>,
+    /// The parser's effective spell catalog — the process's one copy (`eqlog::spelldb::shared`).
+    /// `None` is representable so a caller can build a sink with no catalog; production never does.
+    pub db: Option<&'a spelldb::SpellDb>,
+    /// The parser's own clock. Handed over rather than rebuilt because a fold that resolved its
+    /// launch instant through a SECOND zone would be answering a different question than the
+    /// parser's timestamps ask.
+    pub clock: &'a Clock,
+    /// WHEN THIS ATTACH HAPPENED, in epoch millis — the world's construction clock.
+    ///
+    /// THE ONE WALL-CLOCK READ THAT REACHES A SINK, and it is production-faithful rather than a
+    /// convenience. Over there `WorldOpts.constructionNowMs` defaults to `Date.now()` at
+    /// construction and the respawn module seeds its ordering clock from it; the golden recorder
+    /// PINS it to the slice's last timestamped line only so a golden re-checks tomorrow. A live
+    /// world is built when the attach happens, so that is the instant. It is not fold-derived
+    /// state and no module may read a clock after this (`fold`'s "two rules that are not style").
+    pub attached_at_ms: i64,
+}
+
 /// Builds the sink one attach folds into. THE CONSTRUCTION SEAM — see [`EventSink`].
-pub type SinkFactory = Arc<dyn Fn() -> Box<dyn EventSink> + Send + Sync>;
+pub type SinkFactory = Arc<dyn Fn(&SinkInputs<'_>) -> Box<dyn EventSink> + Send + Sync>;
 
 /// The factory a plain engine uses.
 #[must_use]
 pub fn counting_sinks() -> SinkFactory {
-    Arc::new(|| Box::new(CountingSink::default()))
+    Arc::new(|_inputs| Box::new(CountingSink::default()))
 }
 
 /// What [`World`] does when an attach is accepted: begin folding this log, under this generation.
@@ -202,7 +305,7 @@ pub type Starter = Arc<dyn Fn(&World, u64, PathBuf) + Send + Sync>;
 /// The starter a real engine uses: one ingest thread per attach, folding into `sinks`.
 #[must_use]
 pub fn starter(sinks: SinkFactory) -> Starter {
-    Arc::new(move |world, generation, log| start(world, generation, log, sinks()))
+    Arc::new(move |world, generation, log| start(world, generation, log, Arc::clone(&sinks)))
 }
 
 /// The starter [`World::new`](crate::world::World::new) uses — counting sinks, nothing folded.
@@ -293,7 +396,7 @@ enum Ended {
 ///
 /// A FAILURE TO SPAWN IS NOT A DEAD ENGINE. The epoch has already been bumped and announced; all
 /// that is left is to say the world holds no fold, which is what `idle` means.
-pub fn start(world: &World, generation: u64, log: PathBuf, sink: Box<dyn EventSink>) {
+pub fn start(world: &World, generation: u64, log: PathBuf, sinks: SinkFactory) {
     let owner = world.clone();
     let spawned = thread::Builder::new()
         .name("engined-ingest".to_owned())
@@ -303,7 +406,7 @@ pub fn start(world: &World, generation: u64, log: PathBuf, sink: Box<dyn EventSi
             // `World::lock` makes for a poisoned mutex, and the same one that put the fold in
             // another process to begin with. The epoch is untouched: a fold that died did not
             // create a new generation, and the client's state is still the one it was told about.
-            let ending = catch_unwind(AssertUnwindSafe(|| run(&owner, generation, &log, sink)));
+            let ending = catch_unwind(AssertUnwindSafe(|| run(&owner, generation, &log, &sinks)));
             match ending {
                 Ok(Ok(Ended::Preempted)) => {}
                 Ok(Err(e)) => {
@@ -330,15 +433,11 @@ pub fn start(world: &World, generation: u64, log: PathBuf, sink: Box<dyn EventSi
 }
 
 /// Open the log, fold its history, then follow it. Returns when this turn no longer owns the world.
-fn run(
-    world: &World,
-    generation: u64,
-    log: &Path,
-    mut sink: Box<dyn EventSink>,
-) -> io::Result<Ended> {
-    // ATTACHING is exactly "opening the file and building what a parse depends on" — it covers the
-    // spell DB too, because a parse is a pure function of (bytes, spell DB, character) and the fold
-    // has not begun until all three exist.
+fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::Result<Ended> {
+    // ATTACHING is exactly "opening the file and building what a fold depends on" — the spell DB
+    // and the character, because a parse is a pure function of (bytes, spell DB, character), and
+    // since JOS-478 the REGISTRY as well, because a fold that has no modules has not begun either.
+    // Nothing is folded until all of it exists, and the whole of it happens inside this window.
     if !world.report_status(generation, HealthResultStatus::Attaching) {
         return Ok(Ended::Preempted);
     }
@@ -351,24 +450,49 @@ fn run(
             log.display()
         );
     }
-    // ONE SPELL DB PER ATTACH, and the honest note about it: it is a pure function of committed
-    // data and ought to be built once per PROCESS, but `eqlog::Parser` owns its `SpellDb` by value
-    // and `SpellDb` is neither `Clone` nor shareable, so a parser cannot be handed one that already
-    // exists. Attaches are rare (a character switch) and the build is measured on the line below,
-    // so the cost is visible rather than assumed. Closing it is a one-line change in eqlog, which
-    // this ticket does not own — the crate README names it for the integrator.
+    // ONE SPELL DB PER PROCESS (JOS-478), which is what it always ought to have been: it is a pure
+    // function of committed data, and until this ticket it was rebuilt on EVERY ATTACH — 386 ms in
+    // a release build — only because `eqlog::Parser` owned its `SpellDb` by value and `SpellDb` was
+    // neither `Clone` nor shareable. It is an `Arc` now and `spelldb::shared()` is the process's one
+    // copy, so the measurement below reads ~0 ms on the second attach of a session and the number
+    // is still printed rather than assumed.
     let building = Instant::now();
-    let db = spelldb::load();
+    let db = spelldb::shared();
     eprintln!(
-        "{DIAGNOSTIC_PREFIX} ingest: spell db built in {} ms",
+        "{DIAGNOSTIC_PREFIX} ingest: spell db ready in {} ms",
         building.elapsed().as_millis()
     );
-    let parser = Parser::new(Clock::new(host_timezone()), Some(db), character);
+    let parser = Parser::new(
+        Clock::new(host_timezone()),
+        Some(Arc::clone(&db)),
+        character.clone(),
+    );
+
+    // THE SINK IS BUILT HERE, ON THIS THREAD, and after the catalog exists — the two facts that
+    // made the fold constructible at all (see the module header). It is handed THE PARSER'S OWN
+    // clock rather than a second one built from the same zone, so a fold resolving a local-time
+    // anchor cannot drift from the timestamps it will compare against. `attached_at_ms` is read
+    // once, now, because now is when this world was constructed.
+    let mut sink = sinks(&SinkInputs {
+        log,
+        character: character.as_deref(),
+        db: Some(&db),
+        clock: parser.clock(),
+        attached_at_ms: now_ms(),
+    });
 
     let mut file = File::open(log)?;
     let size = file.metadata()?.len();
 
     if !world.report_status(generation, HealthResultStatus::Folding) {
+        return Ok(Ended::Preempted);
+    }
+
+    // THE SNAPSHOT DOOR OPENS BEFORE THE FIRST BYTE IS FOLDED, so `module.snapshot` can be asked
+    // DURING the scan and answered with a real prefix state. Installed through a `report_*` method
+    // like every other statement an ingest makes, so a turn that has already lost installs nothing.
+    let (asks, answers) = channel::<SnapshotAsk>();
+    if !world.serve_snapshots(generation, asks) {
         return Ok(Ended::Preempted);
     }
 
@@ -399,14 +523,17 @@ fn run(
                 seq += 1;
             }
         });
-        // THE SLICE BOUNDARY, and both of this loop's outward-facing acts happen here and nowhere
-        // else: the generation poll, and at most one progress frame per cadence.
+        // THE SLICE BOUNDARY, and every one of this loop's outward-facing acts happens here and
+        // nowhere else: the generation poll, at most one progress frame per cadence, and whatever
+        // snapshots were asked for while the last megabyte was folding. The order is deliberate —
+        // a turn that has lost answers nobody, including a reader that is waiting.
         if !world.owns(generation) {
             return Ok(Ended::Preempted);
         }
         if cadence.due() && !world.report_progress(generation, mark(&core, size, seq, &*sink)) {
             return Ok(Ended::Preempted);
         }
+        answer_snapshots(&answers, &*sink);
     }
 
     // THE FINAL MEASUREMENT IS NOT OPTIONAL and does not ask the cadence. It is the one frame that
@@ -486,17 +613,54 @@ fn run(
                 return Ok(Ended::Preempted);
             }
         }
-        nap(DEFAULT_POLL_INTERVAL, world, generation);
+        answer_snapshots(&answers, &*sink);
+        nap(DEFAULT_POLL_INTERVAL, world, generation, &answers, &*sink);
     }
 }
 
-/// Sleep out one poll interval in short naps, waking early when the world changes hands.
-fn nap(interval: Duration, world: &World, generation: u64) {
+/// Sleep out one poll interval in short naps, waking early when the world changes hands — and
+/// answering snapshots between them.
+///
+/// A LIVE ENGINE SPENDS ALMOST ALL OF ITS TIME HERE, so a reader that only got served at the top of
+/// a poll would wait a whole poll interval for state that has not moved in minutes. Serving inside
+/// the nap makes the live latency one [`TAIL_NAP`] instead.
+fn nap(
+    interval: Duration,
+    world: &World,
+    generation: u64,
+    answers: &Receiver<SnapshotAsk>,
+    sink: &dyn EventSink,
+) {
     let mut slept = Duration::ZERO;
     while slept < interval && world.owns(generation) {
         thread::sleep(TAIL_NAP);
         slept += TAIL_NAP;
+        answer_snapshots(answers, sink);
     }
+}
+
+/// Answer every snapshot asked for since the last boundary, and block on none of them.
+///
+/// `try_recv` UNTIL EMPTY rather than a blocking read: this is called from the fold's own loop and
+/// must never stall it. A send that fails is an asker that gave up (its deadline passed, or its
+/// connection closed) and is dropped without comment — there is nobody left to tell.
+fn answer_snapshots(answers: &Receiver<SnapshotAsk>, sink: &dyn EventSink) {
+    while let Ok(ask) = answers.try_recv() {
+        let _dropped = ask.answer.send(sink.snapshot(&ask.module));
+    }
+}
+
+/// The wall clock, in epoch millis — read ONCE per attach, for [`SinkInputs::attached_at_ms`].
+///
+/// The only wall-clock read in this file that can reach a sink, and the module header's rule still
+/// holds around it: it measures WHEN THE WORLD WAS BUILT, never anything the fold computes. A clock
+/// before the epoch is not a thing this platform produces; `unwrap_or_default` answers 0 rather
+/// than panicking if one ever were.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or_default()
 }
 
 /// Build the measurement one progress frame carries, from the scan's own coordinates.
@@ -860,7 +1024,7 @@ mod tests {
     /// FIRST sink only — the one whose fold a preemption test needs to hold still.
     fn recording_world(ledger: &Arc<Ledger>, gate: Option<Arc<Gate>>) -> World {
         let ledger = Arc::clone(ledger);
-        World::with_ingest(starter(Arc::new(move || {
+        World::with_ingest(starter(Arc::new(move |_inputs| {
             let id = ledger.built.fetch_add(1, Ordering::SeqCst);
             Box::new(RecordingSink {
                 id,
@@ -1000,13 +1164,21 @@ mod tests {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) =
                 matches!(world.health().status, HealthResultStatus::Starting);
-            let sink = RecordingSink {
-                id: 0,
-                ledger: Arc::clone(&ledger),
-                gate: Some(Arc::clone(&held)),
-                report: SinkReport::default(),
-            };
-            super::start(world, generation, path, Box::new(sink));
+            let ledger = Arc::clone(&ledger);
+            let held = Arc::clone(&held);
+            super::start(
+                world,
+                generation,
+                path,
+                Arc::new(move |_inputs| {
+                    Box::new(RecordingSink {
+                        id: 0,
+                        ledger: Arc::clone(&ledger),
+                        gate: Some(Arc::clone(&held)),
+                        report: SinkReport::default(),
+                    })
+                }),
+            );
         }));
 
         world.attach(&log.to_string_lossy());

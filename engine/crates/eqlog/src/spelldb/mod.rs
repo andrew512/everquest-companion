@@ -223,6 +223,30 @@ fn last_word_key(suffix: &str) -> Option<String> {
 
 const SPELLS_JSON: &str = include_str!("../../../../../src/main/data/spells.json");
 
+/// THE PROCESS'S ONE SPELL DATABASE (JOS-478).
+///
+/// WHY THIS EXISTS. [`load`] is a pure function of committed bytes and takes 386 ms in a release
+/// build (~5 s in a debug one), and until this ticket every caller that wanted the catalog built
+/// its own: the engine rebuilt it on EVERY ATTACH because `Parser` owned its `SpellDb` by value and
+/// `SpellDb` was neither `Clone` nor shareable, and the fold's resist module built a SECOND one
+/// behind its own lazy table. Two full builds per attach, of the identical bytes, for a table
+/// nothing can mutate. `engined`'s README measured it and named it for the integrator; this is the
+/// close.
+///
+/// IT IS NOT A CACHE, AND RULING 18 IS NOT BENT BY IT. The law forbids memoizing an ANSWER keyed by
+/// anything but a fold's own inputs. Nothing here is keyed by a fold's input at all: `spells.json`
+/// and the overlay sidecar are `include_str!`'d into the binary, so this is the same category as
+/// this crate's `OnceLock` regexes and `fold::modules::resist::catalog`'s committed tables — a
+/// compile-once constant that is merely computed late. A second `Parser` in the same process cannot
+/// observe it as different from the first, because there is nothing that could make it different.
+///
+/// A CALLER THAT NEEDS ITS OWN STILL HAS [`load`], which is untouched and still hands back an owned
+/// database. Nothing in this crate calls it except this function.
+pub fn shared() -> std::sync::Arc<SpellDb> {
+    static DB: std::sync::OnceLock<std::sync::Arc<SpellDb>> = std::sync::OnceLock::new();
+    std::sync::Arc::clone(DB.get_or_init(|| std::sync::Arc::new(load())))
+}
+
 /// `loadSpellDb()` + `installSpellDb()`: the whole chain, once.
 pub fn load() -> SpellDb {
     let file: SpellDbFile = serde_json::from_str(SPELLS_JSON).expect("spells.json is not readable");

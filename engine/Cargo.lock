@@ -128,6 +128,7 @@ name = "engined"
 version = "0.1.0"
 dependencies = [
  "eqlog",
+ "fold",
  "protocol",
  "serde_json",
 ]
