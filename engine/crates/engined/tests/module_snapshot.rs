@@ -11,8 +11,9 @@
 //!     the whole claim the channel-not-a-lock design exists to make;
 //!   * a module the registry does not carry is `notFound`, and a process with nothing attached is
 //!     `unavailable` — two different sentences for two different situations;
-//!   * `session.health` carries the MARK once the fold is live, and carries none of the three
-//!     optional fields before an attach.
+//!   * `session.health` carries the MARK once the fold is live, and carries none of the four
+//!     optional fields before an attach — including `logMtimeMs`, the FILE fact owner ruling 21
+//!     made the server's to read: served true, refreshed per answer, and never the log's own clock.
 //!
 //! ── WHY THE ORACLE IS A SECOND FOLD AND NOT THE TS SNAPSHOTS ───────────────────────────────────
 //!
@@ -244,6 +245,23 @@ fn every_module_answers_what_a_direct_fold_of_the_same_bytes_publishes() {
     settle_live(&mut client, &mut id);
 
     let wanted = oracle(&log, &bytes, None);
+    // THE ENGINE HAS TICKED AND THE ORACLE HAS NOT (JOS-481), so before comparing anything this
+    // establishes that for THESE bytes the difference is no difference: a world aged to the host's
+    // clock publishes exactly what an unaged one does. Asserted rather than assumed, because the
+    // day a fixture ends with a buff standing or a spell-set burst open, the failure should name
+    // the reason here instead of surfacing as a mystery divergence in the loop below.
+    {
+        let mut aged = oracle(&log, &bytes, None);
+        let before = aged.registry.snapshots();
+        aged.tick(now_ms());
+        assert_eq!(
+            before,
+            aged.registry.snapshots(),
+            "this fixture's end state IS tick-sensitive, so the engine's go-live sweep and the \
+             oracle's absence of one are no longer the same world — the comparison below needs a \
+             ticked oracle, or a fixture whose tail settles"
+        );
+    }
     let mut compared = 0;
     for module in fold::WIRING_ORDER {
         id += 1;
@@ -410,6 +428,10 @@ fn health_carries_the_mark_once_the_fold_is_live() {
     assert!(fresh.mark.is_none());
     assert!(fresh.events.is_none());
     assert!(fresh.last_event_ts.is_none());
+    assert!(
+        fresh.log_mtime_ms.is_none(),
+        "a process with no log has no file to stat — absent, never zero"
+    );
 
     let scratch = Scratch::new("mark");
     let log = scratch.stage(2);
@@ -443,4 +465,65 @@ fn health_carries_the_mark_once_the_fold_is_live() {
     );
     let stamp = live.last_event_ts.expect("the log's own clock");
     assert!(stamp > 0, "the LOG's clock, never the host's: {stamp}");
+
+    // ── THE FILE FACT (owner ruling 21, JOS-481) ─────────────────────────────────────────────
+    //
+    // THE SERVED ANSWER IS THE FILESYSTEM'S OWN, compared against a stat this test takes itself.
+    // Not against a number typed here and not against `SystemTime::now()`: the claim is that the
+    // engine reported the mtime OF THIS FILE, and only the file can settle that.
+    let stat = std::fs::metadata(&log).expect("the staged log");
+    let truth = i64::try_from(
+        stat.modified()
+            .expect("a modification time")
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a stamp past the epoch")
+            .as_millis(),
+    )
+    .expect("an instant");
+    assert_eq!(
+        live.log_mtime_ms,
+        Some(truth),
+        "the engine stats the log it owns and serves what the filesystem says"
+    );
+    // …AND IT IS NOT THE LOG'S OWN CLOCK. Two different kinds of fact share a health answer and a
+    // reader must never be able to mistake one for the other: the fixture is dated in the log and
+    // the scratch copy was written just now, so they cannot coincide.
+    assert_ne!(
+        live.log_mtime_ms,
+        Some(stamp),
+        "the file's stamp is not the log's last event"
+    );
+
+    // AND IT IS REFRESHED PER ANSWER, never remembered (ruling 5). The game writes a line; the very
+    // next health answer says so, with no attach and no re-fold in between.
+    let before = live.log_mtime_ms.expect("a served mtime");
+    // The filesystem's granularity is coarser than this loop, so the append has to be worth a tick
+    // of it. One sleep, and it is the resolution of a stat rather than a guess at a race.
+    std::thread::sleep(Duration::from_millis(20));
+    {
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&log)
+            .expect("the staged log takes an append");
+        file.write_all(b"[Wed Aug 19 16:21:54 2026] You gain experience! (3.288%)\n")
+            .expect("append");
+        file.flush().expect("flush");
+    }
+    let deadline = Instant::now() + PATIENCE;
+    let after = loop {
+        id += 1;
+        let seen = ask_health(&mut client, id)
+            .log_mtime_ms
+            .expect("a served mtime");
+        if seen > before {
+            break seen;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the served mtime never moved after the file did"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(after > before, "{after} is not later than {before}");
 }

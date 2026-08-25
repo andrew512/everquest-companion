@@ -40,8 +40,9 @@
 //! instant derived from the LOG: the last timestamped LINE of the slice, read from the file's tail
 //! through the parser's own `Clock`. This module takes that instant as `construction_now_ms` and
 //! seeds from it at construction AND at reset, which is the only way the pin means the same thing
-//! on both sides. NO WALL CLOCK IS READ HERE, ever (ruling 18) — `on_tick` is the live tail's and
-//! `Fold` never calls it.
+//! on both sides. NO WALL CLOCK IS READ HERE, ever (ruling 18): one is HANDED in by `on_tick`,
+//! which is the live tail's heartbeat and which a historical fold — the only thing the oracle
+//! records — never calls (JOS-481).
 //!
 //! WHAT THE SIX SLICES ACTUALLY EXERCISE, said out loud: the bench world installs no
 //! `respawnPrefs`, so the watch list is EMPTY, `watch_of` answers `None` for every mob and
@@ -635,6 +636,22 @@ impl EqModule for RespawnModule {
                 }
             }
         }
+    }
+
+    /// `respawn.ts onTick`, which is one assignment and — deliberately — nothing else.
+    ///
+    /// IT PUBLISHES NOTHING, and the revision does NOT move. The set of rows changes only when a
+    /// death, a watch edit, a zone line or a sighting changes it, and every one of those already
+    /// bumps `rev`; what the clock buys is the ORDER `build` publishes in, which is why it is
+    /// recorded here and read there. Bumping the revision on a heartbeat would make this module
+    /// republish once a second forever for a world nobody touched — and, engine-side, would make a
+    /// matched-mark comparison against the app impossible for a module whose `seq` IS that counter.
+    ///
+    /// ON A HISTORICAL FOLD THIS IS NEVER CALLED and the clock stays the pinned construction
+    /// instant, which is what keeps the six goldens re-checking tomorrow (see the header). A LIVE
+    /// world gets today's reading once a second, exactly as the app's does.
+    fn on_tick(&mut self, now_ms: i64) {
+        self.now_ms = now_ms;
     }
 
     fn snapshot(&self) -> Value {

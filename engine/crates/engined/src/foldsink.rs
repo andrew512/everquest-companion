@@ -165,6 +165,19 @@ impl EventSink for FoldSink {
         }
     }
 
+    /// THE LIVE HEARTBEAT, straight through (owner ruling 22, JOS-481). One line, because the whole
+    /// of the decision is `fold`'s: which modules have an `on_tick`, what each does with the number,
+    /// and — the load-bearing half — that the historical path never calls it.
+    ///
+    /// WHY THE ENGINE HAD TO GROW ONE. The app has aged its own fold on a wall clock since JOS-149,
+    /// so an engine that only ever advanced off log timestamps was serving a world that was correct
+    /// about the bytes and stale about the hour. MEASURED by the in-app parity probe on a staged
+    /// fixture whose buffs are long expired by wall time: twelve actives engine-side against three
+    /// app-side, with the two folds agreeing exactly on everything the log had said (JOS-479).
+    fn tick(&mut self, now_ms: i64) {
+        self.fold.tick(now_ms);
+    }
+
     /// What the fold can say about itself. `last_ts` is `max(ev.ts)` — the LOG's own clock,
     /// accumulated the way the golden recorder's bus listener accumulates it, so a log that rolls
     /// over cannot walk it backwards.

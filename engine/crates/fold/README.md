@@ -161,7 +161,10 @@ each is UNREACHABLE under the construction `foldArm.mts` makes rather than a pie
 ### Two rules that are not style
 
 - **No module reads a wall clock, ever** (cache transparency, ruling 18). A time-based rule advances
-  off log timestamps during a fold; `on_tick` is the live tail's and `Fold` never calls it. The
+  off log timestamps during a fold; the wall clock is HANDED in through exactly one door, `Fold::tick`,
+  which a LIVE tail drives ~1×/sec (owner ruling 22, JOS-481) and which `fold_bytes` — the historical
+  path, and the only one the oracle records through — never calls. So the equivalence law is
+  untouched, and `oracle:rust-fold` staying green at its default is the proof of that. The
   `respawn` module (2b) seeds an ordering clock from `Date.now()` at `reset()`, and the golden was
   recorded under a PINNED construction clock (`WorldOpts.constructionNowMs`, taken from the last
   timestamped LINE of the slice). Whoever ports it must take that instant as a parameter, from the

@@ -123,6 +123,18 @@ pub struct BuffsModule {
     /// The `buffExpired` events synthesized while folding the current PRIMARY event, in emission
     /// order, waiting for the registry to take them.
     derived: Vec<Event>,
+    /// `curSeq`/`curTs` — THE LAST PRIMARY EVENT'S IDENTITY, which is what an expiry is stamped
+    /// with (`emitBuffExpired`). It has to be a FIELD rather than a parameter because a wall-clock
+    /// tick synthesizes expiries too and has no event of its own to name: over there `onTick` runs
+    /// long after `onEvent` set these, and the stamp is deliberately the log's last instant rather
+    /// than the host's clock — a derived event carrying a wall time would put a number into the
+    /// event stream that no line of the log ever said.
+    ///
+    /// NOT CLEARED BY `reset()`, exactly as over there: the TS resets nine fields and not these two.
+    /// It is unobservable (a fresh world's first expiry cannot precede its first event) and it is
+    /// copied rather than tidied, because a port that tidies is a port that has stopped matching.
+    cur_seq: i64,
+    cur_ts: i64,
 }
 
 impl BuffsModule {
@@ -144,6 +156,8 @@ impl BuffsModule {
             ),
             facts,
             derived: Vec::new(),
+            cur_seq: 0,
+            cur_ts: 0,
         }
     }
 
@@ -543,6 +557,10 @@ impl EqModule for BuffsModule {
             return;
         }
         let (seq, ts) = (ev.seq(), ev.ts());
+        // Record the primary event's identity so any `buffExpired` synthesized while folding it —
+        // or on a later wall-clock tick, which has no event of its own — is stamped with it.
+        self.cur_seq = seq;
+        self.cur_ts = ts;
         // A log hole that no login ever explained: we lost the thread rather than the character
         // having left, so what was standing when it opened goes, and the pet bindings with it.
         if let Some(unexplained_before) = self.frame.observe(ev) {
@@ -620,6 +638,33 @@ impl EqModule for BuffsModule {
         }
         drop(core);
         self.flush_expiries(seq, ts);
+    }
+
+    /// THE WALL-CLOCK HEARTBEAT — `buffs.ts onTick`, verbatim, and the biggest thing a live tick
+    /// does anywhere in the fold (owner ruling 22, JOS-481).
+    ///
+    /// TWO CALLS, THE SAME TWO `on_event` MAKES, with the wall clock where the log's clock goes:
+    /// a cast nothing confirmed inside the landing window is dropped, and the hygiene sweep retires
+    /// every active past its per-spell cap. That second one is why a live engine that never ticked
+    /// served twelve buffs for a log whose last line was days ago while the app served three.
+    ///
+    /// IT NO LONGER RULES ON AN OPEN HOLE (JOS-262), and the omission is the ported behaviour rather
+    /// than a simplification: a log hole is a question about the LOG, and only the log's own next
+    /// line can answer it. What the tick does is AGE the model, and the sweep still honours whatever
+    /// `held_before_ts` an open absence is protecting.
+    ///
+    /// THE BORROW IS IMMUTABLE, unlike `on_event`'s: the sweep reads the learner's durations and
+    /// writes none, so nothing here needs the core's mutable half. And the expiries it resolves are
+    /// flushed through the same door a folded event's are, stamped with the LAST EVENT's identity —
+    /// see `cur_seq`/`cur_ts`.
+    fn on_tick(&mut self, now_ms: i64) {
+        let core_rc = Rc::clone(&self.core);
+        let core = core_rc.borrow();
+        self.inst.drop_unconfirmed_pending(now_ms);
+        self.inst
+            .sweep_hygiene(now_ms, self.frame.held_before_ts(), &core.stats, &self.pets);
+        drop(core);
+        self.flush_expiries(self.cur_seq, self.cur_ts);
     }
 
     fn snapshot(&self) -> Value {

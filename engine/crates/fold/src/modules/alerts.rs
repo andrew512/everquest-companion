@@ -35,8 +35,15 @@
 //! .snapshot().state, buffTimers.snapshot().state))` — which reaches across two modules registered
 //! AFTER it and rebuilds the timer projection mid-fold. It is called from `onTick` and from
 //! nowhere else, at most once per heartbeat and only while an early warning is actually armed; a
-//! warning can only be armed by a live match, and `Fold` never calls `on_tick`. So the pull is not
+//! warning can only be armed by a LIVE MATCH against a compiled DEF. So the pull is not
 //! reproduced here, and the reason it is safe not to is the same fact twice: no defs, no live.
+//!
+//! SINCE JOS-481 A LIVE ENGINE DOES TICK (`Fold::tick`, owner ruling 22), and this module still
+//! implements no `on_tick` — which is now an argument rather than an absence. The early-warning
+//! queue a tick would sweep is EMPTY BY CONSTRUCTION: `arm` is reachable only from the matcher, the
+//! matcher runs only over `compiled`, and `compiled` is built from a def list this crate has no way
+//! to receive. A tick here would sweep an empty queue and rebuild a projection nobody armed; the
+//! `alerts.define` ticket (boundary verdict 3) turns both halves on together.
 //! Reproducing the SHAPE would mean handing this module a shared, interior-mutable handle on two
 //! modules the registry owns — a real structural cost, paid to reach code that provably cannot run.
 //! Recorded as a judgment call rather than made silently.

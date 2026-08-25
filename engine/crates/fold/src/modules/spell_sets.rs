@@ -11,8 +11,10 @@
 //!
 //! THE CLOCK IS THE LOG'S, and EVERY event advances it — a chat line at `load + 11s` is proof that
 //! eleven seconds passed with no gem activity. `on_tick` does the same from the wall clock for a
-//! live log that falls silent; it is never called on a historical fold, and reading a wall clock
-//! anywhere else in this crate is forbidden outright (ruling 18).
+//! live log that falls silent — driven since JOS-481 by `Fold::tick` engine-side as well as by the
+//! app's own heartbeat — and it is never called on a historical fold, which is what keeps the
+//! goldens a function of the bytes. Reading a wall clock anywhere else in this crate is forbidden
+//! outright (ruling 18).
 //!
 //! THE MEMORIZED MAP'S ORDER IS PUBLISHED. `memorized` and every set's `spells` are
 //! `[...map.values()]`, so the map's INSERTION order is the serialized array's — see `jsmap.rs`.

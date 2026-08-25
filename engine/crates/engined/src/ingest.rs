@@ -57,12 +57,17 @@
 //! that is skipped changes no state at all — and one times the spell-DB build for a stderr
 //! diagnostic. Neither can reach a sink.
 //!
-//! **THERE IS EXACTLY ONE WALL-CLOCK READ THAT DOES REACH A SINK** (JOS-478), and it is named
-//! rather than hidden: [`now_ms`], read ONCE per attach into
-//! [`SinkInputs::attached_at_ms`] — the world's CONSTRUCTION clock. It measures when this world was
-//! built and nothing else; over there `WorldOpts.constructionNowMs` defaults to `Date.now()` at
-//! construction for the same reason. Once a fold exists, every time-based rule inside it advances
-//! off LOG timestamps, and `on_tick` — the live tail's heartbeat — is not called from here at all.
+//! **TWO WALL-CLOCK READS REACH A SINK, AND BOTH ARE NAMED** (JOS-478, JOS-481). [`now_ms`] is read
+//! ONCE per attach into [`SinkInputs::attached_at_ms`] — the world's CONSTRUCTION clock, which
+//! measures when this world was built and nothing else; over there `WorldOpts.constructionNowMs`
+//! defaults to `Date.now()` at construction for the same reason. And once the fold is LIVE it is
+//! read again, ~1×/sec, for [`EventSink::tick`] — the heartbeat owner ruling 22 put engine-side.
+//!
+//! **THE HISTORICAL SCAN NEVER TICKS**, and that is the whole of why the equivalence law is
+//! untouched: the tick loop lives below the `TailStart::At` handoff and there is no path to it from
+//! the scan. Every time-based rule inside a fold still advances off LOG timestamps while history is
+//! being replayed; what a live world gets on top is the same aging the app's own
+//! `registry.tick(Date.now())` has done since JOS-149.
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -110,6 +115,10 @@ const TS_SCAN_BYTES: usize = 128;
 /// poll interval. Mirrors `FileTail::follow`'s own nap.
 const TAIL_NAP: Duration = Duration::from_millis(25);
 
+/// The live world's heartbeat interval — `session.ts startHeartbeat`'s `setInterval(…, 1000)`,
+/// exactly. See [`Ticking`] for why it is a ceiling rather than a schedule.
+const TICK_EVERY: Duration = Duration::from_secs(1);
+
 /// One folded event, as the ingest hands it to a sink.
 ///
 /// Borrowed, never owned: the JSON lives in the parser's reused buffer and is valid for exactly
@@ -141,6 +150,19 @@ pub struct Event<'a> {
 pub trait EventSink {
     /// One event, in emission order. Called once per event, on the ingest thread, and on no other.
     fn event(&mut self, event: &Event<'_>);
+
+    /// THE LIVE HEARTBEAT (owner ruling 22, JOS-481): the wall clock, in epoch millis, handed to
+    /// the fold ~1×/sec — `session.ts startHeartbeat`'s `registry.tick(Date.now())`, moved into the
+    /// process that owns the fold.
+    ///
+    /// **CALLED ONLY WHILE THE STATUS IS `live`.** The historical scan does not call it, cannot
+    /// reach it, and must not: a replay whose output depended on when it was run would break the
+    /// equivalence oracle and, with it, ruling 18's determinism-is-cacheability law. The one place
+    /// it is driven from is the tail loop, past the `TailStart::At` handoff — see [`Ticking`].
+    ///
+    /// Defaulted to nothing, because a sink that folds no modules ([`CountingSink`]) has no model to
+    /// age and a heartbeat over it would be a clock read paid for nobody.
+    fn tick(&mut self, _now_ms: i64) {}
 
     /// What this sink can say about itself.
     ///
@@ -592,6 +614,20 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
     // THE FOLD LANDS AS A RESET, per open subscription, carrying rows (JOS-480). `landed_at` is the
     // instant the scan finished, so the first frame of a generation reports the honest fold-to-frame
     // cost of building and cutting every open window off a whole log.
+    // ---- THE WORLD GOES LIVE, AND IT IS AGED BEFORE ANYBODY CAN READ IT ----------------------
+    //
+    // ONE TICK BEFORE THE CADENCE, and it is ordered BEFORE `report_fold_landed` on purpose. That
+    // call is what publishes `status: "live"`, the landing reset and the mark; a client — the app's
+    // own parity probe among them — polls health and starts asking questions the instant it sees
+    // `live`. Ticking afterwards would leave a window, however short, in which the engine served a
+    // world the app had already swept, and a race is not a thing to leave in a comparison.
+    //
+    // It is also exactly what `session.ts startHeartbeat` does: one `registry.tick(Date.now())`
+    // before the interval is armed, and before `registry.flushNow()` and `sendWorldRebuilt` publish
+    // anything (JOS-149). Whatever real time invalidated while the log was quiet is swept before the
+    // first publish, on both sides, in the same order.
+    let mut ticking = Ticking::new();
+    ticking.beat(&mut *sink);
     let mut serving = Serving::new();
     if !world.report_fold_landed(
         generation,
@@ -648,6 +684,12 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
         if seq != before {
             serving.folded_at.get_or_insert_with(Instant::now);
         }
+        // THE HEARTBEAT, AFTER THE DRAIN AND BEFORE ANYTHING PUBLISHES. Order within one turn of
+        // this loop is the only ordering claim available (the app's tailer and its 1 s interval are
+        // two independent macrotasks and make none at all), so the useful one is this: whatever the
+        // poll folded is aged by the same beat, and both are visible to the progress frame, the
+        // snapshot answers and the view pass below rather than to the next turn's.
+        ticking.due(&mut *sink);
         if let Err(e) = polled {
             // A FAILED POLL LEAVES THE TAIL RUNNING — `FileTail` drops its handle and the next
             // cycle opens a fresh one under a counted reason. This is `Tailer`'s `'error'` event
@@ -690,6 +732,46 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
             &*sink,
             &mut serving,
         );
+    }
+}
+
+/// THE LIVE WORLD'S OWN CLOCK (owner ruling 22, JOS-481) — one cadence and one wall-clock read.
+///
+/// ONE PER ATTACH, like the sink and the parser, and constructed at the LANDING rather than at the
+/// top of the ingest: a heartbeat belongs to a live world, and a world that is still scanning does
+/// not have one. That is not a policy expressed in a flag — it is where the value is created. A
+/// preempted fold's `Ticking` dies with its thread along with everything else that turn built.
+///
+/// THE INTERVAL IS THE APP'S. `session.ts` arms `setInterval(…, 1000)`, so this is 1 s; the tail
+/// polls every 400 ms, so a beat lands on roughly every third turn of the loop and never oftener
+/// than the app's own. It is a CEILING and not a promise: a turn that ran late beats once, not
+/// twice, because a heartbeat is "age the model to now", which is idempotent in `now` — three
+/// missed beats are one beat with a later number.
+struct Ticking {
+    cadence: Cadence,
+}
+
+impl Ticking {
+    /// ARMED FROM NOW, not owed: [`Ticking::beat`] is called once at go-live, so the cadence's job
+    /// is the interval AFTER that one — `startHeartbeat`'s `registry.tick(…)` then `setInterval`,
+    /// in that order.
+    fn new() -> Self {
+        Self {
+            cadence: Cadence::from_now(TICK_EVERY),
+        }
+    }
+
+    /// Beat if the cadence allows.
+    fn due(&mut self, sink: &mut dyn EventSink) {
+        if self.cadence.due() {
+            self.beat(sink);
+        }
+    }
+
+    /// Beat now, whatever the cadence says — the go-live sweep. Reads the wall clock ONCE and hands
+    /// it in; nothing here interprets it, which is the whole of this seam's contract with the fold.
+    fn beat(&mut self, sink: &mut dyn EventSink) {
+        sink.tick(now_ms());
     }
 }
 
@@ -837,6 +919,19 @@ impl Cadence {
         // rather than after a quarter second of silence.
         Self {
             last: Instant::now() - interval,
+            every: interval,
+        }
+    }
+
+    /// The same pacer, ARMED rather than owed: the first `due()` comes one whole interval from now.
+    ///
+    /// For a caller that has ALREADY done the thing once and wants the cadence to carry on from
+    /// there — [`Ticking`], whose go-live beat is `session.ts`'s single `registry.tick(Date.now())`
+    /// before its `setInterval` is armed. Built with `every()` instead, the loop's very next turn
+    /// would beat again a millisecond later, which is not a heartbeat.
+    fn from_now(interval: Duration) -> Self {
+        Self {
+            last: Instant::now(),
             every: interval,
         }
     }
@@ -1067,11 +1162,22 @@ mod tests {
         live: bool,
     }
 
+    /// One HEARTBEAT, as a test sink saw it (JOS-481). `events` is how many events that sink had
+    /// folded when the beat arrived, which is what makes "the scan never ticks" a checkable claim
+    /// rather than a hopeful one.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Beat {
+        sink: usize,
+        events: i64,
+        now_ms: i64,
+    }
+
     /// What every sink this factory builds writes into. ONE SHARED LIST, in the order events were
     /// taken, so an interleaving would be visible rather than inferred.
     #[derive(Default)]
     struct Ledger {
         taken: Mutex<Vec<Taken>>,
+        beats: Mutex<Vec<Beat>>,
         built: AtomicUsize,
     }
 
@@ -1087,6 +1193,16 @@ mod tests {
             self.taken()
                 .into_iter()
                 .filter(|t| t.sink == sink)
+                .collect()
+        }
+
+        fn beats_of(&self, sink: usize) -> Vec<Beat> {
+            self.beats
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .copied()
+                .filter(|b| b.sink == sink)
                 .collect()
         }
     }
@@ -1152,6 +1268,21 @@ mod tests {
             if let Some(gate) = self.gate.take() {
                 gate.wait();
             }
+        }
+
+        /// EVERY BEAT, WITH THE FOLD'S OWN POSITION BESIDE IT (JOS-481). Recording `events` is what
+        /// turns "the historical scan never ticks" into an assertion: a beat taken mid-scan would
+        /// carry a count short of the log's.
+        fn tick(&mut self, now_ms: i64) {
+            self.ledger
+                .beats
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(Beat {
+                    sink: self.id,
+                    events: self.report.events,
+                    now_ms,
+                });
         }
 
         fn report(&self) -> SinkReport {
@@ -1358,6 +1489,110 @@ mod tests {
         settle("the tail to take over", || {
             matches!(world.health().status, HealthResultStatus::Live)
         });
+    }
+
+    // ── THE LIVE TICK (owner ruling 22, JOS-481) ──────────────────────────────────────────────
+
+    /// THE SCAN NEVER TICKS, held still so the claim is a fact rather than a race.
+    ///
+    /// The sink stops at the gate on its first event, so the fold is PROVABLY mid-scan and standing
+    /// there for as long as this test likes. `folding` is asserted first so that "no beats yet"
+    /// cannot pass by being taken before the ingest thread ever started.
+    #[test]
+    fn a_historical_scan_is_never_ticked() {
+        let scratch = Scratch::new("noticks");
+        let log = scratch.stage();
+        let ledger = Arc::new(Ledger::default());
+        let gate = Arc::new(Gate::default());
+        let world = recording_world(&ledger, Some(Arc::clone(&gate)));
+
+        world.attach(&log.to_string_lossy());
+        settle("the scan to reach its first event", || {
+            !ledger.of(0).is_empty()
+        });
+        assert!(matches!(world.health().status, HealthResultStatus::Folding));
+        // A WHOLE TICK INTERVAL AND MORE, spent inside the scan. There is no cadence that would
+        // have let a beat through, because the tick loop lives past the tail handoff entirely.
+        std::thread::sleep(super::TICK_EVERY + super::TICK_EVERY / 2);
+        assert!(
+            ledger.beats_of(0).is_empty(),
+            "a scan was ticked: {:?}",
+            ledger.beats_of(0)
+        );
+        gate.release();
+    }
+
+    /// A LIVE WORLD HAS ALREADY BEEN AGED BY THE TIME ANYBODY CAN SEE IT IS LIVE.
+    ///
+    /// The ordering is the point and it is why the go-live beat is taken BEFORE
+    /// `report_fold_landed`: `status: "live"` is the edge every client waits on — the app's parity
+    /// probe polls `session.health` for exactly it — so a beat taken after the publish would leave
+    /// a window in which the engine served a world the app had already swept.
+    #[test]
+    fn the_world_is_ticked_before_it_is_published_as_live() {
+        let scratch = Scratch::new("golive");
+        let log = scratch.stage();
+        let expected = scan_oracle(&log);
+        let ledger = Arc::new(Ledger::default());
+        let world = recording_world(&ledger, None);
+
+        world.attach(&log.to_string_lossy());
+        settle("the fold to land", || {
+            matches!(world.health().status, HealthResultStatus::Live)
+        });
+        let beats = ledger.beats_of(0);
+        assert!(
+            !beats.is_empty(),
+            "a client that saw `live` would have seen an unswept world"
+        );
+        // EVERY BEAT IS PAST THE WHOLE SCAN, which is the same claim the gated test above makes,
+        // arrived at from the other side: a beat carrying a short count would be a tick inside the
+        // historical fold.
+        for beat in &beats {
+            assert_eq!(
+                beat.events, expected,
+                "a beat landed mid-scan: {beat:?} of {expected}"
+            );
+            // …and the number handed in is a WALL CLOCK, not a log timestamp: within a minute of
+            // this test's own reading of it. A bound loose enough never to be flaky and tight
+            // enough that a log's `ts` — which is whatever the fixture says — could not pass it.
+            assert!(
+                (beat.now_ms - super::now_ms()).abs() < 60_000,
+                "{beat:?} is not this machine's clock"
+            );
+        }
+    }
+
+    /// …AND IT KEEPS BEATING, at the app's own interval, on a log nobody is writing to.
+    ///
+    /// The heartbeat exists precisely FOR the idle log — a buff whose duration ran out while the
+    /// player stared at a quiet screen — so "it beats while nothing arrives" is the claim, not a
+    /// side effect of one.
+    #[test]
+    fn a_live_world_keeps_beating_while_the_log_is_idle() {
+        let scratch = Scratch::new("beating");
+        let log = scratch.stage();
+        let ledger = Arc::new(Ledger::default());
+        let world = recording_world(&ledger, None);
+
+        world.attach(&log.to_string_lossy());
+        settle("the fold to land", || {
+            matches!(world.health().status, HealthResultStatus::Live)
+        });
+        settle("a second beat", || ledger.beats_of(0).len() >= 2);
+        let beats = ledger.beats_of(0);
+        assert!(
+            beats.windows(2).all(|w| w[1].now_ms >= w[0].now_ms),
+            "the clock went backwards: {beats:?}"
+        );
+        // THE CADENCE IS A CEILING, so the gap is at least the interval and never twice per turn.
+        // Measured against the beats' own numbers rather than the test's wall clock.
+        let gap = beats[1].now_ms - beats[0].now_ms;
+        let interval = i64::try_from(super::TICK_EVERY.as_millis()).expect("an interval");
+        assert!(
+            gap >= interval - 50,
+            "two beats {gap} ms apart, faster than the {interval} ms cadence"
+        );
     }
 
     #[test]
