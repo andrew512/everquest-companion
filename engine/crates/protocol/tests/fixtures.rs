@@ -17,8 +17,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use protocol::generated::{
-    ClientMessage, DiffOp, EngineMessage, EpochReason, ProtocolMessage, ReplyResult,
-    PROTOCOL_VERSION,
+    ClientMessage, DiffOp, EngineMessage, EpochReason, ErrorCode, HealthResultStatus,
+    ProtocolMessage, ReplyResult, PROTOCOL_VERSION,
 };
 
 /// One line of a fixture conversation.
@@ -398,4 +398,101 @@ fn two_ops_with_identical_parameter_shapes_stay_apart() {
         "session.progress was read as something else"
     );
     assert_eq!(serde_json::to_value(&typed).expect("serializes"), progress);
+}
+
+// ---- 4. the fold serves (JOS-478) --------------------------------------------------------------
+
+#[test]
+fn a_module_snapshot_carries_whatever_shape_its_module_publishes() {
+    // THE POINT OF THE MOMENT. `kills` publishes an object, `loot` publishes an array, and the
+    // protocol names neither: `ModuleState` is replaced by `serde_json::Value` on this side
+    // exactly so both survive. A generated multi-type enum would have lowered the numbers inside
+    // them to f64 as well, which is the `Cell` defect one level up.
+    let frames = engine_frames("06-module-snapshot.json");
+    let mut shapes: Vec<(String, bool)> = Vec::new();
+    for frame in &frames {
+        let EngineMessage::Reply(reply) = frame else {
+            continue;
+        };
+        let ReplyResult::ModuleSnapshotResult(snapshot) = &reply.result else {
+            continue;
+        };
+        shapes.push((snapshot.module.clone(), snapshot.state.is_object()));
+        assert!(snapshot.seq >= 0, "a hydration cursor is not negative");
+    }
+    assert_eq!(
+        shapes,
+        vec![("kills".to_owned(), true), ("loot".to_owned(), false)],
+        "the moment must demonstrate BOTH published shapes"
+    );
+
+    // AND THE COUNTS INSIDE STAY INTEGRAL. This is the whole reason for the replacement: a `41`
+    // that came back `41.0` would fail the verbatim round trip above, and this says so at the
+    // field rather than leaving it to a whole-message compare to explain.
+    let ReplyResult::ModuleSnapshotResult(kills) = module_result(&frames, "kills") else {
+        panic!("a kills snapshot")
+    };
+    assert_eq!(kills.state["mobs"]["a sand giant"]["count"], 41);
+    assert!(kills.state["mobs"]["a sand giant"]["count"].is_i64());
+}
+
+#[test]
+fn a_module_the_registry_does_not_carry_is_not_found() {
+    // The registry is the authority. An empty state would be a lie about a module that does not
+    // exist, and `loot.ledger` is the trap worth pinning: it is a VIEW source name, and a caller
+    // that confuses the two must be told so rather than handed nothing.
+    let refusal = engine_frames("06-module-snapshot.json")
+        .into_iter()
+        .find_map(|frame| match frame {
+            EngineMessage::ErrorReply(err) => Some(err),
+            _ => None,
+        })
+        .expect("the moment refuses one name");
+    assert!(matches!(refusal.error.code, ErrorCode::NotFound));
+    assert!(!refusal.ok);
+}
+
+#[test]
+fn health_states_its_coordinate_only_once_it_has_one() {
+    // OPTIONAL IS THE HONEST SHAPE (ruling 18 law 3). The first health answer in the moment is a
+    // fresh process: no attach, so no mark, no count, no log clock — ABSENT, never zero, because
+    // a zero is a measurement and nobody took one. The last answer is live and carries all three.
+    let frames = engine_frames("06-module-snapshot.json");
+    let mut healths = frames.iter().filter_map(|frame| match frame {
+        EngineMessage::Reply(reply) => match &reply.result {
+            ReplyResult::HealthResult(health) => Some(health),
+            _ => None,
+        },
+        _ => None,
+    });
+
+    let fresh = healths.next().expect("the first health answer");
+    assert!(matches!(fresh.status, HealthResultStatus::Idle));
+    assert!(fresh.mark.is_none());
+    assert!(fresh.events.is_none());
+    assert!(fresh.last_event_ts.is_none());
+
+    let live = healths.next().expect("the health answer after the fold");
+    assert!(matches!(live.status, HealthResultStatus::Live));
+    let mark = live.mark.as_ref().expect("a live fold has a mark");
+    assert!(mark.log.ends_with("eqlog_Primitive_freeport.txt"));
+    assert_eq!(mark.offset, 9_185_240);
+    assert_eq!(live.events, Some(139_860));
+    assert_eq!(live.last_event_ts, Some(1_787_181_707_000));
+}
+
+/// The reply result of the first `module.snapshot` answer naming `module`.
+fn module_result(frames: &[EngineMessage], module: &str) -> ReplyResult {
+    frames
+        .iter()
+        .find_map(|frame| match frame {
+            EngineMessage::Reply(reply) => match &reply.result {
+                ReplyResult::ModuleSnapshotResult(snapshot) if snapshot.module == module => {
+                    Some(reply.result.clone())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no snapshot of {module}"))
 }

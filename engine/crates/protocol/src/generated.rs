@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:2ebec8b610d4d05c702b55585f8d4c695680cf01ce6be4bce2f747a0a17b9654
+//! schema-digest: sha256:c1059126b392d7caf5ddbad9ddc61cb8540f9a2ae3057dd6df10fbfe716b3328
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -132,6 +132,9 @@ impl ::std::convert::From<::std::collections::BTreeMap<::std::string::String, cr
 ///      "$ref": "#/$defs/SessionProgressRequest"
 ///    },
 ///    {
+///      "$ref": "#/$defs/ModuleSnapshotRequest"
+///    },
+///    {
 ///      "$ref": "#/$defs/ViewSubscribeRequest"
 ///    },
 ///    {
@@ -149,6 +152,7 @@ pub enum ClientMessage {
     SessionAttachRequest(SessionAttachRequest),
     SessionHealthRequest(SessionHealthRequest),
     SessionProgressRequest(SessionProgressRequest),
+    ModuleSnapshotRequest(ModuleSnapshotRequest),
     ViewSubscribeRequest(ViewSubscribeRequest),
     ViewUnsubscribeRequest(ViewUnsubscribeRequest),
 }
@@ -175,6 +179,11 @@ impl ::std::convert::From<SessionHealthRequest> for ClientMessage {
 impl ::std::convert::From<SessionProgressRequest> for ClientMessage {
     fn from(value: SessionProgressRequest) -> Self {
         Self::SessionProgressRequest(value)
+    }
+}
+impl ::std::convert::From<ModuleSnapshotRequest> for ClientMessage {
+    fn from(value: ModuleSnapshotRequest) -> Self {
+        Self::ModuleSnapshotRequest(value)
     }
 }
 impl ::std::convert::From<ViewSubscribeRequest> for ClientMessage {
@@ -1166,13 +1175,14 @@ pub struct FoldProgress {
     ///How far the fold has got, 0 to 100, FRACTIONAL. The engine emits the number it actually measured and does not pre-round it: rounding is a display decision and belongs to whoever is drawing the bar. That is not in tension with the renderer-never-munges rule - that rule is about DOMAIN data (no client-side filtering, sorting or aggregation of the world), and formatting a progress readout for the pixel it lands on is not domain work. A NOTE FOR WORKED EXAMPLES: Rust serializes an f64 whole value as X.0, so a fixture carrying `62` would come back `62.0` and stop being byte-verbatim across the two languages. Examples therefore use a genuinely fractional value (62.4), which round-trips identically in both.
     pub pct: f64,
 }
-///`HealthResult`
+///What the engine's ingest is doing, and where it has got to. THE LAST THREE FIELDS ARE OPTIONAL AND THAT IS NOT A CONVENIENCE: a health answer given before any attach honestly has no mark, no event count and no log timestamp, and a zero would be a measurement nobody took. Absent means `this engine has not folded anything`; present means the numbers are the fold's own.
 ///
 /// <details><summary>JSON schema</summary>
 ///
 /// ```json
 ///{
 ///  "title": "HealthResult",
+///  "description": "What the engine's ingest is doing, and where it has got to. THE LAST THREE FIELDS ARE OPTIONAL AND THAT IS NOT A CONVENIENCE: a health answer given before any attach honestly has no mark, no event count and no log timestamp, and a zero would be a measurement nobody took. Absent means `this engine has not folded anything`; present means the numbers are the fold's own.",
 ///  "type": "object",
 ///  "required": [
 ///    "epoch",
@@ -1182,6 +1192,17 @@ pub struct FoldProgress {
 ///  "properties": {
 ///    "epoch": {
 ///      "$ref": "#/$defs/Epoch"
+///    },
+///    "events": {
+///      "description": "Events folded in this generation. Counts EVENTS, not lines — a log line the parser declines is not one.",
+///      "type": "integer"
+///    },
+///    "lastEventTs": {
+///      "description": "The `ts` of the last event folded — THE LOG'S OWN CLOCK, never the host's. Absent when nothing folded, or when no event so far carried a stamp the parser could read.",
+///      "type": "integer"
+///    },
+///    "mark": {
+///      "$ref": "#/$defs/LogMark"
 ///    },
 ///    "status": {
 ///      "type": "string",
@@ -1205,6 +1226,18 @@ pub struct FoldProgress {
 #[serde(deny_unknown_fields)]
 pub struct HealthResult {
     pub epoch: Epoch,
+    ///Events folded in this generation. Counts EVENTS, not lines — a log line the parser declines is not one.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub events: ::std::option::Option<i64>,
+    ///The `ts` of the last event folded — THE LOG'S OWN CLOCK, never the host's. Absent when nothing folded, or when no event so far carried a stamp the parser could read.
+    #[serde(
+        rename = "lastEventTs",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub last_event_ts: ::std::option::Option<i64>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub mark: ::std::option::Option<LogMark>,
     pub status: HealthResultStatus,
     #[serde(rename = "uptimeMs")]
     pub uptime_ms: i64,
@@ -1633,6 +1666,213 @@ impl ::std::convert::TryFrom<::std::string::String> for InsertOpOp {
         value.parse()
     }
 }
+///THE ADDRESSABLE COORDINATE (owner ruling 18 law 3): state is addressed by (log identity, byte offset) and by nothing else — never by wall time, never by `current`. `offset` is the end of the last COMPLETE line folded, which is the same definition as the scan's end offset; a half-written line is not an event and the mark waits with it. THIS IS NOT A FRAMING CONCERN: it is a coordinate INSIDE the file the engine reads, and it would mean the same thing over any transport.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "LogMark",
+///  "description": "THE ADDRESSABLE COORDINATE (owner ruling 18 law 3): state is addressed by (log identity, byte offset) and by nothing else — never by wall time, never by `current`. `offset` is the end of the last COMPLETE line folded, which is the same definition as the scan's end offset; a half-written line is not an event and the mark waits with it. THIS IS NOT A FRAMING CONCERN: it is a coordinate INSIDE the file the engine reads, and it would mean the same thing over any transport.",
+///  "type": "object",
+///  "required": [
+///    "log",
+///    "offset"
+///  ],
+///  "properties": {
+///    "log": {
+///      "description": "The log being folded, as the path the app handed the engine at attach. The engine never discovers a path of its own.",
+///      "type": "string"
+///    },
+///    "offset": {
+///      "description": "The end of the last complete line folded, counted from the start of the file.",
+///      "type": "integer"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct LogMark {
+    ///The log being folded, as the path the app handed the engine at attach. The engine never discovers a path of its own.
+    pub log: ::std::string::String,
+    ///The end of the last complete line folded, counted from the start of the file.
+    pub offset: i64,
+}
+///`ModuleSnapshotParams`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ModuleSnapshotParams",
+///  "type": "object",
+///  "required": [
+///    "module"
+///  ],
+///  "properties": {
+///    "module": {
+///      "description": "The module's id, exactly as the registry spells it — `loot`, `kills`, `buffTimers`. Not a view source: a view is filtered, sorted and windowed, and this is the module's whole state.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ModuleSnapshotParams {
+    ///The module's id, exactly as the registry spells it — `loot`, `kills`, `buffTimers`. Not a view source: a view is filtered, sorted and windowed, and this is the module's whole state.
+    pub module: ::std::string::String,
+}
+///THE FIRST DATA-BEARING OP. Asks the live fold for one module's published state — the same `{ seq, state }` the app's own module registry hydrates from today. The answer is a point-in-time read of the ingest's fold: mid-scan it is a real PREFIX state (every event up to `seq` and no part of another), because the fold answers between its own read boundaries and never inside one. An unknown module name is `notFound`: the registry is the authority on what a module is, and an empty state would be a lie about a module that does not exist.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ModuleSnapshotRequest",
+///  "description": "THE FIRST DATA-BEARING OP. Asks the live fold for one module's published state — the same `{ seq, state }` the app's own module registry hydrates from today. The answer is a point-in-time read of the ingest's fold: mid-scan it is a real PREFIX state (every event up to `seq` and no part of another), because the fold answers between its own read boundaries and never inside one. An unknown module name is `notFound`: the registry is the authority on what a module is, and an empty state would be a lie about a module that does not exist.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "module.snapshot"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/ModuleSnapshotParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ModuleSnapshotRequest {
+    pub id: RequestId,
+    pub op: ModuleSnapshotRequestOp,
+    pub params: ModuleSnapshotParams,
+}
+///`ModuleSnapshotRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "module.snapshot"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ModuleSnapshotRequestOp {
+    #[serde(rename = "module.snapshot")]
+    ModuleSnapshot,
+}
+impl ::std::fmt::Display for ModuleSnapshotRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ModuleSnapshot => f.write_str("module.snapshot"),
+        }
+    }
+}
+impl ::std::str::FromStr for ModuleSnapshotRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "module.snapshot" => Ok(Self::ModuleSnapshot),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ModuleSnapshotRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ModuleSnapshotRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ModuleSnapshotRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ModuleSnapshotResult`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ModuleSnapshotResult",
+///  "type": "object",
+///  "required": [
+///    "module",
+///    "seq",
+///    "state"
+///  ],
+///  "properties": {
+///    "module": {
+///      "description": "The module that answered, echoed back so a caller holding several in flight needs no bookkeeping of its own.",
+///      "type": "string"
+///    },
+///    "seq": {
+///      "description": "The module's OWN published seq — for most modules the seq of the last event it folded, and for the four that publish a private revision counter (combo, character, respawn, buffTimers) that counter. It is a hydration cursor, not the fold's event count; `HealthResult.events` is the count.",
+///      "type": "integer"
+///    },
+///    "state": {
+///      "$ref": "#/$defs/ModuleState"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ModuleSnapshotResult {
+    ///The module that answered, echoed back so a caller holding several in flight needs no bookkeeping of its own.
+    pub module: ::std::string::String,
+    ///The module's OWN published seq — for most modules the seq of the last event it folded, and for the four that publish a private revision counter (combo, character, respawn, buffTimers) that counter. It is a hydration cursor, not the fold's event count; `HealthResult.events` is the count.
+    pub seq: i64,
+    pub state: ::serde_json::Value,
+}
 ///An op that takes nothing still sends `params: {}`. The envelope keeps one shape, so adding a parameter later is a schema edit rather than an envelope change.
 ///
 /// <details><summary>JSON schema</summary>
@@ -1856,6 +2096,9 @@ impl ::std::convert::TryFrom<::std::string::String> for ReplyKind {
 ///    },
 ///    {
 ///      "$ref": "#/$defs/SubscribeAck"
+///    },
+///    {
+///      "$ref": "#/$defs/ModuleSnapshotResult"
 ///    }
 ///  ]
 ///}
@@ -1868,6 +2111,7 @@ pub enum ReplyResult {
     HealthResult(HealthResult),
     AttachResult(AttachResult),
     SubscribeAck(SubscribeAck),
+    ModuleSnapshotResult(ModuleSnapshotResult),
 }
 impl ::std::convert::From<EchoResult> for ReplyResult {
     fn from(value: EchoResult) -> Self {
@@ -1887,6 +2131,11 @@ impl ::std::convert::From<AttachResult> for ReplyResult {
 impl ::std::convert::From<SubscribeAck> for ReplyResult {
     fn from(value: SubscribeAck) -> Self {
         Self::SubscribeAck(value)
+    }
+}
+impl ::std::convert::From<ModuleSnapshotResult> for ReplyResult {
+    fn from(value: ModuleSnapshotResult) -> Self {
+        Self::ModuleSnapshotResult(value)
     }
 }
 ///Client-chosen correlation id. A reply carries the id of its request; every stream message carries the id of the subscribe request that opened it.

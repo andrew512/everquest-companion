@@ -1,0 +1,216 @@
+// THE CLOSED RESULT REGISTRY, APP SIDE (src/shared/dataServer/ops.ts).
+//
+// The schema states a rule it deliberately refuses to put on the wire: a reply carries no op of its
+// own, because the op of the REQUEST whose id it names is what decides the result shape. That rule
+// is not expressible in the generated types — `ReplyResult` is a bare union there — so `ops.ts` is
+// where it becomes one, and this file is where the claim is checked against the committed
+// conversation rather than against itself.
+//
+// IT EXISTS BECAUSE THE REGISTRY IS A CLAIM ABOUT THE ENGINE, not a derivation from it. `ParamsFor`
+// is read straight off the wire union and cannot drift; `ResultFor` is written down by hand, so the
+// only thing standing between "the registry says session.health answers with a HealthResult" and
+// reality is a test that makes the engine answer. `OpsAreExhaustive` covers the other half at
+// compile time — a new op in `protocol/schema/` is a TYPE error in ops.ts until somebody writes
+// down what it answers with — and the runtime half is here.
+//
+// JOS-478 added `module.snapshot`, the first data-bearing op, which is why this file exists now
+// rather than at JOS-468: it is the first op whose result shape a caller actually reads a value
+// out of.
+
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  EngineError,
+  OPS_ARE_EXHAUSTIVE,
+  RESULT_GUARDS,
+  type RequestOp
+} from '../src/shared/dataServer/ops'
+import { fixture, flush, rig, shakeHands } from './dataServerRig.mjs'
+import type {
+  ClientMessage,
+  EngineMessage,
+  ModuleSnapshotRequest,
+  Reply,
+  ReplyResult
+} from '../src/shared/dataServer/protocol.generated'
+
+/** Every op the schema's client union names, read off the committed conversation's own shapes. */
+const EVERY_OP: RequestOp[] = [
+  'echo',
+  'session.attach',
+  'session.health',
+  'session.progress',
+  'module.snapshot',
+  'view.subscribe',
+  'view.unsubscribe'
+]
+
+test('the registry names every op, and the compile-time pin agrees', () => {
+  // OPS_ARE_EXHAUSTIVE is a `true` that only typechecks when the registry and the wire union name
+  // exactly the same set. Asserting it at runtime is worth one line: it makes the constant
+  // load-bearing in a suite as well as in a build, so nobody deletes it as unused.
+  assert.equal(OPS_ARE_EXHAUSTIVE, true)
+  assert.deepEqual(Object.keys(RESULT_GUARDS).sort(), [...EVERY_OP].sort())
+})
+
+test('EVERY GUARD IS DISCRIMINATING — no two ops accept each other’s result', () => {
+  // The guards are the cheapest possible check that the engine kept its side of the registry. That
+  // is only true if each one accepts its OWN shape and refuses every other, which is a property of
+  // the set rather than of any single guard — so it is asserted over the whole matrix.
+  const shapes: Record<RequestOp, ReplyResult> = {
+    echo: { text: 'hello engine' },
+    'session.attach': { epoch: 2, accepted: true },
+    'session.health': { status: 'live', epoch: 2, uptimeMs: 925 },
+    'session.progress': { subscription: 4, subscribed: true },
+    'module.snapshot': { module: 'kills', seq: 139859, state: { v: 3, mobs: {} } },
+    'view.subscribe': { subscription: 7, subscribed: true },
+    'view.unsubscribe': { subscription: 7, subscribed: false }
+  }
+  for (const op of EVERY_OP) {
+    assert.equal(RESULT_GUARDS[op](shapes[op]), true, `${op} refused its own result`)
+  }
+  // `session.progress`, `view.subscribe` and `view.unsubscribe` share the SubscribeAck shape by
+  // design — the schema has one ack arm and three ops that mean it — so they are the one triple
+  // this matrix may not separate, and naming them here is what keeps the exception deliberate.
+  const ackOps = new Set<RequestOp>(['session.progress', 'view.subscribe', 'view.unsubscribe'])
+  for (const op of EVERY_OP) {
+    for (const other of EVERY_OP) {
+      if (op === other) continue
+      if (ackOps.has(op) && ackOps.has(other)) continue
+      assert.equal(
+        RESULT_GUARDS[op](shapes[other]),
+        false,
+        `${op}'s guard accepted ${other}'s result`
+      )
+    }
+  }
+})
+
+test('module.snapshot travels the client as the registry says it does', async () => {
+  const r = rig()
+  shakeHands(r)
+
+  const answer = r.client.request('module.snapshot', { module: 'kills' })
+  const sent = r.sent[r.sent.length - 1] as ModuleSnapshotRequest
+  assert.equal(sent.op, 'module.snapshot')
+  assert.equal(sent.params.module, 'kills')
+
+  // THE COMMITTED ANSWER, verbatim off the fixture — re-addressed to the id THIS client chose,
+  // which is the one edit a replay is allowed to make (see the rig).
+  const committed = fixture('06-module-snapshot.json').messages.find(
+    (frame) =>
+      frame.dir === 'engine' &&
+      (frame.message as Reply).kind === 'reply' &&
+      ((frame.message as Reply).result as { module?: string }).module === 'kills'
+  )
+  assert.ok(committed, 'the moment carries a kills snapshot')
+  r.deliver({ ...(committed.message as Reply), id: sent.id } as EngineMessage)
+
+  const result = await answer
+  assert.equal(result.module, 'kills')
+  assert.equal(result.seq, 139859)
+  // The state is the MODULE's shape, not the protocol's — so this reads a field the protocol has
+  // never heard of, which is exactly the point of the open type.
+  assert.deepEqual((result.state as { mobs: Record<string, { count: number }> }).mobs['a sand giant'], {
+    count: 41,
+    lastTs: 1787181707000
+  })
+})
+
+test('module.snapshot carries an ARRAY state through the client unchanged', async () => {
+  // `loot` publishes an array where `kills` publishes an object. A client that had narrowed the
+  // state to a record would drop this on the floor, and a schema that had said `type: object`
+  // would have made that the contract.
+  const r = rig()
+  shakeHands(r)
+  const answer = r.client.request('module.snapshot', { module: 'loot' })
+  const sent = r.sent[r.sent.length - 1] as ModuleSnapshotRequest
+  r.deliver({
+    kind: 'reply',
+    id: sent.id,
+    ok: true,
+    result: { module: 'loot', seq: 12, state: [{ item: 'Rune of Al`Kabor', qty: 2 }] }
+  })
+  const result = await answer
+  assert.ok(Array.isArray(result.state))
+  assert.equal((result.state as { qty: number }[])[0].qty, 2)
+})
+
+test('an unknown module is a notFound the caller can branch on', async () => {
+  const r = rig()
+  shakeHands(r)
+  const answer = r.client.request('module.snapshot', { module: 'loot.ledger' })
+  const sent = r.sent[r.sent.length - 1] as ModuleSnapshotRequest
+  r.deliver({
+    kind: 'error',
+    id: sent.id,
+    ok: false,
+    error: { code: 'notFound', message: 'this engine folds no module named "loot.ledger"' }
+  })
+  await assert.rejects(answer, (e: unknown) => {
+    assert.ok(e instanceof EngineError)
+    assert.equal(e.code, 'notFound')
+    return true
+  })
+})
+
+test('a reply carrying ANOTHER op’s result is refused rather than handed over', async () => {
+  // The failure this prevents: a caller reads `result.state` off a SubscribeAck and gets
+  // `undefined` several frames later, with nothing in the log to say why.
+  const r = rig()
+  shakeHands(r)
+  const answer = r.client.request('module.snapshot', { module: 'kills' })
+  const sent = r.sent[r.sent.length - 1] as ClientMessage & { id: number }
+  r.deliver({
+    kind: 'reply',
+    id: sent.id,
+    ok: true,
+    result: { subscription: sent.id, subscribed: true }
+  })
+  await assert.rejects(answer, (e: unknown) => {
+    assert.ok(e instanceof EngineError)
+    assert.equal(e.code, 'internal')
+    return true
+  })
+  await flush()
+})
+
+test('HEALTH’S NEW FIELDS ARE OPTIONAL, and absent is not zero', async () => {
+  // Ruling 18 law 3: state is addressed by (log identity, byte offset). A health answer before any
+  // attach has no such coordinate, and the schema says so by leaving the fields out — so the
+  // client must hand back an object where they are `undefined`, never one where they are 0.
+  const r = rig()
+  shakeHands(r)
+  const fresh = r.client.request('session.health', {})
+  const first = r.sent[r.sent.length - 1] as ClientMessage & { id: number }
+  r.deliver({
+    kind: 'reply',
+    id: first.id,
+    ok: true,
+    result: { status: 'idle', epoch: 1, uptimeMs: 12 }
+  })
+  const before = await fresh
+  assert.equal(before.mark, undefined)
+  assert.equal(before.events, undefined)
+  assert.equal(before.lastEventTs, undefined)
+
+  const live = r.client.request('session.health', {})
+  const second = r.sent[r.sent.length - 1] as ClientMessage & { id: number }
+  r.deliver({
+    kind: 'reply',
+    id: second.id,
+    ok: true,
+    result: {
+      status: 'live',
+      epoch: 2,
+      uptimeMs: 925,
+      mark: { log: 'C:\\EQ\\Logs\\eqlog_Primitive_freeport.txt', offset: 9185240 },
+      events: 139860,
+      lastEventTs: 1787181707000
+    }
+  })
+  const after = await live
+  assert.equal(after.mark?.offset, 9185240)
+  assert.equal(after.events, 139860)
+  assert.equal(after.lastEventTs, 1787181707000)
+})

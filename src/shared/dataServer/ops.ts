@@ -12,13 +12,20 @@
 // the result side of the registry can drift at all.
 
 import type { ClientMessage, ErrorCode, Hello, ReplyResult, RequestId } from './protocol.generated'
-import type { AttachResult, EchoResult, HealthResult, SubscribeAck } from './protocol.generated'
+import type {
+  AttachResult,
+  EchoResult,
+  HealthResult,
+  ModuleSnapshotResult,
+  SubscribeAck
+} from './protocol.generated'
 
 interface ResultRegistry {
   echo: EchoResult
   'session.attach': AttachResult
   'session.health': HealthResult
   'session.progress': SubscribeAck
+  'module.snapshot': ModuleSnapshotResult
   'view.subscribe': SubscribeAck
   'view.unsubscribe': SubscribeAck
 }
@@ -51,6 +58,10 @@ export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> 
   'session.attach': (r) => 'accepted' in r,
   'session.health': (r) => 'status' in r,
   'session.progress': (r) => 'subscribed' in r,
+  // `module` rather than `state`: it is the field no other arm carries, and it is the one a caller
+  // reads first anyway. `state` would be a weaker guard for the same cost — the schema lets it be
+  // any JSON at all, including a value `in` cannot be asked about meaningfully.
+  'module.snapshot': (r) => 'module' in r,
   'view.subscribe': (r) => 'subscribed' in r,
   'view.unsubscribe': (r) => 'subscribed' in r
 }

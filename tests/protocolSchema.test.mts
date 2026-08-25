@@ -174,11 +174,22 @@ test('COVERAGE: every definition became a type in BOTH languages', () => {
         ts.includes(`export type ${name} =`),
       `$defs/${name} produced no TypeScript type`
     )
+    // THE TWO DELIBERATE ABSENCES on the Rust side, and they are the same defect twice: typify
+    // lowers a multi-type schema to an enum whose number arm is f64, so `184220` comes back
+    // `184220.0`. Both replacements are declared in `engine/crates/protocol-codegen/src/lib.rs`
+    // and both are named HERE, so a third one cannot appear without editing this list.
     if (name === 'Cell') {
-      // THE ONE DELIBERATE ABSENCE on the Rust side: `Cell` is replaced by the hand-written
-      // `protocol::cell::Cell`, because typify lowers a multi-type schema to an enum whose number
-      // arm is f64 and `184220` must not come back `184220.0`. See that module's header.
+      // `Cell` is replaced by the hand-written `protocol::cell::Cell` — see that module's header.
       assert.ok(rust.includes('crate::cell::Cell'), 'the hand-written Cell replacement is not in use')
+      continue
+    }
+    if (name === 'ModuleState') {
+      // `ModuleState` says "any JSON, the module owns the shape"; in Rust that sentence IS
+      // `serde_json::Value`, so there is nothing to hand-write and nothing to generate.
+      assert.ok(
+        rust.includes('pub state: ::serde_json::Value'),
+        'the ModuleState replacement is not in use'
+      )
       continue
     }
     assert.ok(
@@ -293,6 +304,8 @@ function describeClient(message: ClientMessage): string {
     case 'session.health':
     case 'session.progress':
       return `${message.op}#${String(message.id)}`
+    case 'module.snapshot':
+      return `snapshot#${String(message.id)} of ${message.params.module}`
     case 'view.subscribe':
       return `subscribe#${String(message.id)} ${message.params.source}`
     case 'view.unsubscribe':
@@ -355,6 +368,7 @@ test('every fixture message VALIDATES against the schema and narrows through the
     'session.attach',
     'session.health',
     'session.progress',
+    'module.snapshot',
     'view.subscribe',
     'view.unsubscribe',
     'reply',

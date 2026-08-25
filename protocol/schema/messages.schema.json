@@ -14,6 +14,7 @@
         { "$ref": "#/$defs/SessionAttachRequest" },
         { "$ref": "#/$defs/SessionHealthRequest" },
         { "$ref": "#/$defs/SessionProgressRequest" },
+        { "$ref": "#/$defs/ModuleSnapshotRequest" },
         { "$ref": "#/$defs/ViewSubscribeRequest" },
         { "$ref": "#/$defs/ViewUnsubscribeRequest" }
       ]
@@ -167,7 +168,8 @@
         { "$ref": "#/$defs/EchoResult" },
         { "$ref": "#/$defs/HealthResult" },
         { "$ref": "#/$defs/AttachResult" },
-        { "$ref": "#/$defs/SubscribeAck" }
+        { "$ref": "#/$defs/SubscribeAck" },
+        { "$ref": "#/$defs/ModuleSnapshotResult" }
       ]
     },
 
@@ -233,6 +235,7 @@
 
     "HealthResult": {
       "title": "HealthResult",
+      "description": "What the engine's ingest is doing, and where it has got to. THE LAST THREE FIELDS ARE OPTIONAL AND THAT IS NOT A CONVENIENCE: a health answer given before any attach honestly has no mark, no event count and no log timestamp, and a zero would be a measurement nobody took. Absent means `this engine has not folded anything`; present means the numbers are the fold's own.",
       "type": "object",
       "properties": {
         "status": {
@@ -240,10 +243,87 @@
           "enum": ["starting", "attaching", "folding", "live", "idle"]
         },
         "epoch": { "$ref": "#/$defs/Epoch" },
-        "uptimeMs": { "type": "integer" }
+        "uptimeMs": { "type": "integer" },
+        "mark": { "$ref": "#/$defs/LogMark" },
+        "events": {
+          "description": "Events folded in this generation. Counts EVENTS, not lines — a log line the parser declines is not one.",
+          "type": "integer"
+        },
+        "lastEventTs": {
+          "description": "The `ts` of the last event folded — THE LOG'S OWN CLOCK, never the host's. Absent when nothing folded, or when no event so far carried a stamp the parser could read.",
+          "type": "integer"
+        }
       },
       "required": ["status", "epoch", "uptimeMs"],
       "additionalProperties": false
+    },
+
+    "LogMark": {
+      "title": "LogMark",
+      "description": "THE ADDRESSABLE COORDINATE (owner ruling 18 law 3): state is addressed by (log identity, byte offset) and by nothing else — never by wall time, never by `current`. `offset` is the end of the last COMPLETE line folded, which is the same definition as the scan's end offset; a half-written line is not an event and the mark waits with it. THIS IS NOT A FRAMING CONCERN: it is a coordinate INSIDE the file the engine reads, and it would mean the same thing over any transport.",
+      "type": "object",
+      "properties": {
+        "log": {
+          "description": "The log being folded, as the path the app handed the engine at attach. The engine never discovers a path of its own.",
+          "type": "string"
+        },
+        "offset": {
+          "description": "The end of the last complete line folded, counted from the start of the file.",
+          "type": "integer"
+        }
+      },
+      "required": ["log", "offset"],
+      "additionalProperties": false
+    },
+
+    "ModuleSnapshotRequest": {
+      "title": "ModuleSnapshotRequest",
+      "description": "THE FIRST DATA-BEARING OP. Asks the live fold for one module's published state — the same `{ seq, state }` the app's own module registry hydrates from today. The answer is a point-in-time read of the ingest's fold: mid-scan it is a real PREFIX state (every event up to `seq` and no part of another), because the fold answers between its own read boundaries and never inside one. An unknown module name is `notFound`: the registry is the authority on what a module is, and an empty state would be a lie about a module that does not exist.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["module.snapshot"] },
+        "params": { "$ref": "#/$defs/ModuleSnapshotParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "ModuleSnapshotParams": {
+      "title": "ModuleSnapshotParams",
+      "type": "object",
+      "properties": {
+        "module": {
+          "description": "The module's id, exactly as the registry spells it — `loot`, `kills`, `buffTimers`. Not a view source: a view is filtered, sorted and windowed, and this is the module's whole state.",
+          "type": "string"
+        }
+      },
+      "required": ["module"],
+      "additionalProperties": false
+    },
+
+    "ModuleSnapshotResult": {
+      "title": "ModuleSnapshotResult",
+      "type": "object",
+      "properties": {
+        "module": {
+          "description": "The module that answered, echoed back so a caller holding several in flight needs no bookkeeping of its own.",
+          "type": "string"
+        },
+        "seq": {
+          "description": "The module's OWN published seq — for most modules the seq of the last event it folded, and for the four that publish a private revision counter (combo, character, respawn, buffTimers) that counter. It is a hydration cursor, not the fold's event count; `HealthResult.events` is the count.",
+          "type": "integer"
+        },
+        "state": { "$ref": "#/$defs/ModuleState" }
+      },
+      "required": ["module", "seq", "state"],
+      "additionalProperties": false
+    },
+
+    "ModuleState": {
+      "title": "ModuleState",
+      "description": "THE MODULE'S PUBLISHED STATE, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the same argument Cells makes, one level up: the field set belongs to the thing that publishes it, so a module growing a field is not a protocol change. `type` NAMES EVERY JSON TYPE rather than being omitted, and that is not decoration: an omitted `type` lowers to an INDEX-SIGNATURE object in TypeScript, which would forbid the ARRAY half of the registry — `kills` publishes an object, `loot`, `consider` and `eventFeed` publish arrays of rows, and a schema that named one of those shapes would be a rule the fold already breaks. IT IS THE SECOND HAND-WRITTEN REPLACEMENT ON THE RUST SIDE, for exactly the reason `Cell` is: typify lowers a multi-type schema to an untagged enum whose number arm is `f64`, and a module state is FULL of counts. The replacement is `serde_json::Value`, which is the same claim this definition makes, spelled in Rust.",
+      "type": ["object", "array", "string", "number", "boolean", "null"]
     },
 
     "SessionProgressRequest": {
