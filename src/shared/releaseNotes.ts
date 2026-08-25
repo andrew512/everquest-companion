@@ -125,6 +125,32 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.10.0',
+    date: '2026-08-24',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Switching characters quickly no longer ties the app in knots. Each new pick now cancels the load already in progress - the last one wins, within a blink - and a character mid-load can no longer flash another character’s fights on screen or fire alert sounds out of months-old history.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The app has removed itself from Windows’ mouse path entirely. A locked overlay used to route every mouse movement on the machine through the app, so a busy moment for the app was a stutter for your camera - now nothing the app does can touch your mouse. The hover-to-unpin button still appears, watched by a tiny background sampler instead, and it now works with any window focused, not just the game.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The app stopped doing slow disk chores on its busiest thread: error logging, periodic saves, and the item and mob knowledge caches all moved off it. Two of those caches also got crash-proof writes - a badly timed shutdown could silently empty everything they had learned.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'When something does hitch, the app can now name it. A bug report carries which internal step owned each stall - and whether it was a memory-cleanup pause - so a report about stutter arrives with its own diagnosis attached.',
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '1.9.0',
     date: '2026-08-23',
     entries: [
