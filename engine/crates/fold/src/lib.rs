@@ -25,11 +25,16 @@
 //!
 //! ── CACHE TRANSPARENCY (ruling 18) ─────────────────────────────────────────────────────────────
 //!
-//! NO MODULE HERE READS A WALL CLOCK, EVER. The one time-based rule in the cluster (spellSets'
-//! settle window) advances off LOG TIMESTAMPS during a fold; `on_tick` exists on the trait for the
-//! live tail and is never called by `Fold`. All state lives behind the registry door — there are no
-//! statics, no lazily-populated caches keyed by anything but a fold's own inputs, and nothing
-//! outlives a `Fold`. `eqlog`'s `OnceLock` regexes are compile-once CONSTANTS, not memoized answers.
+//! NO MODULE HERE READS A WALL CLOCK, EVER — it is HANDED one, and only on the live tail. Every
+//! time-based rule inside a FOLD (spellSets' settle window, the buffs hygiene sweep, buffTimers'
+//! holds) advances off LOG TIMESTAMPS; the wall clock reaches a module through exactly one door,
+//! [`Fold::tick`], which the caller drives from its own clock and which a HISTORICAL FOLD NEVER
+//! CALLS. `fold_bytes` does not call it and neither does the oracle harness, so the equivalence law
+//! is untouched: a fold of the same bytes is the same pure function of those bytes it always was,
+//! and the DEFAULT `oracle:rust-fold` staying green is the proof (owner ruling 22, JOS-481). All
+//! state lives behind the registry door — there are no statics, no lazily-populated caches keyed by
+//! anything but a fold's own inputs, and nothing outlives a `Fold`. `eqlog`'s `OnceLock` regexes
+//! are compile-once CONSTANTS, not memoized answers.
 //!
 //! ── PHASE 3 IS NOT BUILT, BUT IT IS SHAPED ─────────────────────────────────────────────────────
 //!
@@ -63,8 +68,19 @@ pub trait EqModule {
     /// Fold one event. `live` gates nothing here — the registry gates the push (JOS-60).
     fn on_event(&mut self, ev: &Event, live: bool);
 
-    /// Optional wall-clock heartbeat, ~1x/sec on the LIVE tail only. A historical fold never calls
-    /// it, which is what lets every module here keep the cache-transparency promise above.
+    /// Optional wall-clock heartbeat, ~1x/sec on the LIVE tail only — `registry.tick(Date.now())`
+    /// over there, [`Fold::tick`] here. A HISTORICAL FOLD NEVER CALLS IT, which is what lets every
+    /// module keep the cache-transparency promise above: the bytes still decide everything a
+    /// replay can observe.
+    ///
+    /// A TICK'S DERIVED EVENTS ARE COLLECTED AND QUEUED, NOT DELIVERED. No module's `on_tick`
+    /// emits one TODAY — MEASURED: the buffs hygiene sweep retires and culls rows, and neither path
+    /// synthesizes a `buffExpired` (only a resolved wear-off and the illusion clear do, both
+    /// event-driven) — and [`Registry::tick`] takes them anyway, because a contract with a
+    /// [`EqModule::take_derived`] door and one caller that silently drops what comes through it is
+    /// a defect waiting for the first module that uses it. QUEUED rather than drained is what the
+    /// TS does: `bus.emitDerived` pushes onto a queue only `emit` drains, so anything a heartbeat
+    /// synthesized reaches the other modules with the NEXT primary event.
     fn on_tick(&mut self, _now_ms: i64) {}
 
     /// Full current state for hydration, plus the last seq folded in: `{ "seq": n, "state": … }`.
@@ -187,6 +203,36 @@ impl Registry {
     pub fn dispatch(&mut self, ev: &Event, live: bool, derived: &mut Vec<Event>) {
         for m in &mut self.mods {
             m.on_event(ev, live);
+            let mut out = m.take_derived();
+            if !out.is_empty() {
+                derived.append(&mut out);
+            }
+        }
+    }
+
+    /// THE WALL-CLOCK HEARTBEAT, fanned over every module in WIRING ORDER — `registry.tick`'s own
+    /// loop (`src/main/modules/registry.ts`), minus the half that is not this crate's.
+    ///
+    /// Over there the method is `for (const mod of this.modules) mod.onTick?.(nowMs)` followed by
+    /// `this.doFlush()`. The FIRST line is this; the second is the delta push, which no module here
+    /// implements (`flush_delta` is declared and unimplemented — see the crate header) and which is
+    /// the transport's business rather than the fold's. So a tick here advances the model and
+    /// publishes nothing: whoever asks for a snapshot next sees the aged state, which is exactly
+    /// what a pull-based server wants.
+    ///
+    /// DERIVED EVENTS ARE COLLECTED THE WAY `dispatch` COLLECTS THEM and for the same reason — a
+    /// module cannot hold a mutable reference to the queue the registry is iterating — but they are
+    /// NOT drained here. See [`EqModule::on_tick`] for why the door is opened for a producer that
+    /// does not exist yet, and for why leaving them QUEUED is the ported behaviour rather than an
+    /// omission.
+    ///
+    /// NOT GATED ON A REPLAY FLAG. `registry.ts` opens with `if (this.replaying) return`, which is
+    /// the structural half of "never tick during a historical fold"; over here the historical fold
+    /// is `fold_bytes`, which does not call this at all, so the guard has nothing to guard. The
+    /// caller drives the clock and the caller is the live tail.
+    pub fn tick(&mut self, now_ms: i64, derived: &mut Vec<Event>) {
+        for m in &mut self.mods {
+            m.on_tick(now_ms);
             let mut out = m.take_derived();
             if !out.is_empty() {
                 derived.append(&mut out);
@@ -392,8 +438,31 @@ impl Fold {
         }
     }
 
+    /// ONE WALL-CLOCK TICK OVER THE WHOLE WORLD (owner ruling 22, JOS-481) — `session.ts`'s
+    /// `registry.tick(Date.now())`, which the app runs once at go-live and then ~1×/sec while the
+    /// LIVE tail is running, and never during a replay.
+    ///
+    /// THE EQUIVALENCE LAW IS UNTOUCHED, and this is the paragraph that says why. A historical fold
+    /// is [`Fold::fold_bytes`], which does not call this; the six-slice oracle records its goldens
+    /// through that path and nothing else; so the fold of a given log is still a pure function of
+    /// its bytes and every cache-transparency law above still holds (ruling 18 law 1). What a tick
+    /// changes is a LIVE world, which the oracle has never described and cannot: the app's own fold
+    /// has been aged by a wall clock since JOS-149, and an engine that did not do the same would be
+    /// serving state the app would have retired seconds ago. That divergence was MEASURED — the
+    /// in-app parity probe caught `buffs.active` at 12 rows engine-side against 3 app-side on a
+    /// fixture whose buffs are long expired by wall time (JOS-479) — and this is its resolution.
+    ///
+    /// THE COMBAT ENGINE IS NOT TICKED, and that is a fact about the TS rather than a fence: the
+    /// heartbeat over there is `registry.tick` and nothing else — `session.ts startHeartbeat` calls
+    /// it alone, `CombatEngine` declares no `onTick`, and `pipeline.ts` subscribes the engine to the
+    /// bus and to no clock. So an engine ticked here would be doing something its oracle never did.
+    /// If one ever grows a heartbeat, this is the one line that changes.
+    pub fn tick(&mut self, now_ms: i64) {
+        self.registry.tick(now_ms, &mut self.derived);
+    }
+
     /// Fold a complete log through `eqlog::scan`. Historical, so `live` is false from the first
-    /// byte to the last — exactly what a startup replay is.
+    /// byte to the last — exactly what a startup replay is. NEVER TICKS: see [`Fold::tick`].
     ///
     /// STREAMED, never collected. A slice folds to hundreds of thousands of events and holding
     /// them as parsed values at once costs more than the machine has — `goldenOracle.mts`'s rule
@@ -1344,5 +1413,167 @@ mod tests {
         assert_eq!(state["recent"][0]["key"], "a stone spider");
         assert_eq!(state["recent"][0]["watched"], false);
         assert_eq!(state["recent"][0]["kills"], 1);
+    }
+
+    // ── THE LIVE TICK (JOS-481, owner ruling 22) ──────────────────────────────────────────────
+
+    /// A world with one standing buff, folded from a log whose clock stopped at `ts`.
+    fn world_with_one_active(ts: i64) -> Fold {
+        let mut fold = Fold::new(registered(ClusterDeps::default()), i64::MAX);
+        for line in [
+            format!(
+                r#"{{"kind":"castBegin","seq":0,"ts":{},"raw":"c","spell":"Clarity"}}"#,
+                ts - 100
+            ),
+            format!(
+                r#"{{"kind":"buffApply","seq":1,"ts":{ts},"raw":"a","target":"self","spell":"Clarity","illusion":false,"durationMs":60000,"candidates":[{{"name":"Clarity","durationMs":60000,"illusion":false}}]}}"#
+            ),
+        ] {
+            fold.on_primary(&Event::from_json(&line).expect("object"), false);
+        }
+        fold
+    }
+
+    /// THE ACCEPTANCE CLAIM IN MINIATURE (JOS-479's measured divergence, resolved). A fold of bytes
+    /// whose buffs are long expired by WALL time still publishes them — correctly, because the fold
+    /// judges every clock against the log's own last instant. One tick from a clock that has moved
+    /// on retires them, which is exactly what the app's `registry.tick(Date.now())` does at go-live.
+    #[test]
+    fn a_wall_clock_tick_retires_a_buff_the_log_never_said_expired() {
+        let landed = 1_000_000_000;
+        let mut fold = world_with_one_active(landed);
+        let before = state_of(&fold.registry.snapshots(), "buffs");
+        assert_eq!(
+            before["active"].as_array().expect("actives").len(),
+            1,
+            "the fold's own verdict, judged against the log's clock"
+        );
+        // A DAY LATER, by the host's clock and by nothing in the file.
+        fold.tick(landed + 24 * 60 * 60 * 1000);
+        let after = state_of(&fold.registry.snapshots(), "buffs");
+        assert_eq!(after["active"], json!([]));
+    }
+
+    /// …and the tick is the ONLY thing that did it: the same world, ticked at the log's own last
+    /// instant, is untouched. Stated separately because "the sweep works" and "the sweep needs a
+    /// clock that has actually moved" are two different ways this could pass for the wrong reason.
+    #[test]
+    fn a_tick_at_the_logs_own_instant_retires_nothing() {
+        let landed = 1_000_000_000;
+        let mut fold = world_with_one_active(landed);
+        fold.tick(landed);
+        let after = state_of(&fold.registry.snapshots(), "buffs");
+        assert_eq!(after["active"].as_array().expect("actives").len(), 1);
+    }
+
+    /// A TICK IS NOT AN EVENT, and three counters say so: the fold's event count, the fold's last
+    /// log timestamp, and every module's published `seq`. That third one is load-bearing rather than
+    /// tidy — the in-app parity probe SKIPS any module whose two seqs disagree, so a tick that moved
+    /// a seq would turn a live comparison into a permanent skip that reads like agreement.
+    #[test]
+    fn a_tick_moves_no_seq_no_event_count_and_no_log_clock() {
+        let landed = 1_000_000_000;
+        let mut fold = world_with_one_active(landed);
+        let before = fold.registry.snapshots();
+        let (events, last_ts) = (fold.events(), fold.last_ts());
+        fold.tick(landed + 24 * 60 * 60 * 1000);
+        let after = fold.registry.snapshots();
+        assert_eq!(fold.events(), events);
+        assert_eq!(fold.last_ts(), last_ts);
+        for (b, a) in before["modules"]
+            .as_array()
+            .expect("modules")
+            .iter()
+            .zip(after["modules"].as_array().expect("modules"))
+        {
+            assert_eq!(b["id"], a["id"]);
+            assert_eq!(
+                b["snapshot"]["seq"], a["snapshot"]["seq"],
+                "{} moved its seq on a tick",
+                b["id"]
+            );
+        }
+    }
+
+    /// NO REGISTERED MODULE'S TICK EMITS A DERIVED EVENT TODAY, and that is MEASURED rather than
+    /// assumed: the buffs sweep RETIRES and CULLS rows, and neither path synthesizes a
+    /// `buffExpired` — only a resolved wear-off and the illusion clear do, and both are event
+    /// driven. Pinned so that the first module that grows a tick-time emission has to come back and
+    /// read the queueing rule in `EqModule::on_tick` rather than discover it in a divergence.
+    #[test]
+    fn no_modules_tick_emits_a_derived_event_today() {
+        let landed = 1_000_000_000;
+        let mut fold = world_with_one_active(landed);
+        fold.tick(landed + 24 * 60 * 60 * 1000);
+        assert!(fold.derived.is_empty(), "{:?}", fold.derived);
+    }
+
+    /// …but the DOOR is open and wired, which is the half a live registry cannot demonstrate. A
+    /// module that emits on its heartbeat has those events COLLECTED — the same hand-back
+    /// `dispatch` performs — and left on the caller's queue rather than delivered, exactly as
+    /// `bus.emitDerived` leaves them for the next `emit`.
+    #[test]
+    fn a_ticking_module_hands_its_derived_events_to_the_registry() {
+        struct Chatty;
+        impl EqModule for Chatty {
+            fn id(&self) -> &'static str {
+                "chatty"
+            }
+            fn reset(&mut self) {}
+            fn on_event(&mut self, _ev: &Event, _live: bool) {}
+            fn on_tick(&mut self, now_ms: i64) {
+                let _ = now_ms;
+            }
+            fn snapshot(&self) -> Value {
+                json!({ "seq": 0, "state": {} })
+            }
+            fn take_derived(&mut self) -> Vec<Event> {
+                vec![Event::from_value(
+                    json!({ "kind": "buffExpired", "seq": 7, "ts": 42, "raw": "x" }),
+                )]
+            }
+        }
+        let mut r = Registry::new();
+        r.register(Box::new(Chatty));
+        let mut derived = Vec::new();
+        r.tick(1_000, &mut derived);
+        assert_eq!(derived.len(), 1);
+        assert_eq!(derived[0].kind(), "buffExpired");
+        assert_eq!(derived[0].int("ts"), Some(42));
+    }
+
+    /// `fold_bytes` — THE HISTORICAL PATH, AND THE EQUIVALENCE LAW. It never ticks: a scan advances
+    /// only off LOG timestamps, so a world whose buff is standing at the log's last instant still
+    /// has it standing after folding a line stamped at that same instant — even though the HOST's
+    /// clock is years past it (the line below is dated 2026 and the world's instant is derived from
+    /// it). This is the unit-sized statement of what `oracle:rust-fold` proves over six slices.
+    #[test]
+    fn a_historical_fold_never_ticks() {
+        let parser = eqlog::Parser::new(eqlog::Clock::new(eqlog::host_timezone()), None, None);
+        // THE INSTANT COMES FROM THE PARSER, not from a number typed here: the line's stamp is
+        // resolved through the HOST's zone, so a hardcoded epoch ms would pin this test to a
+        // timezone rather than to the claim.
+        let bytes: &[u8] = b"[Wed Aug 19 16:00:00 2026] You gain experience! (3.288%)\n";
+        let mut landed = None;
+        eqlog::scan::scan_bytes(&parser, bytes, |line| {
+            landed = Event::from_json(line).map(|ev| ev.ts());
+        });
+        let landed = landed.expect("the parser dated the line");
+        let mut fold = world_with_one_active(landed);
+        fold.fold_bytes(&parser, bytes);
+        assert_eq!(
+            state_of(&fold.registry.snapshots(), "buffs")["active"]
+                .as_array()
+                .expect("actives")
+                .len(),
+            1,
+            "a scan aged nothing by the host's clock"
+        );
+        // …and the very same world, handed the host's clock ONCE, retires it.
+        fold.tick(landed + 24 * 60 * 60 * 1000);
+        assert_eq!(
+            state_of(&fold.registry.snapshots(), "buffs")["active"],
+            json!([])
+        );
     }
 }

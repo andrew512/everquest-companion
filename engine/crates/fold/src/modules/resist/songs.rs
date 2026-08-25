@@ -391,11 +391,21 @@ impl SongFold {
         self.sung.clear();
     }
 
-    /// `SongFold.settle` IS DELIBERATELY NOT PORTED. It is the live tail's heartbeat — decide what
-    /// the passage of WALL-CLOCK time has settled, leave open what is genuinely still open — and a
-    /// historical fold never ticks, so the goldens were recorded with it never called. What that
-    /// costs is stated in this module's own header: a song's last open pulse is never closed, and
-    /// neither it nor the interpolation leading up to it is emitted.
+    /// `SongFold.settle` — THE LIVE TAIL'S HEARTBEAT (JOS-481): decide what the passage of
+    /// WALL-CLOCK time has settled, and leave open what is genuinely still open.
+    ///
+    /// UNLIKE `flush` IT DOES NOT END A RUN, and that difference is the whole reason there are two
+    /// methods: a bard mid-rotation has an open pulse and an open run, and ending the run would
+    /// forfeit every interpolated pulse across the next gap. A zone line and the end of a profile
+    /// are real discontinuities and call `flush`; a heartbeat is not one.
+    ///
+    /// A HISTORICAL FOLD NEVER REACHES THIS, so the six goldens are still what a world with settle
+    /// never called produces — a song's last open pulse unclosed, and the interpolation leading up
+    /// to it unemitted, exactly as this module's header records.
+    pub fn settle(&mut self, now: i64, out: &mut Vec<SongOut>) {
+        self.pulses.settle(now, out);
+    }
+
     pub fn flush(&mut self, out: &mut Vec<SongOut>) {
         self.pulses.flush(out);
     }

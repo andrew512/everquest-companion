@@ -40,6 +40,15 @@
 // `tests/replayChunking.test.mts`), so this does the same, on both worlds, so that a stamp on
 // either side cannot become a divergence.
 //
+// ── THE LINE ALSO QUOTES A FACT NOBODY COMPARES (JOS-481, owner ruling 21) ────────────────────
+//
+// `logMtimeMs` is the engine's answer about the FILE, not about the fold, so it is not a verdict and
+// has no side to disagree with. It is on the line because the ruling moved the READING of that fact
+// from the app to the server — the app has always taken it itself, `statSync(logPath).mtimeMs` in
+// `main/log/config.ts` — and a served fact nobody can see is a fact nobody can check. The e2e checks
+// it against the file on disk. No product code reads it yet: the character picker is the surface
+// that will, at its cutover, and until then this is an instrument like everything else here.
+//
 // ── AND THE APP'S STATE IS ROUND-TRIPPED THROUGH JSON BEFORE IT IS COMPARED ────────────────────
 //
 // The engine's answer arrived over a JSON wire; the app's is a live object graph that may hold
@@ -131,6 +140,19 @@ export interface ParityRun {
    * the coordinate the whole design addresses state by.
    */
   readonly mark: EngineMark | null
+  /**
+   * THE LOG FILE'S LAST-MODIFIED TIME, AS THE ENGINE SERVED IT (`HealthResult.logMtimeMs`, owner
+   * ruling 21 — the server owns log-file facts). Null before the engine has a file to stat, or when
+   * the stat failed.
+   *
+   * IT IS QUOTED FOR THE SAME REASON THE MARK IS: the app has always taken this fact itself
+   * (`statSync(logPath).mtimeMs` in `main/log/config.ts`, pushed into the character module), and
+   * the ruling moves the reading to the process that owns the file. Printing what the ENGINE
+   * answered — rather than what this process believes — is how the e2e can check the served number
+   * against the file on disk. Nothing in the product reads it yet; the character-picker surface is
+   * the cutover that will.
+   */
+  readonly logMtimeMs: number | null
   /** The engine's generation, and what its ingest said it was doing when the probe ran. A probe
    *  taken at `folding` rather than `live` is not wrong, it is just early — and then every module
    *  drifts, which the line will show. */
@@ -256,10 +278,17 @@ export function parityLine(run: ParityRun): string {
   const t = tallyParity(run.verdicts)
   const events = run.engineEvents === null ? 'nothing folded' : `${String(run.engineEvents)} events`
   const epoch = run.epoch === null ? 'no epoch' : `epoch ${String(run.epoch)}`
+  // THE FILE FACT, STATED EVEN WHEN IT IS ABSENT (ruling 21). `no mtime` rather than an omitted
+  // clause, for the same reason the whole line elides nothing: a missing clause would make "the
+  // engine could not stat it" and "this build does not serve it" the same observation.
+  const mtime = run.logMtimeMs === null ? 'no mtime' : `mtime ${String(run.logMtimeMs)}`
   const head =
     `${PARITY_LINE_PREFIX} ${String(t.agree)} agree, ${String(t.diverge)} diverge, ` +
     `${String(t.skipped)} skipped of ${String(run.verdicts.length)}`
-  const where = `[${epoch}, engine ${run.engineStatus}, ${events}, ${whereBoth(run)}]`
+  // THE MARK CLAUSE STAYS LAST, and that is a parsing contract rather than taste: the log path is
+  // the one field that can contain anything (commas, spaces, `of`), so it is the sentence's ending
+  // and every clause that could follow it goes in front of it instead.
+  const where = `[${epoch}, engine ${run.engineStatus}, ${events}, ${mtime}, ${whereBoth(run)}]`
   return `${head} ${where} — ${run.verdicts.map(phrase).join(' · ')}`
 }
 

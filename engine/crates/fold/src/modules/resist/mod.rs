@@ -35,8 +35,11 @@
 //! The TS module does two things on the registry's 1 s heartbeat: `fold.settle(nowMs)` and, every
 //! sixtieth tick, a ledger persist. NEITHER IS PART OF A HISTORICAL FOLD. The registry does not tick
 //! during a replay, which is exactly right for the persist (a replay is re-deriving what is already
-//! on disk) — and it means the golden was recorded with `settle` NEVER CALLED. So `on_tick` is not
-//! implemented here at all, and the end-of-fold state is deliberately unsettled:
+//! on disk) — and it means the golden was recorded with `settle` NEVER CALLED.
+//!
+//! Since JOS-481 `on_tick` IS implemented, and it changes none of that: a live tail hands the wall
+//! clock in ~1×/sec and `fold_bytes` never does, so a golden's world is still the unsettled one and
+//! the end-of-fold state is deliberately:
 //!
 //!   * A DEFERRED LANDING that arrived within `LAND_DEFER_MS` of the last event is never filed.
 //!     `flush_deferred` runs at the top of every event, so a deferred landing only survives to the
@@ -46,7 +49,8 @@
 //!     `finish()` — and `finish()` is the profile generator's call, not the module's.
 //!
 //! Both are faithful, both are what the recorded numbers contain, and a port that "helpfully"
-//! settled at the end would fail all six slices in the same direction.
+//! settled at the end would fail all six slices in the same direction. THE PERSIST IS STILL NOT
+//! HERE: the engine's ledger lives in memory and its disk IO is boundary verdict 4's later ticket.
 //!
 //! ── HOW EACH OUTCOME IS EARNED ─────────────────────────────────────────────────────────────────
 //!
@@ -211,6 +215,25 @@ impl ResistFold {
         self.dot_seen.clear();
         self.deferred = None;
         self.names.reset();
+    }
+
+    /// `ResistFold.settle` — the live tail's heartbeat (JOS-481), and the two things it is careful
+    /// NOT to be.
+    ///
+    /// SETTLE, NEVER FINISH: a landing that has waited out its cancel window is decided, and a song
+    /// pulse that can gain no more witnesses is closed — but a bard mid-rotation still has an open
+    /// RUN, and ending it here would forfeit the interpolation the next gap is entitled to. That is
+    /// why this calls `songs.settle` and not `songs.flush`, which a zone line does call.
+    ///
+    /// AND IT IS NOT THE PERSIST. Over there `onTick` also writes the ledger to disk every sixtieth
+    /// beat; the engine's ledger is in memory and its IO is a later ticket (boundary verdict 4, the
+    /// cutover ledger's item 6). A heartbeat that quietly grew a disk write here would be the engine
+    /// taking ownership of an artifact the app still owns.
+    pub fn settle(&mut self, now: i64, bucket: &mut ResistBucket) {
+        self.flush_deferred(now, bucket);
+        let mut out = Vec::new();
+        self.songs.settle(now, &mut out);
+        self.apply_song_out(out, bucket);
     }
 
     fn on_event(&mut self, ev: &Event, bucket: &mut ResistBucket) {
@@ -897,6 +920,22 @@ impl EqModule for ResistModule {
             ..
         } = self;
         fold.on_event(ev, ledger.bucket_mut(source_key));
+    }
+
+    /// `resist/module.ts onTick`, minus its second half. See [`ResistFold::settle`] for both.
+    ///
+    /// `seq` DOES NOT MOVE, exactly as over there: this module publishes the last event's seq, and
+    /// a settle is not an event. What it can change is the ledger's row and mob COUNTS, which is
+    /// the published state — a deferred landing filed by the passage of time is a row the app would
+    /// already be showing.
+    fn on_tick(&mut self, now_ms: i64) {
+        let Self {
+            ledger,
+            fold,
+            source_key,
+            ..
+        } = self;
+        fold.settle(now_ms, ledger.bucket_mut(source_key));
     }
 
     fn snapshot(&self) -> Value {

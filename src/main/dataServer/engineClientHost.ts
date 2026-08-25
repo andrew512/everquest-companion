@@ -281,6 +281,11 @@ async function runParityProbe(mine: number, l: LiveEngine, logPath: string): Pro
     parityLine({
       logPath,
       mark: health.mark ?? null,
+      // THE ENGINE'S ANSWER, NOT THIS PROCESS'S (owner ruling 21). This file could stat the log in
+      // one line — the app does exactly that in `main/log/config.ts` — and printing that number
+      // would prove nothing at all about who owns the fact. Quoting the served one is what makes
+      // the line evidence.
+      logMtimeMs: health.logMtimeMs ?? null,
       epoch: health.epoch,
       engineStatus: health.status,
       engineEvents: health.events ?? null,
@@ -296,6 +301,9 @@ interface EngineHealthSay {
   readonly events?: number
   /** The engine's own (log identity, byte offset). Absent until it has folded something. */
   readonly mark?: EngineMark
+  /** THE LOG FILE'S mtime, as the ENGINE stats it (owner ruling 21). Absent before an attach, and
+   *  absent when the stat failed — never zero, which would claim 1970. */
+  readonly logMtimeMs?: number
 }
 
 /** Poll `session.health` until the engine's ingest is `live`, or the budget runs out. Null only

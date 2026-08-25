@@ -1,7 +1,7 @@
 {
   "moment": "the fold serves — one module's state, and a health answer that names its coordinate",
   "source": "JOS-478 (phase 3 first light; not a plan-doc moment — the four numbered moments are 01-04)",
-  "note": "THE FIRST DATA-BEARING OP. `module.snapshot` asks the live fold for one module's published `{ seq, state }` — the same pair the app's own registry hydrates from today. TWO STATE SHAPES ARE DEMONSTRATED ON PURPOSE, because the registry publishes both and the protocol refuses to pick one: `kills` publishes an OBJECT (a shape version and a map of mobs), `loot` publishes an ARRAY of rows. A module name the registry does not carry is `notFound` — the registry is the authority, and an empty state would be a lie about a module that does not exist. The health answer at the end carries the three fields JOS-478 added: the MARK (the addressable coordinate — log identity plus the byte offset of the last complete line folded), the event count, and the log's own last timestamp. The first health answer here is the honest one a fresh process gives: no attach, so none of the three is present at all — ABSENT, never zero.",
+  "note": "THE FIRST DATA-BEARING OP. `module.snapshot` asks the live fold for one module's published `{ seq, state }` — the same pair the app's own registry hydrates from today. TWO STATE SHAPES ARE DEMONSTRATED ON PURPOSE, because the registry publishes both and the protocol refuses to pick one: `kills` publishes an OBJECT (a shape version and a map of mobs), `loot` publishes an ARRAY of rows. A module name the registry does not carry is `notFound` — the registry is the authority, and an empty state would be a lie about a module that does not exist. The health answer at the end carries the three fields JOS-478 added — the MARK (the addressable coordinate — log identity plus the byte offset of the last complete line folded), the event count, and the log's own last timestamp — and the fourth JOS-481 added: `logMtimeMs`, the FILE's last-modified time, which owner ruling 21 makes the server's fact to read and report rather than the app's to reach in for. Note that it is LATER than `lastEventTs` and that the two are different kinds of thing: one is the clock inside the log, the other is the clock the filesystem stamped the file with, and a line half-written after the last complete one moves the second without moving the first. The first health answer here is the honest one a fresh process gives: no attach, so none of the four is present at all — ABSENT, never zero.",
   "messages": [
     {
       "dir": "client",
@@ -94,7 +94,8 @@
             "offset": 9185240
           },
           "events": 139860,
-          "lastEventTs": 1787181707000
+          "lastEventTs": 1787181707000,
+          "logMtimeMs": 1787181709431
         }
       }
     }

@@ -31,8 +31,16 @@
 //!
 //! WHAT IS NOT PORTED, by name: the async `probe` (needs `deps.lookupMob`, which `foldArm.mts`
 //! passes nowhere — the bench's header calls the two knowledge lookups absent outright), the
-//! `onTick` backfill (a fold never ticks), and the JOS-383 con-card hook (installed by
-//! `pipeline.ts` only, and live-only by construction).
+//! `onTick` backfill, and the JOS-383 con-card hook (installed by `pipeline.ts` only, and live-only
+//! by construction).
+//!
+//! THE BACKFILL'S ABSENCE IS ABOUT THE LOOKUP, NOT ABOUT THE TICK, and JOS-481 is why that sentence
+//! had to be rewritten: a live engine ticks now (`Fold::tick`, owner ruling 22). `onTick` over there
+//! does one thing — call `probe` for the newest rows the replay left in the ring — and `probe` is
+//! the very method this crate cannot have, because the wiki FETCH stays app-side in v1 (boundary
+//! verdict 5: the engine ships without a network stack and learns of a miss through an event the app
+//! answers). So there is nothing for a tick to drive here until the miss/answer pair exists, and
+//! implementing an `on_tick` that called nothing would be noise.
 
 use crate::event::Event;
 use crate::EqModule;

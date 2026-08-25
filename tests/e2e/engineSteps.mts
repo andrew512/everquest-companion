@@ -298,11 +298,15 @@ export interface ParitySay {
   readonly diverge: number
   readonly skipped: number
   readonly probed: number
-  /** The bracket: `epoch N, engine <status>, <n> events, mark <offset> of <logPath>` — the last
-   *  clause being the ENGINE's own answer about which file it is folding and how far it has got. */
+  /** The bracket: `epoch N, engine <status>, <n> events, mtime <ms>, mark <offset> of <logPath>` —
+   *  the last clause being the ENGINE's own answer about which file it is folding and how far it
+   *  has got, and the one before it the file fact owner ruling 21 made the server's to state. */
   readonly where: string
   /** The log the ENGINE said it was folding, off that bracket, or null when it named no mark. */
   readonly engineLog: string | null
+  /** The log file's mtime AS THE ENGINE SERVED IT, or null when the line said `no mtime`. The app
+   *  can stat the same file itself, which is exactly what makes this checkable. */
+  readonly engineMtimeMs: number | null
   /** The per-module clauses, joined — `loot AGREE(seq 4211) · kills AGREE(seq 4211) · …`. */
   readonly modules: string
   /** What the line said about one module, or null if it did not name it. */
@@ -326,6 +330,10 @@ function readParity(match: RegExpMatchArray): ParitySay {
   const modules = match[6]
   const where = match[5]
   const mark = /, mark \d+ of (.+)$/.exec(where)
+  // ANCHORED ON ITS OWN CLAUSE, not on the bracket's tail: the mark clause ends the sentence
+  // because a log path can contain anything, so everything else is read by name from in front of
+  // it. `no mtime` is the engine having no answer, and it parses to null rather than to NaN.
+  const mtime = /, mtime (\d+),/.exec(where)
   return {
     line: match[0],
     agree: Number(match[1]),
@@ -334,6 +342,7 @@ function readParity(match: RegExpMatchArray): ParitySay {
     probed: Number(match[4]),
     where,
     engineLog: mark ? mark[1] : null,
+    engineMtimeMs: mtime ? Number(mtime[1]) : null,
     modules,
     verdict: (module) => {
       const clause = clauseFor(modules, module)

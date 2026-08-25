@@ -16,10 +16,12 @@
 //!   implicitly. The epoch is the world's generation and it is stated on every answer that depends
 //!   on it; what the fold has consumed is stated as [`World::mark`] — a path and THE MARK, the end
 //!   of the last complete line folded — and never as a time or a "so far".
-//! * **Determinism is cacheability** (law 1). The one clock read in this file is `uptimeMs`, and
-//!   it is a property of the PROCESS rather than of the world: it is derived from the start
-//!   instant, never from anything the fold computes. No world state may ever be a function of the
-//!   wall clock.
+//! * **Determinism is cacheability** (law 1). The two clock-shaped reads in this file are
+//!   `uptimeMs` and the log's `logMtimeMs`, and NEITHER IS WORLD STATE. The first is a property of
+//!   the PROCESS, derived from the start instant; the second is a property of a FILE, stated fresh
+//!   on each answer and stored nowhere (owner ruling 21 — the server owns log-file facts, and
+//!   [`World::health`] argues the three properties that keep it a served fact rather than a
+//!   remembered one). No world state may ever be a function of the wall clock.
 //! * **A cache invalidates by version, never by patching** (law 5). Which is the same statement as
 //!   the epoch: a new generation is a new world, and the only way to move between generations is to
 //!   take the fresh reset. There is no incremental repair here and there never will be.
@@ -39,7 +41,7 @@
 //! the lock and answers `false` to a turn that has lost; a loser can therefore write nothing, ever,
 //! however long it takes to notice. See `ingest.rs` for the other half.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -155,6 +157,25 @@ pub struct FoldMark {
     pub pct: f64,
     /// The `ts` of the last event folded, if one could be read.
     pub last_ts: Option<i64>,
+}
+
+/// ONE FILE'S LAST-MODIFIED TIME, in epoch milliseconds, or `None` when there is no answer.
+///
+/// THE SERVED HALF OF OWNER RULING 21. The app has always taken this itself —
+/// `statSync(logPath).mtimeMs` in `main/log/config.ts`, pushed into the character module — and the
+/// ruling moves the reading to the process that owns the file. This is the whole of the reading.
+///
+/// **EVERY FAILURE IS `None`, and that is the honest answer rather than a lazy one.** A missing
+/// file, a permission refusal, a filesystem with no modification time, and a timestamp before the
+/// epoch are four different reasons and one outcome: this engine cannot state the fact. `0` would
+/// claim 1970, which a client would draw as a real date beside a real character name.
+///
+/// **TRUNCATED, not rounded**, so it equals `Math.floor(statSync(log).mtimeMs)` — Node reports the
+/// same NTFS stamp as a float with sub-millisecond digits, and the schema field is an integer.
+fn mtime_ms(log: &Path) -> Option<i64> {
+    let modified = std::fs::metadata(log).ok()?.modified().ok()?;
+    let since = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    i64::try_from(since.as_millis()).ok()
 }
 
 /// What the fold has consumed, as a coordinate the caller can name.
@@ -434,25 +455,52 @@ impl World {
     /// a client cannot tell "nothing folded" from "folded nothing" if the two look the same. The
     /// discriminator is the LOG: the world knows one from the instant an attach is accepted, and
     /// from that instant the count and the mark are real answers even while they read zero.
+    ///
+    /// AND SINCE JOS-481 IT CARRIES A FOURTH FIELD THAT IS NOT A FOLD FACT AT ALL: `logMtimeMs`,
+    /// the log file's last-modified time, stated because owner ruling 21 says the SERVER owns
+    /// log-file facts — "the server should be the one reading the log file, rather than the app
+    /// reaching in… reported so the app can use it to display and choose the correct character on
+    /// launch". Three properties of it are deliberate:
+    ///
+    ///   * **It is re-stated per answer**, never remembered. A remembered mtime is a cache of
+    ///     something the filesystem already holds, and it would be wrong the moment the game
+    ///     appended a line. Ruling 5 forbids the cache; the syscall is the honest answer.
+    ///   * **It never enters fold state.** It is a fact about a FILE, not about the events in it,
+    ///     and ruling 18 addresses state by (log identity, byte offset) and by nothing else. A
+    ///     module that folded an mtime would be a module whose output depended on when it ran.
+    ///   * **The stat happens with the lock RELEASED.** A filesystem call is unbounded (a stalled
+    ///     network drive, a file being rotated) and the world's lock is on the path of every
+    ///     `report_*` the ingest makes — holding it across a syscall would let a slow disk stall a
+    ///     fold. The state is copied out first; the stat is made against the copy.
     #[must_use]
     pub fn health(&self) -> HealthResult {
-        let state = self.lock();
-        let mark = state.fold.log.as_ref().map(|log| LogMark {
+        // THE LOCK IS TAKEN AND RELEASED IN THIS BLOCK, and everything below is a function of the
+        // copy — see the note above about statting outside it. `Fold` is small and `Clone`, which
+        // is what `mark()` already relies on.
+        let (status, epoch, fold) = {
+            let state = self.lock();
+            (state.status, state.epoch, state.fold.clone())
+        };
+        let mark = fold.log.as_ref().map(|log| LogMark {
             log: log.to_string_lossy().into_owned(),
-            offset: i64::try_from(state.fold.checkpoint).unwrap_or(i64::MAX),
+            offset: i64::try_from(fold.checkpoint).unwrap_or(i64::MAX),
         });
         HealthResult {
-            status: state.status,
-            epoch: Epoch(state.epoch),
+            status,
+            epoch: Epoch(epoch),
             uptime_ms: i64::try_from(self.inner.started.elapsed().as_millis()).unwrap_or(i64::MAX),
             // `events` rides with the mark, because they are one measurement read two ways: the
             // count and the coordinate it was reached at. One present and the other absent would
             // be a pair a reader has to reason about.
-            events: mark.as_ref().map(|_| state.fold.events),
+            events: mark.as_ref().map(|_| fold.events),
             // …and `lastEventTs` does NOT, because it has its own reason to be missing: a fold that
             // has folded nothing yet, or whose events so far carried no stamp the parser could
             // read, honestly has no log clock to report.
-            last_event_ts: state.fold.last_ts,
+            last_event_ts: fold.last_ts,
+            // THE FILE FACT. Absent before an attach because there is no file, and absent when the
+            // stat fails because a log that was renamed out from under the engine has no answer —
+            // and `0` would claim 1970 rather than admit the miss.
+            log_mtime_ms: fold.log.as_deref().and_then(mtime_ms),
             mark,
         }
     }

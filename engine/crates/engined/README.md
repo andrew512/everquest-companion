@@ -6,7 +6,10 @@ full speed and follows it live; one that SERVES (JOS-478) — the twenty-module 
 thread and `module.snapshot` answers a client with a module's published state; and, since
 **JOS-480**, one that serves VIEWS: `view.subscribe` answers a descriptor with rows that are
 filtered, sorted, windowed and render-ready, and follows them with coalesced diffs. It measures its
-own serve path while it does it.
+own serve path while it does it. Since **JOS-481** it also owns two things it used to leave to the
+app: its own CLOCK — a live world ticks its modules ~1×/sec from this process's wall clock, while a
+historical fold still never does — and the log's FILE FACTS, which it stats and serves rather than
+letting the app reach in for.
 
 **The game logic is not in this crate.** `eqlog` owns what an event is (JOS-469, proven
 byte-identical to the TS parser) and what a line is (JOS-472, proven scan-equivalent); the fold that
@@ -41,7 +44,7 @@ never the process.
 | --- | --- | --- |
 | `hello` | `HelloReply` | Token compared in constant time, then `protocolVersion`. A mismatch is fatal — version skew is a build error. |
 | `echo` | `EchoResult` | Returns the text it was given. |
-| `session.health` | `HealthResult` | The **ingest's** status — `idle` / `starting` / `attaching` / `folding` / `live` — plus the epoch, the process uptime, and, once a log is attached, **the mark** (`{log, offset}`), the folded event count and the log's own last timestamp. Those three are OPTIONAL and absent before the first attach: a zero would be a measurement nobody took. |
+| `session.health` | `HealthResult` | The **ingest's** status — `idle` / `starting` / `attaching` / `folding` / `live` — plus the epoch, the process uptime, and, once a log is attached, **the mark** (`{log, offset}`), the folded event count, the log's own last timestamp and **the log file's mtime** (`logMtimeMs`, JOS-481). Those four are OPTIONAL and absent before the first attach: a zero would be a measurement nobody took. See "The file facts". |
 | `module.snapshot` | `ModuleSnapshotResult` | **The first data-bearing op.** One module's published `{seq, state}`, straight off the fold on the ingest thread. `notFound` for a name the registry does not carry; `unavailable` when nothing is attached. See "The fold seam". |
 | `session.attach` | `AttachResult` | Bumps the epoch, broadcasts an `EpochMessage { reason: "attach" }` to every connection, replies `accepted: true`, and **starts an ingest** over `logPath`. Preempts any in-flight attach. |
 | `session.progress` | `SubscribeAck` | Acknowledges the connection-wide progress channel. Its frames are `EpochMessage { reason: "progress", progress: { pct, events } }` — the schema says progress is not a fourth stream kind, it is this. Connection-wide, so an attach on *another* connection is heard here too. |
@@ -85,6 +88,95 @@ until views arrive in phase 3.
 **The mark.** The engine owns `checkpoint_offset` (boundary verdict 4): the end of the last
 *complete* line folded, which is the same definition as `ScanResult.endOffset`. A half-written line
 is not an event and the mark waits with it.
+
+**And once it is `live`, the world has its own clock** — see "The live tick" below. The historical
+scan does not, and cannot: the tick loop lives past the `TailStart::At` handoff and there is no path
+to it from the scan.
+
+## The live tick
+
+`src/ingest.rs`'s `Ticking`, `EventSink::tick`, `fold::Fold::tick`. Owner ruling 22 (2026-08-25):
+*"it seems more and more like most of that business logic should live in the rust server and that
+the client should be relatively thin."* The engine ticks its own modules while LIVE, with its own
+clock.
+
+**What it is.** `session.ts startHeartbeat` moved into the process that owns the fold: one
+`registry.tick(now)` at go-live, then ~1×/sec while the tail runs. The interval is the app's own
+(1 s); the tail polls every 400 ms, so a beat lands on roughly every third turn of the loop. The
+cadence is a CEILING, not a schedule — a turn that ran late beats once, not twice, because "age the
+model to now" is idempotent in `now`, and three missed beats are one beat with a later number.
+
+**The go-live beat is ordered before `report_fold_landed`, and that ordering is the point.** That
+call is what publishes `status: "live"`, the landing reset and the mark, and `live` is the edge every
+client waits on — the app's parity probe polls `session.health` for exactly it. A beat taken
+afterwards would leave a window, however short, in which the engine served a world the app had
+already swept. It is also precisely the order over there: one tick, *then* the interval, and both
+before `flushNow()` and `sendWorldRebuilt` publish anything (JOS-149).
+
+**A HISTORICAL FOLD NEVER TICKS, and that is the equivalence law.** `fold::Fold::fold_bytes` does
+not call `tick`, the six-slice oracle records its goldens through `fold_bytes` and nothing else, so
+the fold of a given log is still a pure function of its bytes — which is ruling 18 law 1, and also
+what makes a future parse-once cache sound. `npm run oracle:rust-fold` staying green at its default
+IS the proof; if it reddens, the law was broken.
+
+**Which modules have a heartbeat, and which deliberately do not.** Every `on_tick` was read against
+its TypeScript twin:
+
+| Module | On a beat |
+| --- | --- |
+| `buffs` | The big one. Drops a cast nothing confirmed inside the landing window, then runs the hygiene sweep — which is what retires an active past its per-spell cap. This is the JOS-479 divergence: the engine served 12 actives for a fixture whose buffs were long expired by wall time while the app served 3, the two folds agreeing exactly on everything the log had said. |
+| `buffTimers` | Sweeps its holds. A mez runs out while the log is idle, which is exactly when somebody is watching it. |
+| `spellSets` | The wall-clock half of the settle rule: a player who loads a set and stops playing leaves a burst open forever otherwise. |
+| `respawn` | Records the ordering clock `snapshot()` reads. Publishes nothing and moves no revision — the set of rows changes only when a death, a watch edit, a zone line or a sighting changes it. |
+| `resist` | Settles: a deferred landing past its cancel window is filed, a song pulse that can gain no more witnesses is closed. It does NOT *finish* — a bard mid-rotation keeps the run the next gap is entitled to. The TS also persists its ledger every sixtieth beat; that is disk IO the engine does not own yet (boundary verdict 4). |
+| `alerts` | **Nothing, by argument.** The early-warning queue a beat would sweep is empty by construction: `arm` is reachable only from the matcher, the matcher runs only over `compiled`, and `compiled` comes from a def list the engine has no way to receive. The `alerts.define` command turns both halves on together. |
+| `consider` | **Nothing, by argument.** `onTick` over there does one thing — call `probe` for the newest rows the replay left in the ring — and `probe` is the wiki lookup this crate cannot have while the FETCH stays app-side (boundary verdict 5). |
+| the combat engine | **Nothing, because there is nothing to port.** The heartbeat over there is `registry.tick` and nothing else: `CombatEngine` declares no `onTick`, and `pipeline.ts` subscribes it to the bus and to no clock. An engine ticked here would be doing something its oracle never did. |
+
+**A beat's derived events are QUEUED, not delivered.** No module's `on_tick` emits one today — the
+buffs sweep retires and culls rows, and neither path synthesizes a `buffExpired` (only a resolved
+wear-off and the illusion clear do, both event-driven) — but `Registry::tick` collects them through
+the same `take_derived` door `dispatch` uses, because a contract with a door and one caller that
+silently drops what comes through it is a defect waiting for its first user. Queued is what the TS
+does: `bus.emitDerived` pushes onto a queue only `emit` drains, so anything a heartbeat synthesized
+reaches the other modules with the next primary event.
+
+## The file facts
+
+Owner ruling 21 (2026-08-25): *"the server should be the one reading the log file, rather than the
+app reaching in… reported so the app can use it to display and choose the correct character on
+launch."* `session.health` carries `logMtimeMs` — the log file's last-modified time, in epoch
+millis, truncated so it equals `Math.floor(statSync(log).mtimeMs)`.
+
+Three properties of it are deliberate, and each answers a ruling:
+
+* **Re-stated per answer, never remembered** (ruling 5). A remembered mtime is a cache of something
+  the filesystem already holds, and it would be wrong the moment the game appended a line.
+* **Never in fold state** (ruling 18 law 3). It is a fact about a FILE, not about the events in it,
+  and state here is addressed by (log identity, byte offset) and by nothing else. A module that
+  folded an mtime would be a module whose output depended on when it ran — which is why the app's
+  own `character.lastPlayed` divergence is *not* closed by this: the engine SERVES the fact and
+  still does not FOLD it (`tests/e2e/engine-parity.e2e.mts` carries the dated exemption).
+* **Statted with the world's lock released.** A filesystem call is unbounded — a stalled network
+  drive, a file mid-rotation — and that lock is on the path of every `report_*` the ingest makes.
+  `World::health` copies the state out, then stats against the copy.
+
+Every failure is `None`: a missing file, a permission refusal, a filesystem with no modification
+time, a stamp before the epoch. `0` would claim 1970, which a client would draw as a real date beside
+a real character name.
+
+**DIRECTION — `logs.list` comes later, and it is where this is going.** Ruling 21's second half is
+that log DISCOVERY itself migrates server-side: launch-time character choice becomes a served answer
+rather than the app globbing an EverQuest `Logs` directory and statting what it finds. The shape that
+implies is a query op — `logs.list` — answering a row per log the engine found under a directory the
+app named, each carrying the identity the file name states (`{name, server, logPath}`, the same
+derivation `character_of`/`server_of` already make for an attach) beside the file facts a picker
+draws: mtime, and size. Nothing of it is built here and nothing should be built speculatively; what
+this ticket establishes is that the FACT is the server's to state, so the surface that lists them has
+somewhere honest to come from. Note the one thing that op would add which nothing here has: a
+directory read the app did not name a single file in — the engine has never discovered a path of its
+own (`SessionAttachParams`'s doc is emphatic about it), so `logs.list` is the ticket that has to
+decide whether the app hands over a directory or the engine learns where EverQuest lives.
 
 **Both integrator notes phase 2 left here are closed** (JOS-478). The mark, the folded event count
 and the log's last timestamp are on the wire now, optional, in `HealthResult` — the schema gap is
@@ -624,6 +716,13 @@ Seven things in that transcript are this ticket:
    `lastEventTs`, the LOG's clock rather than the host's. That is ruling 18 law 3 on the wire: state
    addressed by (log identity, byte offset), and never by "current".
 
+That transcript predates JOS-481, so its health answers carry no `logMtimeMs`; a build at tip adds it
+beside `lastEventTs`, and the two are different kinds of thing on purpose — one is the clock inside
+the log, the other the clock the filesystem stamped the file with, and a line half-written after the
+last complete one moves the second without moving the first. See "The file facts". The transcript is
+not re-run for a field, for the same reason the JOS-474 one above was kept: every claim it makes
+still holds, and a session nobody actually ran is not evidence.
+
 The `spell db ready in 403 ms` line is a first attach. A second attach in the same process reads ~0:
 the catalog is `Arc`-shared per process now, and the fold's resist catalog reads that same one rather
 than loading a second.
@@ -669,7 +768,21 @@ over a 900 KB fixture would be a weaker copy of a stronger test.
 The other three claims in that file: a snapshot caught MID-SCAN deep-equals a fold of the same bytes
 stopped at the `seq` it named (the prefix claim, which is the whole reason the design is a channel
 rather than a lock); four non-module names are refused, `loot.ledger` among them; and health carries
-the mark, the count and the log's clock once live, and none of the three before an attach.
+the mark, the count, the log's clock and THE FILE'S OWN STAMP once live, and none of the four before
+an attach — the last of those checked against a `std::fs::metadata` this suite takes itself, and
+watched moving when the file does.
+
+**The module comparison states its own precondition since JOS-481.** The engine ticks at go-live and
+the oracle does not, so before comparing anything the suite ticks a SECOND oracle and asserts that
+for these bytes the two publish identically. If a fixture ever ends with a buff standing or a
+spell-set burst open, that assertion fires and names the reason instead of leaving a mystery
+divergence in the loop below it.
+
+**And the tick is proven where it can be held still** (`src/ingest.rs`'s own tests). A scan gated at
+its first event, left standing through a whole tick interval, is never beaten; a world that has
+reached `live` has PROVABLY already been beaten, and every beat it recorded carries the full scan's
+event count; an idle live world keeps beating, monotonically, no faster than the cadence, off a clock
+this machine agrees with.
 
 All of them stage a copy of a committed fixture (`tests/fixtures/cw2-loadout-swap-aug2.log`) into a scratch
 directory under the product's own file-name shape. **Every count is settled against
