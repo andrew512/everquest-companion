@@ -274,6 +274,110 @@ export async function settleReady(
   }
 }
 
+// ── the parity probe's one line (JOS-479) ──────────────────────────────────────────────
+//
+// Door (2) again, and for the same reason it was the door for READY: the probe has no renderer
+// surface, by ruling — it is an instrument that writes ONE sentence to the dev log and changes
+// nothing. So the app's own stdout is not a convenient way to observe it, it is the only way, and a
+// spec that invented an IPC channel to read a verdict would be testing a product that does not
+// exist. The line's shape is `src/main/dataServer/parityProbe.ts parityLine`, and the head is
+// anchored field by field for `READY_RE`'s reason: a loose `/parity/` would be satisfied by a
+// sentence containing the word, and this line is the whole evidence that two worlds were compared.
+
+const PARITY_RE =
+  /data-server parity: (\d+) agree, (\d+) diverge, (\d+) skipped of (\d+) \[([^\]]*)\] — ([^\n]*)/g
+
+/** What one module's clause said. `null` when the line never mentioned it. */
+export type ModuleVerdict = 'AGREE' | 'DIVERGE' | 'SKIP'
+
+/** One parity run, as the app reported it. */
+export interface ParitySay {
+  /** The whole line, for a failure detail that quotes rather than summarizes. */
+  readonly line: string
+  readonly agree: number
+  readonly diverge: number
+  readonly skipped: number
+  readonly probed: number
+  /** The bracket: `epoch N, engine <status>, <n> events, mark <offset> of <logPath>` — the last
+   *  clause being the ENGINE's own answer about which file it is folding and how far it has got. */
+  readonly where: string
+  /** The log the ENGINE said it was folding, off that bracket, or null when it named no mark. */
+  readonly engineLog: string | null
+  /** The per-module clauses, joined — `loot AGREE(seq 4211) · kills AGREE(seq 4211) · …`. */
+  readonly modules: string
+  /** What the line said about one module, or null if it did not name it. */
+  verdict(module: string): ModuleVerdict | null
+  /** WHERE a module diverged — the dotted path the probe reported — or null when it did not
+   *  diverge. A spec that pins a KNOWN divergence has to pin the path too, or the pin would be
+   *  satisfied by any new defect in the same module. */
+  divergePath(module: string): string | null
+}
+
+/** One module's clause out of the joined tail — `loot AGREE(seq 4211)`. Anchored on the ` · `
+ *  separator rather than on the bare name, because a divergence detail quotes arbitrary state and
+ *  can contain a module's name inside it. */
+function clauseFor(modules: string, module: string): string | null {
+  const re = new RegExp(`(?:^|· )${module} (?:AGREE|DIVERGE|SKIP)[^·]*`)
+  const found = re.exec(modules)
+  return found ? found[0].replace(/^· /, '').trimEnd() : null
+}
+
+function readParity(match: RegExpMatchArray): ParitySay {
+  const modules = match[6]
+  const where = match[5]
+  const mark = /, mark \d+ of (.+)$/.exec(where)
+  return {
+    line: match[0],
+    agree: Number(match[1]),
+    diverge: Number(match[2]),
+    skipped: Number(match[3]),
+    probed: Number(match[4]),
+    where,
+    engineLog: mark ? mark[1] : null,
+    modules,
+    verdict: (module) => {
+      const clause = clauseFor(modules, module)
+      if (clause === null) return null
+      const found = /(AGREE|DIVERGE|SKIP)/.exec(clause)
+      return found ? (found[1] as ModuleVerdict) : null
+    },
+    divergePath: (module) => {
+      const clause = clauseFor(modules, module)
+      const found = clause === null ? null : /\) at (.+?): engine /.exec(clause)
+      return found ? found[1] : null
+    }
+  }
+}
+
+/** Every parity line seen so far, oldest first. A run per attach, so a spec that switches
+ *  characters can read the second one. */
+export function parityRuns(out: AppOutput): ParitySay[] {
+  PARITY_RE.lastIndex = 0
+  return Array.from(out.text().matchAll(PARITY_RE), readParity)
+}
+
+/**
+ * Wait for the app to report a parity run, or give up.
+ *
+ * GENEROUS BY DEFAULT because the probe waits for BOTH folds — this process's historical scan and
+ * the engine's, the latter from a DEBUG cargo build, which the engine's own README measures at
+ * roughly ten times the release cost. It is still a condition and never a clock: the wait ends the
+ * moment the sentence appears.
+ */
+export async function settleParity(
+  out: AppOutput,
+  after = 0,
+  timeoutMs = 180_000
+): Promise<ParitySay | null> {
+  const t0 = Date.now()
+  for (;;) {
+    const runs = parityRuns(out)
+    if (runs.length > after) return runs[after]
+    if (Date.now() - t0 >= timeoutMs) return null
+    await sleep(250)
+  }
+}
+
 // ── the durable half ───────────────────────────────────────────────────────────────────
 
 /** `<userData>/errors.log`, or '' when nothing was ever written to it. The file sink is

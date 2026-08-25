@@ -38,8 +38,12 @@
 // function of three hundred lines. A class gives each verb its own name, its own budget and its own
 // test, and keeps the state per-instance so a suite can run twenty supervisors without a reset hook.
 //
-// NO RENDERER EXPOSURE, ON PURPOSE. Phase 0 ends with an engine that exists and is observable in
-// the dev log. Nothing here imports the client library or touches IPC.
+// NO RENDERER EXPOSURE, ON PURPOSE, AND STILL NONE IN PHASE 3. Nothing here imports the client
+// library or touches IPC. What JOS-479 added is exactly one callback — `onReady`, beside `onPid` —
+// through which the launch hands out the port and the TOKEN IT MINTED. That is the smallest
+// possible widening and it could not be avoided: the supervisor owns the secret by design (rule 1,
+// stdin and nowhere else), so an in-app client can only exist if the owner of the secret offers it.
+// The supervisor still knows nothing about what the client then says.
 
 import { LineDecoder, type ByteChannel } from '../../shared/dataServer/ndjson'
 import { PROTOCOL_VERSION } from '../../shared/dataServer/protocol.generated'
@@ -105,6 +109,31 @@ export interface SupervisedChild {
 /** Where the supervisor is right now. Observable so the dev log and a test can both read it. */
 export type EngineStatus = 'stopped' | 'absent' | 'starting' | 'ready' | 'backoff' | 'stopping'
 
+/**
+ * A LAUNCH THAT PROVED ITSELF, and everything a client needs to talk to it (JOS-479).
+ *
+ * The supervisor owns the secret — it mints the token and writes it down the child's stdin, which
+ * is the whole reason nothing else in the process can know it — so the only honest way for the
+ * app's own client to reach this engine is for the supervisor to HAND IT OVER at the one moment it
+ * is meaningful. That moment is READY, which here means a proven `hello` + `session.health` round
+ * trip and not a process that started.
+ *
+ * A RESPAWN IS A LAUNCH (contract rule 5): the next of these carries a different port AND a
+ * different token, and nothing about the previous connection survives. `null` is the same edge in
+ * the other direction — this launch is over, whatever the client still holds is pointed at a socket
+ * that is gone.
+ */
+export interface ReadyEngine {
+  readonly pid: number | null
+  readonly port: number
+  /** The per-launch secret, minted by `mintToken` and known to exactly two processes. */
+  readonly token: string
+  readonly protocolVersion: number
+  readonly engineVersion: string
+  /** The generation the engine reported at the health probe, before any attach of ours. */
+  readonly epoch: number
+}
+
 /** Everything the composition root hands this module. No Electron reaches past this interface. */
 export interface EngineSupervisorDeps {
   /** The engine binary's path, or null when this build has none — see `beginLaunch`. */
@@ -122,6 +151,16 @@ export interface EngineSupervisorDeps {
   /** The engine's pid as it comes and goes: the priority arm, and anything else that needs to know
    *  which process is the engine. Called with null the moment a launch ends. */
   onPid?(pid: number | null): void
+  /**
+   * THE READY EDGE (JOS-479) — `onPid`'s sibling, and deliberately a second callback rather than a
+   * widened first one: the pid arm is about a PROCESS and wants to hear about it as early as
+   * possible, while a client is about a CONNECTION and must not be told anything until a round trip
+   * has proven there is one. They fire at the same instant today and would not have to.
+   *
+   * Called with null on exactly the edges `onPid(null)` fires on, and for the same reason: a
+   * consumer holding a socket to a dead engine is a consumer whose next request hangs.
+   */
+  onReady?(engine: ReadyEngine | null): void
   /** TEST SEAMS — every clock, and the wire version. */
   protocolVersion?: number
   announceTimeoutMs?: number
@@ -368,6 +407,7 @@ export class EngineSupervisor {
       l.finished = true
       clearLaunchTimers(l)
       this.deps.onPid?.(null)
+      this.deps.onReady?.(null)
       if (this.launch === l) this.launch = null
       this.status = 'stopped'
       this.deps.debug(`data-server engine: exited ${String(code ?? -1)} after the shutdown signal`)
@@ -419,6 +459,17 @@ export class EngineSupervisor {
         `protocol ${String(announce.protocolVersion)}, engine ${health.engineVersion || 'unknown'}, ` +
         `status ${health.status}`
     )
+    // THE HANDOVER, AFTER THE NARRATION on purpose: whatever the client does with this — connect,
+    // hello, attach — is caused by the ready line, so the ready line has to be in the log ABOVE it.
+    // A reader following a dev log top to bottom should never see the consequence before the cause.
+    this.deps.onReady?.({
+      pid: l.child.pid ?? null,
+      port: announce.port,
+      token: l.token,
+      protocolVersion: announce.protocolVersion,
+      engineVersion: health.engineVersion,
+      epoch: health.epoch
+    })
   }
 
   // ------------------------------------------------------------------ ending, folding, retrying
@@ -435,6 +486,7 @@ export class EngineSupervisor {
     l.finished = true
     clearLaunchTimers(l)
     this.deps.onPid?.(null)
+    this.deps.onReady?.(null)
     this.fold({
       failure,
       exitCode: info.exitCode ?? null,
