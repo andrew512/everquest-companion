@@ -61,6 +61,10 @@ import { ipcMain, MessageChannelMain, type IpcMainInvokeEvent, type WebContents 
 import { IPC } from '../../shared/ipc'
 import { logInfo } from '../errorLog'
 import { connectToEngine } from './socketChannel'
+// THE PUMP ITSELF (./byteRelay.ts), which imports no Electron — the same split supervisor.ts makes
+// against this file's sibling, and for the same reason: the part with logic in it is unit-tested
+// with fakes, and this file is the wiring nobody can test without an app.
+import { relayBytes } from './byteRelay'
 import type { ReadyEngine } from './supervisor'
 import type { ByteChannel } from '../../shared/dataServer/ndjson'
 
@@ -68,82 +72,6 @@ import type { ByteChannel } from '../../shared/dataServer/ndjson'
  *  the supervisor's probe just completed a round trip on this port, so this covers the pathological
  *  case rather than budgeting the ordinary one. */
 const CONNECT_TIMEOUT_MS = 2_000
-
-/**
- * What this file needs from an Electron `MessagePortMain`, structurally.
- *
- * Stated as an interface rather than imported so `relayBytes` — the only part of this file with any
- * logic in it — can be driven by a fake in a unit test with no Electron, no window and no engine.
- * It is `supervisor.ts`'s discipline applied one file over.
- */
-export interface RelayPort {
-  postMessage(message: unknown): void
-  on(channel: 'message', handler: (event: { data: unknown }) => void): this
-  on(channel: 'close', handler: () => void): this
-  start(): void
-  close(): void
-}
-
-/** The one payload on this wire that is not bytes: the stream ended. The renderer's half of the
- *  convention (and the argument for it) is `shared/dataServer/messagePortChannel.ts`. */
-const PORT_END = null
-
-/**
- * THE PUMP. Join one byte channel and one port so every chunk crosses untouched, in both
- * directions, and either end closing closes the other.
- *
- * `settled` is the same latch both adapters carry, and it is what makes "the socket ended" and "the
- * renderer let go" ONE event however they arrive — a second teardown would post a sentinel down a
- * port that is already closed, and on Electron that is a throw from inside an event handler.
- *
- * NOTHING HERE INSPECTS A CHUNK. A string from the socket is posted; a string from the port is
- * written. The only value with a meaning is the sentinel, and its meaning is "stop".
- */
-export function relayBytes(channel: ByteChannel, port: RelayPort): () => void {
-  let settled = false
-  const settle = (): void => {
-    if (settled) return
-    settled = true
-    // The sentinel goes out BEFORE the close, because closing an entangled port discards anything
-    // not yet posted — without it, a renderer learns its engine is gone only by timing out.
-    try {
-      port.postMessage(PORT_END)
-    } catch {
-      // The peer is already gone. That is the case this is announcing; it is not a failure.
-    }
-    port.close()
-    channel.close()
-  }
-
-  channel.onData((chunk) => {
-    if (settled) return
-    try {
-      port.postMessage(chunk)
-    } catch {
-      settle()
-    }
-  })
-  channel.onClose(() => {
-    settle()
-  })
-  port.on('message', (event) => {
-    if (settled) return
-    if (event.data === PORT_END) {
-      settle()
-      return
-    }
-    // Renderer input, and it reaches a socket — so it is checked for being what it claims rather
-    // than trusted. A non-string is not written: `socket.write` would coerce an object to
-    // `[object Object]` and hand the engine a frame nobody sent.
-    if (typeof event.data !== 'string') return
-    channel.write(event.data)
-  })
-  port.on('close', () => {
-    settle()
-  })
-  port.start()
-  return settle
-}
 
 // ── the live relays ────────────────────────────────────────────────────────────────────────────
 

@@ -65,9 +65,24 @@ const WINDOW_LIMIT = 50
  */
 const LEDGER: ViewDescriptor = {
   source: 'loot.ledger',
-  // The source's own default order, stated rather than inherited: this view is a CHRONOLOGICAL
-  // ledger and the descriptor is where a reader of this file should be able to see that.
-  sort: [['at', 'desc']],
+  // ── BOTH TERMS, AND THE SECOND ONE IS LOAD-BEARING ─────────────────────────────────────────
+  //
+  // The plan's own worked example spells this sort `[["at","desc"]]`, and MEASURED on this ticket
+  // that descriptor draws a DIFFERENT LEDGER from the app's. EQ stamps to the second, so a corpse
+  // yielding three items writes three rows at one instant; the flat table shows them in the reverse
+  // of the order they were folded (`filterLootEvents` ends in `.reverse()`), which is `seq` DESC.
+  // A sort naming only `at` does not stop there — every sort ends in the source's TIEBREAK, and
+  // `loot.ledger`'s tiebreak is `seq` ASC — so the one-term form orders each second's rows
+  // backwards. It is a total order and it is not this list's order.
+  //
+  // The engine's own default sort for this source is `at` desc then `seq` desc, i.e. exactly this;
+  // omitting `sort` entirely would also be correct. It is spelled out because a descriptor is the
+  // one place a reader can see what a list is ordered by, and because "the default happens to be
+  // right" is not a thing the next person can check without opening a Rust file.
+  sort: [
+    ['at', 'desc'],
+    ['seq', 'desc']
+  ],
   window: { offset: 0, limit: WINDOW_LIMIT }
 }
 

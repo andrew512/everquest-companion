@@ -202,7 +202,16 @@ export function LootToolbar({
         sx={{ minWidth: 260 }}
       />
       <FormControlLabel
-        control={<Switch checked={groupByItem} onChange={(e) => setGroupByItem(e.target.checked)} />}
+        control={
+          // The testid is on the SWITCH rather than the label because a spec clicks the control
+          // (JOS-484's row-parity e2e turns grouping off to reach the flat ledger — the shape
+          // `loot.ledger` serves). MUI puts the input inside; clicking this element toggles it.
+          <Switch
+            checked={groupByItem}
+            onChange={(e) => setGroupByItem(e.target.checked)}
+            data-testid="loot-group"
+          />
+        }
         label="Group by item"
       />
       <FormControlLabel
