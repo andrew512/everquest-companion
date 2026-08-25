@@ -47,9 +47,16 @@
 //!     engine: a live meter here publishes `recent: []` where the app publishes classified lines. It
 //!     is the only member of this list that changed status, it is stated rather than quietly
 //!     inherited, and nothing on the meter's own rows depends on it.
-//!   * THE SESSION MARK and its `unsplit()` (`mergeSessions.ts`). A mark is REFUSED while hydrating
-//!     and is stored nowhere, so `closedBy` is `zone` on every zone session in every golden. Going
-//!     live does not reach it: no op, no command and no caller exists for one in this engine.
+//!   * `unsplit()` (`mergeSessions.ts`) — the engine-level UNDO of a mark. No UI calls it over
+//!     there either ("*the capability to merge it back, but not put that in the app*"), so it is
+//!     an absence on both sides rather than a divergence.
+//!
+//! THE SESSION MARK USED TO BE ON THAT LIST AND IS NOW REAL CODE
+//! ([`CombatEngine::session_mark`], JOS-492). Its absence from the goldens is unchanged and is now
+//! proven by the GATE — `if st.hydrating { return false }`, the TS's own first line — rather than
+//! by the method not existing: the golden recorder never calls `set_live()`, so a mark can only
+//! ever be REFUSED there and `closedBy` is still `zone` on every zone session in every golden. Same
+//! shape as the pet nudge below, and for the same reason.
 //!   * FIGHT SEARCH (`fightSearch.ts`) and the fold PROBE (`foldProbe.ts`). Neither is on the
 //!     snapshot path at all: one answers a search box, the other is the bench's own instrumentation.
 //!
@@ -297,6 +304,54 @@ impl CombatEngine {
         }
         st.refresh_roster(roster);
         ingest::ingest_event(st, ev);
+    }
+
+    /// A SESSION MARK — "start a new session now", as the ENGINE's records hear it (JOS-322,
+    /// ported by JOS-492). `engine.ts sessionMark`, line for line.
+    ///
+    /// It is the move a ZONE LINE makes, MINUS THE ROOM CHANGE, and that omission is the design:
+    /// close the open fight, freeze the running stay into the browsable history tagged
+    /// `closedBy: 'mark'`, and mint fresh accumulators. Everything the zone case does beyond that
+    /// — retiring the world's mobs, breaking charm, retiring pets, zoning the ally model — is a
+    /// statement about having LEFT, and you have not left. So `st.zone` keeps its value,
+    /// `world.zone()` is never called, the coats, stances, specials and the session-level state
+    /// timeline all run straight through; segment views clip timeline spans to each record's own
+    /// span at read time, so a stance spanning the mark reads correctly in BOTH records.
+    ///
+    /// REFUSED WHILE HYDRATING, and that refusal is what makes replay determinism STRUCTURAL
+    /// rather than careful: a mark is a user action, is stored nowhere, and cannot enter a
+    /// replaying engine at all — so the JOS-208 replay-vs-live divergence class has no way to
+    /// recur here. It is also what keeps the six-slice oracle whole: the golden recorder never
+    /// calls `set_live()`, so `hydrating` is true for every recorded byte and this method can
+    /// only ever answer `false` there. `closedBy` stays `zone` on every zone session in every
+    /// golden, exactly as it was before this existed.
+    ///
+    /// `ts` IS THE INSTANT THE CALLER STAMPED for the whole click (`src/main/sessionMarks.ts`),
+    /// which is what makes the loot split and this split share one boundary. The closure it runs
+    /// first is the same wall-clock evaluation `snapshot(now)` runs, so a fight that already ended
+    /// by the log's own clock is closed at ITS last damage ts rather than dragged across the
+    /// boundary.
+    ///
+    /// AN EMPTY STAY MINTS NOTHING (`finalize_zone_session`'s own drop rule), which is also what
+    /// makes a double-click harmless — the same property the app's `addSessionMark` dedupe gives
+    /// the loot half.
+    ///
+    /// Returns whether the mark was ACCEPTED (false only while hydrating). Whether it minted a
+    /// record is a different question, and the honest answer to it is the history itself.
+    ///
+    /// `&mut self` RATHER THAN THE SNAPSHOT'S `&self` CELL, because this one has a choice: a mark
+    /// arrives through a command door the caller owns exclusively, so nothing here is threaded
+    /// behind a `&dyn` reader seam and the borrow checker can state the mutation outright.
+    pub fn session_mark(&mut self, ts: i64) -> bool {
+        let st = self.st.get_mut();
+        if st.hydrating {
+            return false;
+        }
+        lifecycle::eval_closure(st, ts);
+        lifecycle::finalize_current(st);
+        st.finalize_zone_session(ZoneSessionClose::Mark);
+        st.reset_zone_accumulators();
+        true
     }
 
     /// The snapshot, at the instant it is asked for — the log's own while replaying, the wall clock
@@ -866,6 +921,98 @@ mod tests {
         assert_eq!(scopes.len(), 1);
         assert_eq!(scopes[0]["kind"], json!("zoneSession"));
         assert_eq!(scopes[0]["id"], json!("zone"));
+    }
+
+    // ── THE SESSION MARK (JOS-322, ported by JOS-492) ─────────────────────────────────────────
+
+    /// A MARK MID-LIVE SPLITS THE ACCOUNTING, AND LEAVES THE ROOM ALONE.
+    ///
+    /// Two hits either side of the press: the first belongs to a stay frozen as `closedBy: 'mark'`,
+    /// the second to a fresh live stay that starts at zero. `zone` is untouched — the whole
+    /// difference between a mark and a zone line.
+    #[test]
+    fn a_mark_mid_live_splits_the_stay_and_keeps_the_room() {
+        let mut e = fold_then_go_live(&[
+            r#"{"kind":"zone","seq":0,"ts":0,"raw":"z","zone":"Najena"}"#,
+            &hit(1, 1_000, 500),
+        ]);
+        assert!(e.session_mark(2_000), "a live engine takes the mark");
+
+        let ev = Event::from_json(&hit(2, 3_000, 70)).expect("a JSON object");
+        e.on_event(&ev, true, None);
+        let snap = e.snapshot(3_000, &SnapshotOpts::full(), None);
+
+        // The room did not change: `zone` still names it, and the LIVE stay carries its name.
+        assert_eq!(snap["zone"], json!("Najena"));
+        assert_eq!(snap["zoneSessions"][0]["zone"], json!("Najena"));
+        assert_eq!(snap["zoneSessions"][0]["live"], json!(true));
+        // …and it accounts only for what happened AFTER the press.
+        assert_eq!(snap["zoneSessions"][0]["total"], json!(70));
+        // The frozen record behind it is the pre-mark half, tagged by what closed it.
+        assert_eq!(snap["zoneSessions"][1]["closedBy"], json!("mark"));
+        assert_eq!(snap["zoneSessions"][1]["total"], json!(500));
+        assert_eq!(snap["zoneSessions"][1]["zone"], json!("Najena"));
+    }
+
+    /// THE OPEN FIGHT IS CLOSED BY THE PRESS. `finalizeCurrent` runs, so the hit that follows opens
+    /// a NEW encounter rather than extending the one the mark was meant to end.
+    #[test]
+    fn a_mark_closes_the_open_fight() {
+        let mut e = fold_then_go_live(&[
+            r#"{"kind":"zone","seq":0,"ts":0,"raw":"z","zone":"Najena"}"#,
+            &hit(1, 1_000, 500),
+        ]);
+        assert_eq!(
+            e.snapshot(1_000, &SnapshotOpts::full(), None)["segments"][0]["kind"],
+            json!("current"),
+            "the fight is open before the press"
+        );
+        e.session_mark(2_000);
+        let ev = Event::from_json(&hit(2, 3_000, 70)).expect("a JSON object");
+        e.on_event(&ev, true, None);
+        let snap = e.snapshot(3_000, &SnapshotOpts::full(), None);
+        // The open fight is the post-mark one, worth 70 — the 500 is behind the boundary.
+        assert_eq!(snap["segments"][0]["kind"], json!("current"));
+        assert_eq!(snap["segments"][0]["total"], json!(70));
+    }
+
+    /// REFUSED WHILE HYDRATING, and the refusal changes nothing at all. This is the structural half
+    /// of replay determinism AND the reason the six-slice oracle is untouched: the recorder never
+    /// hands over, so this is the only answer a golden fold can ever get.
+    #[test]
+    fn a_mark_is_refused_while_hydrating_and_moves_nothing() {
+        let mut e = fold(&[
+            r#"{"kind":"zone","seq":0,"ts":0,"raw":"z","zone":"Najena"}"#,
+            &hit(1, 1_000, 500),
+        ]);
+        let before = e.snapshot(1_000, &SnapshotOpts::full(), None);
+        assert!(!e.session_mark(2_000), "a replaying engine refuses");
+        let after = e.snapshot(1_000, &SnapshotOpts::full(), None);
+        assert_eq!(before, after, "a refused mark is not a mark");
+        assert_eq!(
+            after["zoneSessions"].as_array().expect("sessions").len(),
+            1,
+            "no record was minted"
+        );
+    }
+
+    /// AN EMPTY STAY MINTS NOTHING, which is what makes a double-click harmless: the second press
+    /// finds an aggregate with no attributed damage in it and `finalize_zone_session` drops it.
+    #[test]
+    fn a_second_mark_with_nothing_between_mints_no_record() {
+        let mut e = fold_then_go_live(&[
+            r#"{"kind":"zone","seq":0,"ts":0,"raw":"z","zone":"Najena"}"#,
+            &hit(1, 1_000, 500),
+        ]);
+        e.session_mark(2_000);
+        e.session_mark(2_000);
+        let snap = e.snapshot(2_000, &SnapshotOpts::full(), None);
+        assert_eq!(
+            snap["zoneSessions"].as_array().expect("sessions").len(),
+            2,
+            "the live stay plus ONE frozen record: {snap}"
+        );
+        assert_eq!(snap["zoneSessions"][1]["closedBy"], json!("mark"));
     }
 
     /// `EMPTY_ROSTER` is what an engine with no roster module registered publishes — and it is what
