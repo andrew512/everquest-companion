@@ -93,7 +93,7 @@ fn main() -> ExitCode {
 
     let parser = eqlog::parser_for(&character, tz);
     if args.snapshots {
-        return snapshots(&parser, &bytes, tz, &character);
+        return snapshots(&parser, &bytes, tz, &character, &file_name, &args.log);
     }
     match args.golden {
         None => {
@@ -120,32 +120,105 @@ fn main() -> ExitCode {
 /// was handed and printed GREEN would be claiming coverage of twenty (the no-silent-caps law).
 ///
 /// `meta` carries what the reader needs to know the run was the one it thinks it was: the event
-/// count (`ScanResult.seq`), the character, the zone, and the launch instant the epoch boundary
-/// was resolved at — the one derived event this cluster's modules read.
-fn snapshots(parser: &eqlog::Parser, bytes: &[u8], tz: eqlog::Tz, character: &str) -> ExitCode {
+/// count (`ScanResult.seq`), the character, the zone, the launch instant the epoch boundary was
+/// resolved at, and — since cluster 2b — the PINNED CONSTRUCTION CLOCK the world is built under.
+///
+/// PHASE 2d (JOS-477) ADDS TWO MORE SECTIONS, joined to the golden's own by name: `combat` — the
+/// full-fat snapshot at `now = lastEventTs`, opts `{ maxSegments: 100000, timeline: true,
+/// showUnparsed: true }` — and `scopes`, the uncapped per-scope walk. THE INSTANT IS THE LOG'S,
+/// never a wall clock: `Fold::last_ts()` is the same `max(ev.ts)` the recorder's bus listener
+/// accumulates, and passing anything else would make a golden recorded on Monday fail on Tuesday.
+///
+/// `lastEventTs` travels in `meta` beside them so the comparator can prove the two folds agreed
+/// about WHICH instant they were asked about before it reads anything into their disagreeing about
+/// what was true at it.
+///
+/// THREE CONSTRUCTION INPUTS ARE DERIVED HERE (JOS-475), each the same way the golden recorder
+/// derives it, because the goldens were recorded under those derivations and under no others:
+///
+///   * the `CharacterRef` — `{ name, server, logPath }` off the log's own FILENAME
+///     (`goldenOracle.mts characterOf`, `eqlog_<Name>_<server>.<slice>.txt`), with `logPath` the
+///     path this process was handed verbatim. Hardcoding any of it here would let the corpus and
+///     the harness drift apart silently.
+///   * the CONSTRUCTION CLOCK — the last timestamped LINE of the slice, read from the file's TAIL
+///     through the parser's own `Clock` (`goldenOracle.mts lastTimestampOf`). Deliberately not the
+///     last EVENT's ts: that is only known after a fold, and the clock has to be pinned before the
+///     world is built. See `fold::modules::respawn`'s header for what depends on it — and note it
+///     is a DIFFERENT instant from `lastEventTs` above, on purpose: one is when the world was
+///     built, the other is what time it was in the world.
+///   * `self_name` — NOT derived, and that is the point. `foldArm.mts construct` never calls
+///     `roster.setSelfName`; that line is `session.ts`'s and the bench does not run it, so the
+///     recorded goldens are what an unnamed roster produces. `None` is the faithful value.
+fn snapshots(
+    parser: &eqlog::Parser,
+    bytes: &[u8],
+    tz: eqlog::Tz,
+    character: &str,
+    file_name: &str,
+    log_path: &str,
+) -> ExitCode {
     let known: HashSet<String> = parser
         .spell_db()
         .map(|db| db.keys().map(str::to_string).collect())
         .unwrap_or_default();
+    let spell_classes = parser
+        .spell_db()
+        .map(fold::modules::combo::evidence::spell_class_index)
+        .unwrap_or_default();
     let clock = eqlog::Clock::new(tz);
     let launch_ms = fold::epoch::launch_ms(&clock);
+    let Some(construction_now_ms) = last_timestamp_of(&clock, bytes) else {
+        eprintln!("parity: no timestamped line in the last 64 KiB of {log_path}");
+        return ExitCode::from(2);
+    };
+    let deps = fold::ClusterDeps {
+        known_spell: known,
+        spell_classes,
+        launch_ms,
+        construction_now_ms,
+        character: Some(serde_json::json!({
+            "name": character,
+            "server": eqlog::server_of(file_name).unwrap_or_default(),
+            "logPath": log_path,
+        })),
+        self_name: None,
+        respawn_prefs: fold::modules::respawn::RespawnPrefs::default(),
+        // `wiring.ts` hands the buffs module `spellDb` itself; the fold takes an owned PROJECTION
+        // of `db.byKey` so nothing downstream borrows the parser (`fold::spell_facts`).
+        facts: parser
+            .spell_db()
+            .map(fold::spell_facts::SpellFacts::project)
+            .unwrap_or_default(),
+    };
     let started = std::time::Instant::now();
-    // `wiring.ts` hands the buffs module `spellDb` itself; the fold takes an owned PROJECTION of
-    // `db.byKey` so nothing downstream borrows the parser (`fold::spell_facts`).
-    let facts = parser
-        .spell_db()
-        .map(fold::spell_facts::SpellFacts::project)
-        .unwrap_or_default();
-    let mut folder = fold::Fold::new(fold::registered(known, facts), launch_ms);
+    // The engine is constructed exactly as `foldArm.mts construct()` constructs it: the roster seam
+    // installed (here, structurally — `Fold` hands the registry's roster module to the engine on
+    // every delivery), then `reset()`, then the player name off the slice filename. It calls
+    // `setCombo`, `setDerivedEmitter` and `setHeldClickies` nowhere, and neither do we.
+    let mut engine = fold::combat::CombatEngine::new();
+    engine.reset();
+    engine.set_player_name(character);
+    let mut folder = fold::Fold::new(fold::registered(deps), launch_ms).with_combat(engine);
+    // …and `with_combat` resets, so the name is re-injected after it the way every construction
+    // path does. `CombatEngine::reset` re-seeds an injected name by itself, so this is the same
+    // ordering stated twice rather than two different orderings.
     folder.fold_bytes(parser, bytes);
     let ms = started.elapsed().as_millis();
+    let last_ts = folder.last_ts();
     let mut out = folder.registry.snapshots();
+    if let Some(engine) = &folder.combat {
+        let roster = folder.registry.roster();
+        out["combat"] = engine.snapshot(last_ts, &fold::combat::SnapshotOpts::full(), roster);
+        out["scopes"] = serde_json::Value::Array(engine.walk_scopes(last_ts, roster));
+    }
     out["meta"] = serde_json::json!({
         "events": folder.events(),
         "ms": ms,
         "character": character,
         "tz": tz.to_string(),
         "launchMs": launch_ms,
+        "lastEventTs": last_ts,
+        "constructionNowMs": construction_now_ms,
     });
     let stdout = std::io::stdout();
     let mut w = BufWriter::with_capacity(1 << 20, stdout.lock());
@@ -154,6 +227,36 @@ fn snapshots(parser: &eqlog::Parser, bytes: &[u8], tz: eqlog::Tz, character: &st
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+/// `goldenOracle.mts lastTimestampOf` — the last timestamped LINE's epoch millis, read from the
+/// TAIL so it costs nothing whatever the slice weighs.
+///
+/// The bytes are already in memory here (the fold needs them whole), so the "read the last 64 KiB"
+/// half of that function is a SLICE rather than a seek — same window, same answer, no second file
+/// handle. The stamp goes through the PARSER'S OWN `Clock`: this instant has to be the same kind of
+/// value the fold stamps its events with, and two spellings of "parse an EQ timestamp" would be a
+/// way for the pin and the log to drift apart without anyone noticing.
+fn last_timestamp_of(clock: &eqlog::Clock, bytes: &[u8]) -> Option<i64> {
+    const WINDOW: usize = 1 << 16;
+    let tail = &bytes[bytes.len().saturating_sub(WINDOW)..];
+    // Lossy is safe for the purpose: a replacement character can only appear inside a line whose
+    // leading `[stamp]` is intact ASCII, and it is only the stamp that is read.
+    let text = String::from_utf8_lossy(tail);
+    for line in text.split('\n').rev() {
+        // `/^\[(.+?)\]/` — the first `]` on the line, and nothing before the `[`.
+        let Some(rest) = line.strip_prefix('[') else {
+            continue;
+        };
+        let Some(end) = rest.find(']') else {
+            continue;
+        };
+        let ts = clock.parse_eq_timestamp(&rest[..end]);
+        if ts > 0 {
+            return Some(ts);
+        }
+    }
+    None
 }
 
 /// Compare against the recorded stream, latching the FIRST divergence and folding on so the counts

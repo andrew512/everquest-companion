@@ -38,6 +38,7 @@
 //! nine files rather than a change to the contract every later cluster will have been written
 //! against.
 
+pub mod combat;
 pub mod epoch;
 pub mod event;
 pub mod jsfn;
@@ -76,7 +77,7 @@ pub trait EqModule {
     }
 
     /// THE DERIVED EVENTS THIS MODULE SYNTHESIZED WHILE FOLDING THE EVENT IT WAS JUST HANDED, in
-    /// emission order — `bus.emitDerived` (JOS-471 cluster 2c).
+    /// emission order — `bus.emitDerived` (cluster 2c).
     ///
     /// A HAND-BACK RATHER THAN A CALLBACK, and the difference is ownership rather than taste. Over
     /// there `wiring.ts` injects `emitDerived: (ev, live) => bus.emitDerived(ev, live)` into the
@@ -87,9 +88,25 @@ pub trait EqModule {
     /// module, emission order; across modules, registration order; and the whole batch delivered
     /// after the primary event has reached every module, which is exactly `LogBus.emit`'s drain.
     ///
-    /// One producer today (`buffs`, `buffExpired`). Defaulted empty for the other nineteen.
+    /// One producer (`buffs`, `buffExpired`). Defaulted empty for the other nineteen.
     fn take_derived(&mut self) -> Vec<Event> {
         Vec::new()
+    }
+
+    /// THE GROUP-ROSTER PULL SEAM (JOS-477 / cluster 2b's `roster` module).
+    ///
+    /// `pipeline.ts` wires `combat.setRoster(modules.roster)` — the combat engine does not FOLD the
+    /// roster, it ASKS the module for it, and it asks DURING the same delivery, after the module
+    /// has already advanced for the line (`engine.ts:215`, and `state.ts rosterProvider`'s note
+    /// about why a pull rather than a stored copy). Over here the registry has already dispatched
+    /// by the time `Fold` hands the event to the engine, so the same guarantee holds for free.
+    ///
+    /// A DEFAULTED METHOD RATHER THAN A DOWNCAST, so that the one module which can answer it
+    /// implements one method and every other module says nothing. Defaulted to `None`, which is
+    /// exactly `EMPTY_ROSTER` / `EMPTY_ROSTER_VIEW` at the reading end — an engine constructed
+    /// without the seam behaves as it did before the group model existed.
+    fn as_roster(&self) -> Option<&dyn combat::RosterSource> {
+        None
     }
 }
 
@@ -166,6 +183,13 @@ impl Registry {
         self.mods.iter().map(|m| m.id()).collect()
     }
 
+    /// The registered module that answers the roster pull, or `None` when none does (2b has not
+    /// landed, or this build registered a cluster without it). One linear scan over at most twenty
+    /// modules, made once per delivery — the TS's `rosterProvider` closure costs a call too.
+    pub fn roster(&self) -> Option<&dyn combat::RosterSource> {
+        self.mods.iter().find_map(|m| m.as_roster())
+    }
+
     /// Every id `WIRING_ORDER` names that nothing registered — the harness's SKIPPED list.
     pub fn missing(&self) -> Vec<&'static str> {
         let have: HashSet<&str> = self.ids().into_iter().collect();
@@ -193,34 +217,78 @@ impl Registry {
 /// The registry plus the derived-event producers that sit beside it on the bus.
 pub struct Fold {
     pub registry: Registry,
+    /// THE POST-REGISTRY SUBSCRIBER (JOS-477). `pipeline.ts:311,326` and `foldArm.mts construct()`
+    /// both subscribe the combat engine to the bus AFTER `registry.attach(bus)` and BEFORE the
+    /// epoch/offline-gap detectors, and that position is load-bearing in two directions: the
+    /// twenty modules have all folded the line before the engine sees it (which is what makes the
+    /// roster PULL answer for the same line), and the engine's own work happens before any derived
+    /// event the detectors synthesize off it.
+    ///
+    /// AN `Option` FIELD RATHER THAN A LISTENER VECTOR, because the engine is not only dispatched
+    /// to — it is READ BACK, exactly as `foldArm.mts`'s `World { bus, combat, registry }` hands the
+    /// engine out so its snapshots can be taken. A `Vec<Box<dyn …>>` would deliver the events and
+    /// then have nothing to hand the recorder. `None` on every 2a/2b/2c call site, and `None` means
+    /// the fold behaves precisely as it did before this field existed.
+    pub combat: Option<combat::CombatEngine>,
     epoch: epoch::EpochDetector,
+    /// The OFFLINE-GAP detector (JOS-475). `index.ts` subscribes it after the epoch detector and it
+    /// hands its gap back through the same `emitDerived`, so it is queued in that order here too.
+    /// TWO clusters need it: `progression` publishes every gap's contents verbatim in three columns
+    /// and `roster` marks members stale across one (2b), and `buffs` folds it to PAUSE every
+    /// beneficial buff by the length of the absence (2c) — see `session.rs`.
     sessions: session::SessionDetector,
     /// The bus's derived queue. THREE producers, exactly as over there: the registry's own modules
-    /// (`buffs`, whose `buffExpired` cluster 2c brought), the epoch detector and the offline-gap
+    /// (`buffs`, whose `buffExpired` cluster 2c brought), the epoch detector, and the offline-gap
     /// detector.
     derived: Vec<Event>,
     events: u64,
+    last_ts: i64,
 }
 
 impl Fold {
     pub fn new(registry: Registry, launch_ms: i64) -> Self {
         let mut f = Fold {
             registry,
+            combat: None,
             epoch: epoch::EpochDetector::new(launch_ms),
             sessions: session::SessionDetector::new(),
             derived: Vec::new(),
             events: 0,
+            last_ts: 0,
         };
         f.reset();
         f
     }
 
+    /// Subscribe the combat engine behind the registry (see the field). Builder-shaped so the
+    /// existing `Fold::new` call sites do not move — the parallel-worker fence.
+    pub fn with_combat(mut self, engine: combat::CombatEngine) -> Self {
+        // ONLY the engine it just installed. `Fold::new` has already reset the world, and a SECOND
+        // `registry.reset()` is a call no composition root makes — `foldArm.mts construct` resets
+        // the registry once and the engine once.
+        //
+        // MEASURED, JOS-475: it was invisible while every module's `reset()` was idempotent, and it
+        // is not once a module's REVISION COUNTER is published as its `seq`. Cluster 2b has three
+        // (combo, character, respawn — the JOS-87 rule), and the double reset put every one of them
+        // exactly ONE ahead of the golden on all six slices. Resetting only the new field is both
+        // the fix and what the builder was always describing.
+        self.combat = Some(engine);
+        if let Some(c) = &mut self.combat {
+            c.reset();
+        }
+        self
+    }
+
     pub fn reset(&mut self) {
         self.registry.reset();
+        if let Some(c) = &mut self.combat {
+            c.reset();
+        }
         self.epoch.reset();
         self.sessions.reset();
         self.derived.clear();
         self.events = 0;
+        self.last_ts = 0;
     }
 
     /// How many PRIMARY events were folded — `ScanResult.seq`.
@@ -228,15 +296,25 @@ impl Fold {
         self.events
     }
 
-    /// One primary event: dispatch to the modules, let the two detectors observe it, then drain
-    /// whatever anybody queued through the SAME dispatch loop. That is `LogBus.emit` exactly.
+    /// THE HIGHEST TIMESTAMP ANY EVENT CARRIED — `goldenOracle.mts`'s `lastTs`, which is the
+    /// instant the combat snapshot is taken at. Accumulated with `max` rather than "the last one",
+    /// exactly as the recorder's bus listener does (`if (ev.ts > lastTs) lastTs = ev.ts`): the
+    /// stream is not guaranteed monotonic across a log rollover, and the snapshot's `now` must not
+    /// be able to travel backwards because one line did.
+    pub fn last_ts(&self) -> i64 {
+        self.last_ts
+    }
+
+    /// One primary event: deliver it, then drain whatever anybody queued through the SAME delivery.
+    /// That is `LogBus.emit` exactly.
     ///
     /// THE ORDER OF THE THREE PRODUCERS IS THE SUBSCRIPTION ORDER, and it decides the queue's
     /// order: the twenty modules first (so a `buffExpired` precedes both detectors' output for the
     /// same primary event), then the epoch detector, then the offline-gap detector — which is how
-    /// `foldArm.mts construct` subscribes them, and therefore how the golden was recorded.
+    /// `foldArm.mts construct` subscribes them, and therefore how the goldens were recorded.
     pub fn on_primary(&mut self, ev: &Event, live: bool) {
         self.events += 1;
+        self.last_ts = self.last_ts.max(ev.ts());
         self.observe(ev, live);
         // Shift-until-empty, so anything a derived event queues IN TURN is delivered too — and it
         // can: `buffs` folds an `epoch` by clearing its live state, and a censored instance is
@@ -256,6 +334,17 @@ impl Fold {
     /// (`epochDetector.observe`'s first line, `sessionDetector.observe`'s).
     fn observe(&mut self, ev: &Event, live: bool) {
         self.registry.dispatch(ev, live, &mut self.derived);
+        // …then the engine, which is the next subscriber on the bus (see the `combat` field). The
+        // two field borrows are disjoint, which is what lets the engine pull the roster out of the
+        // registry that has just finished folding this same line.
+        //
+        // A DERIVED EVENT REACHES IT TOO, and that is why this is one function rather than two:
+        // `LogBus.emit` drains through the same listener loop, and `epoch` is a kind the engine
+        // handles BY NAME (it drops the fight, the zone and the world), so delivering a boundary to
+        // the modules alone would leave the engine holding a dead character's encounter.
+        if let Some(c) = &mut self.combat {
+            c.on_event(ev, live, self.registry.roster());
+        }
         if let Some(d) = self.epoch.observe(ev) {
             self.derived.push(d);
         }
@@ -279,26 +368,88 @@ impl Fold {
     }
 }
 
-/// EVERY PORTED MODULE, registered in `WIRING_ORDER`'s relative order.
+/// EVERYTHING THE CLUSTER NEEDS FROM OUTSIDE ITSELF — `wiring.ts ModuleWiringDeps`, minus the
+/// seams no ported module has yet.
 ///
-/// It was `cluster_2a` while nine modules were all there was; the name moved with the second
-/// cluster because a registry that names one ticket is a registry a reader has to date. What has
-/// NOT changed is the law it enforces — the caller registers in wiring order, the test below says
-/// so, and `missing()` names everything still absent.
+/// It is a STRUCT rather than a parameter list because it is the thing later clusters grow: 2c and
+/// 2d each bring modules with their own construction inputs, and a struct means they add a FIELD
+/// and a registration line instead of re-threading every call site.
 ///
-/// `known_spell` is `wiring.ts`'s `knownSpell: (key) => spellDb.byKey.has(key)`, passed in as the
-/// key set rather than as a closure so nothing in this crate borrows the parser. `facts` is the
-/// same idea one size up — the whole of `db.byKey`, projected into the six scalar facts the buffs
-/// model reads (see `spell_facts.rs`), because `wiring.ts` hands `spellDb` itself to that module.
-/// An EMPTY `facts` is the TS's absent `db?` and every read answers nothing, which is what a caller
-/// with no catalog gets over there.
-pub fn registered(known_spell: HashSet<String>, facts: spell_facts::SpellFacts) -> Registry {
+/// Every field is a fact about the RUN rather than about the log's bytes, which is what makes it a
+/// parameter at all — and each of them is derived by the caller exactly as `foldArm.mts` /
+/// `goldenOracle.mts` derive it, because the goldens were recorded under those derivations.
+#[derive(Default)]
+pub struct ClusterDeps {
+    /// `wiring.ts` `knownSpell: (key) => spellDb.byKey.has(key)`, passed as the key SET rather than
+    /// as a closure so nothing in this crate borrows the parser.
+    pub known_spell: HashSet<String>,
+    /// `spellClasses.ts`'s canon-key → class-set index, built once off the same DB (evidence.rs).
+    pub spell_classes: modules::combo::evidence::SpellClassIndex,
+    /// `epochDetector.ts LAUNCH_MS`, resolved through the fold's own zone.
+    pub launch_ms: i64,
+    /// `WorldOpts.constructionNowMs` — the PINNED construction clock the respawn module seeds its
+    /// ordering clock from. See `modules/respawn.rs`'s header for why it cannot be a wall clock.
+    pub construction_now_ms: i64,
+    /// The `CharacterRef` `index.ts` pushes in with `setCharacter`, derived from the log's filename.
+    pub character: Option<Value>,
+    /// `roster.setSelfName` — `session.ts`'s line. THE BENCH DOES NOT CALL IT, so the parity runner
+    /// passes `None` and the recorded goldens are what that produces (roster.rs's header).
+    pub self_name: Option<String>,
+    /// `deps.respawnPrefs` — the shipped default is an EMPTY watch list and that is what every
+    /// non-Electron caller passes.
+    pub respawn_prefs: modules::respawn::RespawnPrefs,
+    /// `deps.spellDb` one size up from `known_spell` — the whole of `db.byKey`, projected into the
+    /// scalar facts the BUFFS model reads (`spell_facts.rs`), because `wiring.ts` hands the spell
+    /// database itself to that module. An EMPTY one is the TS's absent `db?`: every read answers
+    /// nothing, which is exactly what a caller with no catalog gets over there.
+    pub facts: spell_facts::SpellFacts,
+}
+
+/// EVERY PORTED MODULE, registered in `WIRING_ORDER`'s relative order — which since JOS-476 is all
+/// twenty of them.
+///
+/// The name has moved twice and for the same reason both times: it was `cluster_2a` while nine
+/// modules were all there was, then `cluster_2a_2b`, and a registry that names the tickets IN it is
+/// a registry a reader has to date. `Registry::missing()` is the half that still says what a given
+/// build did not register, and it is the half the parity report prints.
+pub fn registered(deps: ClusterDeps) -> Registry {
+    let ClusterDeps {
+        known_spell,
+        spell_classes,
+        launch_ms,
+        construction_now_ms,
+        character,
+        self_name,
+        respawn_prefs,
+        facts,
+    } = deps;
     let mut r = Registry::new();
+    // combo goes FIRST (design § 5.1): within one bus delivery every later module — and the combat
+    // engine, which folds the same event afterwards — then sees an already-advanced combo state.
+    r.register(Box::new(modules::combo::ComboModule::new(
+        spell_classes,
+        launch_ms,
+    )));
+    // roster goes SECOND for the same reason: the engine's admission gate pulls the roster through
+    // a seam installed before it ever folds a line, so the roster must already be advanced.
+    r.register(Box::new(modules::roster::RosterModule::new(
+        self_name.as_deref(),
+    )));
     r.register(Box::new(modules::loot::LootModule::new()));
     r.register(Box::new(modules::turnins::TurnInsModule::new()));
     r.register(Box::new(modules::class_unlocks::ClassUnlocksModule::new()));
     r.register(Box::new(modules::kills::KillsModule::new()));
+    // Beside `kills` because it folds the SAME death line — and AFTER it, so anything reading both
+    // within one delivery sees the kill counted before the clock that kill started.
+    r.register(Box::new(modules::respawn::RespawnModule::new(
+        construction_now_ms,
+        respawn_prefs,
+    )));
+    r.register(Box::new(modules::progression::ProgressionModule::new()));
     r.register(Box::new(modules::leveling::LevelingModule::new()));
+    r.register(Box::new(modules::character::CharacterModule::new(
+        character,
+    )));
     r.register(Box::new(modules::output_files::OutputFilesModule::new()));
     r.register(Box::new(modules::spell_sets::SpellSetsModule::new()));
     r.register(Box::new(modules::item_tiers::ItemTiersModule::new()));
@@ -327,10 +478,7 @@ mod tests {
     use super::*;
 
     fn fold_lines(lines: &[&str]) -> Value {
-        let mut fold = Fold::new(
-            registered(HashSet::new(), spell_facts::SpellFacts::default()),
-            i64::MAX,
-        );
+        let mut fold = Fold::new(registered(ClusterDeps::default()), i64::MAX);
         for line in lines {
             let ev = Event::from_json(line).expect("a JSON object");
             fold.on_primary(&ev, false);
@@ -351,7 +499,7 @@ mod tests {
     /// The registered cluster is a SUBSEQUENCE of the wiring order, and everything else is named.
     #[test]
     fn registration_follows_the_wiring_order_and_names_what_is_absent() {
-        let r = registered(HashSet::new(), spell_facts::SpellFacts::default());
+        let r = registered(ClusterDeps::default());
         let ids = r.ids();
         let mut at = 0usize;
         for id in &ids {
@@ -361,12 +509,18 @@ mod tests {
                 .unwrap_or_else(|| panic!("{id} is out of wiring order"));
             at += found + 1;
         }
-        assert_eq!(r.missing().len(), WIRING_ORDER.len() - ids.len());
-        // The 2b set is still absent BY NAME, which is what the SKIP line prints.
-        assert!(r.missing().contains(&"respawn"));
-        assert!(!r.missing().contains(&"loot"));
-        assert!(!r.missing().contains(&"alerts"));
-        assert!(!r.missing().contains(&"eventFeed"));
+        // ALL TWENTY, since JOS-476 — so `missing()` is empty and the SKIP line is a statement
+        // that nothing was skipped rather than an absent line. The assertion is written against
+        // `WIRING_ORDER.len()` rather than against 20, so a module ADDED to the wiring over there
+        // fails here until it is ported, which is the whole no-silent-caps mechanism.
+        assert_eq!(ids.len(), WIRING_ORDER.len());
+        assert!(r.missing().is_empty(), "{:?}", r.missing());
+        // combo and roster are the two whose POSITION is load-bearing rather than free.
+        assert_eq!(ids[0], "combo");
+        assert_eq!(ids[1], "roster");
+        // …and eventFeed stays LAST: a row appended while an earlier module's delta is being
+        // emitted still rides out on the same flush pass.
+        assert_eq!(ids[ids.len() - 1], "eventFeed");
     }
 
     /// A loot row is tagged with the zone the module was standing in, and an absent optional field
@@ -487,7 +641,10 @@ mod tests {
         let mut known = HashSet::new();
         known.insert("shiftless deeds".to_string());
         let mut fold = Fold::new(
-            registered(known, spell_facts::SpellFacts::default()),
+            registered(ClusterDeps {
+                known_spell: known,
+                ..Default::default()
+            }),
             i64::MAX,
         );
         for line in [
@@ -520,10 +677,7 @@ mod tests {
     /// character-scoped module's state — while `outputFiles` deliberately keeps its receipts.
     #[test]
     fn the_launch_boundary_drops_the_dead_characters_state() {
-        let mut fold = Fold::new(
-            registered(HashSet::new(), spell_facts::SpellFacts::default()),
-            1000,
-        );
+        let mut fold = Fold::new(registered(ClusterDeps::default()), 1000);
         for line in [
             r#"{"kind":"loot","seq":0,"ts":500,"raw":"l","item":"Beta Sword"}"#,
             r#"{"kind":"outputFile","seq":1,"ts":600,"raw":"o","file":"Inventory.txt"}"#,
@@ -577,20 +731,40 @@ mod tests {
         );
     }
 
-    /// Every module reports the seq of the LAST event it was handed, derived events included —
-    /// EXCEPT `buffTimers`, whose published `seq` is its own REVISION counter (JOS-87). That
-    /// exception is named here rather than skipped, because it is the trap the 2c port walked into:
-    /// the goldens record 0 for three of the six slices, and a module that answered `ev.seq` there
-    /// would fail the comparator on a slice whose holds are all empty.
+    /// A module whose state moves ONLY on events reports the seq of the LAST event it was handed,
+    /// derived events included — and FOUR of them deliberately do not (JOS-87).
+    ///
+    /// `combo`, `character` and `respawn` each have a SECOND INPUT that advances no log seq (a user
+    /// correction, `setCharacter`, a watch edit), and `buffTimers` has `onTick`, which expires holds
+    /// on a log that is idle — which is precisely when someone is watching a mez run out. Each
+    /// reports a private revision counter instead. `useModule` dedupes with `d.seq <= knownSeq`, so
+    /// publishing the event seq there would let the renderer drop the very push that carries the
+    /// out-of-band change. The distinction is a CONTRACT, not an accident, so the test names both
+    /// sides — and `buffTimers` is the one the goldens catch outright, recording 0 for three of the
+    /// six slices.
     #[test]
-    fn the_published_seq_is_the_last_event_folded() {
+    fn the_published_seq_is_the_last_event_folded_except_where_a_revision_is_owed() {
+        const OWN_REVISION: [&str; 4] = ["combo", "character", "respawn", "buffTimers"];
         let snaps = fold_lines(&[
             r#"{"kind":"unknown","seq":0,"ts":1,"raw":"x"}"#,
             r#"{"kind":"unknown","seq":41,"ts":2,"raw":"x"}"#,
         ]);
         for m in snaps["modules"].as_array().expect("modules") {
-            let want = if m["id"] == "buffTimers" { 0 } else { 41 };
-            assert_eq!(m["snapshot"]["seq"], want, "{}", m["id"]);
+            let id = m["id"].as_str().expect("an id");
+            if OWN_REVISION.contains(&id) {
+                // Two unknown events move none of the four, so each is still at what its
+                // CONSTRUCTION spent: one `reset()` apiece, plus `character`'s `setCharacter` —
+                // which the composition root always makes, ref or no ref — and NONE for
+                // `buffTimers`, whose `reset()` zeroes the counter rather than spending it.
+                let want = match id {
+                    "character" => 2,
+                    "buffTimers" => 0,
+                    _ => 1,
+                };
+                assert_eq!(m["snapshot"]["seq"], want, "{id}");
+                continue;
+            }
+            assert_eq!(m["snapshot"]["seq"], 41, "{id}");
         }
     }
 
@@ -600,10 +774,7 @@ mod tests {
     /// launch boundary — alerts is the one character-facing module with no `epoch` branch.
     #[test]
     fn the_cast_recency_map_is_rank_sensitive_and_outlives_the_epoch() {
-        let mut fold = Fold::new(
-            registered(HashSet::new(), spell_facts::SpellFacts::default()),
-            1000,
-        );
+        let mut fold = Fold::new(registered(ClusterDeps::default()), 1000);
         for line in [
             r#"{"kind":"castBegin","seq":0,"ts":500,"raw":"c","spell":"Mesmerization III"}"#,
             r#"{"kind":"castBegin","seq":1,"ts":400,"raw":"c","spell":"Mesmerization III"}"#,
@@ -679,10 +850,7 @@ mod tests {
     /// line about YOU rather than the reconnect preamble's chat noise.
     #[test]
     fn the_fold_feeds_every_primary_event_to_the_offline_gap_detector() {
-        let mut fold = Fold::new(
-            registered(HashSet::new(), spell_facts::SpellFacts::default()),
-            i64::MAX,
-        );
+        let mut fold = Fold::new(registered(ClusterDeps::default()), i64::MAX);
         for line in [
             r#"{"kind":"loot","seq":0,"ts":1000,"raw":"l","item":"Bone Chips"}"#,
             r#"{"kind":"unknown","seq":1,"ts":500000,"raw":"Channels: 1=General1(400)"}"#,
@@ -755,10 +923,7 @@ mod tests {
     /// the same order the TS bus delivers it.
     #[test]
     fn a_resolved_wear_off_is_handed_back_to_the_bus_as_a_derived_event() {
-        let mut fold = Fold::new(
-            registered(HashSet::new(), spell_facts::SpellFacts::default()),
-            i64::MAX,
-        );
+        let mut fold = Fold::new(registered(ClusterDeps::default()), i64::MAX);
         for line in [
             r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Clarity"}"#,
             r#"{"kind":"buffApply","seq":1,"ts":2000,"raw":"a","target":"self","spell":"Clarity","illusion":false,"durationMs":60000,"candidates":[{"name":"Clarity","durationMs":60000,"illusion":false}]}"#,
@@ -786,10 +951,7 @@ mod tests {
     /// halves of JOS-134, and the reason the offline-gap detector had to come with this cluster.
     #[test]
     fn an_absence_rewinds_a_buffs_clock_and_leaves_a_debuffs_alone() {
-        let mut fold = Fold::new(
-            registered(HashSet::new(), spell_facts::SpellFacts::default()),
-            i64::MAX,
-        );
+        let mut fold = Fold::new(registered(ClusterDeps::default()), i64::MAX);
         for line in [
             // The anchor, the landing, and an in-world line to give the detector something to
             // measure the absence FROM.
@@ -1007,10 +1169,7 @@ mod tests {
     /// and leveling, and the module still reports the seq of the last event it was handed.
     #[test]
     fn what_a_mob_resists_outlives_the_launch_boundary() {
-        let mut fold = Fold::new(
-            registered(HashSet::new(), spell_facts::SpellFacts::default()),
-            1000,
-        );
+        let mut fold = Fold::new(registered(ClusterDeps::default()), 1000);
         for line in [
             r#"{"kind":"resist","seq":0,"ts":500,"raw":"r","caster":"You","target":"a froglok ton knight","spell":"Malosi","incoming":false}"#,
             r#"{"kind":"loot","seq":1,"ts":1500,"raw":"l","item":"Live Sword"}"#,
@@ -1036,5 +1195,115 @@ mod tests {
         ]);
         // The Tashani landing row, plus an un-debuffed Malosi row — the window died with the zone.
         assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 2, "mobs": 1 }));
+    }
+
+    // ── CLUSTER 2b (JOS-475) ──────────────────────────────────────────────────────────────────
+
+    /// A login after a long silence synthesizes an `offlineGap`, and `progression` publishes the
+    /// instants it carries — the columns are a record of what the log said, and the absence is a
+    /// thing the log said (JOS-475: the producer this cluster had to bring with it).
+    #[test]
+    fn a_login_after_an_absence_writes_an_offline_interval() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"expGain","seq":0,"ts":1000,"raw":"e","party":false}"#,
+            r#"{"kind":"campStart","seq":1,"ts":2000,"raw":"c"}"#,
+            r#"{"kind":"sessionStart","seq":2,"ts":900000,"raw":"w"}"#,
+        ]);
+        let p = state_of(&snaps, "progression");
+        assert_eq!(p["offlineStart"], json!([2000]));
+        assert_eq!(p["offlineEnd"], json!([900000]));
+        assert_eq!(p["offlineCamped"], json!([1]));
+    }
+
+    /// The credited/witnessed split, the backward experience join, and the ring row that carries
+    /// what the kill paid — all off one four-line window.
+    #[test]
+    fn a_kill_claims_the_experience_line_before_it_and_a_strangers_does_not_pay_you() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"zone","seq":0,"ts":0,"raw":"z","zone":"Najena"}"#,
+            r#"{"kind":"expGain","seq":1,"ts":1000,"raw":"e","party":false,"pct":2}"#,
+            r#"{"kind":"death","seq":2,"ts":1000,"raw":"d","name":"a stone spider","bySelf":true}"#,
+            r#"{"kind":"death","seq":3,"ts":2000,"raw":"d","name":"a bat","bySelf":false,"killer":"Dranix"}"#,
+        ]);
+        let p = state_of(&snaps, "progression");
+        assert_eq!(p["killTs"], json!([1000]));
+        assert_eq!(p["killZone"], json!([0]));
+        assert_eq!(p["witnessTs"], json!([2000]));
+        assert_eq!(p["recentKills"][0]["name"], "a stone spider");
+        assert_eq!(p["recentKills"][0]["zone"], "Najena");
+        // `expPct` is the one true f64 in the stream, so it is compared as a NUMBER: serde writes
+        // `2.0` where `JSON.stringify` writes `2`, and both parse to the same double — which is
+        // exactly what the phase-2 comparator does with them (it diffs two PARSED values).
+        assert_eq!(p["recentKills"][0]["expPct"].as_f64(), Some(2.0));
+        assert_eq!(p["recentKills"][0]["expFlag"], 0);
+    }
+
+    /// A group line names a member and an offline gap marks them STALE rather than removing them —
+    /// hiding a real member is the worse error, and is the bug the feature exists to fix.
+    #[test]
+    fn an_offline_gap_dims_a_member_and_never_drops_one() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"group","seq":0,"ts":1000,"raw":"g","change":"join","name":"Dranix"}"#,
+            r#"{"kind":"expGain","seq":1,"ts":2000,"raw":"e","party":true}"#,
+            r#"{"kind":"sessionStart","seq":2,"ts":900000,"raw":"w"}"#,
+        ]);
+        let r = state_of(&snaps, "roster");
+        assert_eq!(r["members"][0]["name"], "Dranix");
+        assert_eq!(r["members"][0]["source"], "joined");
+        assert_eq!(r["members"][0]["stale"], true);
+        assert_eq!(r["seen"], true);
+        assert_eq!(r["lastSignalTs"], 1000);
+    }
+
+    /// A `/who` row states the level at its own instant and OUTRANKS a ding in the same second; the
+    /// epoch drops the wiped character's zone and level and KEEPS the ref.
+    ///
+    /// Note the zone line that triggers the boundary: the derived event drains AFTER it, so that
+    /// zone goes with the dead character too, and the first zone the surviving character has is the
+    /// next line. Same shape as the 2a loot case, and the same reason.
+    #[test]
+    fn the_level_fact_takes_the_latest_statement_and_who_breaks_the_tie() {
+        let mut fold = Fold::new(
+            registered(ClusterDeps {
+                character: Some(json!({ "name": "Primitive", "server": "freeport" })),
+                ..Default::default()
+            }),
+            1000,
+        );
+        for line in [
+            r#"{"kind":"zone","seq":0,"ts":500,"raw":"z","zone":"Beta Zone"}"#,
+            r#"{"kind":"level","seq":1,"ts":600,"raw":"v","level":26}"#,
+            r#"{"kind":"zone","seq":2,"ts":1500,"raw":"z","zone":"Beta Zone"}"#,
+            r#"{"kind":"zone","seq":3,"ts":1550,"raw":"z","zone":"Najena"}"#,
+            r#"{"kind":"level","seq":4,"ts":1600,"raw":"v","level":30}"#,
+            r#"{"kind":"selfWho","seq":5,"ts":1600,"raw":"w","level":31,"classes":["PAL","MNK","ENC"]}"#,
+        ] {
+            fold.on_primary(&Event::from_json(line).expect("object"), false);
+        }
+        let state = state_of(&fold.registry.snapshots(), "character");
+        assert_eq!(state["character"]["name"], "Primitive");
+        assert_eq!(state["zone"], "Najena");
+        assert_eq!(
+            state["level"],
+            json!({ "level": 31, "ts": 1600, "source": "who" })
+        );
+    }
+
+    /// A watch list nobody filled in clocks NOTHING — the opt-in ruling — while the recent-kills
+    /// candidate list still offers every mob the fold has seen die.
+    #[test]
+    fn an_empty_watch_list_publishes_candidates_and_no_rows() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"zone","seq":0,"ts":0,"raw":"z","zone":"Najena"}"#,
+            r#"{"kind":"death","seq":1,"ts":1000,"raw":"d","name":"a stone spider","bySelf":true}"#,
+        ]);
+        let state = state_of(&snaps, "respawn");
+        assert_eq!(state["v"], 4);
+        assert_eq!(state["zone"], "Najena");
+        assert_eq!(state["rows"], json!([]));
+        assert_eq!(state["prefs"], json!({ "watches": [] }));
+        assert_eq!(state["recent"][0]["key"], "a stone spider");
+        assert_eq!(state["recent"][0]["watched"], false);
+        assert_eq!(state["recent"][0]["kills"], 1);
     }
 }

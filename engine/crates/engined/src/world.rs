@@ -1,46 +1,56 @@
 //! THE ONE DOOR. Every piece of state this process holds lives behind [`World`], and every reader —
 //! including the engine's own — asks for it by calling a method.
 //!
-//! WHY A SKELETON THAT HOLDS ALMOST NOTHING IS SHAPED THIS WAY. Owner ruling 18 (docs/plans/
+//! WHY A STORE THAT HOLDS THIS LITTLE IS SHAPED THIS WAY. Owner ruling 18 (docs/plans/
 //! data-server.md, "Cache transparency"): the destination is an engine that parses any given log
 //! byte once, ever, with a cache under the store seam so transparent that even the engine's own
 //! internal callers cannot tell cached from computed. Nothing is cached now and nothing may be —
-//! but the interface laws that keep that door open are cheapest to obey while there is nothing
+//! but the interface laws that keep that door open are cheapest to obey while there is little
 //! behind it, and impossible to retrofit once twenty modules have reached into each other's fields.
 //! The four that bind this file:
 //!
 //! * **Reads go through one door** (law 2). There is no `pub` field here and no way to borrow the
 //!   state. A caller asks [`World::health`] a question and gets an answer; whether that answer was
 //!   computed just now or lifted from a checkpoint is not a distinction the caller can make.
-//! * **State is addressed explicitly** (law 3). Nothing here means "current" implicitly. The
-//!   epoch is the world's generation and it is stated on every answer that depends on it. When the
-//!   tailer lands, the coordinate this state is keyed by becomes (log identity, byte offset) — and
-//!   `attach` is where that coordinate will be recorded. It records NOTHING today, because a
-//!   skeleton with no tailer that remembered a path would be state nobody reads, and state nobody
-//!   reads is state that rots.
+//! * **State is addressed by (log identity, byte offset)** (law 3). Nothing here means "current"
+//!   implicitly. The epoch is the world's generation and it is stated on every answer that depends
+//!   on it; what the fold has consumed is stated as [`World::mark`] — a path and THE MARK, the end
+//!   of the last complete line folded — and never as a time or a "so far".
 //! * **Determinism is cacheability** (law 1). The one clock read in this file is `uptimeMs`, and
 //!   it is a property of the PROCESS rather than of the world: it is derived from the start
-//!   instant, never from anything the fold will one day compute. No world state may ever be a
-//!   function of the wall clock.
+//!   instant, never from anything the fold computes. No world state may ever be a function of the
+//!   wall clock.
 //! * **A cache invalidates by version, never by patching** (law 5). Which is the same statement as
 //!   the epoch: a new generation is a new world, and the only way to move between generations is to
 //!   take the fresh reset. There is no incremental repair here and there never will be.
 //!
-//! THE EPOCH AND ITS ANNOUNCEMENT ARE ONE CRITICAL SECTION. `attach` bumps the generation and
-//! pushes the [`EpochMessage`] to every connection while still holding the lock, so no two attaches
-//! can interleave their announcements and no connection can ever be told about generation N+1
-//! before generation N. That is not a performance decision — the lock is held for the length of a
-//! few `Sender::send` calls into unbounded queues — it is the ordering the client's drop-and-reset
-//! rule depends on.
+//! THE EPOCH AND ITS ANNOUNCEMENT ARE ONE CRITICAL SECTION. [`World::attach`] bumps the generation
+//! and pushes the [`EpochMessage`] to every connection while still holding the lock, so no two
+//! attaches can interleave their announcements and no connection can ever be told about generation
+//! N+1 before generation N. That is not a performance decision — the lock is held for the length of
+//! a few `Sender::send` calls into unbounded queues — it is the ordering the client's
+//! drop-and-reset rule depends on. Opening a subscription and stamping its reset happen in that
+//! same critical section ([`World::open_subscription`]), for the same reason.
+//!
+//! THE GENERATION IS THE INGEST'S OWNERSHIP TOKEN (JOS-457, engine-side). It is bumped under this
+//! file's lock and readable without it, because the question an in-flight fold asks at every slice
+//! boundary — "do I still own the world?" — must not contend with the world it no longer owns. Every
+//! statement an ingest makes about the world goes through a `report_*` method that re-asks it INSIDE
+//! the lock and answers `false` to a turn that has lost; a loser can therefore write nothing, ever,
+//! however long it takes to notice. See `ingest.rs` for the other half.
 
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use protocol::generated::{
-    AttachResult, EngineMessage, Epoch, EpochMessage, EpochMessageKind, EpochReason, HealthResult,
-    HealthResultStatus,
+    AttachResult, EngineMessage, Epoch, EpochMessage, EpochMessageKind, EpochReason, FoldProgress,
+    HealthResult, HealthResultStatus, RequestId, ResetMessage, ResetMessageKind,
 };
+
+use crate::ingest::{self, Starter};
 
 /// The generation a fresh process starts in.
 ///
@@ -58,22 +68,83 @@ pub struct World {
 struct Inner {
     /// When this process started. See the header: process metadata, never world state.
     started: Instant,
+    /// THE INGEST'S OWNERSHIP TOKEN. Written only under `state`'s lock; read without it.
+    generation: AtomicU64,
+    /// What an accepted attach starts. See [`ingest::Starter`] — this is the phase-2a seam, and the
+    /// whole extent of what the fold registry changes here.
+    ingest: Starter,
     state: Mutex<State>,
 }
 
 struct State {
     epoch: i64,
-    /// Every open connection's outbox. Connection-wide messages — today only [`EpochMessage`] — are
-    /// pushed here under the same lock that owns the epoch.
+    /// Every open connection's outbox. Connection-wide messages — [`EpochMessage`], and the
+    /// per-subscription resets a landing fold produces — are pushed here under the same lock that
+    /// owns the epoch.
     listeners: Vec<Listener>,
     /// The next listener id. Monotonic, never reused, so a stale id can never name a live
     /// connection.
     next_listener: u64,
+    /// What the ingest is doing. `Idle` when there is none — see [`World::health`].
+    status: HealthResultStatus,
+    /// What the current ingest has folded, in the only coordinates law 3 allows.
+    fold: Fold,
+}
+
+/// What the world's fold has consumed. A COORDINATE PAIR plus what was counted along the way.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Fold {
+    /// The log being folded, or `None` before the first attach.
+    log: Option<PathBuf>,
+    /// THE MARK: the end of the last complete line folded (`eqlog::tail`'s `checkpoint_offset`,
+    /// which is the same definition as `ScanResult.endOffset`). The engine owns it — boundary
+    /// verdict 4 — and it is the coordinate any future checkpoint is keyed by.
+    checkpoint: u64,
+    /// Events folded in this generation. Counts EVENTS, not lines.
+    events: i64,
+    /// The `ts` of the last event folded — THE LOG'S own clock.
+    last_ts: Option<i64>,
+}
+
+/// One measurement of an ingest, as the ingest thread hands it to the world.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FoldMark {
+    /// THE MARK — see [`Fold::checkpoint`].
+    pub checkpoint: u64,
+    /// Events folded so far.
+    pub events: i64,
+    /// How far through the bytes the mark has reached, as a percentage. A FLOAT (owner ruling 17),
+    /// bytes over bytes, engine-measured.
+    pub pct: f64,
+    /// The `ts` of the last event folded, if one could be read.
+    pub last_ts: Option<i64>,
+}
+
+/// What the fold has consumed, as a coordinate the caller can name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mark {
+    /// The log being folded, or `None` before the first attach.
+    pub log: Option<PathBuf>,
+    /// THE MARK: the end of the last complete line folded.
+    pub checkpoint: u64,
+    /// Events folded in this generation.
+    pub events: i64,
+    /// The `ts` of the last event folded.
+    pub last_ts: Option<i64>,
 }
 
 struct Listener {
     id: ListenerId,
     outbox: Sender<EngineMessage>,
+    /// The subscribe-request ids open on this connection.
+    ///
+    /// THEY LIVE HERE, NOT ON THE CONNECTION, for two reasons that only became true when a fold
+    /// arrived: a landing fold must reset EVERY open subscription, which is a statement about all
+    /// connections at once; and a subscription's opening reset must be stamped with the epoch under
+    /// the same lock that can bump it. Per-connection ISOLATION is unchanged — request ids are
+    /// client-chosen and two renderers routinely pick the same number, so a subscription is named
+    /// by (listener, id) and one client still cannot unsubscribe another's stream.
+    subscriptions: std::collections::BTreeSet<i64>,
 }
 
 /// Names one connection's membership of the world. Opaque on purpose: it is a receipt to hand back
@@ -94,17 +165,29 @@ pub struct Membership {
 }
 
 impl World {
-    /// A fresh world. A respawn is a launch (owner ruling 10), so this is the only way one is ever
-    /// made and there is no state to restore.
+    /// A fresh world folding into counting sinks. A respawn is a launch (owner ruling 10), so this
+    /// is the only way one is ever made and there is no state to restore.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_ingest(ingest::default_starter())
+    }
+
+    /// A fresh world whose attaches start the ingest the caller names. THE PHASE-2a SEAM: the fold
+    /// registry arrives as `ingest::starter(<its factory>)` here and nothing else in this crate
+    /// moves.
+    #[must_use]
+    pub fn with_ingest(ingest: Starter) -> Self {
         Self {
             inner: Arc::new(Inner {
                 started: Instant::now(),
+                generation: AtomicU64::new(0),
+                ingest,
                 state: Mutex::new(State {
                     epoch: FIRST_EPOCH,
                     listeners: Vec::new(),
                     next_listener: 0,
+                    status: HealthResultStatus::Idle,
+                    fold: Fold::default(),
                 }),
             }),
         }
@@ -119,86 +202,234 @@ impl World {
         state.listeners.push(Listener {
             id,
             outbox: outbox.clone(),
+            subscriptions: std::collections::BTreeSet::new(),
         });
         Membership { id, outbox, inbox }
     }
 
-    /// Deregister a connection. Idempotent: leaving twice is not an error, because a connection can
-    /// end in more than one way and the tidy-up path must not care which.
+    /// Deregister a connection, and with it every subscription it held. Idempotent: leaving twice is
+    /// not an error, because a connection can end in more than one way and the tidy-up path must not
+    /// care which.
     pub fn leave(&self, id: ListenerId) {
         self.lock().listeners.retain(|l| l.id != id);
     }
 
-    /// The world's generation, right now.
+    /// Open one subscription and answer with the epoch its reset must name.
     ///
-    /// A CAVEAT THE NEXT PHASE MUST CLOSE. A caller that reads this and then builds a message from
-    /// it is racing an attach on another connection: the bump can land between the read and the
-    /// push, so a subscription's opening reset could name a generation that has already been
-    /// superseded. Phase 0 gets away with it because its resets carry no rows and there is no fold
-    /// to send a fresh one — but when views arrive, creating a subscription and stamping its reset
-    /// must happen inside this lock, exactly as the bump and its announcement already do.
-    #[must_use]
-    pub fn epoch(&self) -> Epoch {
-        Epoch(self.lock().epoch)
+    /// ONE CRITICAL SECTION, and that closes the caveat phase 0 wrote down here: a caller that read
+    /// the epoch and then built a reset from it was racing an attach on another connection, so a
+    /// subscription's opening reset could name a generation that had already been superseded. It
+    /// cannot now — the registration and the stamp happen together, and an attach that lands after
+    /// this returns finds the subscription already registered and resets it when its fold lands.
+    pub fn open_subscription(&self, listener: ListenerId, subscription: i64) -> Epoch {
+        let mut state = self.lock();
+        let epoch = Epoch(state.epoch);
+        if let Some(l) = state.listeners.iter_mut().find(|l| l.id == listener) {
+            l.subscriptions.insert(subscription);
+        }
+        epoch
+    }
+
+    /// Close one subscription. `false` when this connection does not hold it — including one it held
+    /// a moment ago, which is the honest answer rather than a comforting one.
+    pub fn close_subscription(&self, listener: ListenerId, subscription: i64) -> bool {
+        let mut state = self.lock();
+        state
+            .listeners
+            .iter_mut()
+            .find(|l| l.id == listener)
+            .is_some_and(|l| l.subscriptions.remove(&subscription))
     }
 
     /// Answer `session.health`.
     ///
-    /// THE STATUS IS ALWAYS `idle` IN PHASE 0, and that is a statement rather than a stub: the
-    /// other four — `starting`, `attaching`, `folding`, `live` — describe a fold, and there is no
-    /// fold in this crate to be in the middle of. An engine that reported `live` here would be
-    /// lying to a loading screen.
+    /// THE STATUS IS THE INGEST'S, AND IT IS HONEST NOW (JOS-474): `idle` when no fold exists —
+    /// a fresh process, or one whose ingest ended — then `starting` at the instant an attach is
+    /// accepted, `attaching` while the log is opened and the parse's inputs are built, `folding`
+    /// for the length of the historical scan, and `live` once the tail owns the file.
+    ///
+    /// A SCHEMA GAP, STATED RATHER THAN WORKED AROUND: `HealthResult` carries `status`, `epoch` and
+    /// `uptimeMs` and has nowhere to put the mark, the event count or the log's last timestamp. The
+    /// engine owns all three (boundary verdict 4) and answers them through [`World::mark`] to its
+    /// own callers; putting them on the wire is a schema change, which goes through the integrator.
+    /// The one measurement that does reach a client today is `pct`/`events` on a progress frame.
     #[must_use]
     pub fn health(&self) -> HealthResult {
-        let epoch = Epoch(self.lock().epoch);
+        let state = self.lock();
         HealthResult {
-            status: HealthResultStatus::Idle,
-            epoch,
+            status: state.status,
+            epoch: Epoch(state.epoch),
             uptime_ms: i64::try_from(self.inner.started.elapsed().as_millis()).unwrap_or(i64::MAX),
         }
     }
 
-    /// Answer `session.attach` — A STUB, AND HERE IS EXACTLY WHAT IT DOES AND DOES NOT DO.
+    /// What the fold has consumed: the log, THE MARK, and what was counted reaching it.
     ///
-    /// DOES: bump the generation, announce the bump to every open connection as an
-    /// [`EpochMessage`] with reason `attach`, and report the new epoch to the caller as accepted.
+    /// The engine's own door onto the coordinate ruling 18 law 3 names. Not on the wire — see the
+    /// schema gap in [`World::health`].
+    #[must_use]
+    pub fn mark(&self) -> Mark {
+        let fold = self.lock().fold.clone();
+        Mark {
+            log: fold.log,
+            checkpoint: fold.checkpoint,
+            events: fold.events,
+            last_ts: fold.last_ts,
+        }
+    }
+
+    /// Answer `session.attach` — begin folding one log, PREEMPTING anything already folding.
     ///
-    /// DOES NOT: open a file, read a byte, start a tail, or fold anything. The request's `logPath`
-    /// is not even looked at — see the header on why nothing records it yet.
+    /// WHAT HAPPENS INSIDE THE LOCK: the epoch bumps, the generation bumps (which is what strips the
+    /// in-flight ingest of its ownership, before this call returns and before anything new starts),
+    /// the world is emptied of the previous fold's coordinates, the status becomes `starting`, and
+    /// the bump is announced to every connection.
     ///
-    /// `accepted` IS ALWAYS TRUE HERE, and the reason it is a field at all matters for phase 1: an
-    /// attach PREEMPTS any in-flight attach (last pick wins, never queued — JOS-457's generation
-    /// ownership promoted to protocol law), so the caller whose attach lost reports `false` and the
-    /// epoch names the winner. Nothing can lose to anything in a stub that completes inside the
-    /// lock, so every attach here wins.
+    /// WHAT HAPPENS OUTSIDE IT: the ingest thread starts. Deliberately after the lock is released —
+    /// a thread spawn is a syscall and the epoch's critical section must stay the length of a few
+    /// queue pushes.
     ///
-    /// NO `progress` RIDES THE ANNOUNCEMENT. The schema says [`protocol::generated::FoldProgress`]
-    /// is present while a fold is running and on the bump that starts one; this bump starts no
-    /// fold, so claiming a percentage would be inventing a measurement.
-    pub fn attach(&self) -> AttachResult {
-        let mut state = self.lock();
-        state.epoch += 1;
-        let epoch = Epoch(state.epoch);
-        let announcement = EngineMessage::EpochMessage(EpochMessage {
-            kind: EpochMessageKind::Epoch,
-            epoch: Epoch(state.epoch),
-            reason: EpochReason::Attach,
-            progress: None,
-        });
-        broadcast(&mut state, &announcement);
+    /// `accepted` IS ALWAYS TRUE, and now the field earns its place: an attach preempts any
+    /// in-flight attach (last pick wins, never queued), so the only way to lose is to be superseded
+    /// — and nothing can supersede an acceptance that completes inside the lock. The turn that LOSES
+    /// is the older ingest, and it reports nothing to anybody, by law.
+    ///
+    /// NO `progress` RIDES THE ANNOUNCEMENT. At the instant of the bump the fold has not opened the
+    /// file, so a percentage would be inventing a measurement. The first honest frame arrives from
+    /// the ingest a moment later, carrying `pct` 0 and the size it actually measured.
+    pub fn attach(&self, log_path: &str) -> AttachResult {
+        let log = PathBuf::from(log_path);
+        let generation;
+        let epoch;
+        {
+            let mut state = self.lock();
+            state.epoch += 1;
+            epoch = Epoch(state.epoch);
+            // BUMPED UNDER THE LOCK, so the atomic and the epoch can never disagree about which
+            // turn owns the world.
+            generation = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            state.status = HealthResultStatus::Starting;
+            state.fold = Fold {
+                log: Some(log.clone()),
+                ..Fold::default()
+            };
+            let announcement = EngineMessage::EpochMessage(EpochMessage {
+                kind: EpochMessageKind::Epoch,
+                epoch: Epoch(state.epoch),
+                reason: EpochReason::Attach,
+                progress: None,
+            });
+            broadcast(&mut state, &announcement);
+        }
+
+        (self.inner.ingest)(self, generation, log);
+
         AttachResult {
             epoch,
             accepted: true,
         }
     }
 
+    /// Does this turn still own the world? The lock-free half of the generation law.
+    #[must_use]
+    pub fn owns(&self, generation: u64) -> bool {
+        self.inner.generation.load(Ordering::SeqCst) == generation
+    }
+
+    /// Move the health status, if this turn still owns the world.
+    pub fn report_status(&self, generation: u64, status: HealthResultStatus) -> bool {
+        let mut state = self.lock();
+        if !self.owns(generation) {
+            return false;
+        }
+        state.status = status;
+        true
+    }
+
+    /// Announce one measurement of the fold to every connection.
+    ///
+    /// The frame is an `EpochMessage` carrying `progress` — the schema says in as many words that
+    /// progress frames are not a fourth stream kind, they are this — so a client that acked
+    /// `session.progress` and a client that acked nothing see the same thing, which is what
+    /// connection-wide means.
+    pub fn report_progress(&self, generation: u64, mark: FoldMark) -> bool {
+        let mut state = self.lock();
+        if !self.owns(generation) {
+            return false;
+        }
+        state.fold.checkpoint = mark.checkpoint;
+        state.fold.events = mark.events;
+        state.fold.last_ts = mark.last_ts;
+        let frame = EngineMessage::EpochMessage(EpochMessage {
+            kind: EpochMessageKind::Epoch,
+            epoch: Epoch(state.epoch),
+            reason: EpochReason::Progress,
+            progress: Some(FoldProgress {
+                pct: mark.pct,
+                events: mark.events,
+            }),
+        });
+        broadcast(&mut state, &frame);
+        true
+    }
+
+    /// THE FOLD LANDED: the historical scan is complete and the tail has the file.
+    ///
+    /// Every open subscription is RESET, on every connection, stamped with this generation — rule 1
+    /// of the diff protocol (reset-then-diffs) at the one moment the whole window changed at once.
+    /// The rows are empty until the fold registry arrives; a client that special-cased "no reset
+    /// because there was nothing" would be a client that cannot tell an empty view from a view that
+    /// never re-opened.
+    ///
+    /// EXACTLY ONE PER WINNING ATTACH. A preempted ingest never reaches here, and one that does can
+    /// only pass through it once — the tail loop that follows has no way back.
+    pub fn report_fold_landed(&self, generation: u64, mark: FoldMark) -> bool {
+        let mut state = self.lock();
+        if !self.owns(generation) {
+            return false;
+        }
+        state.status = HealthResultStatus::Live;
+        state.fold.checkpoint = mark.checkpoint;
+        state.fold.events = mark.events;
+        state.fold.last_ts = mark.last_ts;
+        let landed = state.epoch;
+        state.listeners.retain(|listener| {
+            listener.subscriptions.iter().all(|subscription| {
+                let reset = EngineMessage::ResetMessage(ResetMessage {
+                    kind: ResetMessageKind::Reset,
+                    id: RequestId(*subscription),
+                    epoch: Epoch(landed),
+                    total: 0,
+                    rows: Vec::new(),
+                });
+                listener.outbox.send(reset).is_ok()
+            })
+        });
+        true
+    }
+
+    /// THERE IS NO FOLD ANY MORE — the ingest could not start, could not read, or panicked.
+    ///
+    /// `idle` is the same word a never-attached process uses, and that is the honest one: it says
+    /// nothing is being folded. The EPOCH IS UNTOUCHED, deliberately — a fold that died did not
+    /// create a new generation, and a client that was told about generation N is still looking at
+    /// generation N's (empty) world rather than at a world it has never heard of.
+    pub fn report_idle(&self, generation: u64) -> bool {
+        let mut state = self.lock();
+        if !self.owns(generation) {
+            return false;
+        }
+        state.status = HealthResultStatus::Idle;
+        true
+    }
+
     /// Take the lock, surviving a poisoned one.
     ///
-    /// A POISONED MUTEX MUST NOT END THE ENGINE. Poisoning means some connection thread panicked
-    /// while holding this lock; the state it guards is an integer and a list of channel senders,
-    /// neither of which a panic can leave torn. Propagating the panic would turn one bad connection
-    /// into a dead engine for every other renderer, which is precisely the blast radius this
-    /// process boundary exists to shrink.
+    /// A POISONED MUTEX MUST NOT END THE ENGINE. Poisoning means some thread panicked while holding
+    /// this lock; the state it guards is an integer, a list of channel senders and a byte offset,
+    /// none of which a panic can leave torn. Propagating the panic would turn one bad connection —
+    /// or one bad fold — into a dead engine for every other renderer, which is precisely the blast
+    /// radius this process boundary exists to shrink.
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.inner
             .state
@@ -226,29 +457,61 @@ fn broadcast(state: &mut State, message: &EngineMessage) {
 
 #[cfg(test)]
 mod tests {
-    use super::World;
+    use super::{FoldMark, World};
     use protocol::generated::{EngineMessage, EpochReason, HealthResultStatus};
+    use std::sync::Arc;
+
+    /// A path standing in for a log. NOTHING IN THIS MODULE OPENS IT: these tests drive the world
+    /// with the ingest replaced by a no-op, so the epoch, the subscription and the generation laws
+    /// are proven with no thread, no file and no timing in the room. The ingest's own behaviour is
+    /// proven against real bytes in `ingest.rs`'s tests and over a real socket in `tests/ingest.rs`.
+    const A_LOG: &str = "C:/nowhere/eqlog_Nobody_freeport.txt";
+
+    /// A world whose attaches start nothing.
+    fn world() -> World {
+        World::with_ingest(Arc::new(|_world, _generation, _log| {}))
+    }
+
+    /// The generation the current turn holds. A real ingest is HANDED its own number by `attach`
+    /// and never has to ask; a test that replaced the ingest has to.
+    fn generation(world: &World) -> u64 {
+        world
+            .inner
+            .generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn mark(events: i64, pct: f64) -> FoldMark {
+        FoldMark {
+            checkpoint: 4096,
+            events,
+            pct,
+            last_ts: Some(1_787_181_707_000),
+        }
+    }
 
     #[test]
     fn a_fresh_world_is_idle_in_the_first_generation() {
-        let world = World::new();
+        let world = world();
         let health = world.health();
         assert!(matches!(health.status, HealthResultStatus::Idle));
         assert_eq!(*health.epoch, 1);
+        assert_eq!(world.mark().checkpoint, 0);
+        assert!(world.mark().log.is_none());
     }
 
     #[test]
     fn an_attach_bumps_the_generation_and_tells_everyone() {
-        let world = World::new();
+        let world = world();
         let one = world.join();
         let two = world.join();
 
-        let result = world.attach();
+        let result = world.attach(A_LOG);
         assert!(result.accepted);
         assert_eq!(*result.epoch, 2);
 
         for membership in [&one, &two] {
-            let message = membership.inbox.try_recv().expect("an announcement");
+            let message = membership.inbox.recv().expect("an announcement");
             let EngineMessage::EpochMessage(epoch) = message else {
                 panic!("a connection-wide announcement is an epoch message");
             };
@@ -256,31 +519,128 @@ mod tests {
             assert!(matches!(epoch.reason, EpochReason::Attach));
             assert!(
                 epoch.progress.is_none(),
-                "a bump that starts no fold claims no progress"
+                "at the bump the fold has not opened the file, so it claims no percentage"
             );
         }
     }
 
     #[test]
     fn a_connection_that_left_hears_nothing_further() {
-        let world = World::new();
+        let world = world();
         let stayed = world.join();
         let left = world.join();
         world.leave(left.id);
 
-        world.attach();
+        world.attach(A_LOG);
 
-        assert!(stayed.inbox.try_recv().is_ok());
+        assert!(stayed.inbox.recv().is_ok());
         assert!(left.inbox.try_recv().is_err());
     }
 
     #[test]
     fn the_generation_is_process_global_and_monotonic() {
-        let world = World::new();
+        let world = world();
         let mirror = world.clone();
-        assert_eq!(*world.attach().epoch, 2);
-        assert_eq!(*mirror.attach().epoch, 3);
-        assert_eq!(*world.epoch(), 3);
+        assert_eq!(*world.attach(A_LOG).epoch, 2);
+        assert_eq!(*mirror.attach(A_LOG).epoch, 3);
+        assert_eq!(*world.health().epoch, 3);
         assert_eq!(*mirror.health().epoch, 3);
+    }
+
+    #[test]
+    fn an_attach_strips_the_turn_before_it_of_every_way_to_speak() {
+        let world = world();
+        world.attach(A_LOG);
+        let loser = generation(&world);
+        world.attach(A_LOG);
+
+        assert!(!world.owns(loser));
+        assert!(!world.report_status(loser, HealthResultStatus::Live));
+        assert!(!world.report_progress(loser, mark(10, 50.0)));
+        assert!(!world.report_fold_landed(loser, mark(10, 100.0)));
+        assert!(!world.report_idle(loser));
+    }
+
+    #[test]
+    fn a_progress_frame_carries_the_measurement_to_every_connection() {
+        let world = world();
+        let listener = world.join();
+        world.attach(A_LOG);
+        let generation = generation(&world);
+        // Drain the attach announcement.
+        let _bump = listener.inbox.recv().expect("the bump");
+
+        assert!(world.report_progress(generation, mark(1571, 62.4)));
+        loop {
+            let EngineMessage::EpochMessage(frame) = listener.inbox.recv().expect("a frame") else {
+                panic!("progress rides an epoch message");
+            };
+            if matches!(frame.reason, EpochReason::Attach) {
+                continue;
+            }
+            assert!(matches!(frame.reason, EpochReason::Progress));
+            let progress = frame.progress.expect("a progress frame carries progress");
+            assert!((progress.pct - 62.4).abs() < f64::EPSILON);
+            assert_eq!(progress.events, 1571);
+            break;
+        }
+        assert_eq!(world.mark().events, 1571);
+        assert_eq!(world.mark().checkpoint, 4096);
+    }
+
+    #[test]
+    fn a_landing_fold_resets_every_open_subscription_and_goes_live() {
+        let world = world();
+        let listener = world.join();
+        let bystander = world.join();
+        world.open_subscription(listener.id, 7);
+        world.open_subscription(listener.id, 9);
+        world.attach(A_LOG);
+        let generation = generation(&world);
+
+        assert!(world.report_fold_landed(generation, mark(3, 100.0)));
+        assert!(matches!(world.health().status, HealthResultStatus::Live));
+
+        let mut reset_ids = Vec::new();
+        while let Ok(message) = listener.inbox.try_recv() {
+            if let EngineMessage::ResetMessage(reset) = message {
+                assert_eq!(*reset.epoch, 2, "a reset names the generation that landed");
+                assert!(reset.rows.is_empty());
+                assert_eq!(reset.total, 0);
+                reset_ids.push(*reset.id);
+            }
+        }
+        assert_eq!(reset_ids, vec![7, 9]);
+
+        // A connection with no subscriptions is told about the epoch and nothing else.
+        let mut bystander_resets = 0;
+        while let Ok(message) = bystander.inbox.try_recv() {
+            if matches!(message, EngineMessage::ResetMessage(_)) {
+                bystander_resets += 1;
+            }
+        }
+        assert_eq!(bystander_resets, 0);
+    }
+
+    #[test]
+    fn a_subscription_belongs_to_its_own_connection() {
+        let world = world();
+        let mine = world.join();
+        let theirs = world.join();
+        world.open_subscription(mine.id, 7);
+
+        assert!(!world.close_subscription(theirs.id, 7));
+        assert!(world.close_subscription(mine.id, 7));
+        assert!(!world.close_subscription(mine.id, 7));
+    }
+
+    #[test]
+    fn an_ingest_that_ends_leaves_the_world_idle_with_its_generation_intact() {
+        let world = world();
+        world.attach(A_LOG);
+        let generation = generation(&world);
+        assert!(world.report_idle(generation));
+        assert!(matches!(world.health().status, HealthResultStatus::Idle));
+        assert_eq!(*world.health().epoch, 2, "a dead fold bumps nothing");
     }
 }

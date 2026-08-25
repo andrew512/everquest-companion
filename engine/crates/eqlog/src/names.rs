@@ -38,8 +38,21 @@ fn rank_tail() -> &'static Regex {
 /// `spellCanonKey` — trim, strip a trailing Roman rank, trim, lowercase.
 pub fn spell_canon_key(spell: &str) -> String {
     let t = js_trim(spell);
-    let stripped = rank_tail().replace(t, "");
+    let stripped = strip_rank_tail(t);
     js_trim(&stripped).to_lowercase()
+}
+
+/// The CASE-SENSITIVE rank strip on its own, without the lowercasing `spell_canon_key` adds.
+///
+/// It exists because `comboEvidence.ts` declares its OWN `RANK_TAIL_RE` — the same case-sensitive
+/// pattern — and applies it for DISPLAY: a cast observation's label is `Lay on Hands`, spelled the
+/// way the log spelled it, and the golden publishes that label inside every slot's `because`. So
+/// the same semantic is needed twice with two different tails on it, and a second spelling of "a
+/// trailing Roman numeral" is the thing the ledger law forbids. `js_trim` is deliberately NOT
+/// applied here: the TS's display path is `.replace(RE, '').trim()` and the key path trims on both
+/// sides, so each caller keeps its own trimming.
+pub fn strip_rank_tail(name: &str) -> std::borrow::Cow<'_, str> {
+    rank_tail().replace(name, "")
 }
 
 /// The DB's own `canonKey` (spellDb.ts) — the same fold with a CASE-INSENSITIVE rank tail. The two

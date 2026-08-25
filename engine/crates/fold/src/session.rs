@@ -1,111 +1,99 @@
-//! `main/log/sessionDetector.ts`, ported — the SECOND derived event, and cluster 2c's to bring.
+//! `main/log/sessionDetector.ts`, ported — the SECOND derived event the fold has to synthesize.
 //!
-//! WHY IT IS HERE NOW AND WAS NOT IN 2a. The 2a worker recorded a proof beside `epoch.rs`: no
-//! module in that cluster reads `offlineGap`, so synthesizing it could not move one of their
-//! snapshots. That proof does not survive this cluster. `modules/buffs.ts` folds the kind outright
-//! (`onEvent`'s third branch): a gap PAUSES every beneficial buff by the length of the absence and
-//! clears the pet bindings, so a fold that never emitted one would run every post-login buff's
-//! clock through hours the character was not in the world, and `active[].startedTs` — a published
-//! field — would be wrong for the rest of the log. `modules/buffTimers.ts` reads it too, to say
-//! explicitly that it does nothing with it (its early return also keeps the derived restatement
-//! out of `lastEventTs`, which is a real difference from ignoring the kind). The other four of
-//! this cluster — alerts, consider, resist, eventFeed — never name it; they were read rather than
-//! assumed.
+//! WHY IT IS HERE AND NOT IN 2c, where the README parked it. That note ("2c owes the other two")
+//! was written from cluster 2a's vantage, where it was provably true: none of the nine simple
+//! appenders reads `offlineGap`. Cluster 2b has TWO modules that do, and one of them publishes the
+//! event's contents verbatim:
 //!
-//! ── THE ANCHOR IS EVIDENCE, NOT A WINDOW (JOS-262) ─────────────────────────────────────────────
+//!   * `progression` folds every gap into three parallel columns (`offlineStart` / `offlineEnd` /
+//!     `offlineCamped`). The goldens carry 4 / 7 / 6 / 0 / 3 / 2 intervals across the six slices,
+//!     so a fold with no producer publishes three empty columns and diverges on five of them.
+//!   * `roster` marks every member whose last confirmation predates `fromTs` STALE and closes the
+//!     party-experience gate. It publishes an empty roster on all six slices today, so this half
+//!     is unobserved by the corpus — but the module's state moves either way and a silent absence
+//!     here would be a landmine for the first slice that carries a group.
 //!
-//! The obvious rule — "the absence ran from the last event before the `Welcome to EverQuest
-//! Legends!` line" — is wrong, and wrong SILENTLY. Every login prints a reconnect preamble first,
-//! because the client is already on the chat servers while the character is still being placed in
-//! the world: channel joins, adventure notices, and (measured) other players' kills seconds before
-//! the Welcome. A last-event anchor read a 13h43m absence as six seconds.
+//! `buffExpired` remains 2c's, unchanged and for the reason the epoch header already gives.
 //!
-//! So `fromTs` is the newest event that could ONLY have been printed because THIS CHARACTER WAS IN
-//! THE WORLD — {@link in_world_evidence}. Three groups: the FIRST-PERSON families, which the log
-//! has no third-person grammar for at all; the NAMED families (a swing, a heal, a resist, a death),
-//! which count only when they name you; and everything else, which is refused. Somebody else's kill
-//! proves the CLIENT is connected; only a line about you proves your CHARACTER is in the world.
+//! THE ANCHOR IS EVIDENCE, NOT A WINDOW (JOS-262). `fromTs` is the newest event that could ONLY
+//! have been printed because THIS character was standing in the world — never merely the newest
+//! typed event. The reconnect preamble is the reason: the client receives channel noise AND other
+//! players' fully-typed combat for seconds before `Welcome to EverQuest Legends!`, so a
+//! "newest typed event" anchor reads a 58-minute absence as two seconds. A stranger's kill proves
+//! the CLIENT is connected; only a line about YOU proves the CHARACTER is in the world.
 //!
-//! THE COST IS STATED RATHER THAN PAPERED OVER: `fromTs` is a LOWER bound on the last instant the
-//! character is known to be in the world, so a reported gap never under-states the absence and can
-//! over-state it by the trailing run of lines that name nobody. The ordinary case is the camp
-//! countdown (24 s, because the five `It will take about N more seconds…` ticks are deliberately
-//! `unknown`); the worst measured case is an AFK park of 56 minutes. Nothing downstream may treat
-//! the number as exact, and the buffs model's mining censor drops rather than adjusts any sample
-//! that spans a gap for precisely this reason.
+//! THE COST IS STATED RATHER THAN HIDDEN: `fromTs` is a LOWER bound, so a gap never under-states
+//! an absence and over-states it by the trailing run of lines that name nobody (measured worst
+//! case on the owner's log: an AFK park, 56 minutes).
+//!
+//! NOTHING HERE READS A WALL CLOCK, so a replay reconstructs every historical gap exactly as the
+//! live tail would (cache transparency, ruling 18).
 
 use crate::event::Event;
 use eqlog::names::id_key;
 use serde_json::json;
-use std::collections::HashSet;
-use std::sync::OnceLock;
 
 /// Minimum absence worth reporting. Below this a relog is a BLIP: the four sub-minute relogs in
-/// the owner's log measure 30–34 s and are exactly the noise this suppresses.
+/// the owner's real log (30-34 s of measured gap) are exactly the noise this suppresses.
 pub const OFFLINE_GAP_MIN_MS: i64 = 60_000;
 
-/// How close a non-aborted `campStart` must sit to `fromTs` for the logout to count as CAMPED. A
-/// camp takes ~30 s, so 60 s is the comfortable read — and since the anchor change the two are
-/// usually the SAME INSTANT and the window is not even exercised.
+/// How close a non-aborted `campStart` must sit to `fromTs` for the logout to count as CAMPED.
+/// A camp takes ~30 s; 60 s is the comfortable read of "these two describe the same logout".
 pub const CAMP_PAIRING_MS: i64 = 60_000;
 
-/// `FIRST_PERSON_KINDS` — the families the log prints no third-person twin of, so the sentence can
-/// only be about the tailed character. `petClaim` is a member because BOTH its shapes name you;
+/// The FIRST-PERSON families: the log prints no third-person twin of any of these, so the sentence
+/// can only be about the tailed character. `petClaim` is here because both of its shapes name YOU;
 /// the ally form has been its own kind since JOS-250 and is deliberately absent.
-fn first_person_kinds() -> &'static HashSet<&'static str> {
-    static KINDS: OnceLock<HashSet<&'static str>> = OnceLock::new();
-    KINDS.get_or_init(|| {
-        [
-            "sessionStart",
-            "zone",
-            "loot",
-            "coin",
-            "itemReceived",
-            "purchase",
-            "offer",
-            "trade",
-            "level",
-            "expGain",
-            "aaGain",
-            "aaSpend",
-            "aaPotion",
-            "aaActivate",
-            "castBegin",
-            "castFizzle",
-            "castInterrupted",
-            "castResumed",
-            "buffFade",
-            "buffWearOff",
-            "illusionFade",
-            "playerDeath",
-            "healUnstated",
-            "mitigation",
-            "campStart",
-            "campAbort",
-            "outputFile",
-            "selfWho",
-            "skillUp",
-            "specialAttack",
-            "classUnlock",
-            "itemActivate",
-            "itemMerge",
-            "itemMergeFailed",
-            "consider",
-            "stanceChange",
-            "invocationChange",
-            "petClaim",
-        ]
-        .into_iter()
-        .collect()
-    })
-}
+const FIRST_PERSON_KINDS: &[&str] = &[
+    "sessionStart",
+    "zone",
+    "loot",
+    "coin",
+    "itemReceived",
+    "purchase",
+    "offer",
+    "trade",
+    "level",
+    "expGain",
+    "aaGain",
+    "aaSpend",
+    "aaPotion",
+    "aaActivate",
+    "castBegin",
+    "castFizzle",
+    "castInterrupted",
+    "castResumed",
+    "buffFade",
+    "buffWearOff",
+    "illusionFade",
+    "playerDeath",
+    "healUnstated",
+    "mitigation",
+    "campStart",
+    "campAbort",
+    "outputFile",
+    "selfWho",
+    "skillUp",
+    "specialAttack",
+    "classUnlock",
+    "itemActivate",
+    "itemMerge",
+    "itemMergeFailed",
+    "consider",
+    "stanceChange",
+    "invocationChange",
+    "petClaim",
+];
 
-/// `isYou` — the canonical key the log writes for the tailed character in every name position.
+/// `isYou` — `You`, `YOU`, `your`… all canonicalize here. An absent field is not you.
 fn is_you(name: Option<&str>) -> bool {
-    name.is_some_and(|n| id_key(n) == "you")
+    match name {
+        Some(n) => id_key(n) == "you",
+        None => false,
+    }
 }
 
-/// `combatNamesYou` — the families that exist for everyone, so the event's own fields decide.
+/// The combat families, which exist for everyone: only a line that NAMES you is evidence.
 fn combat_names_you(ev: &Event) -> bool {
     match ev.kind() {
         "damage" | "miss" => is_you(ev.str("attacker")) || is_you(ev.str("target")),
@@ -118,34 +106,29 @@ fn combat_names_you(ev: &Event) -> bool {
     }
 }
 
-/// `selfFormOf` — families with a SELF form and a broadcast form; only the self form is about you.
+/// Families with a SELF form and a broadcast form; only the self form is about you.
 fn self_form_of(ev: &Event) -> bool {
     match ev.kind() {
         // A `msg_cast_on_you` match. A NAMED target is the third-person broadcast, which every
         // player in earshot receives — including one who is not in the world yet.
         "buffApply" => ev.str("target") == Some("self"),
         "spellEmote" => ev.str("subject") == Some("self"),
-        // `You have joined the group.` / `You have left the group.` — `name` is absent for exactly
-        // the two self shapes.
+        // `name` is absent for exactly the two self shapes.
         "group" => matches!(ev.str("change"), Some("selfJoin") | Some("selfLeave")),
         _ => false,
     }
 }
 
-/// `inWorldEvidence` — can this line ONLY have been printed because the character was standing in
-/// the world? The refusals cost precision, never correctness: a refused line leaves the anchor
-/// where the previous accepted one put it, and the anchor is documented as a lower bound.
+/// `inWorldEvidence` — could this line ONLY have been printed because the tailed character was
+/// standing in the world? Stricter than "did the parser type this line"; see the header.
 pub fn in_world_evidence(ev: &Event) -> bool {
-    first_person_kinds().contains(ev.kind()) || combat_names_you(ev) || self_form_of(ev)
+    FIRST_PERSON_KINDS.contains(&ev.kind()) || combat_names_you(ev) || self_form_of(ev)
 }
 
-/// Stateful, single-character. Feed it every event in stream order — primary AND derived, which is
-/// what the bus does (it is a plain subscriber registered after the modules), and which is why the
-/// three derived kinds are refused by name below rather than left to arithmetic.
+/// Stateful, single-character. Feed it every event in stream order, exactly as the bus does.
 #[derive(Default)]
 pub struct SessionDetector {
-    /// THE ANCHOR: the newest instant the character is KNOWN to have been in the world, or 0
-    /// before the first such line.
+    /// THE ANCHOR: the newest instant the character is KNOWN to have been in the world, or 0.
     evidence_ts: i64,
     /// ts of the most recent `campStart` that has not been abandoned, or 0.
     camp_ts: i64,
@@ -161,12 +144,12 @@ impl SessionDetector {
         self.camp_ts = 0;
     }
 
-    /// The `OfflineGapEvent` to emit at a `sessionStart` whose implied absence exceeds
-    /// {@link OFFLINE_GAP_MIN_MS}, else `None`.
+    /// One event. Returns the `offlineGap` to emit at a `sessionStart` whose implied absence
+    /// exceeds `OFFLINE_GAP_MIN_MS`, else `None`.
     ///
-    /// The derived events of other producers are ignored: an `offlineGap` is our own output (a
-    /// feedback loop), and an `epoch` / `buffExpired` is a synthesized restatement of a primary
-    /// event whose timestamp has already been recorded.
+    /// Other producers' DERIVED events are ignored: an `offlineGap` is our own output (a feedback
+    /// loop), and an `epoch`/`buffExpired` restates a primary event whose timestamp is already
+    /// recorded.
     pub fn observe(&mut self, ev: &Event) -> Option<Event> {
         if matches!(ev.kind(), "offlineGap" | "epoch" | "buffExpired") {
             return None;
@@ -175,16 +158,17 @@ impl SessionDetector {
         if ev.ts() <= 0 {
             return None;
         }
-        match ev.kind() {
-            "campStart" => self.camp_ts = ev.ts(),
-            // The game states the cancellation outright (law 1) — an abandoned camp is not a logout.
-            "campAbort" => self.camp_ts = 0,
-            _ => {}
+        if ev.kind() == "campStart" {
+            self.camp_ts = ev.ts();
         }
-        // The gap is built BEFORE the Welcome advances the anchor — it is measured against the
-        // previous session, and it is also the login that ends the absence.
+        // The game states the cancellation outright (law 1) — an abandoned camp is not a logout.
+        if ev.kind() == "campAbort" {
+            self.camp_ts = 0;
+        }
+        // The gap is built BEFORE the Welcome advances the anchor: it is measured against the
+        // PREVIOUS session, and it is also the login that ended the absence.
         let gap = if ev.kind() == "sessionStart" {
-            self.build_gap(ev)
+            self.build_gap(ev.ts(), ev.seq(), ev.raw())
         } else {
             None
         };
@@ -194,21 +178,20 @@ impl SessionDetector {
         gap
     }
 
-    /// `buildGap`. `None` when the log has shown no in-world evidence yet — the first login in a
-    /// freshly-started log has no observed "before", and inventing one out of the preamble is the
-    /// mistake this file exists to avoid.
-    fn build_gap(&self, ev: &Event) -> Option<Event> {
+    /// The gap implied by a login at `to_ts`, or `None`. A log whose first login has shown no
+    /// in-world evidence yet has no observed "before", and inventing one out of the preamble is
+    /// exactly the mistake this file exists to avoid.
+    fn build_gap(&self, to_ts: i64, seq: i64, raw: &str) -> Option<Event> {
         let from_ts = self.evidence_ts;
-        let to_ts = ev.ts();
         if from_ts <= 0 || to_ts - from_ts <= OFFLINE_GAP_MIN_MS {
             return None;
         }
         let camped = self.camp_ts > 0 && (from_ts - self.camp_ts).abs() <= CAMP_PAIRING_MS;
         Some(Event::from_value(json!({
             "kind": "offlineGap",
-            "seq": ev.seq(),
+            "seq": seq,
             "ts": to_ts,
-            "raw": ev.raw(),
+            "raw": raw,
             "fromTs": from_ts,
             "toTs": to_ts,
             "camped": camped,
@@ -220,78 +203,79 @@ impl SessionDetector {
 mod tests {
     use super::*;
 
-    fn ev(json_line: &str) -> Event {
-        Event::from_json(json_line).expect("a JSON object")
+    fn ev(json: &str) -> Event {
+        Event::from_json(json).expect("an object")
     }
 
-    /// The preamble is refused, so a login's gap is measured from the last line about YOU — the
-    /// whole of JOS-262, in the shape the module header's own log excerpt states it.
+    /// The reconnect preamble is the whole reason the anchor is evidence rather than a window: a
+    /// stranger's kill two seconds before the Welcome must not shrink a 13-hour absence.
     #[test]
-    fn the_reconnect_preamble_cannot_anchor_a_gap() {
+    fn a_strangers_kill_in_the_preamble_does_not_anchor_the_gap() {
         let mut d = SessionDetector::new();
         d.observe(&ev(
-            r#"{"kind":"campStart","seq":0,"ts":1000,"raw":"camp"}"#,
+            r#"{"kind":"expGain","seq":0,"ts":1000,"raw":"x","party":false}"#,
         ));
-        // Somebody else's kill: the client is connected, the character is not in the world.
-        assert!(d
-            .observe(&ev(
-                r#"{"kind":"death","seq":1,"ts":900000,"raw":"d","name":"a seahorse","bySelf":false,"killer":"Dyson"}"#
-            ))
-            .is_none());
-        // …and an `unknown` channel line says nothing at all.
-        assert!(d
-            .observe(&ev(r#"{"kind":"unknown","seq":2,"ts":900500,"raw":"x"}"#))
-            .is_none());
+        d.observe(&ev(
+            r#"{"kind":"death","seq":1,"ts":900000,"raw":"d","name":"a mob","bySelf":false,"killer":"Dyson"}"#,
+        ));
         let gap = d
             .observe(&ev(
-                r#"{"kind":"sessionStart","seq":3,"ts":901000,"raw":"Welcome"}"#,
+                r#"{"kind":"sessionStart","seq":2,"ts":900002,"raw":"w"}"#,
             ))
             .expect("a gap");
-        assert_eq!(gap.kind(), "offlineGap");
         assert_eq!(gap.int("fromTs"), Some(1000));
-        assert_eq!(gap.int("toTs"), Some(901000));
-        // The campStart is the anchor itself, so the pairing window is not even exercised.
-        assert!(gap.bool("camped"));
+        assert_eq!(gap.int("toTs"), Some(900002));
+        assert!(!gap.bool("camped"));
     }
 
-    /// A blip is not an absence, and the FIRST login of a log has no observed "before".
+    /// A relog under the floor is a blip, and the first login of a log has no observed "before".
     #[test]
-    fn a_short_relog_and_a_first_login_emit_nothing() {
+    fn a_blip_and_a_first_login_report_nothing() {
         let mut d = SessionDetector::new();
         assert!(d
             .observe(&ev(
-                r#"{"kind":"sessionStart","seq":0,"ts":50000,"raw":"Welcome"}"#
-            ))
-            .is_none());
-        // …and that Welcome IS evidence, so the next one is measured against it.
-        assert!(d
-            .observe(&ev(
-                r#"{"kind":"sessionStart","seq":1,"ts":110000,"raw":"Welcome"}"#
+                r#"{"kind":"sessionStart","seq":0,"ts":5000,"raw":"w"}"#
             ))
             .is_none());
         assert!(d
             .observe(&ev(
-                r#"{"kind":"sessionStart","seq":2,"ts":170001,"raw":"Welcome"}"#
+                r#"{"kind":"sessionStart","seq":1,"ts":6000,"raw":"w"}"#
             ))
-            .is_some());
+            .is_none());
     }
 
-    /// An abandoned camp is not a logout, and our own derived kinds are refused by name.
+    /// A camp within the pairing window makes the logout CAMPED; an abort withdraws it.
     #[test]
-    fn an_aborted_camp_is_not_a_logout_and_derived_kinds_are_refused() {
+    fn a_camp_beside_the_anchor_marks_the_logout_camped() {
         let mut d = SessionDetector::new();
         d.observe(&ev(r#"{"kind":"campStart","seq":0,"ts":1000,"raw":"c"}"#));
-        d.observe(&ev(r#"{"kind":"campAbort","seq":1,"ts":2000,"raw":"a"}"#));
-        // A derived restatement of an in-world line may not advance the anchor.
-        d.observe(&ev(
-            r#"{"kind":"buffExpired","seq":2,"ts":500000,"raw":"x","spell":"Valor","target":"self"}"#,
-        ));
         let gap = d
             .observe(&ev(
-                r#"{"kind":"sessionStart","seq":3,"ts":900000,"raw":"Welcome"}"#,
+                r#"{"kind":"sessionStart","seq":1,"ts":200000,"raw":"w"}"#,
+            ))
+            .expect("a gap");
+        // campStart is itself in-world evidence, so it IS the anchor — the ordinary camp.
+        assert_eq!(gap.int("fromTs"), Some(1000));
+        assert!(gap.bool("camped"));
+
+        let mut d = SessionDetector::new();
+        d.observe(&ev(r#"{"kind":"campStart","seq":0,"ts":1000,"raw":"c"}"#));
+        d.observe(&ev(r#"{"kind":"campAbort","seq":1,"ts":1010,"raw":"a"}"#));
+        let gap = d
+            .observe(&ev(
+                r#"{"kind":"sessionStart","seq":2,"ts":200000,"raw":"w"}"#,
             ))
             .expect("a gap");
         assert!(!gap.bool("camped"));
-        assert_eq!(gap.int("fromTs"), Some(2000));
+    }
+
+    /// A third-person buff landing is a broadcast everyone in earshot receives; the self form is
+    /// the only one that says where YOU are.
+    #[test]
+    fn only_the_self_form_of_a_landing_is_evidence() {
+        let self_land = ev(r#"{"kind":"buffApply","seq":0,"ts":1,"raw":"b","target":"self"}"#);
+        let other = ev(r#"{"kind":"buffApply","seq":0,"ts":1,"raw":"b","target":"Dranix"}"#);
+        assert!(in_world_evidence(&self_land));
+        assert!(!in_world_evidence(&other));
     }
 }

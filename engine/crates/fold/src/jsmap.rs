@@ -104,11 +104,23 @@ impl<V> JsMap<V> {
         self.entries.iter().map(|(_, v)| v)
     }
 
-    /// `for (const v of map.values()) { v.field = … }` — a walk that WRITES to every value without
-    /// touching the keys. The crowd-control half re-reads the estimator across every live hold of one
-    /// (line, caster) after a sample lands, which is that shape exactly.
+    /// `for (const v of map.values()) v.field = …` — a walk that WRITES to every value without
+    /// touching the keys. The roster's offline-gap sweep marks its stale members in place, and the
+    /// crowd-control half re-reads the estimator across every live hold of one (line, caster) after
+    /// a sample lands.
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
         self.entries.iter_mut().map(|(_, v)| v)
+    }
+
+    /// The keys in insertion order — the LRU order the respawn module's history evicts from.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.entries.iter().map(|(k, _)| k.as_str())
+    }
+
+    /// `[...map.values()]` — the values, owned, in insertion order. The combo scorer turns three of
+    /// its maps straight into arrays this way, and the array's order is a published claim.
+    pub fn into_values(self) -> Vec<V> {
+        self.entries.into_iter().map(|(_, v)| v).collect()
     }
 }
 

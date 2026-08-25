@@ -64,14 +64,32 @@ impl Event {
         self.v.get(key)?.as_i64()
     }
 
+    /// The one genuinely fractional field in the stream — `expGain.pct` (jsstr.rs's header names it
+    /// as such). `as_f64` widens an integral JSON number too, which is what a log printing `(3%)`
+    /// produces and what the TS reads as the same `number` either way.
+    pub fn f64(&self, key: &str) -> Option<f64> {
+        self.v.get(key)?.as_f64()
+    }
+
     pub fn bool(&self, key: &str) -> bool {
         self.v.get(key).and_then(Value::as_bool).unwrap_or(false)
     }
 
-    /// The raw value behind a key, for the few fields that are neither a string nor a number:
-    /// `buffApply.candidates` and `cc.candidates` are ARRAYS of `{ name, durationMs }` and the
-    /// modules that read them (2c) walk the array. Everything else goes through the scalar
-    /// accessors above, which is why this one is deliberately last rather than first.
+    /// A string ARRAY field — `selfWho.classes`, and nothing else in the ported set. A missing key,
+    /// a non-array and a non-string element all read as absent, which is what
+    /// `ev.classes.filter(isClassAbbr)` does with them on the other side.
+    pub fn arr_str(&self, key: &str) -> Vec<&str> {
+        match self.v.get(key).and_then(Value::as_array) {
+            Some(list) => list.iter().filter_map(Value::as_str).collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// The raw value behind a key, for the fields that are neither a string, a number nor an array
+    /// OF strings: `buffApply.candidates` and `cc.candidates` are arrays of OBJECTS
+    /// (`{ name, durationMs, illusion }`) and the 2c modules that read them walk each element.
+    /// Everything else goes through the typed accessors above, which is why this one is
+    /// deliberately last rather than first.
     pub fn get(&self, key: &str) -> Option<&Value> {
         match self.v.get(key) {
             None | Some(Value::Null) => None,
@@ -79,10 +97,10 @@ impl Event {
         }
     }
 
-    /// `ev.<key> == null` in the TS sense — the key is absent OR explicitly null. Several 2c
-    /// modules branch on the DIFFERENCE between an absent optional and a present one whose value
-    /// is falsy (`buffFade.target` absent means SELF; `''` would mean an unnamed entity), so the
-    /// question has to be askable without reading the value.
+    /// `ev.<key> != null` in the TS sense — the key is present AND not null. A 2c module branches
+    /// on the DIFFERENCE between an absent optional and a present one whose value is falsy
+    /// (`buffFade.target` absent means SELF; `''` would mean an unnamed entity), so the question
+    /// has to be askable without reading the value.
     pub fn has(&self, key: &str) -> bool {
         self.get(key).is_some()
     }
