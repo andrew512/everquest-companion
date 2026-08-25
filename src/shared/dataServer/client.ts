@@ -44,6 +44,7 @@ import {
   type FoldProgress,
   type Hello,
   type HelloReply,
+  type KnowledgeMissMessage,
   type Reply,
   type ReplyResult,
   type RequestId,
@@ -103,6 +104,23 @@ export interface EngineClient {
    * the honest shape for a sound: an alert nobody was listening for is not an alert to replay.
    */
   onFire(listener: (fire: FireMessage) => void): () => void
+  /**
+   * KNOWLEDGE MISSES (JOS-486, boundary verdict 5). Connection-wide, like fires and progress, and
+   * with the same shape for the same reason: a miss belongs to the PROCESS's corpus rather than to
+   * any subscription, so it carries no id and no epoch.
+   *
+   * IT IS A REQUEST FOR WORK, WHICH IS WHAT MAKES IT DIFFERENT FROM A FIRE. The engine ships with no
+   * network stack; the app owns the wiki fetch and the scrape etiquette that goes with it (one
+   * serialized queue, 150 ms spacing, `Retry-After` honoured across the whole queue), so this frame
+   * says "I could not answer this name" and the answer goes back as a `knowledge.define` command.
+   * The engine announces each name AT MOST ONCE per process — a listener that misses one will not
+   * be told again, which is the same honest shape a fire has.
+   *
+   * THIS CLIENT ONLY DELIVERS IT. Nothing here fetches anything: the handler belongs to whoever owns
+   * main's `itemLookup`/`mobLookup` queues, and putting a fetch in a shared transport module would
+   * put a network call in the renderer's copy of it.
+   */
+  onKnowledgeMiss(listener: (miss: KnowledgeMissMessage) => void): () => void
   close(): void
 }
 
@@ -137,6 +155,7 @@ interface ClientState {
   readonly stateListeners: Set<(state: ConnectionState) => void>
   readonly progressListeners: Set<(progress: FoldProgress) => void>
   readonly fireListeners: Set<(fire: FireMessage) => void>
+  readonly missListeners: Set<(miss: KnowledgeMissMessage) => void>
 }
 
 function setConnectionState(s: ClientState, next: ConnectionState): void {
@@ -452,6 +471,11 @@ function receive(s: ClientState, message: EngineMessage): void {
   // is handed straight to the listeners without passing through `noteEpoch`, which is the one place
   // this client is entitled to drop state.
   else if (message.kind === 'fire') for (const listener of s.fireListeners) listener(message)
+  // …AND NEITHER DOES A KNOWLEDGE MISS, for the same two reasons and one more: it names no window,
+  // it carries no generation, and it is a statement about the process's CORPUS — committed data
+  // plus an overlay that survives an attach — which outlives every epoch this client will see.
+  else if (message.kind === 'knowledgeMiss')
+    for (const listener of s.missListeners) listener(message)
   else onDiff(s, message)
 }
 
@@ -468,6 +492,7 @@ export function createEngineClient(options: EngineClientOptions): EngineClient {
     subs: new Map(),
     stateListeners: new Set(),
     progressListeners: new Set(),
+    missListeners: new Set(),
     fireListeners: new Set()
   }
   return {
@@ -499,6 +524,12 @@ export function createEngineClient(options: EngineClientOptions): EngineClient {
       s.fireListeners.add(listener)
       return (): void => {
         s.fireListeners.delete(listener)
+      }
+    },
+    onKnowledgeMiss: (listener): (() => void) => {
+      s.missListeners.add(listener)
+      return (): void => {
+        s.missListeners.delete(listener)
       }
     },
     close: (): void => {

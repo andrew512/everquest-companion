@@ -4,6 +4,7 @@ members = [
   "crates/engined",
   "crates/eqlog",
   "crates/fold",
+  "crates/knowledge",
   "crates/parity",
   "crates/protocol",
   "crates/protocol-codegen",

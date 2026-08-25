@@ -17,6 +17,8 @@ import type {
   DefineAck,
   EchoResult,
   HealthResult,
+  KnowledgeResult,
+  KnowledgeSearchResult,
   ModuleSnapshotResult,
   PerfSnapshotResult,
   SubscribeAck
@@ -40,6 +42,17 @@ interface ResultRegistry {
   'respawn.define': DefineAck
   'combo.define': DefineAck
   'roster.define': DefineAck
+  // THE KNOWLEDGE SURFACE (JOS-486). Three lookups share one result shape and that is the shape
+  // being right rather than the registry being lazy: `KnowledgeResult` names its own `domain`, so a
+  // caller holding an item card and a mob card can tell them apart from the value alone — which is
+  // what the five `*.define` ops CANNOT do with `DefineAck`, and why they are five entries too.
+  'knowledge.item': KnowledgeResult
+  'knowledge.mob': KnowledgeResult
+  'knowledge.spell': KnowledgeResult
+  'knowledge.search': KnowledgeSearchResult
+  // …and the push-back reuses `DefineAck`, because it IS a define: one entry taken, `applied` true,
+  // and no `count`, which the schema already says is what a non-list payload answers with.
+  'knowledge.define': DefineAck
 }
 
 /** Every client message that carries a request id — i.e. everything except the handshake. */
@@ -92,7 +105,16 @@ export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> 
   'buffTrust.define': (r) => 'applied' in r,
   'respawn.define': (r) => 'applied' in r,
   'combo.define': (r) => 'applied' in r,
-  'roster.define': (r) => 'applied' in r
+  'roster.define': (r) => 'applied' in r,
+  // `record` rather than `found`: it is the field no other arm carries, and a boolean guard would
+  // read `false` as "wrong shape" if `in` were ever swapped for a truthiness test by a later hand.
+  'knowledge.item': (r) => 'record' in r,
+  'knowledge.mob': (r) => 'record' in r,
+  'knowledge.spell': (r) => 'record' in r,
+  // `hits` rather than `query`: a search result and a lookup result must be separable, and `hits`
+  // is required by the schema and carried by no other shape.
+  'knowledge.search': (r) => 'hits' in r,
+  'knowledge.define': (r) => 'applied' in r
 }
 
 /**

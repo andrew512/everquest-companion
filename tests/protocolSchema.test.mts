@@ -289,6 +289,11 @@ function describeEngine(message: EngineMessage): string {
     // subscription, and it is a thing that happened rather than window state to reconcile.
     case 'fire':
       return `fire ${message.rule} [${message.sound}] at ${String(message.at)}`
+    // NO id AND NO epoch EITHER (JOS-486), and for a third reason on top of the fire's two: a miss
+    // describes the process's CORPUS — committed data plus an overlay that survives an attach — so
+    // there is no generation it could belong to.
+    case 'knowledgeMiss':
+      return `knowledgeMiss ${message.domain}/${message.name}`
     default: {
       const unreachable: never = message
       throw new Error(`unhandled engine message ${JSON.stringify(unreachable)}`)
@@ -320,6 +325,14 @@ function describeDefine(message: DefineMessage): string {
       return `${at} combo×${String(message.params.corrections.length)}`
     case 'roster.define':
       return `${at} roster×${String(message.params.edits.length)}`
+    // THE ONE DEFINE THAT IS NOT A FULL-SET REPLACE (JOS-486), and the description says so at
+    // length: the other five carry user PREFERENCES, which a store can restate whole, and this one
+    // carries the WIKI, which is unbounded and learned one answer at a time. It lands in this
+    // function because it is a `*.define` BY NAME, and the count it reports is deliberately `×1` —
+    // that is what a push of one entry is, and printing a set size it does not have would be the
+    // line above pretending the two commands are the same law.
+    case 'knowledge.define':
+      return `${at} knowledge/${message.params.domain} ${message.params.name}×1`
     default: {
       const unreachable: never = message
       throw new Error(`unhandled define ${JSON.stringify(unreachable)}`)
@@ -352,6 +365,17 @@ function describeClient(message: ClientMessage): string {
       return `subscribe#${String(message.id)} ${message.params.source}`
     case 'view.unsubscribe':
       return `unsubscribe#${String(message.id)} of ${String(message.params.subscription)}`
+    // THE KNOWLEDGE SURFACE (JOS-486). Three lookups share one params shape and are still three
+    // arms, because the exhaustive switch is the point: an op added to the schema without being
+    // described here is a TYPECHECK failure.
+    case 'knowledge.item':
+    case 'knowledge.mob':
+    case 'knowledge.spell':
+      return `${message.op}#${String(message.id)} ${message.params.name}`
+    case 'knowledge.search':
+      return `search#${String(message.id)} ${JSON.stringify(message.params.query)}`
+    case 'knowledge.define':
+      return `knowledge.define#${String(message.id)} ${message.params.domain}/${message.params.name}`
     default: {
       const unreachable: never = message
       throw new Error(`unhandled client message ${JSON.stringify(unreachable)}`)
@@ -418,12 +442,18 @@ test('every fixture message VALIDATES against the schema and narrows through the
     'respawn.define',
     'combo.define',
     'roster.define',
+    'knowledge.item',
+    'knowledge.mob',
+    'knowledge.spell',
+    'knowledge.search',
+    'knowledge.define',
     'reply',
     'error',
     'reset',
     'diff',
     'epoch',
-    'fire'
+    'fire',
+    'knowledgeMiss'
   ]) {
     assert.ok(seen.has(tag), `no fixture demonstrates \`${tag}\``)
   }
