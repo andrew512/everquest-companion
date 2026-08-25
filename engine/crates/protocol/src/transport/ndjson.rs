@@ -56,6 +56,30 @@ pub fn decode_line<T: DeserializeOwned>(line: &str) -> Result<T, TransportError>
     serde_json::from_str(trimmed).map_err(TransportError::Decode)
 }
 
+/// Parse one COMPLETE frame's bytes back into a message — the entry [`NdjsonTransport::recv`] uses.
+///
+/// THE CONVERSION HAPPENS EXACTLY ONCE, OVER A WHOLE FRAME, and that is a correctness requirement
+/// rather than an efficiency one. A UTF-8 character is up to four bytes and a read boundary falls
+/// wherever the OS feels like it, so a character routinely straddles two reads on a real socket.
+/// Decoding each read separately — with `from_utf8_lossy`, say — replaces each half with U+FFFD,
+/// and because both halves sit inside a JSON string the corrupted frame STILL PARSES: the message
+/// arrives, looks fine, and quietly says something the peer never sent. That is the silent data
+/// corruption this program's byte-identity discipline exists to prevent, so it is spelled out here
+/// and pinned by `tests/transport.rs`, which feeds the wire one byte per read.
+///
+/// # Errors
+/// [`TransportError::Decode`] if the frame is not valid UTF-8, or is not a message of this type.
+/// BROKEN UTF-8 IS A REFUSAL, NEVER A LOSSY ACCEPT — a peer that cannot spell its own strings is a
+/// peer whose message must not be guessed at.
+pub fn decode_frame<T: DeserializeOwned>(frame: &[u8]) -> Result<T, TransportError> {
+    let text = std::str::from_utf8(frame).map_err(|e| {
+        TransportError::Decode(<serde_json::Error as serde::de::Error>::custom(format!(
+            "a frame was not valid UTF-8 ({e})"
+        )))
+    })?;
+    decode_line(text)
+}
+
 /// A [`Transport`] over any pair of byte streams.
 ///
 /// It is generic over the streams rather than tied to a socket because phase 0 has no socket: the
@@ -64,7 +88,9 @@ pub fn decode_line<T: DeserializeOwned>(line: &str) -> Result<T, TransportError>
 pub struct NdjsonTransport<R: BufRead, W: Write, Out: Serialize, In: DeserializeOwned> {
     reader: R,
     writer: W,
-    line: String,
+    /// The frame being assembled, as BYTES. Never a `String`: see [`decode_frame`] for why text
+    /// conversion may only happen once a whole frame is in hand.
+    frame: Vec<u8>,
     outbound: PhantomData<Out>,
     inbound: PhantomData<In>,
 }
@@ -76,7 +102,7 @@ impl<R: BufRead, W: Write, Out: Serialize, In: DeserializeOwned> NdjsonTransport
         Self {
             reader,
             writer,
-            line: String::new(),
+            frame: Vec::new(),
             outbound: PhantomData,
             inbound: PhantomData,
         }
@@ -105,32 +131,38 @@ impl<R: BufRead, W: Write, Out: Serialize, In: DeserializeOwned> Transport
     }
 
     fn recv(&mut self) -> Result<Option<In>, TransportError> {
-        self.line.clear();
+        self.frame.clear();
         loop {
             let available = self.reader.fill_buf()?;
             if available.is_empty() {
-                // End of stream. A partial line here is a truncated frame, which is a decode
-                // failure rather than a quiet `None` - silently discarding half a message is how a
-                // client ends up rendering a world that was never sent.
-                if self.line.is_empty() {
+                // End of stream. A partial frame here is a TRUNCATED one, which is a decode failure
+                // rather than a quiet `None` - silently discarding half a message is how a client
+                // ends up rendering a world that was never sent.
+                if self.frame.is_empty() {
                     return Ok(None);
                 }
-                return decode_line(&self.line).map(Some);
+                return decode_frame(&self.frame).map(Some);
             }
             let (chunk, found) = match available.iter().position(|b| *b == DELIMITER) {
-                Some(at) => (&available[..at], Some(at)),
-                None => (available, None),
+                Some(at) => (&available[..at], true),
+                None => (available, false),
             };
-            if self.line.len() + chunk.len() > MAX_LINE_BYTES {
+            // The limit is measured in BYTES, which is what a frame is made of and what a hostile
+            // peer actually spends. Unchanged by the switch away from `String` - it was already
+            // byte length - but now it is unambiguously so.
+            if self.frame.len() + chunk.len() > MAX_LINE_BYTES {
                 return Err(TransportError::FrameTooLarge {
                     limit: MAX_LINE_BYTES,
                 });
             }
-            self.line.push_str(&String::from_utf8_lossy(chunk));
-            let consumed = chunk.len() + usize::from(found.is_some());
+            // BYTES IN, BYTES OUT. Nothing here decides what the frame SAYS; a read boundary is an
+            // artifact of the OS and must not be able to change a message's contents. Text
+            // conversion happens once, in `decode_frame`, when the whole frame is in hand.
+            self.frame.extend_from_slice(chunk);
+            let consumed = chunk.len() + usize::from(found);
             self.reader.consume(consumed);
-            if found.is_some() {
-                return decode_line(&self.line).map(Some);
+            if found {
+                return decode_frame(&self.frame).map(Some);
             }
         }
     }

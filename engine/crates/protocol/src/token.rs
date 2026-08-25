@@ -25,9 +25,15 @@
 //! engine owns the secret's lifetime, and a process that can mint its own credential is a process
 //! whose credential proves nothing.
 
-/// The floor a token must clear, in bytes. It matches `minLength` on `Token` in
-/// `protocol/schema/messages.schema.json` — 32 bytes of the app's hex alphabet is 128 bits of
-/// entropy, which is not guessable at any rate a loopback socket can be driven.
+/// The floor a token must clear, in bytes of the encoded string. It matches `minLength` on `Token`
+/// in `protocol/schema/messages.schema.json`.
+///
+/// THE ARITHMETIC, because two languages state it and they must agree: the token travels as hex, so
+/// 32 encoded bytes is 32 hex characters, which is 16 raw bytes — 128 bits. That is the FLOOR an
+/// incoming token must clear, not what the app spends: `mintToken` in
+/// `src/main/dataServer/token.ts` draws 32 raw bytes and sends 64 hex characters (256 bits).
+/// Either figure is far past guessable at any rate a loopback socket can be driven, and the floor
+/// is deliberately the weaker of the two so it can outlive a change to what minting chooses.
 pub const MIN_TOKEN_BYTES: usize = 32;
 
 /// The ceiling, matching `maxLength` on `Token`. It exists so a hostile first message cannot make

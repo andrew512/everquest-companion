@@ -14,9 +14,11 @@
 // is. One per launch, never persisted, never logged; a respawn is a launch and mints a new one.
 
 /**
- * How many random BYTES a token is minted from. 16 bytes is 128 bits, which is not guessable at any
- * rate a loopback socket can be driven — and the token is thrown away when the process ends, so
- * there is no long-lived secret to grind at anyway.
+ * How many random BYTES a token is minted from. 32 bytes is 256 bits, which hex-encodes to the
+ * 64-character token `mintToken` returns. That is comfortably above `MIN_TOKEN_CHARS` — the floor
+ * is what an incoming token must CLEAR, this is what this app chooses to SPEND — and either number
+ * is far past guessable at any rate a loopback socket can be driven. The token is also thrown away
+ * when the process ends, so there is no long-lived secret to grind at in the first place.
  */
 export const TOKEN_ENTROPY_BYTES = 32
 
