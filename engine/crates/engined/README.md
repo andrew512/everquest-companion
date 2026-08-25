@@ -52,6 +52,9 @@ never the process.
 | `view.subscribe` | `SubscribeAck`, then a `reset`, then diffs | **The heart of the protocol** (JOS-480). The descriptor is validated against the SOURCE REGISTRY — an unknown source is `notFound`, a term over a field the source does not carry is `badParams` — then acknowledged, then opened with a reset. The opening reset is EMPTY even over a live fold, because the rows live on the ingest thread; the fold answers with the full window at its next boundary. See "Views". |
 | `view.unsubscribe` | `SubscribeAck { subscribed: false }` | `notFound` for a subscription this connection does not hold. Subscriptions are keyed by (connection, id), so one client can never close another's stream. |
 | `alerts.define` · `buffTrust.define` · `respawn.define` · `combo.define` · `roster.define` | `DefineAck` | **APP KNOWLEDGE IN** (JOS-482, boundary verdict 3). Each is an idempotent FULL-SET REPLACE of one family. The world records the push and hands it to the live fold, so `applied: true` means the RUNNING fold has the set — not that a queue took it. A push made before any attach is HELD and applied at the next attach's construction. `count` is the entries taken for a list payload and absent for the two families that push one object. See "Defines and fires". |
+| `knowledge.item` · `knowledge.mob` · `knowledge.spell` | `KnowledgeResult` | **THE COMMITTED CORPORA, ENGINE-SIDE** (JOS-486, design surface 5). `items.json` (8.75 MB), `mobs.json` (3.2 MB), `quests.json` and `posky.json` are `include_str`'d into the `knowledge` crate and indexed **on first use**, so an attach pays for nothing a client has not asked for. **None of the three can fail**: a name no corpus holds is `found: false` beside a record carrying every LOCAL association the engine could still gather, because a missing wiki page does not unmake a posky quest use. There is no `unavailable` arm either — a corpus question names nothing that could be absent, so a mob card is a real card before the first attach. `knowledge.mob` is the one that touches the fold, and only for the own-loot half of its join. See "The knowledge surface". |
+| `knowledge.search` | `KnowledgeSearchResult` | Name search across all four corpora. **The ENGINE ranks** (exact, then prefix, then contains; then by length, then alphabetically) because the renderer never munges domain data. A type-ahead, not a page: `limit` is capped, and `total` states how many matched. |
+| `knowledge.define` | `DefineAck` | **THE ANSWER TO A MISS, PUSHED BACK** (boundary verdict 5). The engine has no network stack; the app owns the wiki fetch and the etiquette that goes with it. **Not a full-set replace**, and the schema argues it: the other five defines carry user preferences a store can restate whole, this one carries the WIKI. It keeps the half of the command law the law is for — idempotent and order-independent per key. `domain` is `item` or `mob` only, refused by SHAPE. |
 | anything else | `ErrorReply { unknownOp }` | The connection survives — a refused request is not a broken conversation. |
 
 And one message the engine sends that answers no request at all:
@@ -59,6 +62,7 @@ And one message the engine sends that answers no request at all:
 | Frame | When | Notes |
 | --- | --- | --- |
 | `FireMessage` | an alert matched a LIVE event | **ALERT FIRES OUT** (owner ruling 22). Connection-wide, so it carries no `id` — the epoch-message precedent. It carries no `epoch` either, and that is the difference from an epoch message rather than an oversight: every other stream frame describes WINDOW STATE a client reconciles across a generation, while a fire is a thing that happened once. Fully resolved server-side: `sound` is the `<packId>/<soundId>` key the app plays. |
+| `KnowledgeMissMessage` | a lookup found no page for a name | **A REQUEST FOR WORK** (JOS-486, boundary verdict 5) — the one frame that asks the app for something rather than telling it something. No `id` (the fire's precedent) and no `epoch`, for the fire's reason plus one: a miss describes the PROCESS's corpus, which is committed data plus an overlay that survives an attach, so there is no generation it could belong to. **Each name is announced at most once per process** — a stacked loot burst probes one name many times, and asking the app to fetch each of those would be the engine breaking the etiquette law on the app's behalf. The answer comes back as `knowledge.define`. |
 
 A known op with unreadable params is `badParams`. A frame that is not a message at all, or one with
 no `id` to correlate a refusal with, **closes the connection** — the schema's own rule is that a
@@ -426,6 +430,181 @@ it would corrupt the owner's hands-on regression evidence, which is what this pr
 on. `engineClientHost.ts noteFire` writes one dev-log line per fire and counts them. The audio
 cutover is the alerts-surface ticket, which deletes the app-side evaluator in the same change that
 gives that line a speaker, so the two can never both be live.
+
+## The knowledge surface
+
+**The corpora move into the engine (JOS-486, design surface 5).** `items.json` (8.75 MB, 11,288 item
+pages), `mobs.json` (3.2 MB, 7,866 mob pages), `quests.json` and `posky.json` are `include_str`'d
+into a new `knowledge` crate — the `spells.json` precedent, one copy of each file in the tree, so a
+re-scrape reaches every reader at once. That is ~12 MB leaving main's heap, and the renderer's own
+bundled copies follow when its surfaces cut over.
+
+The crate is `main/itemLookup.ts` + `main/mobLookup.ts` and the six pure files they are built out of
+(`itemsDb`, `questItemIndex`, `mobLookupLocal`, `mobAliases`, `mobDropEra`, and the own-loot half of
+`mobLookupParse`), ported, **with the network removed**.
+
+### Three steps, and the third one inverted
+
+Over there the resolution is committed DB → userData cache → politely-throttled wiki call. Here it is
+committed corpus → **runtime overlay** → **a miss**:
+
+1. **The committed corpus** answers the overwhelming majority and short-circuits everything after it.
+2. **The runtime overlay** is what the userData cache was — answers the app has already fetched and
+   pushed back with `knowledge.define`.
+3. **A miss** is recorded, drained at whatever boundary notices it (the ingest's fold boundary for
+   the fold's own probes, the op itself for a client's question), and announced connection-wide as a
+   `knowledgeMiss` frame. The app fetches, keeping its own serialized queue, its own 150 ms spacing
+   and its own `Retry-After` cooldown — **scraper etiquette is a LAW and it stays where the socket
+   is** — and pushes the answer in.
+
+**Each name is announced at most once per process.** A stacked loot burst probes one name many times
+and a `/con` ring re-cons the same mob three times in five seconds; asking the app to fetch each of
+those would be the engine breaking the etiquette law on the app's behalf. A `knowledge.define` for
+the name makes every later lookup a hit, so nothing has to un-remember anything.
+
+### Every index is built on first use
+
+`include_str!` puts the bytes in the binary; nothing is PARSED until something asks. `itemLookup.ts`
+made the same call and measured it (JOS-371: 41.8 ms of parse for a ~20.4 MB retained graph, plus
+three derived indexes being charged to `DATA_READY_MS` for a service nothing had asked anything of
+yet). Here it matters with the same shape for a different reason: **an attach must not pay for a
+corpus no client has queried**, because an attach is on the path of the one thing this whole program
+exists to make fast.
+
+### The fold gets the real lookups — in the PRODUCTION construction only
+
+`consider` and `eventFeed` are the two modules whose TypeScript twins take an injected lookup
+(`deps.lookupMob`, `deps.lookupItem`) and do nothing at all without one. `tests/bench/foldArm.mts`
+injects neither, which is why every recorded golden carries `knowledge` **absent** from every
+consider row and an **empty** event feed — and why the parity construction must keep injecting
+neither, forever.
+
+**The dependency direction is what makes that structural rather than conventional.** The `knowledge`
+crate depends on `fold`; `fold` cannot name `knowledge`. So `fold::registered()` — the construction
+the parity runner, the bench arm and every fold test use — has no way to reach a corpus even by
+accident, and the `parity` binary does not carry 12 MB of committed JSON in its text section.
+`Registry::install_knowledge` is called by `foldsink::registry_for` and by nothing else in this repo.
+
+**And a production fold differs from that world only on the LIVE TAIL.** Both probes sit behind the
+`live` gate: the feed admits nothing historical at all, and `consider` enriches live cons plus a
+bounded backfill on the first **wall-clock tick**, which `fold_bytes` never calls. A historical fold
+with a corpus installed is the same fold as one without — which is the property the oracle checks,
+and the DEFAULT `oracle:rust-fold` is green across all six slices with the lookups in the build.
+
+**The probe is synchronous, and that is the boundary dissolving.** Over there both lookups are
+promises, because main's answer may be a wiki round trip: the row is appended immediately and
+`knowledge` lands later as its own delta. Here the corpus is an in-memory index in the same process,
+so a live con enriches inside the same fold and the row is published complete. There is therefore
+**no out-of-band seq bump** — the TS bumps `seq` on the async landing so `useModule`'s gap check
+accepts a delta with no event behind it, and a bump here would put the module's published seq ahead
+of the event it folded for no reader's benefit.
+
+### The one part a corpus cannot answer
+
+`knowledge.mob` joins four sources and one of them is yours: **what you have actually looted off that
+creature**. That index lives inside the `consider` module on the ingest thread, is character-scoped
+and epoch-scoped, and is read through the same one door everything else is (`Ask::Loot`). The order
+is the design — the corpus resolves the roster's alias identity FIRST, so what crosses the thread
+boundary is a handful of rows rather than a handle on somebody's state — and an engine with no fold
+answers with an empty history, which is the same value a creature nothing has been looted from gets.
+
+### The named gap: `knowledge.spell`
+
+It answers off `eqlog`'s **effective** catalog (the committed scrape with removals, derived durations
+and corrections applied — one load, never a second) and states exactly the fields that DB carries. It
+does **not** carry the join half of `main/data/spellDetail.ts`: no derived effect classes, no rank
+lineage, and none of the metrics `spellMetricsAt` reads at a gain level, at a mote rank or with worn
+focus. Those need three inputs this engine does not have yet — the parsed `spells_us.txt` client
+table (boundary verdict 7, unbuilt), the observed-rank module's join, and the planner's worn-focus
+reading — and half a card is a wrong answer wearing a right one's clothes. It answers `found: false`
+for a rank-suffixed name the DB has no row for rather than handing back the LINE's numbers with no
+note that they are the line's. Named here and in the schema beside the op, the way `earlyWarnSec` is
+named in the alert evaluator.
+
+## Watching the corpora answer, by hand
+
+A **real session** against a release build, and **with no log and no attach at all** — which is the
+point of the session rather than a shortcut: a corpus question names nothing a fold owns, so the
+engine answers all of it before it has read a byte of anybody's log.
+
+```js
+// scratch/drive486.mjs — node scratch/drive486.mjs <repo root>
+// (spawn and frame printing are drive.mjs's, verbatim; there is no log to stage)
+send({ op: 'hello', token: TOKEN, protocolVersion: 1 })
+send({ id: 1, op: 'knowledge.item', params: { name: 'Cloak of Flames' } })   // a hit
+send({ id: 2, op: 'knowledge.mob',  params: { name: 'a sand giant' } })      // four sources, joined
+send({ id: 3, op: 'knowledge.item', params: { name: 'Shard of Nothing' } })  // a MISS
+// …then, 400 ms later, the app "fetches" and pushes the answer back:
+send({ id: 4, op: 'knowledge.define', params: { domain: 'item', name: 'Shard of Nothing',
+       entry: { page: 'Shard of Nothing', lore: true, summary: 'Fetched by the app, not by the engine.' } } })
+send({ id: 5, op: 'knowledge.item', params: { name: 'Shard of Nothing' } })  // …and now a hit
+send({ id: 6, op: 'knowledge.search', params: { query: 'cloak of flames', domain: 'item', limit: 3 } })
+```
+
+The transcript, verbatim except where a record is elided — the two hits below are the committed
+corpus's real records and the mob one runs to 6 KB of drop table:
+
+```console
+$ cargo build --release -p engined
+$ node scratch/drive486.mjs .
+EQC-ENGINE PORT=62213 PROTOCOL=1
+<- {"engineVersion":"0.1.0","kind":"hello","ok":true,"protocolVersion":1}
+
+<- {"id":1,"kind":"reply","ok":true,"result":{"domain":"item","found":true,"name":"Cloak of Flames",
+    "record":{"cached":true,"dropsFrom":[{"mob":"Lord Nagafen","zone":"Nagafen's Lair"}],
+    "eraTag":"Classic","iconId":658,"lore":false,"name":"Cloak of Flames","page":"Cloak of Flames",
+    "quest":false,"questUses":[],"stats":{"ac":10,"classes":["ALL"],"slot":"BACK",
+    "stats":[{"key":"DEX","value":"+9"},{"key":"AGI","value":"+9"},{"key":"HP","value":"+50"},
+    {"key":"HASTE","value":"+36%"}], …},"statsBlock":"MAGIC ITEM\n\nSlot: BACK\n\nAC: 10\n\n…"}}}
+
+<- {"id":2,"kind":"reply","ok":true,"result":{"domain":"mob","found":true,"name":"a sand giant",
+    "record":{"cached":true,"levelText":"33-37","page":"A Sand Giant",
+    "zone":"Southern Desert of Ro, Oasis of Marr, Northern Desert of Ro",
+    "dropsWiki":[{"item":"Sand of Ro","eraTag":"Temple","eraZones":["Oasis of Marr", …]},
+                 {"item":"Essence of Sunlight","eraTag":"Classic","eraZones":[…]}, … 16 in all],
+    "quests":[{"quest":"Armor of Ro Quests","page":"Armor of Ro Quests","giver":"Lord Searfire",
+               "zone":"Temple of Solusek Ro"},
+              {"quest":"Princess Lenya (Quest)","page":"Princess Lenya (Quest)","giver":"Tynkale",
+               "zone":"Northern Felwithe"}]}}}
+
+<- {"domain":"item","kind":"knowledgeMiss","name":"Shard of Nothing"}
+<- {"id":3,"kind":"reply","ok":true,"result":{"domain":"item","found":false,"name":"Shard of Nothing",
+    "record":{"lore":false,"name":"Shard of Nothing","offline":true,"quest":false,"questUses":[]}}}
+
+-> {"id":4,"op":"knowledge.define","params":{"domain":"item","name":"Shard of Nothing", …}}
+<- {"id":4,"kind":"reply","ok":true,"result":{"applied":true}}
+<- {"id":5,"kind":"reply","ok":true,"result":{"domain":"item","found":true,"name":"Shard of Nothing",
+    "record":{"cached":true,"lore":true,"name":"Shard of Nothing","page":"Shard of Nothing",
+    "quest":false,"questUses":[],"summary":"Fetched by the app, not by the engine."}}}
+
+<- {"id":6,"kind":"reply","ok":true,"result":{"query":"cloak of flames","total":1,
+    "hits":[{"domain":"item","name":"Cloak of Flames","page":"Cloak of Flames"}]}}
+```
+
+Five things in that transcript are worth naming, because each of them is a decision rather than an
+outcome:
+
+* **The era evidence on the mob's drop list is joined engine-side** (JOS-377's defect, which is why
+  it exists): the mob catalog states names only, so each drop's `eraTag` and `eraZones` come from the
+  ITEM page, in the 8.75 MB corpus that only this process now holds. It attaches EVIDENCE and reaches
+  **no verdict** — there is exactly one era rule in this app and a second opinion computed here would
+  be the beginning of a third.
+* **The miss frame arrives BEFORE the reply it belongs to.** Both go out on the connection's one
+  outbox and the broadcast happens inside the dispatch, before the outcome is written. Nothing
+  depends on the order — the frame carries no id and the reply is correlated by one — and it is
+  stated here so a reader of a real capture does not go looking for a bug.
+* **The miss still ANSWERS.** `found: false` beside a card with the player's own name in it, and
+  `offline: true` rather than `notFound: true`: over there `notFound` means "the wiki lookup RAN and
+  found no page", and this engine has no network stack, so it cannot make that claim. `offline` is
+  the app's own word for "the wiki could not be consulted — local sources may still have answered",
+  which is exactly true, and it is the state the renderer already treats as retryable. The retry is
+  the frame.
+* **`knowledge.define` needs no attach and survives one.** The overlay is what the APP has told this
+  process about committed data, not what a generation folded — the same sentence `World::defines`
+  makes about the other five families.
+* **`total: 1` on the search** is the match count, not the hit count. It is the one number a caller
+  cannot compute from what it was handed, which is what lets a type-ahead print `1-20 of 143` without
+  ever holding 143.
 
 ## Watching app knowledge land, and an alert fire, by hand
 
@@ -979,6 +1158,16 @@ unknown op, a malformed frame, four concurrent connections, a request delivered 
 time**, and stdin EOF. `tests/harness/mod.rs` is the shared client; its stderr goes to `null`
 because the suite refuses a great many connections on purpose — when a diagnostic matters, run the
 binary by hand as above.
+
+**The knowledge surface is proven in three places, and each proves something the others cannot.**
+`cargo test -p knowledge` drives the indexes against the **committed bytes** — the real `items.json`
+keys, the mob catalog's two spellings, the roster's alias statement, the era join, the overlay and
+the at-most-once miss ledger — because a fixture would prove nothing about the corpus the product
+ships. `ops::tests` drives the op table over its own isolated corpus (the shared one is a process
+singleton, and a define in one test would be a hit in another). And `fold`'s `consider` and
+`event_feed` tests prove the half that matters to the oracle: **with no lookup installed, `knowledge`
+is absent from every row and the feed is empty** — the goldens' own claim, pinned against the one
+change that could have broken it.
 
 **The ingest is proven twice, and the two halves are different claims.**
 

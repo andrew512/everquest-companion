@@ -360,8 +360,15 @@ light, app connected with the parity probe, packaging signed). Remaining to buil
    real def set before cutover.
 3. **The remaining view sources** — every list in the product: `combat.live` (the meter; where
    update-op coverage arrives), encounters/drilldown, buff+timer rows (the overlays), respawn,
-   progression, kills, and the Knowledge surface (items/spells/mobs/quests move engine-side —
-   deletes ~12 MB from main's heap and the renderer-bundled corpora).
+   progression, kills. ~~and the Knowledge surface~~ **KNOWLEDGE DONE ENGINE-SIDE** (JOS-486):
+   items/mobs/quests/posky are `include_str`'d into a `knowledge` crate and indexed on first use,
+   served as `knowledge.item/mob/spell/search`, with `consider` and `eventFeed` folding against the
+   real lookups in the PRODUCTION construction only (the parity construction cannot reach a corpus —
+   the crate depends on `fold`, never the reverse — and the default `oracle:rust-fold` is green
+   across all six slices with the lookups in the build). What remains of this item: the ~12 MB is
+   still ALSO in main's heap and the renderer's bundle until the app's own surfaces cut over to the
+   ops, and `knowledge.spell` carries a named gap (no effect classes, no rank lineage, no metrics —
+   they need boundary verdict 7's client table, the observed-rank join and the planner's worn focus).
 4. **Streams**: `alerts.fires` DONE as a stream (JOS-482; the AUDIO cutover — app plays from the
    frame and the TS evaluator dies — is its own ticket, owning the two named gaps above);
    `world.conCard` fully resolved engine-side still open.
@@ -370,8 +377,14 @@ light, app connected with the parity probe, packaging signed). Remaining to buil
    one-by-one, `useModule` → `useView`.
 6. **Main's 18 sync readers rewired** (3 genuine queries → ops; mirrors → pushed streams);
    fold-owned persisted artifacts (resist ledger, message-overlay register) move their IO into
-   the engine; `sessionMarks` as a command; `spells_us.txt` parse engine-side; wiki-miss events
-   with app-side fetch pushing results in.
+   the engine; `sessionMarks` as a command; `spells_us.txt` parse engine-side. **Wiki-miss events
+   DONE engine-side** (JOS-486): the `knowledgeMiss` stream frame (connection-wide, no id, no epoch,
+   each name announced at most once per process) and the `knowledge.define` push-back into the
+   engine's runtime overlay both exist and are proven end to end. **THE APP-SIDE FETCH HANDLER IS
+   NOT BUILT** — the half that hears the frame, runs `itemLookup`/`mobLookup`'s existing serialized
+   queue with its 150 ms spacing and its `Retry-After` cooldown, and pushes the answer back. It is
+   deliberately left to the surface-cutover ticket, because that is where the app stops asking its
+   own lookups anything and the queue has one caller instead of two.
 7. **Ruling 19 surface**: the in-app performance panel section is DONE (JOS-483: engine
    CPU/memory row, `perf.snapshot`, serve table, parity summary); `perf.budgets`/`perf.timeline`
    ops, CI budgets, and bug-report attachment still open.

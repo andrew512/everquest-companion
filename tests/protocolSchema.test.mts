@@ -344,9 +344,35 @@ function isDefine(message: ClientMessage): message is DefineMessage {
   return message.op.endsWith('.define')
 }
 
+/**
+ * THE KNOWLEDGE FAMILY (JOS-486), split out on exactly the terms `describeDefine` is — and here the
+ * repo's own complexity ceiling is what asked for the split rather than a preference. Four more
+ * `case` labels put `describeClient` at 16 against a maximum of 12, and that number is a measurement
+ * of this tree (p95 is 8): a switch that has grown a fifth family is a switch asking to have one
+ * lifted out. The exhaustive-`never` property survives the lift intact, because the halves are
+ * disjoint by TYPE rather than by a runtime string test — `knowledge.define` is EXCLUDED here and
+ * lands in `describeDefine`, which is where its ack shape says it belongs.
+ */
+type KnowledgeMessage = Exclude<Extract<ClientMessage, { op: `knowledge.${string}` }>, DefineMessage>
+
+function isKnowledge(message: ClientMessage): message is KnowledgeMessage {
+  return message.op.startsWith('knowledge.')
+}
+
+function describeKnowledge(message: KnowledgeMessage): string {
+  // The three lookups name a THING and the search names a STRING, which is the whole difference
+  // between them and the reason `total` exists on only one of the two answers.
+  const what =
+    message.op === 'knowledge.search' ? JSON.stringify(message.params.query) : message.params.name
+  return `${message.op}#${String(message.id)} ${what}`
+}
+
 /** Same trick on the client half. */
 function describeClient(message: ClientMessage): string {
+  // ORDER IS LOAD-BEARING: `knowledge.define` satisfies both tests at runtime, and it belongs to the
+  // ack family, so the define check goes first and the type exclusion above says the same thing.
   if (isDefine(message)) return describeDefine(message)
+  if (isKnowledge(message)) return describeKnowledge(message)
   switch (message.op) {
     case 'hello':
       return `hello v${String(message.protocolVersion)}`
@@ -365,17 +391,6 @@ function describeClient(message: ClientMessage): string {
       return `subscribe#${String(message.id)} ${message.params.source}`
     case 'view.unsubscribe':
       return `unsubscribe#${String(message.id)} of ${String(message.params.subscription)}`
-    // THE KNOWLEDGE SURFACE (JOS-486). Three lookups share one params shape and are still three
-    // arms, because the exhaustive switch is the point: an op added to the schema without being
-    // described here is a TYPECHECK failure.
-    case 'knowledge.item':
-    case 'knowledge.mob':
-    case 'knowledge.spell':
-      return `${message.op}#${String(message.id)} ${message.params.name}`
-    case 'knowledge.search':
-      return `search#${String(message.id)} ${JSON.stringify(message.params.query)}`
-    case 'knowledge.define':
-      return `knowledge.define#${String(message.id)} ${message.params.domain}/${message.params.name}`
     default: {
       const unreachable: never = message
       throw new Error(`unhandled client message ${JSON.stringify(unreachable)}`)
@@ -442,11 +457,8 @@ test('every fixture message VALIDATES against the schema and narrows through the
     'respawn.define',
     'combo.define',
     'roster.define',
-    'knowledge.item',
-    'knowledge.mob',
-    'knowledge.spell',
-    'knowledge.search',
-    'knowledge.define',
+    'knowledge.item', 'knowledge.mob', 'knowledge.spell',
+    'knowledge.search', 'knowledge.define',
     'reply',
     'error',
     'reset',
