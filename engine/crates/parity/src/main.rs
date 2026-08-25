@@ -130,7 +130,13 @@ fn snapshots(parser: &eqlog::Parser, bytes: &[u8], tz: eqlog::Tz, character: &st
     let clock = eqlog::Clock::new(tz);
     let launch_ms = fold::epoch::launch_ms(&clock);
     let started = std::time::Instant::now();
-    let mut folder = fold::Fold::new(fold::registered(known), launch_ms);
+    // `wiring.ts` hands the buffs module `spellDb` itself; the fold takes an owned PROJECTION of
+    // `db.byKey` so nothing downstream borrows the parser (`fold::spell_facts`).
+    let facts = parser
+        .spell_db()
+        .map(fold::spell_facts::SpellFacts::project)
+        .unwrap_or_default();
+    let mut folder = fold::Fold::new(fold::registered(known, facts), launch_ms);
     folder.fold_bytes(parser, bytes);
     let ms = started.elapsed().as_millis();
     let mut out = folder.registry.snapshots();

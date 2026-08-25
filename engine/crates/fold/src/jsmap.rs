@@ -103,6 +103,13 @@ impl<V> JsMap<V> {
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.entries.iter().map(|(_, v)| v)
     }
+
+    /// `for (const v of map.values()) { v.field = … }` — a walk that WRITES to every value without
+    /// touching the keys. The crowd-control half re-reads the estimator across every live hold of one
+    /// (line, caster) after a sample lands, which is that shape exactly.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.entries.iter_mut().map(|(_, v)| v)
+    }
 }
 
 impl<V: serde::Serialize> serde::Serialize for JsMap<V> {

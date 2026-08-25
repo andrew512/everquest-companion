@@ -42,8 +42,10 @@ pub mod epoch;
 pub mod event;
 pub mod jsfn;
 pub mod jsmap;
+pub mod message_overlay;
 pub mod modules;
 pub mod session;
+pub mod spell_facts;
 
 use event::Event;
 use serde_json::{json, Value};
@@ -285,8 +287,12 @@ impl Fold {
 /// so, and `missing()` names everything still absent.
 ///
 /// `known_spell` is `wiring.ts`'s `knownSpell: (key) => spellDb.byKey.has(key)`, passed in as the
-/// key set rather than as a closure so nothing in this crate borrows the parser.
-pub fn registered(known_spell: HashSet<String>) -> Registry {
+/// key set rather than as a closure so nothing in this crate borrows the parser. `facts` is the
+/// same idea one size up — the whole of `db.byKey`, projected into the six scalar facts the buffs
+/// model reads (see `spell_facts.rs`), because `wiring.ts` hands `spellDb` itself to that module.
+/// An EMPTY `facts` is the TS's absent `db?` and every read answers nothing, which is what a caller
+/// with no catalog gets over there.
+pub fn registered(known_spell: HashSet<String>, facts: spell_facts::SpellFacts) -> Registry {
     let mut r = Registry::new();
     r.register(Box::new(modules::loot::LootModule::new()));
     r.register(Box::new(modules::turnins::TurnInsModule::new()));
@@ -300,6 +306,16 @@ pub fn registered(known_spell: HashSet<String>) -> Registry {
         modules::observed_spell_ranks::ObservedSpellRanksModule::new(known_spell),
     ));
     r.register(Box::new(modules::alerts::AlertsModule::new()));
+    // THE SHARED HALVES (JOS-140 ruling 1). `wiring.ts` constructs the crowd-control module FROM the
+    // buffs module's own anchors and learner (`new BuffTimersModule(buffs.castAnchors(),
+    // buffs.spellStats())`), so the two cannot end up with two ideas of whose spell just landed or
+    // how long it lasts. One `Rc<RefCell<…>>`, cloned into both, is that line.
+    let core = modules::buffs::shared_core(facts.clone());
+    r.register(Box::new(modules::buffs::BuffsModule::new(
+        facts,
+        core.clone(),
+    )));
+    r.register(Box::new(modules::buff_timers::BuffTimersModule::new(core)));
     r.register(Box::new(modules::consider::ConsiderModule::new()));
     r.register(Box::new(modules::event_feed::EventFeedModule::new()));
     r
@@ -310,7 +326,10 @@ mod tests {
     use super::*;
 
     fn fold_lines(lines: &[&str]) -> Value {
-        let mut fold = Fold::new(registered(HashSet::new()), i64::MAX);
+        let mut fold = Fold::new(
+            registered(HashSet::new(), spell_facts::SpellFacts::default()),
+            i64::MAX,
+        );
         for line in lines {
             let ev = Event::from_json(line).expect("a JSON object");
             fold.on_primary(&ev, false);
@@ -331,7 +350,7 @@ mod tests {
     /// The registered cluster is a SUBSEQUENCE of the wiring order, and everything else is named.
     #[test]
     fn registration_follows_the_wiring_order_and_names_what_is_absent() {
-        let r = registered(HashSet::new());
+        let r = registered(HashSet::new(), spell_facts::SpellFacts::default());
         let ids = r.ids();
         let mut at = 0usize;
         for id in &ids {
@@ -466,7 +485,10 @@ mod tests {
     fn the_two_rank_witnesses_are_kept_apart() {
         let mut known = HashSet::new();
         known.insert("shiftless deeds".to_string());
-        let mut fold = Fold::new(registered(known), i64::MAX);
+        let mut fold = Fold::new(
+            registered(known, spell_facts::SpellFacts::default()),
+            i64::MAX,
+        );
         for line in [
             r#"{"kind":"castBegin","seq":0,"ts":1,"raw":"c","spell":"Lay on Hands IX"}"#,
             r#"{"kind":"castBegin","seq":1,"ts":2,"raw":"c","spell":"Clarity"}"#,
@@ -497,7 +519,10 @@ mod tests {
     /// character-scoped module's state — while `outputFiles` deliberately keeps its receipts.
     #[test]
     fn the_launch_boundary_drops_the_dead_characters_state() {
-        let mut fold = Fold::new(registered(HashSet::new()), 1000);
+        let mut fold = Fold::new(
+            registered(HashSet::new(), spell_facts::SpellFacts::default()),
+            1000,
+        );
         for line in [
             r#"{"kind":"loot","seq":0,"ts":500,"raw":"l","item":"Beta Sword"}"#,
             r#"{"kind":"outputFile","seq":1,"ts":600,"raw":"o","file":"Inventory.txt"}"#,
@@ -551,7 +576,11 @@ mod tests {
         );
     }
 
-    /// Every module reports the seq of the LAST event it was handed, derived events included.
+    /// Every module reports the seq of the LAST event it was handed, derived events included —
+    /// EXCEPT `buffTimers`, whose published `seq` is its own REVISION counter (JOS-87). That
+    /// exception is named here rather than skipped, because it is the trap the 2c port walked into:
+    /// the goldens record 0 for three of the six slices, and a module that answered `ev.seq` there
+    /// would fail the comparator on a slice whose holds are all empty.
     #[test]
     fn the_published_seq_is_the_last_event_folded() {
         let snaps = fold_lines(&[
@@ -559,7 +588,8 @@ mod tests {
             r#"{"kind":"unknown","seq":41,"ts":2,"raw":"x"}"#,
         ]);
         for m in snaps["modules"].as_array().expect("modules") {
-            assert_eq!(m["snapshot"]["seq"], 41, "{}", m["id"]);
+            let want = if m["id"] == "buffTimers" { 0 } else { 41 };
+            assert_eq!(m["snapshot"]["seq"], want, "{}", m["id"]);
         }
     }
 
@@ -569,7 +599,10 @@ mod tests {
     /// launch boundary — alerts is the one character-facing module with no `epoch` branch.
     #[test]
     fn the_cast_recency_map_is_rank_sensitive_and_outlives_the_epoch() {
-        let mut fold = Fold::new(registered(HashSet::new()), 1000);
+        let mut fold = Fold::new(
+            registered(HashSet::new(), spell_facts::SpellFacts::default()),
+            1000,
+        );
         for line in [
             r#"{"kind":"castBegin","seq":0,"ts":500,"raw":"c","spell":"Mesmerization III"}"#,
             r#"{"kind":"castBegin","seq":1,"ts":400,"raw":"c","spell":"Mesmerization III"}"#,
@@ -645,7 +678,10 @@ mod tests {
     /// line about YOU rather than the reconnect preamble's chat noise.
     #[test]
     fn the_fold_feeds_every_primary_event_to_the_offline_gap_detector() {
-        let mut fold = Fold::new(registered(HashSet::new()), i64::MAX);
+        let mut fold = Fold::new(
+            registered(HashSet::new(), spell_facts::SpellFacts::default()),
+            i64::MAX,
+        );
         for line in [
             r#"{"kind":"loot","seq":0,"ts":1000,"raw":"l","item":"Bone Chips"}"#,
             r#"{"kind":"unknown","seq":1,"ts":500000,"raw":"Channels: 1=General1(400)"}"#,
@@ -660,5 +696,164 @@ mod tests {
         assert_eq!(gap.kind(), "offlineGap");
         assert_eq!(gap.int("fromTs"), Some(1000));
         assert_eq!(gap.int("toTs"), Some(900000));
+    }
+
+    // ── THE BUFFS MODEL (JOS-476) ─────────────────────────────────────────────────────────────
+    //
+    // These drive hand-written NDJSON through the registry with an EMPTY catalog, which is the TS's
+    // absent `db?`: every DB read answers nothing, so a landing has to state its own duration to
+    // open a row. That is enough to exercise every law below, and it keeps the fixtures readable —
+    // the catalog's own contribution is what the six slices prove.
+
+    /// AN UNANCHORED LANDING PRODUCES NOTHING (ruling 3) — the whole of the attribution gate. The
+    /// same sentence with a cast line in front of it opens a row.
+    #[test]
+    fn a_landing_with_no_cast_line_behind_it_opens_nothing() {
+        let stranger = fold_lines(&[
+            r#"{"kind":"buffApply","seq":0,"ts":1000,"raw":"a","target":"self","spell":"Clarity","illusion":false,"durationMs":60000,"candidates":[{"name":"Clarity","durationMs":60000,"illusion":false}]}"#,
+        ]);
+        assert_eq!(state_of(&stranger, "buffs")["active"], json!([]));
+
+        let mine = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":900,"raw":"c","spell":"Clarity II"}"#,
+            r#"{"kind":"buffApply","seq":1,"ts":1000,"raw":"a","target":"self","spell":"Clarity","illusion":false,"durationMs":60000,"candidates":[{"name":"Clarity","durationMs":60000,"illusion":false}]}"#,
+        ]);
+        let active = &state_of(&mine, "buffs")["active"];
+        assert_eq!(active[0]["spell"], "Clarity");
+        // THE IDENTITY IS THE DB CANDIDATE'S NAME AND THE RANK RIDES BESIDE IT (JOS-238).
+        assert_eq!(active[0]["castName"], "Clarity II");
+        assert_eq!(active[0]["self"], true);
+        assert_eq!(active[0]["startedTs"], 1000);
+        assert_eq!(active[0]["messageDriven"], true);
+        // No sample yet, so the number is the landing's own stated duration and nothing else.
+        assert_eq!(active[0]["n"], 0);
+    }
+
+    /// A LAND→FADE PAIR MINTS ONE DURATION SAMPLE, and the wear-off resolves against the ACTIVE set
+    /// rather than guessing the first candidate — the defect that left self Quickness standing
+    /// forever because `Aanya's Quickening` was never the one that was up.
+    #[test]
+    fn a_clean_cycle_mints_a_sample_and_the_shared_wear_off_finds_the_live_one() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Swift Like the Wind"}"#,
+            r#"{"kind":"buffApply","seq":1,"ts":2000,"raw":"a","target":"self","spell":"Swift Like the Wind","illusion":false,"durationMs":60000,"candidates":[{"name":"Swift Like the Wind","durationMs":60000,"illusion":false}]}"#,
+            r#"{"kind":"buffWearOff","seq":2,"ts":102000,"raw":"w","spell":"Aanya's Quickening","candidates":["Aanya's Quickening","Swift Like the Wind"],"target":"self"}"#,
+        ]);
+        let state = state_of(&snaps, "buffs");
+        assert_eq!(state["active"], json!([]));
+        let row = &state["stats"]["swift like the wind"];
+        assert_eq!(row["n"], 1);
+        assert_eq!(row["maxMs"], 100_000);
+        // No DB floor to beat, so the observation stands alone and says so.
+        assert_eq!(row["estimateMs"], 100_000);
+        assert_eq!(row["estimatorSource"], "observed");
+    }
+
+    /// THE WEAR-OFF IS SYNTHESIZED BACK ONTO THE BUS AS A RESOLVED `buffExpired` (Task #47), and it
+    /// is DRAINED after the primary event — so every module registered before `buffs` sees it, in
+    /// the same order the TS bus delivers it.
+    #[test]
+    fn a_resolved_wear_off_is_handed_back_to_the_bus_as_a_derived_event() {
+        let mut fold = Fold::new(
+            registered(HashSet::new(), spell_facts::SpellFacts::default()),
+            i64::MAX,
+        );
+        for line in [
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Clarity"}"#,
+            r#"{"kind":"buffApply","seq":1,"ts":2000,"raw":"a","target":"self","spell":"Clarity","illusion":false,"durationMs":60000,"candidates":[{"name":"Clarity","durationMs":60000,"illusion":false}]}"#,
+        ] {
+            fold.on_primary(&Event::from_json(line).expect("object"), false);
+        }
+        let wear_off = Event::from_json(
+            r#"{"kind":"buffWearOff","seq":2,"ts":50000,"raw":"w","spell":"Clarity","candidates":["Clarity"],"target":"self"}"#,
+        )
+        .expect("object");
+        // Dispatch by hand so the queue can be read before `on_primary` drains and clears it.
+        let mut derived = Vec::new();
+        fold.registry.dispatch(&wear_off, false, &mut derived);
+        assert_eq!(derived.len(), 1);
+        assert_eq!(derived[0].kind(), "buffExpired");
+        assert_eq!(derived[0].str("spell"), Some("Clarity"));
+        assert_eq!(derived[0].str("target"), Some("self"));
+        // Stamped with the PRIMARY event's identity, which is what lets it slot into the stream.
+        assert_eq!(derived[0].seq(), 2);
+        assert_eq!(derived[0].ts(), 50000);
+        assert_eq!(derived[0].raw(), "Clarity wore off you.");
+    }
+
+    /// AN OFFLINE GAP PAUSES A BUFF AND NOT A DEBUFF, and it CENSORS the sample either way — the two
+    /// halves of JOS-134, and the reason the offline-gap detector had to come with this cluster.
+    #[test]
+    fn an_absence_rewinds_a_buffs_clock_and_leaves_a_debuffs_alone() {
+        let mut fold = Fold::new(
+            registered(HashSet::new(), spell_facts::SpellFacts::default()),
+            i64::MAX,
+        );
+        for line in [
+            // The anchor, the landing, and an in-world line to give the detector something to
+            // measure the absence FROM.
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Clarity"}"#,
+            r#"{"kind":"buffApply","seq":1,"ts":2000,"raw":"a","target":"self","spell":"Clarity","illusion":false,"durationMs":600000,"candidates":[{"name":"Clarity","durationMs":600000,"illusion":false}]}"#,
+            // …a login 100 s later, which the detector turns into a gap and the fold drains.
+            r#"{"kind":"sessionStart","seq":2,"ts":102000,"raw":"Welcome to EverQuest Legends!"}"#,
+        ] {
+            fold.on_primary(&Event::from_json(line).expect("object"), false);
+        }
+        let active = &state_of(&fold.registry.snapshots(), "buffs")["active"];
+        // 2000 + (102000 - 2000) = 102000: the clock was rewound by the whole absence, because EQ
+        // freezes a buff with your character.
+        assert_eq!(active[0]["startedTs"], 102_000);
+    }
+
+    /// A CROWD-CONTROL HOLD IS ANCHOR-GATED TOO, and closing it mints into the SAME learner the
+    /// buffs half reads — the JOS-140 unification, which is what the shared core exists for.
+    #[test]
+    fn a_mez_cycle_mints_into_the_shared_learner() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"castBegin","seq":0,"ts":1000,"raw":"c","spell":"Mesmerization VII"}"#,
+            r#"{"kind":"cc","seq":1,"ts":2000,"raw":"m","mob":"a spiroc banisher","verb":"mesmerized","candidates":[{"name":"Mesmerization","durationMs":24000}]}"#,
+            r#"{"kind":"cc","seq":2,"ts":46000,"raw":"r","mob":"a spiroc banisher","refresh":true,"spell":"Mesmerization"}"#,
+        ]);
+        // The hold closed, so nothing is standing…
+        assert_eq!(state_of(&snaps, "buffTimers")["holds"], json!([]));
+        // …and the 44 s cycle reached the BUFFS module's stats table, under the rank the cast line
+        // named (JOS-411) rather than the rank-less landing sentence's.
+        let row = &state_of(&snaps, "buffs")["stats"]["mesmerization"];
+        assert_eq!(row["spell"], "Mesmerization VII");
+        assert_eq!(row["n"], 1);
+        assert_eq!(row["maxMs"], 44_000);
+    }
+
+    /// A STRANGER'S MEZ FILLS NOBODY'S OVERLAY, and the refusal still moves the revision counter
+    /// when a break line arrives — which is what the goldens' non-zero `seq` on two slices is.
+    #[test]
+    fn an_unanchored_mez_opens_no_hold_and_a_break_still_counts_a_revision() {
+        let snaps = fold_lines(&[
+            r#"{"kind":"cc","seq":0,"ts":2000,"raw":"m","mob":"a spiroc banisher","verb":"mesmerized","candidates":[{"name":"Mesmerization","durationMs":24000}]}"#,
+        ]);
+        assert_eq!(state_of(&snaps, "buffTimers")["holds"], json!([]));
+        assert_eq!(snapshot_seq(&snaps, "buffTimers"), 0);
+
+        let snaps = fold_lines(&[
+            r#"{"kind":"uncharm","seq":0,"ts":2000,"raw":"u","mob":"a spiroc banisher","spell":"Allure"}"#,
+        ]);
+        // An `end` is recorded even when we held nothing: it is a real CC break, and the projection
+        // uses it to retire an active buff the buffs model does not clear.
+        assert_eq!(snapshot_seq(&snaps, "buffTimers"), 1);
+        assert_eq!(
+            state_of(&snaps, "buffTimers")["ends"],
+            json!([{ "key": "a spiroc banisher", "ts": 2000, "spell": "Allure" }])
+        );
+    }
+
+    fn snapshot_seq(snaps: &Value, id: &str) -> i64 {
+        snaps["modules"]
+            .as_array()
+            .expect("modules")
+            .iter()
+            .find(|m| m["id"] == id)
+            .expect("the module")["snapshot"]["seq"]
+            .as_i64()
+            .expect("a seq")
     }
 }

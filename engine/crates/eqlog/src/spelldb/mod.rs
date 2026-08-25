@@ -380,12 +380,15 @@ fn apply_overlay_corrections(db: &mut SpellDb, corrections: &[(String, String, O
 }
 
 impl SpellDb {
-    /// `db.byKey`, in insertion order — `looksCastOnOther` walks it, and nothing else does.
-    pub(crate) fn by_key_values(&self) -> impl Iterator<Item = &SpellEntry> {
+    /// `db.byKey`, in insertion order — `looksCastOnOther` walks it, and so does the FOLD, which
+    /// projects the whole table into an owned per-line record at construction rather than borrowing
+    /// the parser (JOS-476: `wiring.ts` hands `spellDb` to the buffs module, and everything that
+    /// module asks of it is a lookup on this map).
+    pub fn by_key_values(&self) -> impl Iterator<Item = &SpellEntry> {
         self.by_key_order.iter().map(move |&i| &self.spells[i])
     }
 
-    pub(crate) fn by_key_get(&self, key: &str) -> Option<&SpellEntry> {
+    pub fn by_key_get(&self, key: &str) -> Option<&SpellEntry> {
         self.by_key.get(key).map(|&i| &self.spells[i])
     }
 }

@@ -7,6 +7,19 @@
 //! `../README.md`.
 
 pub mod alerts;
+pub mod buff_anchors;
+pub mod buff_landing;
+pub mod buff_rounds;
+pub mod buff_timers;
+pub mod buffs;
+pub mod buffs_entities;
+pub mod buffs_instance_rules;
+pub mod buffs_instances;
+pub mod buffs_mining;
+pub mod buffs_session;
+pub mod buffs_shapes;
+pub mod buffs_stats;
+pub mod buffs_view;
 pub mod class_unlocks;
 pub mod consider;
 pub mod event_feed;
