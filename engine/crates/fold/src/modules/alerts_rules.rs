@@ -772,6 +772,14 @@ impl BreakWatchers for RuleSet {
             .collect()
     }
 
+    /// The same question without the allocation — asked once per beat by
+    /// [`crate::EqModule::wants_timer_rows`] to decide whether the projection is built at all.
+    fn has_break_watchers(&self) -> bool {
+        self.rules
+            .iter()
+            .any(|r| !r.break_kinds.is_empty() && r.early_warn_sec.is_some())
+    }
+
     /// WOULD THIS DEF ANNOUNCE THE BREAK OF THIS ROW — asked of the def's OWN matcher, never of a
     /// second one written to guess at the same question. The hypothetical event and its entire blast
     /// radius are documented on `alerts_early::break_probes`.

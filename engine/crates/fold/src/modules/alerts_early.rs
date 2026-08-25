@@ -673,6 +673,10 @@ pub trait BreakWatchers {
     /// overwhelmingly common case) the scheduler does not read the timer projection at all.
     fn break_watchers(&self) -> Vec<(String, i64)>;
 
+    /// Whether [`Self::break_watchers`] would answer with anything — the same question without the
+    /// allocation, asked once per beat to decide whether the timer projection is built at all.
+    fn has_break_watchers(&self) -> bool;
+
     /// Would this def announce the break of this row — asked of the def's OWN matcher. The firing it
     /// hands back is built exactly like an ordinary one, on the same cooldown clock the REAL break
     /// event would have chosen.
@@ -995,6 +999,9 @@ mod tests {
     impl BreakWatchers for NoWatchers {
         fn break_watchers(&self) -> Vec<(String, i64)> {
             Vec::new()
+        }
+        fn has_break_watchers(&self) -> bool {
+            false
         }
         fn probe_break(&self, _: &str, _: &BuffTimerRow, _: i64) -> Option<(ArmedFire, String)> {
             None
@@ -1324,6 +1331,9 @@ mod tests {
     impl BreakWatchers for AlwaysWatching {
         fn break_watchers(&self) -> Vec<(String, i64)> {
             vec![("a1".to_owned(), self.0)]
+        }
+        fn has_break_watchers(&self) -> bool {
+            true
         }
         fn probe_break(
             &self,

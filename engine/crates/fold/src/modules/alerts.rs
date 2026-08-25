@@ -80,7 +80,7 @@
 //! `JsMap`'s whole reason for existing. The published object's KEY order is not a claim (the bar is
 //! deep equality), but WHICH KEY the cap threw away certainly is.
 
-use super::alerts_early::EarlyWarnings;
+use super::alerts_early::{BreakWatchers as _, EarlyWarnings};
 use super::alerts_rules::{Fire, RuleSet};
 use super::buff_timer_rows::BuffTimerRow;
 use crate::event::Event;
@@ -250,6 +250,14 @@ impl EqModule for AlertsModule {
     ///
     /// NOTHING IS READ WHEN NOTHING OWES: `EarlyWarnings::tick` returns immediately when nothing is
     /// armed and no def is watching, which is every beat of an ordinary session.
+    /// THE ONE MODULE THAT EVER READS THE PROJECTION, and only while it has something to measure
+    /// against it: a warning armed and waiting, or a break-family def watching the rows themselves.
+    /// See [`crate::EqModule::wants_timer_rows`] — this is the TS's "only while an early warning is
+    /// actually armed", asked one beat ahead.
+    fn wants_timer_rows(&self) -> bool {
+        !self.early.idle() || self.rules.has_break_watchers()
+    }
+
     fn on_tick(&mut self, now_ms: i64, timer_rows: &[BuffTimerRow]) {
         for due in self.early.tick(now_ms, timer_rows, &self.rules) {
             if let Some(fire) = self.rules.fire_warning(&due, now_ms) {
@@ -485,6 +493,25 @@ mod tests {
         // …and nothing was armed either, so a later tick has nothing to deliver.
         m.on_tick(999_000, &[slow_row(1_000, Some(60_000))]);
         assert!(m.take_fires().is_empty());
+    }
+
+    /// THE PROJECTION IS ONLY BUILT WHEN SOMETHING WILL READ IT — the laziness the TS's pull has by
+    /// construction and this had to state (`crate::EqModule::wants_timer_rows`). An ordinary session
+    /// has no def carrying an offset, so no beat of it folds `buffs.active` and the CC ledger at all.
+    #[test]
+    fn a_module_with_no_offset_never_asks_for_the_timer_projection() {
+        use crate::EqModule as _;
+        let m = module(None);
+        assert!(!m.wants_timer_rows(), "no offset, nothing to measure");
+
+        // …a break-family def with an offset watches the ROWS themselves, so it asks from the
+        // moment it is pushed — before anything has been armed.
+        let watching = module(Some(5));
+        assert!(watching.wants_timer_rows());
+
+        // …and a module with NO defs at all — every world this crate constructs on its own — is the
+        // first case again, which is what keeps a historical fold's cost exactly what it was.
+        assert!(!AlertsModule::new().wants_timer_rows());
     }
 
     /// A CHARACTER SWITCH FORGETS THE ARMED WARNINGS: they are about a debuff on a mob THIS

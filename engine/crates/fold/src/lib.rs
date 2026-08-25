@@ -98,6 +98,22 @@ pub trait EqModule {
     /// to be first.
     fn on_tick(&mut self, _now_ms: i64, _timer_rows: &[modules::buff_timer_rows::BuffTimerRow]) {}
 
+    /// WOULD THIS MODULE READ THE TIMER PROJECTION ON THE NEXT BEAT? — the LAZINESS half of the
+    /// `setTimerRows` seam (JOS-492).
+    ///
+    /// Over there the pull is a CLOSURE, so not calling it costs nothing; here the rows are a
+    /// parameter and something has to decide whether to build them. This is that decision, and it
+    /// keeps the TS's own condition rather than approximating it: the projection is built "at most
+    /// once per heartbeat and only while an early warning is actually armed".
+    ///
+    /// `false` FOR NINETEEN MODULES AND FOR THE TWENTIETH TOO, almost always: an ordinary session
+    /// has no def carrying an offset and nothing armed, so no beat of it builds a projection at all.
+    /// Asking is one bool per module per second, against a fold of a whole `buffs.active` and a whole
+    /// CC ledger — which is why the question is worth asking rather than just building them.
+    fn wants_timer_rows(&self) -> bool {
+        false
+    }
+
     /// Full current state for hydration, plus the last seq folded in: `{ "seq": n, "state": … }`.
     fn snapshot(&self) -> Value;
 
@@ -409,8 +425,17 @@ impl Registry {
     /// projection built from buffs alone would state ends for the beneficial half and silently know
     /// nothing about the crowd-control half, and an early warning measured against it would be right
     /// about mez and wrong about slow. Every production construction registers both.
+    ///
+    /// …AND EMPTY WHEN NOBODY ASKED, which is the LAZINESS the TS's pull has and this must not lose:
+    /// over there the closure "is called from `onTick` and from nowhere else, at most once per
+    /// heartbeat and only while an early warning is actually armed". [`EqModule::wants_timer_rows`]
+    /// is that condition, asked of every module for the cost of a bool, so an ordinary session — no
+    /// offset on any def, nothing armed — builds NO projection on any beat.
     #[must_use]
     pub fn timer_rows(&self) -> Vec<modules::buff_timer_rows::BuffTimerRow> {
+        if !self.mods.iter().any(|m| m.wants_timer_rows()) {
+            return Vec::new();
+        }
         let (Some(buffs), Some(timers)) = (self.buffs(), self.buff_timers()) else {
             return Vec::new();
         };
