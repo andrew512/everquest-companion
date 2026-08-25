@@ -22,7 +22,9 @@
         { "$ref": "#/$defs/BuffTrustDefineRequest" },
         { "$ref": "#/$defs/RespawnDefineRequest" },
         { "$ref": "#/$defs/ComboDefineRequest" },
-        { "$ref": "#/$defs/RosterDefineRequest" }
+        { "$ref": "#/$defs/RosterDefineRequest" },
+        { "$ref": "#/$defs/CombatSnapshotRequest" },
+        { "$ref": "#/$defs/CombatSearchFightsRequest" }
       ]
     },
 
@@ -178,7 +180,9 @@
         { "$ref": "#/$defs/SubscribeAck" },
         { "$ref": "#/$defs/ModuleSnapshotResult" },
         { "$ref": "#/$defs/PerfSnapshotResult" },
-        { "$ref": "#/$defs/DefineAck" }
+        { "$ref": "#/$defs/DefineAck" },
+        { "$ref": "#/$defs/CombatSnapshotResult" },
+        { "$ref": "#/$defs/CombatSearchFightsResult" }
       ]
     },
 
@@ -746,6 +750,143 @@
         "setAt": { "type": "integer" }
       },
       "required": ["key", "name", "action", "setAt"],
+      "additionalProperties": true
+    },
+
+    "CombatSnapshotRequest": {
+      "title": "CombatSnapshotRequest",
+      "description": "THE COMBAT ENGINE, ASKED (JOS-485). The whole of what `combat:snapshot` serves over IPC today — the selection, the segment list, the zone sessions, the stance and poison readouts, the roster and the hydration flag — from the fold that is running, through the same one door `module.snapshot` uses. It is NOT a `module.snapshot`: the combat engine is not in the registry (`WIRING_ORDER` does not name it), it is the post-registry subscriber, and asking for it by a module name would be asking the wrong authority. THE INSTANT IS THE ENGINE'S TO CHOOSE and the reply says which one it chose — see `CombatSnapshotResult.now`.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["combat.snapshot"] },
+        "params": { "$ref": "#/$defs/CombatSnapshotParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "CombatSnapshotParams": {
+      "title": "CombatSnapshotParams",
+      "type": "object",
+      "properties": { "opts": { "$ref": "#/$defs/CombatSnapshotOpts" } },
+      "additionalProperties": false
+    },
+
+    "CombatSnapshotOpts": {
+      "title": "CombatSnapshotOpts",
+      "description": "`src/shared/combat.ts SnapshotOpts`, and OPEN rather than closed — the one shape in this schema where an unlisted key is IGNORED instead of refused. An option is a request for MORE work, so an engine that does not know one has already given the honest answer by not doing it; refusing the whole call would turn a client that learned a new option into a client that cannot ask for anything. That is the opposite of `AlertDefinition`'s openness, which exists because a definition ROUND-TRIPS and a dropped field would rewrite the user's data — nothing here comes back, so dropping an unknown key costs a caller nothing it can lose. Every field is absent-means-the-engine's-default; there is deliberately no `combinePets`, which the owner cut in 2026-08-04 and which lives in the renderer now.",
+      "type": "object",
+      "properties": {
+        "selectedId": {
+          "description": "Which fight or zone session to resolve `selected` against. An id this fold does not carry falls back to the default selection — the open fight, else the most recent finalized one, and NEVER the zone aggregate.",
+          "type": "string"
+        },
+        "showUnparsed": {
+          "description": "Include lines the engine could not classify. Reads the classification ring, which this fold never writes — see `fold/src/combat/state.rs` fact 2 — so it moves nothing here and is carried because the option is the app's and this op is its replacement.",
+          "type": "boolean"
+        },
+        "maxSegments": {
+          "description": "Cap on finalized-fight summaries to serialize, newest-first. A PAYLOAD bound, never a retention one: the current encounter and the zone summary are always included, and a selected fight outside the cap still resolves fully through `selected`.",
+          "type": "integer"
+        },
+        "timeline": {
+          "description": "Include the SELECTED encounter's event timeline. Off by default because the timeline payload is heavier than the bar view.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "CombatSnapshotResult": {
+      "title": "CombatSnapshotResult",
+      "description": "The snapshot, and the instant it was taken at. TWO FIELDS RATHER THAN ONE because `now` is not recoverable from the payload and the whole answer is a function of it: a fight closes on elapsed time, `inCombat` is a freshness test, and a summary's `active` flag is the same question per row. A client that could not see which clock the engine used could not tell a stale answer from a quiet log.",
+      "type": "object",
+      "properties": {
+        "now": {
+          "description": "THE INSTANT THE SNAPSHOT WAS TAKEN AT, in epoch millis, and the engine chose it: the process's own wall clock once the tail is LIVE, and the fold's own `lastTs` — the log's clock — at every moment before that. A REPLAY IS NOT A MOMENT IN TIME (`engine.ts`'s hydrating gate, ported): every line of a months-old log is weeks behind the host clock, so a mid-scan answer stamped `Date.now()` would finalize whatever fight was open and hand the rest of it to a fresh encounter — MEASURED app-side, one 53,577-damage fight splitting into 43,504 + 10,073 under load. It is stated rather than assumed because it is what makes a mid-fold answer a REAL PREFIX STATE: the same bytes asked at the same `seq` give the same snapshot, which is ruling 18 law 1 for this surface.",
+          "type": "integer"
+        },
+        "snapshot": { "$ref": "#/$defs/CombatState" }
+      },
+      "required": ["now", "snapshot"],
+      "additionalProperties": false
+    },
+
+    "CombatState": {
+      "title": "CombatState",
+      "description": "THE COMBAT SNAPSHOT, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the `ModuleState` argument, one surface over. `src/shared/combat.ts CombatSnapshot` is ~14 fields of nested view builders (six of them, each with its own row types), it is the app's own contract with its renderer, and a meter growing a column must not be a protocol change or a `badParams` refusal. Typed-where-cheap is emphatically not cheap here: typify would lower every count in it to `f64`, which is the `Cell` defect at the scale of a whole damage meter. It is an OBJECT and always one, which is where it differs from `ModuleState` — the registry publishes both objects and arrays, `CombatEngine::snapshot` publishes an object and nothing else — so this says `object` and lowers to an ordered map of raw JSON in both languages, with every integer intact.",
+      "type": "object",
+      "additionalProperties": true
+    },
+
+    "CombatSearchFightsRequest": {
+      "title": "CombatSearchFightsRequest",
+      "description": "SEARCH THE FIGHT HISTORY (Task #61, moved server-side by JOS-485). `src/main/ipc/world.ts`'s `searchFights` handler, whose semantics are mirrored here exactly: a non-string query is the empty string, and a `limit` is CLAMPED rather than refused — see `CombatSearchFightsParams.limit`. The corpus is the engine's UNCAPPED encounter history plus the open fight, which is why this is an op and not a view: it is a ranked answer to a question, not a window over a collection, and its rows are the app's own `SegmentSummary` rather than cells.",
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/RequestId" },
+        "op": { "type": "string", "enum": ["combat.searchFights"] },
+        "params": { "$ref": "#/$defs/CombatSearchFightsParams" }
+      },
+      "required": ["id", "op", "params"],
+      "additionalProperties": false
+    },
+
+    "CombatSearchFightsParams": {
+      "title": "CombatSearchFightsParams",
+      "type": "object",
+      "properties": {
+        "query": {
+          "description": "What the user typed. Tokenized to lowercase alphanumerics; an empty or whitespace-only query answers NO hits rather than everything — the UI shows its ordinary browse list in that state, and returning the whole corpus would make the empty box the most expensive keystroke of all.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "How many ranked hits to return. CLAMPED to the engine's own bounds rather than refused, which is `world.ts`'s rule kept verbatim: a renderer bug asking for an unbounded payload is a payload problem, not a conversation-ending one, and a search box that stopped answering because a number was silly would be the worse failure. Absent takes the engine's default.",
+          "type": "integer"
+        }
+      },
+      "required": ["query"],
+      "additionalProperties": false
+    },
+
+    "CombatSearchFightsResult": {
+      "title": "CombatSearchFightsResult",
+      "description": "`src/shared/combat.ts FightSearchResult`. Ranked hits, best first, ties broken by recency and then by id so the order never depends on the corpus's arrival order.",
+      "type": "object",
+      "properties": {
+        "hits": {
+          "description": "The ranked hits, already capped by `limit`.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/FightSearchHit" }
+        },
+        "corpus": {
+          "description": "How many fights were SEARCHED — the whole uncapped history plus the open fight. It lets a UI say `12 of 1,428` honestly instead of implying the corpus is the result set, and it is present even when `hits` is empty, because `no matches in 1,428` and `nothing to search` are different sentences.",
+          "type": "integer"
+        }
+      },
+      "required": ["hits", "corpus"],
+      "additionalProperties": false
+    },
+
+    "FightSearchHit": {
+      "title": "FightSearchHit",
+      "type": "object",
+      "properties": {
+        "summary": { "$ref": "#/$defs/FightSummary" },
+        "score": {
+          "description": "0..1 relevance. Exact token matches outrank prefix, prefix substring, substring a bounded typo correction. A FLOAT and deliberately not a percentage: it is a ranking key the UI may show as a bar, and rounding it here would flatten ties the sort has already broken.",
+          "type": "number"
+        }
+      },
+      "required": ["summary", "score"],
+      "additionalProperties": false
+    },
+
+    "FightSummary": {
+      "title": "FightSummary",
+      "description": "One fight, EXACTLY AS THE ENGINE SUMMARIZES IT — `src/shared/combat.ts SegmentSummary`. Open for `CombatState`'s reason and read off the same builder, so a hit and the same fight inside a snapshot are byte-identical rather than two renderings of one row.",
+      "type": "object",
       "additionalProperties": true
     },
 

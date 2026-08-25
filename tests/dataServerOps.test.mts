@@ -48,7 +48,9 @@ const EVERY_OP: RequestOp[] = [
   'buffTrust.define',
   'respawn.define',
   'combo.define',
-  'roster.define'
+  'roster.define',
+  'combat.snapshot',
+  'combat.searchFights'
 ]
 
 test('the registry names every op, and the compile-time pin agrees', () => {
@@ -84,7 +86,13 @@ test('EVERY GUARD IS DISCRIMINATING — no two ops accept each other’s result'
     'buffTrust.define': { applied: true },
     'respawn.define': { applied: true },
     'combo.define': { applied: true, count: 2 },
-    'roster.define': { applied: true, count: 0 }
+    'roster.define': { applied: true, count: 0 },
+    // THE COMBAT SURFACE (JOS-485). The snapshot's `now` is deliberately present in this shape and
+    // deliberately NOT what the guard reads — the same trap `perf.snapshot`'s `status` sprang — and
+    // the search result carries an EMPTY `hits` beside a non-zero `corpus`, because that is the
+    // answer to a query that matched nothing and a guard reading truthiness would miss it.
+    'combat.snapshot': { now: 1787181707000, snapshot: { hydrating: false, segments: [] } },
+    'combat.searchFights': { hits: [], corpus: 1428 }
   }
   for (const op of EVERY_OP) {
     assert.equal(RESULT_GUARDS[op](shapes[op]), true, `${op} refused its own result`)

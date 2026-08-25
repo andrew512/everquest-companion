@@ -109,6 +109,22 @@ pub enum PerfAnswer {
     Unavailable(String),
 }
 
+/// WHAT A COMBAT QUESTION FOUND (JOS-485).
+///
+/// TWO OUTCOMES AND NOT THREE, and the missing one is `NotFound` for the same reason
+/// [`PerfAnswer`]'s is missing: the request names nothing that could be absent. There is no module
+/// id to typo — there is one combat engine or there is none — so a fold this build made without one
+/// is `unavailable` beside a world with no fold at all and a fold that did not answer in time. All
+/// three are the same sentence to a client: *ask again when something is attached*.
+#[derive(Debug)]
+pub enum CombatAnswer<T> {
+    /// The engine answered.
+    Answer(T),
+    /// Nothing is folding, this fold carries no combat engine, or it could not be reached. The
+    /// string is the diagnostic that reaches the client's `ErrorReply.message`.
+    Unavailable(String),
+}
+
 /// A handle on the process's whole state. Cheap to clone; every clone is the same world.
 #[derive(Clone)]
 pub struct World {
@@ -664,6 +680,87 @@ impl World {
             },
             serve: serve_rows(&measured.serve, &watched),
         }))
+    }
+
+    /// Answer `combat.snapshot` — the combat engine's whole state, from the fold that is running.
+    ///
+    /// THE SAME DOOR AND THE SAME DEADLINE `module.snapshot` uses, and it is not a registry op: the
+    /// combat engine is the post-registry subscriber (`WIRING_ORDER` does not name it), so it is
+    /// reached by its own arm on the one door rather than by a module id. See [`ask_fold`] for the
+    /// wait, and `crate::foldsink` for which clock the answer is stamped with.
+    #[must_use]
+    pub fn combat_snapshot(
+        &self,
+        opts: &ingest::CombatOpts,
+    ) -> CombatAnswer<ingest::CombatSnapshot> {
+        let opts = opts.clone();
+        match self.ask_fold(|answer| ingest::Ask::Combat(ingest::CombatAsk { opts, answer })) {
+            Err(why) => CombatAnswer::Unavailable(why),
+            Ok(None) => CombatAnswer::Unavailable(
+                "this fold carries no combat engine, so there is no meter to read".to_owned(),
+            ),
+            Ok(Some(snapshot)) => CombatAnswer::Answer(snapshot),
+        }
+    }
+
+    /// Answer `combat.searchFights` — a ranked search of the fold's whole encounter history.
+    ///
+    /// USER-INITIATED, and it travels the same door anyway. A search is heavier than a snapshot (it
+    /// summarizes every finalized fight of the session before it ranks one), and it is still
+    /// answered at a boundary the ingest already reaches rather than under a lock — the alternative
+    /// would let a person typing into a box stall the fold between keystrokes, which is the exact
+    /// shape of hitch this whole program exists to remove.
+    #[must_use]
+    pub fn search_fights(&self, query: &str, limit: usize) -> CombatAnswer<ingest::FightSearch> {
+        let query = query.to_owned();
+        match self.ask_fold(|answer| {
+            ingest::Ask::Fights(ingest::FightSearchAsk {
+                query,
+                limit,
+                answer,
+            })
+        }) {
+            Err(why) => CombatAnswer::Unavailable(why),
+            Ok(None) => CombatAnswer::Unavailable(
+                "this fold carries no combat engine, so there is no fight history to search"
+                    .to_owned(),
+            ),
+            Ok(Some(found)) => CombatAnswer::Answer(found),
+        }
+    }
+
+    /// POST ONE ASK THROUGH THE ONE DOOR AND WAIT FOR IT — the shape `module_snapshot` and
+    /// `perf_snapshot` each spell out by hand, written once for the readers JOS-485 added.
+    ///
+    /// THE LOCK IS TAKEN AND RELEASED BEFORE ANYTHING BLOCKS, which is the whole of why this is a
+    /// method and not a closure at the call site: the ingest thread takes this lock in every
+    /// `report_*` it makes, so waiting under it would deadlock against the very thread being waited
+    /// for. `Err` is the three ways there is nobody to answer — nothing attached, an ingest that
+    /// ended between the copy and the send, and a fold that did not answer inside
+    /// [`SNAPSHOT_PATIENCE`] — each stated differently because they read differently in a bug
+    /// report.
+    ///
+    /// The two older readers are deliberately NOT rewritten onto it. They are proven where they
+    /// stand, this is add-only, and a refactor of the door is not a thing to bundle into a ticket
+    /// that is adding a surface to it.
+    fn ask_fold<T>(&self, make: impl FnOnce(Sender<T>) -> ingest::Ask) -> Result<T, String> {
+        let asks = {
+            let state = self.lock();
+            state.asks.clone()
+        };
+        let Some(asks) = asks else {
+            return Err("no log is attached, so there is no fold to ask".to_owned());
+        };
+        let (answer, wait) = channel();
+        if asks.send(make(answer)).is_err() {
+            return Err("the fold that was answering has ended".to_owned());
+        }
+        wait.recv_timeout(SNAPSHOT_PATIENCE).map_err(|_| {
+            format!(
+                "the fold did not answer within {} ms",
+                SNAPSHOT_PATIENCE.as_millis()
+            )
+        })
     }
 
     /// Post the perf ask and wait for the fold, on the same terms `module_snapshot` waits: a

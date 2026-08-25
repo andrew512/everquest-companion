@@ -481,6 +481,100 @@ fn health_states_its_coordinate_only_once_it_has_one() {
     assert_eq!(live.last_event_ts, Some(1_787_181_707_000));
 }
 
+// ---- 5. the combat surface (JOS-485) -----------------------------------------------------------
+
+#[test]
+fn a_combat_snapshot_says_which_clock_it_was_taken_by() {
+    // THE CENTRAL CLAIM OF THE OP. A mid-fold answer is stamped with the LOG's own clock, because a
+    // replay is not a moment in time; a live one is stamped with the process's, because a meter has
+    // to age while the log is quiet. The two answers here are five seconds apart on a fold whose
+    // last event is the same in both — which is the difference, on the wire, in one comparison.
+    let mut answers = engine_frames("08-combat-snapshot.json")
+        .into_iter()
+        .filter_map(|frame| match frame {
+            EngineMessage::Reply(reply) => match reply.result {
+                ReplyResult::CombatSnapshotResult(snapshot) => Some(snapshot),
+                _ => None,
+            },
+            _ => None,
+        });
+
+    let folding = answers.next().expect("the mid-fold answer");
+    assert_eq!(folding.now, 1_787_181_707_000, "the log's own last stamp");
+    // …and the keys the caller did not ask for are ABSENT rather than null. `timeline` is the one
+    // that has to be both — absent when unasked, present-and-null when asked and unresolvable —
+    // and this is the half `JSON.stringify` drops over there.
+    assert!(
+        !folding.snapshot.contains_key("timeline"),
+        "an unasked timeline is not a key"
+    );
+    assert!(
+        !folding.snapshot.contains_key("zone"),
+        "no zone line folded yet, so there is no zone to state"
+    );
+    // THE INTEGERS SURVIVED, which is the whole reason `CombatState` is a raw map: a damage total
+    // that came back as 43504.0 would fail the verbatim round trip above, and this says so at the
+    // field rather than leaving a whole-message compare to explain it.
+    let you = &folding.snapshot["selected"]["entities"][0];
+    assert_eq!(you["total"], 43_504);
+    assert!(you["total"].is_i64());
+
+    let live = answers.next().expect("the live answer");
+    assert!(
+        live.now > folding.now,
+        "a live meter ages past the log's last line: {} vs {}",
+        live.now,
+        folding.now
+    );
+    // Asked for, and resolved to nothing: the key is present and null.
+    assert_eq!(live.snapshot["timeline"], serde_json::Value::Null);
+    assert_eq!(live.snapshot["selectedId"], "zone");
+}
+
+#[test]
+fn a_search_that_found_nothing_still_says_how_much_it_looked_through() {
+    // `corpus` IS NOT THE RESULT SET, and the two empty answers are what make that a real claim
+    // rather than a description: an empty query and a query nothing matched produce the identical
+    // empty `hits` beside the identical 1,428, because both mean "draw no results" and the
+    // difference between them is the query the client already holds.
+    let results: Vec<_> = engine_frames("09-combat-search.json")
+        .into_iter()
+        .filter_map(|frame| match frame {
+            EngineMessage::Reply(reply) => match reply.result {
+                ReplyResult::CombatSearchFightsResult(found) => Some(found),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    let [found, empty_query, no_match] = results.as_slice() else {
+        panic!("three answers, got {}", results.len());
+    };
+    assert_eq!(found.hits.len(), 2);
+    assert_eq!(found.corpus, 1428);
+    assert!(empty_query.hits.is_empty());
+    assert_eq!(
+        empty_query.corpus, 1428,
+        "an empty box searched nothing, and there was plenty to search"
+    );
+    assert!(no_match.hits.is_empty());
+    assert_eq!(no_match.corpus, 1428);
+
+    // A HIT'S SUMMARY IS THE FOLD'S OWN ROW, carried whole. `durationSec` is a float and `total` is
+    // an integer in the same object, which is exactly what an open map preserves and a generated
+    // struct would have flattened to two f64s.
+    let top = &found.hits[0].summary;
+    assert_eq!(top["name"], "a zol ghoul knight");
+    assert!(top["total"].is_i64());
+    assert!(top["durationSec"].is_f64());
+    // Ties break by RECENCY: the two hits score identically and the newer `startTs` is first.
+    assert!(
+        (found.hits[0].score - found.hits[1].score).abs() < f64::EPSILON,
+        "the fixture's two hits are a tie, which is what makes the order a claim"
+    );
+    assert!(top["startTs"].as_i64() > found.hits[1].summary["startTs"].as_i64());
+}
+
 /// The reply result of the first `module.snapshot` answer naming `module`.
 fn module_result(frames: &[EngineMessage], module: &str) -> ReplyResult {
     frames

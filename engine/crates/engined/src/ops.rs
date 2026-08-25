@@ -13,15 +13,18 @@
 //! argument `protocol::transport::memory` makes one layer down.
 
 use protocol::generated::{
-    AlertsDefineRequestOp, BuffTrustDefineRequestOp, ClientMessage, ComboDefineRequestOp,
-    DefineAck, EchoRequestOp, EchoResult, EngineMessage, ErrorCode, ErrorReply, ErrorReplyKind,
-    HelloOp, ModuleSnapshotRequestOp, ModuleSnapshotResult, PerfSnapshotRequestOp, ProtocolError,
-    Reply, ReplyKind, ReplyResult, RequestId, ResetMessage, ResetMessageKind,
-    RespawnDefineRequestOp, RosterDefineRequestOp, SessionAttachRequestOp, SessionHealthRequestOp,
+    AlertsDefineRequestOp, BuffTrustDefineRequestOp, ClientMessage, CombatSearchFightsRequestOp,
+    CombatSearchFightsResult, CombatSnapshotOpts, CombatSnapshotRequestOp, CombatSnapshotResult,
+    CombatState, ComboDefineRequestOp, DefineAck, EchoRequestOp, EchoResult, EngineMessage,
+    ErrorCode, ErrorReply, ErrorReplyKind, FightSearchHit, FightSummary, HelloOp,
+    ModuleSnapshotRequestOp, ModuleSnapshotResult, PerfSnapshotRequestOp, ProtocolError, Reply,
+    ReplyKind, ReplyResult, RequestId, ResetMessage, ResetMessageKind, RespawnDefineRequestOp,
+    RosterDefineRequestOp, SessionAttachRequestOp, SessionHealthRequestOp,
     SessionProgressRequestOp, SubscribeAck, ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
 };
 
-use crate::world::{ListenerId, PerfAnswer, SnapshotAnswer, World};
+use crate::ingest::CombatOpts;
+use crate::world::{CombatAnswer, ListenerId, PerfAnswer, SnapshotAnswer, World};
 
 /// One connection's own state — everything that belongs to this conversation rather than to the
 /// world.
@@ -289,7 +292,141 @@ impl Session {
                 &request.params.edits,
                 json(&request.params.edits),
             ),
+
+            // ── THE COMBAT SURFACE (JOS-485) ───────────────────────────────────────────────────
+            //
+            // COMBAT.SNAPSHOT. `src/main/ipc/world.ts`'s `combat:snapshot` handler, moved to the
+            // process that owns the fold — and the ONE difference from that handler is the one
+            // worth stating: it passes `Date.now()`, and this passes nothing, because the instant
+            // is the engine's to choose and only the thread holding the fold knows whether this
+            // world has reached its tail (`crate::foldsink`'s header). The reply says which instant
+            // it chose.
+            //
+            // TWO OUTCOMES, LIKE `perf.snapshot` AND UNLIKE `module.snapshot`. The request names no
+            // module, no source, nothing that could be absent — so there is no `notFound` here, and
+            // every way of having nothing to ask is one `unavailable`.
+            ClientMessage::CombatSnapshotRequest(request) => {
+                let opts = combat_opts(request.params.opts.as_ref());
+                match world.combat_snapshot(&opts) {
+                    CombatAnswer::Unavailable(why) => {
+                        error(request.id, ErrorCode::Unavailable, why)
+                    }
+                    CombatAnswer::Answer(snapshot) => match snapshot.state {
+                        // THE SHAPE IS CHECKED RATHER THAN COERCED. `CombatEngine::snapshot`
+                        // publishes an object and the schema says so, but "an empty object" is what
+                        // an `unwrap_or_default` would put on the wire if it ever stopped — a
+                        // meter with no rows, indistinguishable from a session with no fights. An
+                        // engine bug says it is one.
+                        serde_json::Value::Object(state) => reply(
+                            request.id,
+                            ReplyResult::CombatSnapshotResult(CombatSnapshotResult {
+                                now: snapshot.now,
+                                snapshot: CombatState(state),
+                            }),
+                        ),
+                        other => error(
+                            request.id,
+                            ErrorCode::Internal,
+                            format!(
+                                "the combat engine published a {} where the protocol states an object",
+                                shape_of(&other)
+                            ),
+                        ),
+                    },
+                }
+            }
+
+            // COMBAT.SEARCHFIGHTS. `world.ts:27`'s semantics, kept verbatim: a `limit` is CLAMPED
+            // rather than refused, and the clamp is here rather than in the fold because it is a
+            // payload decision about a wire message. The query needs no coercion on this side — the
+            // schema makes it a string or the frame is `badParams` one layer up, which is the typed
+            // half of `typeof text === 'string' ? text : ''`.
+            ClientMessage::CombatSearchFightsRequest(request) => {
+                let limit = clamp_hits(request.params.limit);
+                match world.search_fights(&request.params.query, limit) {
+                    CombatAnswer::Unavailable(why) => {
+                        error(request.id, ErrorCode::Unavailable, why)
+                    }
+                    CombatAnswer::Answer(found) => reply(
+                        request.id,
+                        ReplyResult::CombatSearchFightsResult(CombatSearchFightsResult {
+                            corpus: found.corpus,
+                            hits: found
+                                .hits
+                                .into_iter()
+                                .map(|hit| FightSearchHit {
+                                    score: hit.score,
+                                    summary: FightSummary(match hit.summary {
+                                        serde_json::Value::Object(map) => map,
+                                        // A summary is an object by construction; an empty one is
+                                        // the honest floor if a future builder ever published
+                                        // something else, and unlike the snapshot above it costs a
+                                        // ROW rather than the whole answer.
+                                        _ => serde_json::Map::new(),
+                                    }),
+                                })
+                                .collect(),
+                        }),
+                    ),
+                }
+            }
         }
+    }
+}
+
+/// THE MOST HITS THIS ENGINE WILL RANK, whoever asks — `world.ts:30`'s own 500.
+const MAX_FIGHT_HITS: i64 = 500;
+
+/// The hits a request that named no limit gets — `fightSearch.ts`'s `DEFAULT_LIMIT`. The UI shows a
+/// ranked list, not a page of 1,400.
+const DEFAULT_FIGHT_HITS: i64 = 50;
+
+/// `Math.min(Math.max(1, Math.floor(limit)), 500)`, and the floor is free: the wire type is an
+/// integer, so a fractional limit is a frame the generated types already refused.
+///
+/// CLAMPED, NEVER REFUSED, which is the difference between this and a view's `window.limit`. A view
+/// refuses an over-budget window BY NAME because the client stated a query it will keep re-cutting
+/// and a silently-shrunk one it cannot notice is a window it did not ask for. A search is one
+/// answer to one keystroke and the ranking is already truncated — so the smaller list IS the
+/// answer, and a search box that stopped answering because a number was silly would be the worse
+/// failure. `world.ts` made the same call and this is it kept.
+fn clamp_hits(limit: Option<i64>) -> usize {
+    let wanted = limit.map_or(DEFAULT_FIGHT_HITS, |n| n.clamp(1, MAX_FIGHT_HITS));
+    usize::try_from(wanted).unwrap_or(0)
+}
+
+/// The wire's opts in the ingest's vocabulary, with every absence resolved to the app's own default.
+///
+/// THE DEFAULTS ARE `snapshot()`'s, not zero: `maxSegments` absent is 100 because that is what
+/// `engine.ts` reads (`opts.maxSegments ?? 100`), and a cap of zero would serve a meter with no
+/// fight list at all to a client that asked for the ordinary thing.
+fn combat_opts(opts: Option<&CombatSnapshotOpts>) -> CombatOpts {
+    /// `engine.ts snapshot`'s `opts.maxSegments ?? 100`.
+    const DEFAULT_MAX_SEGMENTS: i64 = 100;
+    let Some(opts) = opts else {
+        return CombatOpts {
+            max_segments: usize::try_from(DEFAULT_MAX_SEGMENTS).unwrap_or(0),
+            ..CombatOpts::default()
+        };
+    };
+    CombatOpts {
+        selected_id: opts.selected_id.clone(),
+        show_unparsed: opts.show_unparsed.unwrap_or(false),
+        max_segments: usize::try_from(opts.max_segments.unwrap_or(DEFAULT_MAX_SEGMENTS).max(0))
+            .unwrap_or(0),
+        timeline: opts.timeline.unwrap_or(false),
+    }
+}
+
+/// What a JSON value IS, for a diagnostic that has to say why an answer was refused.
+fn shape_of(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
     }
 }
 
@@ -469,6 +606,8 @@ fn is_known_op(op: &str) -> bool {
         RespawnDefineRequestOp::RespawnDefine.to_string(),
         ComboDefineRequestOp::ComboDefine.to_string(),
         RosterDefineRequestOp::RosterDefine.to_string(),
+        CombatSnapshotRequestOp::CombatSnapshot.to_string(),
+        CombatSearchFightsRequestOp::CombatSearchFights.to_string(),
     ]
     .iter()
     .any(|known| known == op)

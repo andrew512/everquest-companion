@@ -39,6 +39,7 @@ mod conn;
 mod foldsink;
 mod ingest;
 mod ops;
+mod search;
 mod spawn;
 mod views;
 mod wire;

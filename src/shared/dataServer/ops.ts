@@ -14,6 +14,8 @@
 import type { ClientMessage, ErrorCode, Hello, ReplyResult, RequestId } from './protocol.generated'
 import type {
   AttachResult,
+  CombatSearchFightsResult,
+  CombatSnapshotResult,
   DefineAck,
   EchoResult,
   HealthResult,
@@ -40,6 +42,12 @@ interface ResultRegistry {
   'respawn.define': DefineAck
   'combo.define': DefineAck
   'roster.define': DefineAck
+  // THE COMBAT SURFACE (JOS-485). Two ops and two shapes: the meter's whole state, and a ranked
+  // answer to a search box. Neither is a `view.*` — one is the app's own `combat:snapshot` IPC
+  // moved server-side, the other is a question rather than a window — and the third surface the
+  // ticket adds, `combat.live`, is a view SOURCE and therefore not an op at all.
+  'combat.snapshot': CombatSnapshotResult
+  'combat.searchFights': CombatSearchFightsResult
 }
 
 /** Every client message that carries a request id — i.e. everything except the handshake. */
@@ -92,7 +100,15 @@ export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> 
   'buffTrust.define': (r) => 'applied' in r,
   'respawn.define': (r) => 'applied' in r,
   'combo.define': (r) => 'applied' in r,
-  'roster.define': (r) => 'applied' in r
+  'roster.define': (r) => 'applied' in r,
+  // `snapshot` rather than `now`: the payload is the field this result exists for, and a name as
+  // generic as `now` is the one a later result shape is most likely to want too. The lesson is
+  // JOS-483's — a guard is only worth its line if no other arm can pass it — and `status` losing its
+  // discriminating power the moment `perf.snapshot` restated it is what taught it.
+  'combat.snapshot': (r) => 'snapshot' in r,
+  // `hits` rather than `corpus`, for the same reason and one step further: `corpus` is a count and
+  // counts are exactly what other shapes grow.
+  'combat.searchFights': (r) => 'hits' in r
 }
 
 /**

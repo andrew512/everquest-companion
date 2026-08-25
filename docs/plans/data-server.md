@@ -282,6 +282,13 @@ From the connect-and-serve wave (JOS-478/479/480):
 
 1. `combat.snapshot(now, opts)` — the only wall-clock-parameterized read: the now-evaluation
    moves server-side; fight/scope selection become subscription parameters, not app state.
+   **SETTLED (JOS-485).** The op takes NO instant and the reply states the one the engine used:
+   the process's own wall clock while the tail is live, `fold.last_ts()` at every moment before
+   that. The discriminator is structural rather than a status copy — `EventSink::tick` is
+   unreachable from the historical scan, so "has this sink been ticked" IS "is this world live" —
+   which leaves the replay path a pure function of its bytes and the oracle untouched. Selection
+   is an OP parameter (`opts.selectedId`) today; making it a SUBSCRIPTION parameter is the
+   `combat.live` follow-up, whose source serves the default selection and nothing else so far.
 2. The conCard hook (fold synchronously calls INTO Electron today): inverts to a server-emitted
    `world.conCard` stream event carrying the fully resolved card (resist profile joined
    engine-side); main only opens the overlay window.
@@ -358,10 +365,17 @@ light, app connected with the parity probe, packaging signed). Remaining to buil
    `earlyWarnSec` defs are compiled out of the engine evaluator (needs the timer-row projection),
    and Rust's regex refuses lookaround/backreferences V8 accepts — measure against the owner's
    real def set before cutover.
-3. **The remaining view sources** — every list in the product: `combat.live` (the meter; where
-   update-op coverage arrives), encounters/drilldown, buff+timer rows (the overlays), respawn,
-   progression, kills, and the Knowledge surface (items/spells/mobs/quests move engine-side —
-   deletes ~12 MB from main's heap and the renderer-bundled corpora).
+3. **The remaining view sources** — every list in the product. ~~`combat.live`~~ **DONE** (JOS-485)
+   and it is where update-op coverage arrived: the meter's rows edit rather than append, so the
+   diff protocol's third op is proven over a socket at last. The two combat OPS landed with it —
+   `combat.snapshot` (verdict 1) and `combat.searchFights`. ONE NAMED GAP for the meter-cutover
+   ticket: `hydrating` is `true` in every answer this build gives, because the snapshot-time sweep
+   block (charm sweep, ally expiry, pet nudge, deferred encounter closure) is unported and a fold
+   that provably never enters it cannot honestly say otherwise — clearing the flag means porting
+   those four, not editing a boolean. Still open: encounters/drilldown, the INCOMING meter,
+   buff+timer rows (the overlays), respawn, progression, kills, and the Knowledge surface
+   (items/spells/mobs/quests move engine-side — deletes ~12 MB from main's heap and the
+   renderer-bundled corpora).
 4. **Streams**: `alerts.fires` DONE as a stream (JOS-482; the AUDIO cutover — app plays from the
    frame and the TS evaluator dies — is its own ticket, owning the two named gaps above);
    `world.conCard` fully resolved engine-side still open.
