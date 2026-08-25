@@ -13,6 +13,11 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, statSync }
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// WHERE CARGO IS, ASKED ONCE FOR THE WHOLE REPO. `scripts/build-engine.mts` owns that resolution
+// because the SHIPPING build needs it too (JOS-473) — and a second copy here would not be untidy
+// so much as a machine where one of the two finds a toolchain and the other does not. The
+// dependency points this way on purpose: the harness leans on the build script, never the reverse.
+import { cargoBinary } from '../../scripts/build-engine.mts'
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -105,19 +110,6 @@ function newestEngineSourceMtime(): number {
     }
   }
   return newest
-}
-
-/**
- * `cargo`, which is NOT on PATH in a fresh shell on this machine (AGENTS.md's toolchain note says
- * so for the shell; a spawned harness inherits whatever the shell had). Rustup's default install
- * location FIRST, deterministically — it is the toolchain `engine/rust-toolchain.toml` pins — and
- * bare `cargo` only as the fallback for a machine that installed Rust some other way.
- */
-function cargoBinary(): string {
-  const home = process.env.USERPROFILE ?? process.env.HOME ?? ''
-  const fallback = home === '' ? null : join(home, '.cargo', 'bin', 'cargo.exe')
-  if (fallback !== null && existsSync(fallback)) return fallback
-  return 'cargo'
 }
 
 /**

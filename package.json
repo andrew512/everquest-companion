@@ -66,8 +66,9 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "dist": "npm run build && electron-builder --win",
-    "dist:dir": "npm run build && electron-builder --win --dir"
+    "build:engine": "tsx scripts/build-engine.mts",
+    "dist": "npm run build && npm run build:engine && electron-builder --win",
+    "dist:dir": "npm run build && npm run build:engine && electron-builder --win --dir"
   },
   "dependencies": {
     "@emotion/react": "^11.13.3",

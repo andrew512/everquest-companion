@@ -25,10 +25,10 @@
 // both variables instead of having to undo a gate. The rule this repo actually keeps is that the
 // test mode changes as little about the product as possible.
 //
-// WHAT IT LOOKS LIKE WITH NO BINARY — which is every checkout until JOS-466's `engined.exe` lands,
-// and every packaged build until the phase-3 packaging change. The supervisor probes, finds
-// nothing, logs one line naming what it looked for, and stops. No error-store entry, no retry
-// storm, no crash. Absence is a CONDITION here, not a failure.
+// WHAT IT LOOKS LIKE WITH NO BINARY — which is any checkout that has not run `cargo build`, since
+// a PACKAGED build now carries its own (JOS-473 ships `resources/engine/engined.exe`). The
+// supervisor probes, finds nothing, logs one line naming what it looked for, and stops. No
+// error-store entry, no retry storm, no crash. Absence is a CONDITION here, not a failure.
 
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'

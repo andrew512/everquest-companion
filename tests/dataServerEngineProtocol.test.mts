@@ -199,8 +199,8 @@ test('the binary is PROBED, dev build first, and every candidate is absolute', (
     // sitting beside it must not silently win.
     'C:/repo/engine/target/debug/engined.exe',
     'C:/repo/engine/target/release/engined.exe',
-    // Packaged: beside the asar. Nothing puts it here yet - that is the phase-3 packaging change,
-    // deliberately out of this ticket's scope - so the path is listed now and resolves to nothing.
+    // Packaged: beside the asar, which is where electron-builder's extraResources copies the
+    // release binary (JOS-473). `tests/enginePackaging.test.mts` pins the config against THIS list.
     'C:/app/resources/engine/engined.exe',
     'C:/app/resources/engined.exe'
   ])
