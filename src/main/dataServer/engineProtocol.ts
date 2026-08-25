@@ -401,10 +401,11 @@ export function engineExitStep(
 // the asar under `process.resourcesPath`), and which one is running is not a thing this module can
 // know from its own path.
 //
-// PACKAGING IS DELIBERATELY OUT OF SCOPE HERE (phase 3): nothing in `electron-builder.yml` ships
-// `engined.exe` yet, so the packaged candidate below is where it WILL be, listed now so the
-// resolver does not have to change when it arrives. Until then a packaged build resolves nothing
-// and the supervisor logs an absence, which is the honest state.
+// PACKAGING HAS LANDED (JOS-473, phase 3) AND THIS FILE DID NOT HAVE TO MOVE: `electron-builder.yml`
+// copies the RELEASE binary to `resources/engine/engined.exe` — the address the packaged candidate
+// below already named while nothing shipped it. `tests/enginePackaging.test.mts` COMPOSES that
+// destination out of the config and requires it to be exactly this candidate, so the two files
+// cannot drift into a packaged app that resolves nothing and logs an absence.
 
 /** The engine binary's file name. Windows only today, like the rest of this app. */
 export const ENGINE_BIN_NAME = process.platform === 'win32' ? 'engined.exe' : 'engined'
@@ -456,7 +457,8 @@ export function engineBinaryCandidates(env: EngineBinaryEnv): string[] {
     add(`${root}/engine/target/debug/${bin}`)
     add(`${root}/engine/target/release/${bin}`)
   }
-  // Packaged: beside the asar under `resources/`. Phase 3 puts it here; nothing does today.
+  // Packaged: beside the asar under `resources/`, which is where `extraResources` puts it — the
+  // only arrangement a native executable can be launched from at all.
   if (env.resourcesPath !== '') {
     add(`${env.resourcesPath}/engine/${bin}`)
     add(`${env.resourcesPath}/${bin}`)
