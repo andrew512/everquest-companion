@@ -25,6 +25,13 @@
 // both variables instead of having to undo a gate. The rule this repo actually keeps is that the
 // test mode changes as little about the product as possible.
 //
+// TWO NARROWER FLAGS LIVE INSIDE THIS ONE and neither means anything without it: `EQC_ENGINE_SERVE`
+// lets the engine answer the app's READS (serveShim.ts), and `EQC_ENGINE_ALERTS` lets it make a
+// SOUND (alertsAudio.ts, which additionally refuses to arm over an early-warning def). Both are
+// read by their own file and reached only from inside the guard below, which is the same one-gate
+// rule the client and the broker keep: this file decides whether there is an engine at all, and
+// nothing else re-asks that question.
+//
 // AND SINCE JOS-479 THE FLAG BUYS ONE MORE THING: the app's own CLIENT. `engineClientHost.ts`
 // connects to the launch this file supervises, attaches the engine to the log this process is
 // tailing, and runs the parity probe. It is armed from inside the guard below and torn down beside
@@ -56,6 +63,9 @@ import { installEngineClient, onEngineReady, stopEngineClient } from './engineCl
 // THE RENDERERS' OWN CLIENTS (JOS-484, phase 3), behind THIS file's flag as well. The broker holds
 // no flag of its own either — it simply never learns about a launch, so its IPC handler refuses.
 import { noteEngineLaunch, stopRendererBroker } from './rendererBroker'
+// THE AUDIO CUTOVER (JOS-491), behind THIS file's flag plus one of its own. It is armed and
+// disarmed beside the supervisor for the reason the client is: one lifecycle, one place.
+import { armEngineAlerts, disarmEngineAlerts } from './alertsAudio'
 
 /** How long a loopback connect may take before the probe gives up on it. Loopback either answers
  *  immediately or is not listening; this is a bound on the pathological case, not a budget. */
@@ -147,6 +157,11 @@ function dirOf(path: string): string {
  */
 export function startEngineSupervisor(): void {
   if (!engineEnabled()) return
+  // THE AUDIO CUTOVER'S SWITCH (JOS-491), THROWN BEFORE ANYTHING CAN FIRE. It reads its own second
+  // flag (`EQC_ENGINE_ALERTS=1`) and its own gate, so this call is unconditional and silent on the
+  // launches that want nothing; what it must NOT be is late, because arming after a fire has
+  // arrived would mean one alert played by the wrong world.
+  armEngineAlerts()
   // ARMED BEFORE THE SUPERVISOR CAN REACH READY. `installEngineClient` only registers the
   // world-rebuilt observer — it opens no socket — but the TypeScript fold can land at any moment
   // and a rebuild that arrived before the observer existed would be a rebuild the client never
@@ -203,7 +218,13 @@ export function startEngineSupervisor(): void {
  * child's exit is how a wedged child becomes a window that will not close.
  */
 export function stopEngineSupervisor(): void {
-  // THE CLIENT GOES FIRST, and the order is the same courtesy the supervisor extends to the engine:
+  // THE SOUND COMES BACK FIRST (JOS-491). An engine that is being stopped is about to stop firing,
+  // and an app left silenced by a departed evaluator would be an app with no alerts at all — the
+  // one failure this whole feature must never produce. It is the reverse of the arm order for the
+  // same reason the client closes before the engine does: nothing is left depending on a thing that
+  // has already gone.
+  disarmEngineAlerts()
+  // THE CLIENT GOES NEXT, and the order is the same courtesy the supervisor extends to the engine:
   // closing our socket before closing the engine's stdin means the engine sees a client leave and
   // then a shutdown, rather than being asked to exit while a connection is still open. Idempotent
   // and safe on a launch that never armed a client.

@@ -60,8 +60,13 @@ import { createNdjsonTransport, type ByteChannel } from '../../shared/dataServer
 import type {
   ClientMessage,
   EngineMessage,
+  FireMessage,
   PerfSnapshotResult
 } from '../../shared/dataServer/protocol.generated'
+// THE AUDIO CUTOVER (JOS-491). It owns its own flag and its own gate; this file simply offers it
+// every fire and prints what it decided. A launch without `EQC_ENGINE_ALERTS=1` finds `armed`
+// false and pays one boolean read per fire.
+import { playEngineFire } from './alertsAudio'
 import { readDefine } from './appKnowledge'
 import { DEFINE_OPS, setAppKnowledgePusher, type DefineOp } from './definePush'
 import { connectToEngine } from './socketChannel'
@@ -213,7 +218,7 @@ async function openConnection(mine: number, info: ReadyEngine, client: EngineCli
   // The hello rides this call — the client sends it the moment it has a transport, and queues
   // everything else behind the answer, so there is no handshake to sequence here.
   client.attach(createNdjsonTransport<ClientMessage, EngineMessage>(channel))
-  // THE FIRES, LOGGED AND COUNTED — NEVER PLAYED. See `onFire`.
+  // THE FIRES — logged and counted always, PLAYED when the cutover armed. See `noteFire`.
   client.onFire((fire) => {
     noteFire(fire)
   })
@@ -272,24 +277,29 @@ async function pushAllDefines(mine: number): Promise<void> {
 let firesHeard = 0
 
 /**
- * ONE ALERT FIRE FROM THE ENGINE — LOGGED AND COUNTED, AND DELIBERATELY NOT PLAYED.
+ * ONE ALERT FIRE FROM THE ENGINE — LOGGED AND COUNTED, AND PLAYED ONLY WHEN THE CUTOVER IS ARMED.
  *
- * THE APP'S OWN `AlertsModule` IS STILL FIRING, and it is still the only thing that makes a sound.
- * Playing this one too would double every alert the owner hears — and the owner is the regression
+ * WITHOUT `EQC_ENGINE_ALERTS=1` this is exactly what JOS-482 shipped: a line, and no sound. The
+ * app's own `AlertsModule` is still firing and is still the only thing that makes noise, because
+ * playing this one too would double every alert the owner hears — and the owner is the regression
  * test for this whole program, so a duplicated sound would not be a cosmetic bug, it would corrupt
- * the evidence the cutover is being judged on. The audio cutover is the alerts-surface ticket:
- * that one deletes the app-side evaluator in the same change that gives this line a speaker, so the
- * two can never both be live.
+ * the evidence the cutover is being judged on.
  *
- * WHAT THE LINE PROVES is everything a sound would: the def reached the engine, the engine
- * evaluated it against a LIVE event, and the frame it sent back is fully resolved — the pack key is
- * right there, so the app would need nothing else to play it.
+ * WITH THE FLAG (JOS-491) the two swap in one place rather than both being live: `alertsAudio.ts`
+ * silenced this process's evaluator at arm time, so `playEngineFire` is the only thing publishing
+ * a firing and the sound is engine-attributed by construction. The line stays either way, and says
+ * which world it was in.
+ *
+ * WHAT THE LINE PROVES, even unplayed, is everything a sound would: the def reached the engine, the
+ * engine evaluated it against a LIVE event, and the frame it sent back is fully resolved — the pack
+ * key is right there, so the app needs nothing else to play it.
  */
-function noteFire(fire: { at: number; rule: string; sound: string; message: string }): void {
+function noteFire(fire: FireMessage): void {
   firesHeard += 1
+  const outcome = playEngineFire(fire) ? 'PLAYED from the engine' : 'logged, not played'
   debug(
     `data-server fire: ${fire.rule} [${fire.sound}] at ${String(fire.at)} — ` +
-      `${fire.message} (fires this launch: ${String(firesHeard)}; logged, not played)`
+      `${fire.message} (fires this launch: ${String(firesHeard)}; ${outcome})`
   )
 }
 
