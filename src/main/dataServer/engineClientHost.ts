@@ -26,6 +26,13 @@
 // `if` in `engineHost.ts` — `installEngineClient` is never called, no observer is registered, and
 // `pipeline.ts sendWorldRebuilt` finds a null.
 //
+// THAT IS STILL TRUE AFTER JOS-483, and it is worth saying because the engine now appears in the
+// app's performance panel. This file grew two READS and one request (`lastParitySummary`,
+// `enginePerfSnapshot`) and no channel: `src/main/perf.ts` calls them and pushes over the perf IPC
+// that already existed, which is the same shape every other number in that panel has. Nothing here
+// knows a window exists, and no PRODUCT branch reads the engine — a diagnostic is not a source of
+// truth. The renderer still has no engine client; brokering one is JOS-484.
+//
 // ── WHY A FRESH CLIENT PER LAUNCH, RATHER THAN `client.attach` OVER A REPLACEMENT TRANSPORT ────
 //
 // `EngineClient` takes its token at construction and holds it for the life of the object, which is
@@ -50,12 +57,17 @@ import { registry, setWorldRebuiltObserver } from '../pipeline'
 import { getActiveCharacter } from '../session'
 import { createEngineClient, EngineError, type EngineClient } from '../../shared/dataServer/client'
 import { createNdjsonTransport, type ByteChannel } from '../../shared/dataServer/ndjson'
-import type { ClientMessage, EngineMessage } from '../../shared/dataServer/protocol.generated'
+import type {
+  ClientMessage,
+  EngineMessage,
+  PerfSnapshotResult
+} from '../../shared/dataServer/protocol.generated'
 import { connectToEngine } from './socketChannel'
 import {
   PARITY_PROBE_MODULES,
   judgeParity,
   parityLine,
+  tallyParity,
   type EngineMark,
   type ParityAsk,
   type ParityVerdict
@@ -142,6 +154,10 @@ export function onEngineReady(info: ReadyEngine | null): void {
   const mine = gen
   live?.client.close()
   live = null
+  // THE LAST VERDICT DIES WITH THE ENGINE THAT EARNED IT. A respawn is a launch and a fresh world
+  // has proven nothing yet; leaving the counts standing would let the panel report "5 agree" about
+  // a process that no longer exists.
+  lastParity = null
   if (info === null) {
     debug('data-server client: the engine is gone; the connection is closed')
     return
@@ -277,6 +293,13 @@ async function runParityProbe(mine: number, l: LiveEngine, logPath: string): Pro
     asks.push(ask)
   }
   const verdicts: ParityVerdict[] = judgeParity(asks)
+  // THE COUNTS ARE KEPT, not only printed (JOS-483). The line is still the dev log's own record and
+  // it is unchanged; this is the same verdict tallied once, at the one moment it is authoritative,
+  // so the performance panel can state "5 agree, 0 diverge" without parsing prose out of a log
+  // nobody guaranteed the shape of. It is the LAST run's, deliberately: a probe runs on a rebuild
+  // and a character switch, not on a timer, and the panel wants what was last established rather
+  // than a running total across worlds that have been replaced.
+  lastParity = { at: Date.now(), logPath, ...tallyParity(verdicts) }
   debug(
     parityLine({
       logPath,
@@ -345,6 +368,52 @@ async function askOne(l: LiveEngine, module: string): Promise<ParityAsk> {
   }
 }
 
+// ── what the performance panel can ask this file (JOS-483) ─────────────────────────────────────
+//
+// TWO READS AND ONE REQUEST, and every one of them is main-side. The renderer never reaches the
+// engine — brokering a client into a window is JOS-484's job — so the panel's data arrives the way
+// every other number in that panel arrives: main measures, main pushes, over the perf channels that
+// already exist.
+
+/** The last parity probe's counts, kept for the panel. `null` until one has run in this launch. */
+export interface ParitySummary {
+  /** When the probe finished, by the host's clock. The panel draws its AGE, because a parity
+   *  verdict from four minutes ago is a different thing to read than one from four seconds ago. */
+  readonly at: number
+  /** The log both worlds were folding. */
+  readonly logPath: string
+  readonly agree: number
+  readonly diverge: number
+  readonly skipped: number
+}
+
+let lastParity: ParitySummary | null = null
+
+/** What the last parity probe found, or `null` when none has run in this launch — which is NOT
+ *  "everything agreed": a probe that never ran has established nothing. */
+export function lastParitySummary(): ParitySummary | null {
+  return lastParity
+}
+
+/**
+ * Ask the engine what it costs. `null` when there is no connected engine to ask.
+ *
+ * IT DOES NOT WAIT FOR A CONNECTION and it does not open one: the client is the supervisor's to
+ * make, and a perf panel must never be the reason a socket exists. A rejection resolves to `null`
+ * rather than throwing, for the reason this whole file exists — a diagnostic that can break the
+ * thing it measures is worse than no diagnostic. The refusal is still logged, once, at debug.
+ */
+export async function enginePerfSnapshot(): Promise<PerfSnapshotResult | null> {
+  const l = live
+  if (l === null) return null
+  try {
+    return await l.client.request('perf.snapshot', {})
+  } catch (err) {
+    debug(`data-server client: perf.snapshot was refused (${describeErr(err)})`)
+    return null
+  }
+}
+
 // ── the composition root's two verbs ────────────────────────────────────────────────────────────
 
 /**
@@ -361,4 +430,5 @@ export function stopEngineClient(): void {
   setWorldRebuiltObserver(null)
   live?.client.close()
   live = null
+  lastParity = null
 }

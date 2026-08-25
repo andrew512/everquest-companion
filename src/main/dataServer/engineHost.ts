@@ -44,7 +44,12 @@ import { setEnginePid } from '../processPriority'
 import { mintToken } from './token'
 import { engineBinaryCandidates } from './engineProtocol'
 import { connectToEngine } from './socketChannel'
-import { createEngineSupervisor, type EngineSupervisor, type SupervisedChild } from './supervisor'
+import {
+  createEngineSupervisor,
+  type EngineStatus,
+  type EngineSupervisor,
+  type SupervisedChild
+} from './supervisor'
 // THE APP'S OWN CLIENT (JOS-479, phase 3). It lives behind THIS file's flag and nothing else, which
 // is why it reads no environment variable of its own: one gate, in one place.
 import { installEngineClient, onEngineReady, stopEngineClient } from './engineClientHost'
@@ -63,6 +68,21 @@ let supervisor: EngineSupervisor | null = null
 /** Is the engine wanted on this launch at all? ONE variable, read at boot. */
 export function engineEnabled(): boolean {
   return process.env.EQC_ENGINE === '1'
+}
+
+/**
+ * Where the engine supervisor is right now — `null` when this launch never wanted one.
+ *
+ * THE PERFORMANCE PANEL'S GATE (JOS-483), and the two absences it distinguishes are the whole
+ * reason it returns a union rather than a string. `null` means the flag is off, so there is no
+ * feature to show. `'absent'` means the flag is on and this build carries no binary, which is the
+ * ORDINARY state of a checkout that has not run `cargo build` — and drawing an ENGINE section
+ * there would be showing the owner a row of dashes for a process that was never going to exist.
+ * Every other status is a real engine at some point in its life, and the panel draws it.
+ */
+export function engineSupervisorStatus(): EngineStatus | null {
+  if (!engineEnabled()) return null
+  return supervisor?.currentStatus() ?? 'stopped'
 }
 
 /**

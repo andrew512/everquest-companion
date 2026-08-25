@@ -218,6 +218,20 @@ export class EngineSupervisor {
 
   // ------------------------------------------------------------------ the public four
 
+  /**
+   * Where this supervisor is right now. A READ, and the type says so — the setter is every private
+   * transition in this file and there is no way to write it from outside.
+   *
+   * `EngineStatus` already promised to be "observable so the dev log and a test can both read it";
+   * this is the accessor that makes the promise true for the performance panel as well (JOS-483).
+   * The distinction it needs is `absent` from everything else: a build with no engine binary is the
+   * ORDINARY state of every install that is not a developer's cargo tree, and a panel that drew an
+   * ENGINE section there would be showing a feature this build does not have.
+   */
+  currentStatus(): EngineStatus {
+    return this.status
+  }
+
   /** Start, or restart after a `stop()`. Idempotent while a launch or a backoff is in flight. */
   start(): void {
     this.stopping = false

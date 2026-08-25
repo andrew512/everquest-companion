@@ -46,6 +46,7 @@ import { installSpeechCacheProtocol } from './speech/cache'
 import { registerIpc } from './ipc'
 import { DATA_READY_MS, bus, buffsModule, epoch, sendWorldRebuilt, sessionDetector } from './pipeline'
 import { markStartupPhase, startPerfSampler, stopPerf } from './perf'
+import { stopEnginePerfWatch } from './enginePerfWatch'
 import { noteHeapAfterData } from './dataWeight'
 import { initProcessPriority } from './processPriority'
 import { startEngineSupervisor, stopEngineSupervisor } from './dataServer/engineHost'
@@ -577,6 +578,12 @@ app.on('window-all-closed', () => {
   // that never reached `rendererHydrated` still writing what it DID reach, which is exactly the
   // launch whose profile is worth having.
   teardownStep('main:stopPerf', stopPerf)
+  // …and the ENGINE half of that panel (JOS-483), which is a SEPARATE step for the reason this
+  // whole list is separate steps: it polls a child process over a socket, which is the kind of
+  // thing that can throw on the way out, and it must not be able to take the startup profile's
+  // flush with it. It is armed only while the panel is open, so this is usually a no-op — and
+  // usually is not always: a window closed with the popover open never sent its own close.
+  teardownStep('main:stopEnginePerf', stopEnginePerfWatch)
   // Flush the learned message overlay one last time so the final session's observations
   // aren't lost between debounced saves (Task #36).
   teardownStep('main:saveOverlay', () => saveUserOverlaySync(buffsModule.overlayRegister()))

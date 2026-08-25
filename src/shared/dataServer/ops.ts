@@ -17,6 +17,7 @@ import type {
   EchoResult,
   HealthResult,
   ModuleSnapshotResult,
+  PerfSnapshotResult,
   SubscribeAck
 } from './protocol.generated'
 
@@ -26,6 +27,7 @@ interface ResultRegistry {
   'session.health': HealthResult
   'session.progress': SubscribeAck
   'module.snapshot': ModuleSnapshotResult
+  'perf.snapshot': PerfSnapshotResult
   'view.subscribe': SubscribeAck
   'view.unsubscribe': SubscribeAck
 }
@@ -62,6 +64,10 @@ export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> 
   // reads first anyway. `state` would be a weaker guard for the same cost — the schema lets it be
   // any JSON at all, including a value `in` cannot be asked about meaningfully.
   'module.snapshot': (r) => 'module' in r,
+  // `serve` rather than `status`: `session.health` already owns `status`, and a guard that two
+  // arms of the registry both pass is a guard that cannot tell them apart. `serve` is required by
+  // the schema and carried by no other result shape.
+  'perf.snapshot': (r) => 'serve' in r,
   'view.subscribe': (r) => 'subscribed' in r,
   'view.unsubscribe': (r) => 'subscribed' in r
 }
