@@ -9,28 +9,46 @@
 // the only file in `src/main/dataServer` that anybody would have to rewrite to run the engine some
 // other way.
 //
-// THE FLAG. `EQC_ENGINE=1` in the environment, and nothing else, turns this on. It is an
-// environment variable rather than a store preference or a vite `define` on purpose:
-//   * a STORE PREFERENCE would be a user-facing switch for a feature no user can see yet, and
-//     phase 0 ships no renderer surface at all;
+// THE FLAG IS AN ESCAPE HATCH NOW, NOT A SWITCH (JOS-495, the owner's cutover ruling). `EQC_ENGINE=0`
+// in the environment turns this OFF. Anything else turns it ON — and "anything else" is above all
+// the UNSET variable that every ordinary launch has, in dev and in the packaged app alike. THE
+// ENGINE IS THE PRODUCT; the flag is what you reach for when you need it gone.
+//
+// THAT IS THE EXACT INVERSION OF WHAT THIS HEADER USED TO ARGUE, and the old argument is not being
+// quietly deleted — it was right for its phase and its phase is over. Default-off is how you carry
+// a feature while you are still deciding about it, and the deciding is done: packaged builds have
+// SHIPPED the binary since JOS-473, the whole e2e suite has run engine-on since JOS-490, the shim
+// answers three of the app's own reads, the engine makes the sound, and the parity probe has been
+// comparing the two folds on every rebuild for as long as any of it. A flag nobody sane leaves off
+// is not a switch, it is a diagnostic.
+//
+// WHAT SURVIVES FROM THE OLD ARGUMENT IS THE SHAPE. It is still an environment variable rather than
+// a store preference or a vite `define`, and for reasons the inversion does not touch:
+//   * a STORE PREFERENCE would be a user-facing switch for the app's own architecture — nothing a
+//     user can act on, and a support answer nobody should ever have to give;
 //   * a VITE DEFINE would need the owner to restart `npm run dev` to change (AGENTS.md's rule), and
-//     the whole point of this phase is that a developer can start and stop the engine at will;
-//   * an env var read at boot is a thing the DEV can flip in one shell and the packaged app can
-//     never accidentally inherit.
-// THE E2E HARNESS IS NOT A SPECIAL CASE HERE, and that is deliberate rather than an omission. Every
-// other gate in this process restates `EQ_E2E` because the thing it guards happens by DEFAULT (the
-// sound-pack download, the telemetry flush, the presence thread); this one happens only when
-// somebody sets a variable, and the harness sets nothing. So the suite is already unaffected —
-// there is nothing to suppress — while the queued real-binary e2e (JOS-470) can opt in by setting
-// both variables instead of having to undo a gate. The rule this repo actually keeps is that the
-// test mode changes as little about the product as possible.
+//     the whole point of an escape hatch is that a developer reaches for it in one shell;
+//   * an env var read at boot is a FACT ABOUT HOW THE PROCESS WAS STARTED, so a diagnosis that
+//     needs the engine gone gets it by starting the process differently rather than by editing one.
+// `=1` still means on, and not as a compatibility special case — it is simply not `'0'`
+// (`shared/dataServer/engineFlags.ts`, which owns the comparison for all five readers of it).
+//
+// THE E2E HARNESS IS NOT A SPECIAL CASE HERE, and that is still deliberate. `EQ_E2E` is not a gate
+// on this file: the flags are a thing a developer sets in a shell, and since JOS-490 the harness is
+// a developer who always sets them (`appWindow.mts ENGINE_ON`). That forcing became REDUNDANT with
+// this ticket and is kept anyway — belt and braces across the default flip — while the one spec
+// whose subject is the engine's ABSENCE opts out by name with `EQC_ENGINE=0`. The rule this repo
+// actually keeps is that the test mode changes as little about the product as possible, and a
+// harness that names what it wants changes nothing at all.
 //
 // TWO NARROWER FLAGS LIVE INSIDE THIS ONE and neither means anything without it: `EQC_ENGINE_SERVE`
-// lets the engine answer the app's READS (serveShim.ts), and `EQC_ENGINE_ALERTS` lets it make a
-// SOUND (alertsAudio.ts, which additionally refuses to arm over an early-warning def). Both are
-// read by their own file and reached only from inside the guard below, which is the same one-gate
-// rule the client and the broker keep: this file decides whether there is an engine at all, and
-// nothing else re-asks that question.
+// lets the engine answer the app's READS (serveShim.ts for the answers, serveDeltas.ts for the
+// notification that there is a newer one), and `EQC_ENGINE_ALERTS` lets it make a SOUND
+// (alertsAudio.ts). Both default ON beside this one and both are taken away the same way, by `=0`
+// — which is what makes "is this the serve path or the audio path?" two launches rather than a
+// build. They are read by their own files and reached only from inside the guard below, which is
+// the same one-gate rule the client and the broker keep: this file decides whether there is an
+// engine at all, and nothing else re-asks that question.
 //
 // AND SINCE JOS-479 THE FLAG BUYS ONE MORE THING: the app's own CLIENT. `engineClientHost.ts`
 // connects to the launch this file supervises, attaches the engine to the log this process is
@@ -38,15 +56,24 @@
 // the supervisor, so `EQC_ENGINE` remains the single switch for the whole feature — a second gate
 // would be a second thing to forget.
 //
-// WHAT IT LOOKS LIKE WITH NO BINARY — which is any checkout that has not run `cargo build`, since
-// a PACKAGED build now carries its own (JOS-473 ships `resources/engine/engined.exe`). The
-// supervisor probes, finds nothing, logs one line naming what it looked for, and stops. No
-// error-store entry, no retry storm, no crash. Absence is a CONDITION here, not a failure.
+// WHAT IT LOOKS LIKE WITH NO BINARY — UNCHANGED BY THE FLIP, AND THAT IS THE POINT. The supervisor
+// probes, finds nothing, logs one line naming what it looked for, and stops. No error-store entry,
+// no retry storm, no crash. Absence is a CONDITION here, not a failure. Which of the two worlds a
+// launch is therefore in is decided by the DISK and not by the flag, and the two answers are:
+//   * A DEV CHECKOUT THAT HAS NOT RUN `cargo build` gets exactly the app it got before this ticket
+//     — TypeScript fold, TypeScript reads, TypeScript alerts — because default-on asks for an
+//     engine that is not there and gets the same silent nothing it always did. Nobody has to know
+//     the default moved to keep working in this tree.
+//   * A PACKAGED BUILD HAS THE BINARY, always, and has since JOS-473 (`extraResources` copies
+//     `resources/engine/engined.exe` beside the asar, the first path `engineBinaryCandidates`
+//     probes, and `build:engine` fails the build rather than shipping without it). So default-on in
+//     a shipped app means the engine actually runs, which is the entire content of this ticket.
 
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { app } from 'electron'
 import { logError, logInfo } from '../errorLog'
+import { engineFlagOn } from '../../shared/dataServer/engineFlags'
 import { setEnginePid } from '../processPriority'
 import { mintToken } from './token'
 import { engineBinaryCandidates } from './engineProtocol'
@@ -75,17 +102,26 @@ const CONNECT_TIMEOUT_MS = 2_000
  *  app and one engine; the CLASS is per-instance so tests never see this. */
 let supervisor: EngineSupervisor | null = null
 
-/** Is the engine wanted on this launch at all? ONE variable, read at boot. */
+/**
+ * Is the engine wanted on this launch at all? ONE variable, read at boot — and WANTED BY DEFAULT
+ * since JOS-495, so the honest reading of this function is "did anybody ask for it to be gone?".
+ *
+ * Answering `true` is not a claim that an engine EXISTS: `engineSupervisorStatus()` below
+ * distinguishes the two absences, and the header says why a checkout with no binary is the ordinary
+ * state rather than a broken one.
+ */
 export function engineEnabled(): boolean {
-  return process.env.EQC_ENGINE === '1'
+  return engineFlagOn(process.env.EQC_ENGINE)
 }
 
 /**
  * Where the engine supervisor is right now — `null` when this launch never wanted one.
  *
  * THE PERFORMANCE PANEL'S GATE (JOS-483), and the two absences it distinguishes are the whole
- * reason it returns a union rather than a string. `null` means the flag is off, so there is no
- * feature to show. `'absent'` means the flag is on and this build carries no binary, which is the
+ * reason it returns a union rather than a string. `null` means somebody turned the flag OFF, so
+ * there is no feature to show — a rarer answer since JOS-495 and a louder one, because it can now
+ * only be a deliberate `EQC_ENGINE=0`. `'absent'` means the engine is wanted and this build carries
+ * no binary, which is the
  * ORDINARY state of a checkout that has not run `cargo build` — and drawing an ENGINE section
  * there would be showing the owner a row of dashes for a process that was never going to exist.
  * Every other status is a real engine at some point in its life, and the panel draws it.

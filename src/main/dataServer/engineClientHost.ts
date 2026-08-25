@@ -22,8 +22,9 @@
 //
 // No IPC, no `window.eq`, no renderer anything. No store write. No branch in the product reads
 // anything the engine says. The TypeScript fold remains the app's only source of truth and will be
-// until the cutover deletes it (plan, phase 3). The cost when `EQC_ENGINE` is unset is exactly one
-// `if` in `engineHost.ts` — `installEngineClient` is never called, no observer is registered, and
+// until the cutover deletes it (plan, phase 3). The cost on a launch that asked for NO engine —
+// `EQC_ENGINE=0`, which since JOS-495 is the only way to be in that state — is exactly one `if` in
+// `engineHost.ts`: `installEngineClient` is never called, no observer is registered, and
 // `pipeline.ts sendWorldRebuilt` finds a null.
 //
 // THAT IS STILL TRUE AFTER JOS-483, and it is worth saying because the engine now appears in the
@@ -64,8 +65,8 @@ import type {
   PerfSnapshotResult
 } from '../../shared/dataServer/protocol.generated'
 // THE AUDIO CUTOVER (JOS-491). It owns its own flag and its own gate; this file simply offers it
-// every fire and prints what it decided. A launch without `EQC_ENGINE_ALERTS=1` finds `armed`
-// false and pays one boolean read per fire.
+// every fire and prints what it decided. A launch that turned it off (`EQC_ENGINE_ALERTS=0`, or
+// `EQC_ENGINE_SERVE=0` above it) finds `armed` false and pays one boolean read per fire.
 import { playEngineFire } from './alertsAudio'
 import { readDefine } from './appKnowledge'
 import { DEFINE_OPS, setAppKnowledgePusher, type DefineOp } from './definePush'
@@ -334,8 +335,8 @@ let firesHeard = 0
 /**
  * ONE ALERT FIRE FROM THE ENGINE — LOGGED AND COUNTED, AND PLAYED ONLY WHEN THE CUTOVER IS ARMED.
  *
- * WITHOUT `EQC_ENGINE_ALERTS=1` this is exactly what JOS-482 shipped: a line, and no sound. The
- * app's own `AlertsModule` is still firing and is still the only thing that makes noise, because
+ * WITH THE CUTOVER TURNED OFF (`EQC_ENGINE_ALERTS=0`) this is exactly what JOS-482 shipped: a line,
+ * and no sound. The app's own `AlertsModule` is still firing and is still the only noise, because
  * playing this one too would double every alert the owner hears — and the owner is the regression
  * test for this whole program, so a duplicated sound would not be a cosmetic bug, it would corrupt
  * the evidence the cutover is being judged on.
@@ -667,7 +668,7 @@ export function installEngineClient(): void {
   setWorldRebuiltObserver(onWorldRebuilt)
   // THE PREFERENCE-WRITE EDGE (JOS-482). One slot, filled here and nowhere else, so an ipc setter
   // can say "this family moved" without importing the engine client — and so that a launch with
-  // `EQC_ENGINE` unset finds a null and pays one comparison per preference write.
+  // `EQC_ENGINE=0` finds a null and pays one comparison per preference write.
   setAppKnowledgePusher((op) => {
     const mine = gen
     void pushDefine(mine, op)

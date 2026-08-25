@@ -259,6 +259,10 @@ async function muteEveryWindow(app: ElectronApplication): Promise<void> {
  * THE PRODUCT IS UNCHANGED BY ANY OF THIS. `engineHost.ts` states that `EQ_E2E` is deliberately not
  * a gate on the engine: the flags are what a developer sets in a shell, and the harness is now
  * simply a developer who always sets them.
+ *
+ * AND SINCE JOS-495 BOTH LINES ARE REDUNDANT — the product defaults to them — SO THEY STAY: naming
+ * what the suite runs is belt and braces across a default flip, and a harness whose engine-on claim
+ * rested on somebody else's default would go quietly TS-only the day that default moved again.
  */
 const ENGINE_ON: Readonly<Record<string, string>> = {
   EQC_ENGINE: '1',

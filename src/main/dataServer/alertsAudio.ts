@@ -10,16 +10,28 @@
 // This file is that last inch. `alertsAudioRules.ts` holds the decisions; this holds the world —
 // the flags, the store read, the alerts module, the dev log.
 //
-// ── THE THIRD FLAG, AND WHY IT IS A THIRD FLAG ─────────────────────────────────────────────────
+// ── THE THIRD FLAG, AND WHAT IT IS FOR NOW (JOS-495) ───────────────────────────────────────────
 //
-// `EQC_ENGINE=1` runs an engine. `EQC_ENGINE_SERVE=1` lets it answer the app's READS. This one,
-// `EQC_ENGINE_ALERTS=1`, lets it make a SOUND — and a sound is not a read. A wrong read draws a
-// wrong number on a panel somebody is looking at; a wrong fire interrupts a raid, and a MISSING one
-// is worse and invisible. The owner is the regression test for this whole program and the thing
-// being risked is the evidence itself, so the switch that risks it is the developer's own rather
-// than a change of meaning for a flag they already have in a shell. It is MEANINGLESS ALONE for
-// `serveShim.ts`'s reason and by the same construction: `armEngineAlerts` is reached only from
-// inside `engineHost.ts`'s own `engineEnabled()` guard, and it reads the serve flag before arming.
+// THE ENGINE MAKES THE SOUND BY DEFAULT. `EQC_ENGINE_ALERTS=0` gives it back to this process's own
+// evaluator and changes nothing else — the engine still folds, still serves the reads, still gets
+// the defs pushed to it and still matches them; it simply stops being the thing whose match plays.
+// Unset, which is every ordinary launch, means the ENGINE fires.
+//
+// IT WAS A THIRD FLAG BECAUSE A SOUND IS NOT A READ, and that argument is untouched by the flip —
+// it is why this gate still exists at all rather than folding into the serve flag. A wrong read
+// draws a wrong number on a panel somebody is looking at; a wrong fire interrupts a raid, and a
+// MISSING one is worse and invisible. The owner is the regression test for this whole program and
+// the thing being risked is the evidence itself. What changed is who has to act: the default now
+// carries the risk (the owner ruled that the engine IS the product, and it earned that on his own
+// hands-on runs and on `engine-alert-fires.e2e.mts` driving one live line to exactly one sound), and
+// the flag is how a silence gets bisected in one launch — set it to `0`, and if the alert comes
+// back the fault is downstream of the match rather than in it.
+//
+// IT IS STILL MEANINGLESS ALONE for `serveShim.ts`'s reason and by the same construction:
+// `armEngineAlerts` is reached only from inside `engineHost.ts`'s own `engineEnabled()` guard, so
+// `EQC_ENGINE=0` silences the engine's fires structurally, and the serve flag is read below — a
+// launch not being SERVED is a launch whose reads come from the app's own fold, and letting the
+// engine fire into it would mean two worlds sharing one alert lane.
 //
 // ── THE SINGLE-AUDIO GUARANTEE, STRUCTURALLY ───────────────────────────────────────────────────
 //
@@ -41,6 +53,7 @@
 // engine's to make (the engine compiles it out and says nothing).
 
 import { logInfo } from '../errorLog'
+import { engineFlagOn } from '../../shared/dataServer/engineFlags'
 import { alertsModule, registry } from '../pipeline'
 import { getAlerts } from '../store'
 import { armVerdict, fireToFiring } from './alertsAudioRules'
@@ -51,8 +64,14 @@ import type { FireMessage } from '../../shared/dataServer/protocol.generated'
  * `serveShim.ts SERVING`'s reason: an environment variable is a fact about how the process was
  * started, and re-reading it per call would invite the belief that it can change. `EQC_ENGINE` is
  * deliberately not read here — the only caller is inside its guard.
+ *
+ * TRUE BY DEFAULT since JOS-495, and still the AND of both narrower flags: either `=0` hands the
+ * sound back to this process's evaluator, and they are both read rather than one, because "the
+ * engine answers the reads" and "the engine plays the alerts" are the two halves a bisecting
+ * developer is trying to tell apart.
  */
-const WANTED = process.env.EQC_ENGINE_SERVE === '1' && process.env.EQC_ENGINE_ALERTS === '1'
+const WANTED =
+  engineFlagOn(process.env.EQC_ENGINE_SERVE) && engineFlagOn(process.env.EQC_ENGINE_ALERTS)
 
 /** True once the swap has actually happened. `WANTED` is what the developer asked for; this is what
  *  the gate allowed, and the two differ on any store holding an early-warning def. */

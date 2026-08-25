@@ -95,7 +95,8 @@ export function registerIpc(): void {
   // See ./dev.ts.
   registerDevIpc()
   // Registered in EVERY build too, and for the same reason: the handler refuses when there is no
-  // engine on this launch, which is every launch without `EQC_ENGINE=1`. One gate, in engineHost.ts
-  // — a second `if` around this call would be a second place to forget.
+  // engine on this launch — since JOS-495 that means `EQC_ENGINE=0` or a checkout with no binary,
+  // rather than the default it used to be. One gate, in engineHost.ts — a second `if` around this
+  // call would be a second place to forget.
   registerRendererBrokerIpc()
 }

@@ -169,9 +169,13 @@ test('the cursor fan-out reaches the SAME windows the increments do', () => {
   assert.doesNotMatch(mod, /OVERLAY_KINDS/, 'the overlay list was copied instead of reused')
 })
 
-test('nothing is pushed when this launch was not asked to serve', () => {
+test('nothing is pushed when this launch turned the serve flag OFF', () => {
   const mod = code('../src/main/dataServer/serveDeltas.ts')
-  assert.match(mod, /const SERVE_ASKED = process\.env\.EQC_ENGINE_SERVE === '1'/)
+  // DEFAULT-ON SINCE JOS-495, through the one predicate all five readers of these variables share.
+  // The inversion had to land HERE as well as in `serveShim.ts` or the two halves of the read path
+  // would disagree on every ordinary launch — served snapshots, suppressed cursors, frozen surfaces.
+  // The whole matrix, and the audit that catches a sixth reader, live in tests/engineFlagDefault.
+  assert.match(mod, /const SERVE_ASKED = engineFlagOn\(process\.env\.EQC_ENGINE_SERVE\)/)
   // Both exported pushes are gated, and gated FIRST — a fan-out that allocated a frame before
   // checking would still be paying for a feature the launch did not ask for.
   for (const fn of ['pushModuleChanged', 'pushWorldChanged']) {

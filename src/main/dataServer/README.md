@@ -5,15 +5,28 @@ design and the owner's twenty rulings live in `docs/plans/data-server.md`; the e
 `engine/crates/engined/README.md`. Every file here carries its argument in its header — this page is
 the map, plus the one thing no single file can state: **how the pieces connect at run time**.
 
-Nothing in this directory does anything without `EQC_ENGINE=1` in the environment. That is the one
-switch for the whole feature, read in exactly one place (`engineHost.ts engineEnabled`). Since
-JOS-489 there is a SECOND switch, and it is subordinate rather than parallel: `EQC_ENGINE_SERVE=1`
-lets the engine answer three of the app's own read IPCs, and `serveShim.ts` gates it on
-`engineEnabled()` rather than on a second reading of the environment — so the serve flag alone is
-off, not half-on. It is separate because `EQC_ENGINE=1` is what every engine ticket up to that one
-shipped ("no branch in the product reads anything the engine says"), and ending that invariant
-deserves its own switch rather than a silent change of meaning for a flag developers already have
-in a shell. Since
+**Everything in this directory is ON by default (JOS-495, the owner's cutover ruling).** The three
+flags are escape hatches, not opt-ins:
+
+| Set this | and you get |
+| --- | --- |
+| *(nothing — every ordinary launch)* | an engine, answering the app's reads, playing its alerts |
+| `EQC_ENGINE=0` | no engine at all: the app is exactly the app it was before any of this existed |
+| `EQC_ENGINE_SERVE=0` | an engine that folds and is compared, but answers no read (and makes no sound) |
+| `EQC_ENGINE_ALERTS=0` | an engine that answers the reads, while this process's evaluator plays alerts |
+
+`EQC_ENGINE` is read in exactly one place (`engineHost.ts engineEnabled`) and the other two are
+SUBORDINATE rather than parallel: `serveShim.ts` gates on `engineEnabled()` rather than on a second
+reading of the environment, and `alertsAudio.ts` is only ever reached from inside that guard — so a
+granular flag alone is off, not half-on. All five readers of these variables (the three above plus
+`serveDeltas.ts` and `src/preload/engine.ts`) share ONE comparison,
+`src/shared/dataServer/engineFlags.ts engineFlagOn`, so an inverted default cannot be inverted in
+four places and left in a fifth. `=1` still means on; it is simply not `'0'`.
+
+**A checkout with no binary is unchanged by all of that.** `cargo build` is what puts an engine on
+disk in a dev tree; without one the supervisor probes, logs what it looked for, and stops, and the
+app runs TypeScript-only exactly as before. A PACKAGED build always has the binary (JOS-473 ships
+`resources/engine/engined.exe`), so default-on there means the engine actually runs. Since
 JOS-484 there is one channel registered in every build — `engine:connect`, beside `registerDevIpc` —
 and it is not an exception to that rule: the handler holds no flag, is never told about a launch
 without one, and therefore refuses. A registered door with nothing behind it, so the refusal is a
@@ -46,7 +59,7 @@ exists. The renderer never speaks to the engine; brokering a client into a windo
 ## The connect flow (JOS-479, phase 3)
 
 ```
- startEngineSupervisor()          [engineHost.ts, behind EQC_ENGINE=1]
+ startEngineSupervisor()          [engineHost.ts, unless EQC_ENGINE=0]
    ├─ installEngineClient()       registers the world-rebuilt observer on pipeline.ts
    └─ supervisor.start()
         spawn engined.exe ─── token down stdin ──►  engine
@@ -275,7 +288,8 @@ closes the spec goes red and somebody deletes the exemption. Neither is a fold d
 
 ## The compat shim (JOS-489, phase 1 of the cutover)
 
-`EQC_ENGINE_SERVE=1`, beside `EQC_ENGINE=1`, moves three of the app's own read IPCs onto the engine:
+Three of the app's own read IPCs are answered by the engine — by DEFAULT since JOS-495, and
+`EQC_ENGINE_SERVE=0` is what hands them back:
 
 | IPC channel | op | what the shim hands back |
 | --- | --- | --- |
