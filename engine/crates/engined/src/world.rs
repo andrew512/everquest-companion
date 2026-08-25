@@ -178,10 +178,11 @@ struct State {
     /// process, and a character switch is not the app withdrawing it. Every attach re-applies it at
     /// construction (`ingest::run`).
     defines: std::collections::BTreeMap<String, serde_json::Value>,
-    /// THE WAY TO PUSH APP KNOWLEDGE INTO THE CURRENT FOLD, or `None` when nothing is folding.
-    /// Cleared by an attach and by an ended ingest, exactly as `snapshots` is and in the same
-    /// critical section: a preempted fold must not be able to take a define either.
-    define_to: Option<Sender<ingest::DefineAsk>>,
+    /// THE WAY TO WRITE INTO THE CURRENT FOLD, or `None` when nothing is folding — app knowledge
+    /// (`*.define`) and the session mark, the two statements made TO a fold rather than about one.
+    /// Cleared by an attach and by an ended ingest, exactly as `asks` is and in the same critical
+    /// section: a preempted fold must not be able to take a define or a mark either.
+    write_to: Option<Sender<ingest::Write>>,
     /// THE WAY TO ASK THE CURRENT FOLD A QUESTION, or `None` when nothing is folding.
     ///
     /// ONE DOOR, EVERY QUESTION (see [`ingest::Ask`]): a module's published state, and — since
@@ -367,7 +368,7 @@ impl World {
                     fold: Fold::default(),
                     asks: None,
                     defines: std::collections::BTreeMap::new(),
-                    define_to: None,
+                    write_to: None,
                 }),
             }),
         }
@@ -840,17 +841,17 @@ impl World {
         let push = {
             let mut state = self.lock();
             state.defines.insert(family.to_owned(), payload.clone());
-            state.define_to.clone()
+            state.write_to.clone()
         };
         let Some(push) = push else {
             return;
         };
         let (answer, wait) = channel();
-        let ask = ingest::DefineAsk {
+        let ask = ingest::Write::Define(ingest::DefineAsk {
             family: family.to_owned(),
             payload,
             answer,
-        };
+        });
         if push.send(ask).is_ok() {
             let _took = wait.recv_timeout(SNAPSHOT_PATIENCE);
         }
@@ -872,17 +873,17 @@ impl World {
             .collect()
     }
 
-    /// THE INGEST OFFERS TO TAKE DEFINES: install this turn's push channel.
+    /// THE INGEST OFFERS TO TAKE WRITES: install this turn's push channel.
     ///
     /// A `report_*` method like every other statement an ingest makes, and ownership is re-asked
     /// INSIDE the lock for the same reason: a turn that has already lost must not be able to
     /// install a door onto a fold nobody wants.
-    pub fn serve_defines(&self, generation: u64, push: Sender<ingest::DefineAsk>) -> bool {
+    pub fn serve_writes(&self, generation: u64, push: Sender<ingest::Write>) -> bool {
         let mut state = self.lock();
         if !self.owns(generation) {
             return false;
         }
-        state.define_to = Some(push);
+        state.write_to = Some(push);
         true
     }
 
@@ -969,22 +970,60 @@ impl World {
     /// enter a replaying fold, so the JOS-208 replay-versus-live divergence class has no way to
     /// recur here either.
     ///
-    /// WHAT AN ACCEPTED MARK DOES TO THE WORLD, TODAY, IS NOTHING — and that is a NAMED GAP rather
-    /// than a shrug. The mark's effect is a COMBAT-ENGINE act (close the open fight, freeze the
-    /// running stay into history tagged `closedBy: 'mark'`, mint fresh accumulators) and this
-    /// crate's sink does not register the combat engine at all: `Fold::with_combat` is the combat
-    /// surface's own ticket. So what exists now is the command, the law, and the reply a client
-    /// branches on — the half that decides WHETHER, without the half that DOES. The instant the
-    /// engine is registered, this method grows one call and nothing else here moves.
+    /// AND SINCE JOS-492 AN ACCEPTED MARK DOES THE THING. The mark's effect is a COMBAT-ENGINE act
+    /// — close the open fight, freeze the running stay into history tagged `closedBy: 'mark'`, mint
+    /// fresh accumulators — and the engine is registered now (`foldsink::combat_for`), so the
+    /// acceptance is handed to it through the WRITE DOOR and this method waits for it. What was
+    /// the command, the law and the reply is now all three plus the act.
+    ///
+    /// THE TWO GATES ARE ONE BOUNDARY, and the ordering is what makes that true rather than
+    /// hopeful: `foldsink::tick` calls `CombatEngine::set_live()` on its first beat, and that beat
+    /// happens BEFORE `report_fold_landed` publishes `status: "live"` — so a world this method
+    /// finds `Live` is a world whose engine has already left `hydrating`, and the engine's own
+    /// refusal can never contradict the status the reply names. Both are kept anyway: the status
+    /// gate is what the client is TOLD, and the engine's is what actually owns the model.
+    ///
+    /// THE LOCK IS NOT HELD ACROSS THE HAND-OVER, exactly as [`World::define`] does not hold it and
+    /// for the identical reason: the ingest thread takes this lock in every `report_*` it makes, so
+    /// waiting under it would deadlock against the thread being waited for. The status and the door
+    /// are read together in one critical section, and the wait happens outside it.
+    ///
+    /// THE WAIT IS WHAT MAKES THE ACK USABLE. Without it a client could ask `combat.snapshot` the
+    /// instant its ack arrived and be answered by a fold that had not yet reached the boundary the
+    /// mark was queued at — the split would appear a beat later, which for a person who just
+    /// pressed a button is the meter ignoring them. It is bounded by [`SNAPSHOT_PATIENCE`] for the
+    /// reason every wait on this door is: a wedged ingest must become an answer rather than a
+    /// connection that never replies.
     ///
     /// IT RETURNS THE STATUS IT DECIDED UNDER, read in the SAME critical section as the decision.
     /// A client that asked `session.health` afterwards would be racing a fold that may have gone
     /// live in between, and a refusal explained by a state that no longer holds is worse than one
     /// with no explanation at all.
-    pub fn session_mark(&self, _at: i64) -> (bool, HealthResultStatus) {
-        let state = self.lock();
-        let status = state.status;
-        (matches!(status, HealthResultStatus::Live), status)
+    pub fn session_mark(&self, at: i64) -> (bool, HealthResultStatus) {
+        let (status, push) = {
+            let state = self.lock();
+            (state.status, state.write_to.clone())
+        };
+        if !matches!(status, HealthResultStatus::Live) {
+            return (false, status);
+        }
+        // A LIVE WORLD WITH NO DOOR IS A WORLD BEING REPLACED between the two reads above — the
+        // attach that cleared it has not yet published its own status. Nothing can be split, so
+        // nothing is claimed.
+        let Some(push) = push else {
+            return (false, status);
+        };
+        let (answer, wait) = channel();
+        let ask = ingest::Write::Mark(ingest::MarkAsk { at, answer });
+        if push.send(ask).is_err() {
+            return (false, status);
+        }
+        // THE FOLD'S OWN ANSWER IS THE ANSWER. A timeout answers `false`, which is the honest
+        // reading of what this process knows: the mark may still be applied at the next boundary,
+        // and a client told `true` by a wait that never returned would have been told something
+        // nobody here observed.
+        let took = wait.recv_timeout(SNAPSHOT_PATIENCE).unwrap_or(false);
+        (took, status)
     }
 
     /// THE PROCESS'S CORPUS, for the ops that read it directly — `knowledge.item`, `knowledge.spell`
@@ -1126,10 +1165,11 @@ impl World {
             // must never be answered by a generation the world has already replaced, and the
             // preempted ingest's own `report_*` calls already cannot write anything.
             state.asks = None;
-            // …and neither is it PUSHABLE. `defines` itself is untouched: that is the app's
+            // …and neither is it WRITABLE. `defines` itself is untouched: that is the app's
             // knowledge, not this generation's, and the fold about to be built re-applies it at
-            // construction.
-            state.define_to = None;
+            // construction. A session mark has no such second life — it is stored nowhere, so a
+            // mark posted at a fold that is being replaced is simply a mark that did not happen.
+            state.write_to = None;
             let announcement = EngineMessage::EpochMessage(EpochMessage {
                 kind: EpochMessageKind::Epoch,
                 epoch: Epoch(state.epoch),
@@ -1258,7 +1298,7 @@ impl World {
         // thread; clearing the sender here makes the world say "no fold" rather than making every
         // reader discover it one failed send at a time.
         state.asks = None;
-        state.define_to = None;
+        state.write_to = None;
         true
     }
 

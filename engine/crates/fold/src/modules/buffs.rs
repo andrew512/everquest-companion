@@ -703,7 +703,7 @@ impl EqModule for BuffsModule {
     /// writes none, so nothing here needs the core's mutable half. And the expiries it resolves are
     /// flushed through the same door a folded event's are, stamped with the LAST EVENT's identity —
     /// see `cur_seq`/`cur_ts`.
-    fn on_tick(&mut self, now_ms: i64) {
+    fn on_tick(&mut self, now_ms: i64, _rows: &[crate::modules::buff_timer_rows::BuffTimerRow]) {
         let core_rc = Rc::clone(&self.core);
         let core = core_rc.borrow();
         self.inst.drop_unconfirmed_pending(now_ms);

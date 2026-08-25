@@ -477,6 +477,76 @@ fn a_live_meter_closes_a_fight_the_log_stopped_talking_about() {
 }
 
 #[test]
+fn a_session_mark_splits_the_live_meter_over_the_socket() {
+    // THE ACK'S OTHER HALF (JOS-492). `tests/live_surfaces.rs` proves WHICH answer a press gets and
+    // when; this proves that an accepted one DOES THE THING — end to end, through the op table, the
+    // write door and the ingest thread, into the combat engine's own records.
+    //
+    // The press lands between two fights and the meter has to disagree with itself either side of
+    // it: before, one live stay holding 500; after, a frozen `closedBy: 'mark'` record holding 500
+    // and a live stay that has started over.
+    let staged = Staged::new("mark-split");
+    staged.stage_a_fight();
+    let engine = Engine::start();
+    let mut client = live_client(&engine, &staged);
+
+    let before = snapshot(&mut client, 2, Some(full()));
+    assert_eq!(
+        before.snapshot["zoneSessions"]
+            .as_array()
+            .expect("zoneSessions")
+            .len(),
+        1,
+        "one live stay and no frozen records yet: {:?}",
+        before.snapshot["zoneSessions"]
+    );
+    assert_eq!(
+        before.snapshot["zoneSessions"][0]["total"],
+        serde_json::json!(560)
+    );
+
+    client.send(&harness::session_mark(3, wall_clock_ms()));
+    let ack = loop {
+        match client.recv() {
+            EngineMessage::Reply(reply) if *reply.id == 3 => {
+                let ReplyResult::SessionMarkAck(ack) = reply.result else {
+                    panic!("sessionMarks.add answers a SessionMarkAck");
+                };
+                break ack;
+            }
+            other => skip(&other),
+        }
+    };
+    assert!(ack.accepted, "a live world takes the press");
+
+    // THE ACK IS THE RECEIPT FOR THE ACT, not for the queueing: this snapshot is asked for
+    // immediately afterwards and the split is already in it. That is what the bounded wait on the
+    // write door buys — see `World::session_mark`.
+    let after = snapshot(&mut client, 4, Some(full()));
+    let stays = after.snapshot["zoneSessions"]
+        .as_array()
+        .expect("zoneSessions");
+    assert_eq!(
+        stays.len(),
+        2,
+        "the live stay plus one frozen record: {stays:?}"
+    );
+    assert_eq!(stays[0]["live"], serde_json::json!(true));
+    assert_eq!(
+        stays[0]["total"],
+        serde_json::json!(0),
+        "the new stay starts over"
+    );
+    assert_eq!(stays[1]["closedBy"], serde_json::json!("mark"));
+    assert_eq!(stays[1]["total"], serde_json::json!(560));
+    // …AND THE ROOM DID NOT CHANGE, which is the whole difference between a mark and a zone line:
+    // both records name the zone the player is still standing in, and so does the snapshot.
+    assert_eq!(after.snapshot["zone"], serde_json::json!("Nagafen's Lair"));
+    assert_eq!(stays[0]["zone"], serde_json::json!("Nagafen's Lair"));
+    assert_eq!(stays[1]["zone"], serde_json::json!("Nagafen's Lair"));
+}
+
+#[test]
 fn a_snapshot_taken_mid_fold_is_stamped_with_the_logs_own_clock() {
     // A REPLAY IS NOT A MOMENT IN TIME. `engine.ts`'s hydrating gate exists because a poll landing
     // between two replay slices used to finalize whatever fight was open and hand the rest of it to

@@ -5,10 +5,13 @@
 // pure (`src/main/dataServer/alertsAudioRules.ts`) precisely so they can be asked here rather than
 // inferred from a running raid:
 //
-//   1. THE GATE. A def carrying `earlyWarnSec` is COMPILED OUT by the engine's evaluator — its fire
-//      is one the app MOVES, and the engine has neither the wall clock nor the timer projection to
-//      move it with (JOS-482's named gap). Arming over one would trade a correctly-delayed sound
-//      for no sound at all, so the flag must refuse and NAME the def. Tested both ways.
+//   1. THE GATE, WHICH SINCE JOS-492 REFUSES NOTHING. It used to refuse over a def carrying
+//      `earlyWarnSec`, because the engine COMPILED such a def out — its fire is one the app MOVES,
+//      and JOS-482's engine had neither the wall clock nor the timer projection to move it with. It
+//      has both now and honours the offset end to end, reading it through this app's own
+//      normalizer, so the category the gate guarded is empty and the refusal is deleted rather than
+//      left standing over nothing. The tests below pin the ARMING, including over the exact defs
+//      that used to block.
 //   2. THE TRANSLATION. A fire frame names its rule by LABEL; the renderer's player needs an ID.
 //
 // WHAT IS NOT HERE. That the arm path actually consults the verdict, that the module actually goes
@@ -17,11 +20,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  armVerdict,
-  earlyWarnBlocker,
-  fireToFiring
-} from '../src/main/dataServer/alertsAudioRules'
+import { armVerdict, fireToFiring } from '../src/main/dataServer/alertsAudioRules'
 import type { FireMessage } from '../src/shared/dataServer/protocol.generated'
 import type { AlertDef } from '../src/shared/types'
 
@@ -47,55 +46,41 @@ function fire(over: Partial<FireMessage> = {}): FireMessage {
   }
 }
 
-// ---- the gate, both ways -----------------------------------------------------------------------
+// ---- the gate -----------------------------------------------------------------------------------
 
-test('THE GATE ARMS over a def set with no early warning in it', () => {
+test('THE GATE ARMS, and the line still SAYS SO', () => {
   const defs = [def({ id: 'charm-break', name: 'Charm break' }), def({ id: 'b', name: 'Mote dropped' })]
-  assert.equal(earlyWarnBlocker(defs), null)
   const verdict = armVerdict(defs)
   assert.equal(verdict.arm, true)
-  // The armed line still SAYS something: a silent evaluator with no line explaining itself is the
-  // state a developer cannot tell apart from a broken one.
+  // The armed line is the reason the verdict is still a verdict and not a boolean: a silent
+  // evaluator with no line explaining itself is the state a developer cannot tell apart from a
+  // flag nobody set.
   assert.match(verdict.line, /the ENGINE now plays alert audio/)
 })
 
-test('THE GATE REFUSES, and the one line NAMES the def the engine would swallow', () => {
-  const blocker = def({ id: 'group:slow:mob', name: 'Slow wore off a mob', earlyWarnSec: 5 })
-  const defs = [def({ id: 'charm-break', name: 'Charm break' }), blocker]
-  assert.equal(earlyWarnBlocker(defs), blocker)
-  const verdict = armVerdict(defs)
-  assert.equal(verdict.arm, false)
-  // Both halves of the identity, because a name alone is not enough to find the row and an id
-  // alone is not enough to recognize it.
-  assert.match(verdict.line, /Slow wore off a mob/)
-  assert.match(verdict.line, /group:slow:mob/)
-  // …and WHY, so the reader does not have to know the engine's source to act on it.
-  assert.match(verdict.line, /earlyWarnSec=5/)
-  assert.match(verdict.line, /compiles early-warning defs out/)
-})
+test('AND IT ARMS OVER THE DEFS THAT USED TO BLOCK IT (JOS-492)', () => {
+  // THE EXACT DEF THAT BLOCKED. `group:slow:mob` with `earlyWarnSec: 5` is what the owner's dev
+  // profile carries and is what this gate refused over from JOS-491 until the offset landed
+  // engine-side. The engine arms that warning off the timer projection now and fires it five
+  // seconds before the row's stated end — proven in `fold`'s own suite against this same def —
+  // so there is nothing left to swallow and nothing left to refuse.
+  const slow = def({ id: 'group:slow:mob', name: 'Slow wore off a mob', earlyWarnSec: 5 })
+  assert.equal(armVerdict([def({ id: 'charm-break', name: 'Charm break' }), slow]).arm, true)
 
-test('AN OFFSET THIS APP WOULD NOT ACT ON IS NOT A BLOCKER — the gate asks the normalizer, not the key', () => {
-  // `normalizeEarlyWarnSec` rejects all three (zero is below the 1 s floor, and neither of the
-  // others is a finite number). Nothing arms a warning from them here, so nothing is swallowed
-  // there either, and refusing would be a false alarm no edit could clear.
+  // …INCLUDING THE ONE INPUT THE TWO NORMALIZERS USED TO DISAGREE ABOUT. The app clamps 5000 to
+  // its 120 s ceiling; JOS-482's engine read anything out of range as absent and would have fired
+  // it immediately, which is why this case blocked hardest. The engine runs the app's normalizer
+  // now, bound for bound, so both sides clamp to the same 120.
+  assert.equal(armVerdict([def({ id: 'huge', name: 'Huge', earlyWarnSec: 5000 })]).arm, true)
+
+  // …and the values NEITHER side acts on are still nothing to anybody: a zero is below the 1 s
+  // floor and the other two are not finite numbers, so no warning is armed on either side.
   for (const raw of [0, Number.NaN, '10' as unknown as number]) {
-    const defs = [def({ id: 'junk', name: 'Junk', earlyWarnSec: raw })]
-    assert.equal(earlyWarnBlocker(defs), null, `earlyWarnSec=${String(raw)} must not block`)
-    assert.equal(armVerdict(defs).arm, true)
+    assert.equal(armVerdict([def({ id: 'junk', name: 'Junk', earlyWarnSec: raw })]).arm, true)
   }
 })
 
-test('AN OFFSET PAST THE CEILING STILL BLOCKS — the conservative side of the one disagreement', () => {
-  // The app CLAMPS 5000 to its 120 s ceiling and moves the fire; the engine's own reader treats
-  // anything outside 1..600 as absent and would fire it immediately. Two wrong answers, and this
-  // gate refuses rather than picking one.
-  const defs = [def({ id: 'huge', name: 'Huge', earlyWarnSec: 5000 })]
-  assert.equal(earlyWarnBlocker(defs)?.id, 'huge')
-  assert.equal(armVerdict(defs).arm, false)
-})
-
-test('AN EMPTY STORE ARMS. No defs is no early warnings, not an unknown', () => {
-  assert.equal(earlyWarnBlocker([]), null)
+test('AN EMPTY STORE ARMS. No defs is no alerts, not an unknown', () => {
   assert.equal(armVerdict([]).arm, true)
 })
 

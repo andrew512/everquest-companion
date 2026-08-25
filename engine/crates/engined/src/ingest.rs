@@ -213,6 +213,21 @@ pub trait EventSink {
         false
     }
 
+    /// TAKE A SESSION MARK (JOS-322, wired by JOS-492) — `sessionMarks.add`'s effect on the meter.
+    ///
+    /// `true` when the COMBAT ENGINE took it. Defaulted to `false` because a sink with no engine
+    /// has no fight to close and no stay to freeze — and that is the same honest `false` a
+    /// hydrating engine answers, for the same reason: nothing was split.
+    ///
+    /// `&mut self` AND THE SAME BOUNDARIES `define` IS APPLIED AT. A mark is a POINT ON THE EVENT
+    /// STREAM, which is the whole of what a split means: every event before it belongs to the
+    /// record it closed and every event after it to the record it opened, and no event lands
+    /// half-way. Answering it under a lock, or on the connection thread, would put the boundary
+    /// somewhere the fold was not standing.
+    fn session_mark(&mut self, _at: i64) -> bool {
+        false
+    }
+
     /// THE ALERT FIRES THIS SINK PRODUCED SINCE THE LAST DRAIN (JOS-482, owner ruling 22).
     ///
     /// Structurally empty for a historical scan: firing is live-only by the boundary law, which the
@@ -426,6 +441,38 @@ pub struct DefineAsk {
     pub payload: serde_json::Value,
     /// Where the answer goes: `true` when a module took it.
     pub answer: std::sync::mpsc::Sender<bool>,
+}
+
+/// ONE SESSION MARK, and the way back (JOS-492) — `sessionMarks.add`'s effect on the meter.
+///
+/// THE SECOND WRITE THIS DOOR CARRIES, and it is here rather than on [`Ask`] because of what it
+/// does: a mark closes the open fight and freezes the running stay. `answer_asks` takes the sink by
+/// `&dyn` precisely so that every arm on it is provably a READ; a mark cannot be one, so it belongs
+/// with the defines — which is the placement that door's own header already predicted.
+pub struct MarkAsk {
+    /// The instant MAIN stamped for the whole click, so the loot split and this split share one
+    /// boundary. NEVER re-derived here from a host clock.
+    pub at: i64,
+    /// Where the answer goes: whether the ENGINE took it (false while it is still hydrating).
+    pub answer: std::sync::mpsc::Sender<bool>,
+}
+
+/// EVERY STATEMENT MADE *TO* THE FOLD — the write door, the mirror image of [`Ask`].
+///
+/// TWO ARMS AND ONE RULE: an arm here is handed the sink by `&mut`, so it may fold, define, or
+/// otherwise MOVE the world; an arm on [`Ask`] is handed it by `&`, so it may only read. Which door
+/// a new request belongs on is therefore decided by the compiler rather than by a convention, and a
+/// read that quietly grew a mutation would not compile where it lives.
+///
+/// ONE CHANNEL FOR BOTH WRITES, for exactly the reason `Ask` is one channel for every read: the
+/// door's property is that the fold is reached at a boundary it already services, and a third
+/// channel would be a third thing this loop has to remember to drain in all four places
+/// (mid-scan, the live poll, the nap, and the landing).
+pub enum Write {
+    /// One family of app knowledge — see [`DefineAsk`].
+    Define(DefineAsk),
+    /// One session mark — see [`MarkAsk`].
+    Mark(MarkAsk),
 }
 
 /// ONE REQUEST FOR ONE MODULE'S STATE, and the way back.
@@ -881,8 +928,8 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
     // user changes while a 200 MB log is folding must reach the fold that is folding it, not the
     // next one. A second channel rather than a second arm on the first: the two carry opposite
     // directions (a read out, a write in) and share nothing but the boundary they are serviced at.
-    let (define_to, defines) = channel::<DefineAsk>();
-    if !world.serve_defines(generation, define_to) {
+    let (write_to, writes) = channel::<Write>();
+    if !world.serve_writes(generation, write_to) {
         return Ok(Ended::Preempted);
     }
 
@@ -930,7 +977,7 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
         // events already folded were folded under what the user had said at the time. The app
         // pushes on connect, before it attaches, so this path is the mid-fold EDIT rather than the
         // ordinary one.
-        answer_defines(&defines, &mut *sink);
+        answer_writes(&writes, &mut *sink);
     }
 
     // THE FINAL MEASUREMENT IS NOT OPTIONAL and does not ask the cadence. It is the one frame that
@@ -1063,7 +1110,7 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
             }
         }
         answer_asks(&answers, &*sink, &serving);
-        answer_defines(&defines, &mut *sink);
+        answer_writes(&writes, &mut *sink);
         // THE FIRES, IMMEDIATELY AND NOT AT A CADENCE (owner ruling 22). Everything else this loop
         // publishes is STATE, which coalesces by definition — the newest window is the whole
         // answer. A fire is not state: two charm breaks are two sounds, and folding them would
@@ -1100,7 +1147,7 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
             world,
             generation,
             &answers,
-            &defines,
+            &writes,
             &mut *sink,
             &mut serving,
         );
@@ -1256,7 +1303,7 @@ fn nap(
     world: &World,
     generation: u64,
     answers: &Receiver<Ask>,
-    defines: &Receiver<DefineAsk>,
+    writes: &Receiver<Write>,
     sink: &mut dyn EventSink,
     serving: &mut Serving,
 ) {
@@ -1265,10 +1312,12 @@ fn nap(
         thread::sleep(TAIL_NAP);
         slept += TAIL_NAP;
         answer_asks(answers, &*sink, serving);
-        // A DEFINE ARRIVING WHILE THE TAIL NAPS IS TAKEN IN THAT NAP, for the same reason: a live
+        // A WRITE ARRIVING WHILE THE TAIL NAPS IS TAKEN IN THAT NAP, for the same reason: a live
         // engine spends almost all of its time here, so a preference saved on an idle log would
-        // otherwise wait out a whole poll interval before the fold had heard of it.
-        answer_defines(defines, sink);
+        // otherwise wait out a whole poll interval before the fold had heard of it — and a SESSION
+        // MARK, which the user presses BECAUSE the log has gone quiet, would land almost always in
+        // exactly this nap.
+        answer_writes(writes, sink);
         // A SUBSCRIPTION OPENED WHILE THE TAIL IS NAPPING IS OWED A RESET, and the nap is where a
         // live engine spends almost all of its time — the same argument `answer_snapshots` makes
         // one line up. Serving here makes the wait for a full window one nap instead of one poll.
@@ -1320,16 +1369,30 @@ fn answer_asks(answers: &Receiver<Ask>, sink: &dyn EventSink, serving: &Serving)
     }
 }
 
-/// Apply every define pushed since the last boundary, and block on none of them.
+/// Apply every WRITE pushed since the last boundary, and block on none of them.
 ///
-/// `try_recv` UNTIL EMPTY, exactly as [`answer_snapshots`] is, and for the same reason: this runs
+/// `try_recv` UNTIL EMPTY, exactly as [`answer_asks`] is, and for the same reason: this runs
 /// inside the fold's own loop and must never stall it. A send that fails is a pusher whose deadline
-/// passed or whose connection closed — the define is STILL APPLIED, because the world already holds
-/// it and the fold is now in step with what the world holds; only the receipt went nowhere.
-fn answer_defines(defines: &Receiver<DefineAsk>, sink: &mut dyn EventSink) {
-    while let Ok(ask) = defines.try_recv() {
-        let took = sink.define(&ask.family, &ask.payload);
-        let _dropped = ask.answer.send(took);
+/// passed or whose connection closed — the write is STILL APPLIED, because the fold is the only
+/// place it can take effect and a half-applied world would be worse than a lost receipt. For a
+/// DEFINE that is also exactly right: the world already holds the set, so the fold is now in step
+/// with what the world holds. For a MARK the receipt is the only record there is (a mark is stored
+/// nowhere, by design), so a lost one costs the client its answer and nothing else.
+fn answer_writes(writes: &Receiver<Write>, sink: &mut dyn EventSink) {
+    while let Ok(write) = writes.try_recv() {
+        match write {
+            Write::Define(ask) => {
+                let took = sink.define(&ask.family, &ask.payload);
+                let _dropped = ask.answer.send(took);
+            }
+            // THE ENGINE'S OWN GATE ANSWERS, not this loop's idea of whether the world is live:
+            // `CombatEngine::session_mark` refuses while hydrating, which is the same boundary the
+            // world's status gate reads and is the one that actually owns the model.
+            Write::Mark(ask) => {
+                let took = sink.session_mark(ask.at);
+                let _dropped = ask.answer.send(took);
+            }
+        }
     }
 }
 

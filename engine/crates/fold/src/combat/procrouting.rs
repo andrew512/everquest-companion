@@ -88,6 +88,14 @@ pub struct CoatLine<'a> {
 /// the log neither confirms nor contradicts it.
 pub fn route_coat(st: &mut EngineState, ev: &CoatLine) {
     if id_key(ev.who) != "you" {
+        // SOMEBODY ELSE'S BLADES. Nothing here models a stranger's poison, and the line is kept
+        // anyway: it is the sort of thing a person scanning the processing log wants to see went by.
+        st.log(
+            ev.ts,
+            "poison",
+            "info",
+            format!("☠ {} coated their blades", ev.who),
+        );
         return;
     }
     let slot = CoatSlot {
@@ -140,6 +148,12 @@ pub fn route_coat(st: &mut EngineState, ev: &CoatLine) {
         let name = ev.poison.to_string();
         commit_state(st, StateKind::Coat, &key, &name, ev.ts, Some(group));
     }
+    let group = if ev.group == "unknown" {
+        String::new()
+    } else {
+        format!(" ({})", ev.group)
+    };
+    st.log(ev.ts, "poison", "info", format!("☠ coated: {label}{group}"));
 }
 
 /// A coat wore off / was replaced. The line names no poison, only which FAMILY dried:
@@ -166,6 +180,7 @@ pub fn route_dry(st: &mut EngineState, group: &str, ts: i64) {
     };
     st.state_timeline.close_group_prefix(prefix, ts, evidence);
     note_state_transition(st, prefix, ts);
+    st.log(ts, "poison", "info", format!("☠ {group} coat dried"));
 }
 
 /// STRIP EVERY BLADE COAT, BOTH FAMILIES, AND END THEIR OPEN SPANS AT `ts`.
@@ -183,7 +198,7 @@ pub fn route_dry(st: &mut EngineState, group: &str, ts: i64) {
 /// coats is the last minute the purity gate should believe was clean.
 ///
 /// Returns whether anything was actually cleared. Cheap on bare blades: two field reads and a return.
-pub fn clear_coats(st: &mut EngineState, ts: i64) -> bool {
+pub fn clear_coats(st: &mut EngineState, ts: i64, reason: CoatClearReason) -> bool {
     if st.coat_utility.is_none() && st.coat_combat.is_empty() {
         return false;
     }
@@ -198,7 +213,40 @@ pub fn clear_coats(st: &mut EngineState, ts: i64) -> bool {
     // writes a coat observation anywhere, which is what keeps this one-directional against the class
     // model that triggers it (a coat is ROG evidence at weight 3, so a clear that fed the inference
     // back would be a loop).
+    st.log(
+        ts,
+        "poison",
+        "info",
+        format!("☠ blades bare - {}", reason.note()),
+    );
     true
+}
+
+/// WHY A SET OF BLADES WENT BARE WITHOUT THE GAME PRINTING A LINE — `CoatClearReason`, and its one
+/// sentence each.
+///
+/// THE THIRD ARM IS UNREACHABLE IN THIS FOLD AND IS STATED ANYWAY. `ClassSwap` is the coat/class
+/// sweep's boundary, and that sweep returns before it can ever fire here — this crate wires no combo
+/// provider, so it has nothing to ask (`ingest::sweep_coat_class`). Spelling the variant is what
+/// keeps the reason table a table rather than a pair plus a gap somebody has to notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoatClearReason {
+    Death,
+    ClassSwap,
+    Epoch,
+}
+
+impl CoatClearReason {
+    fn note(self) -> &'static str {
+        match self {
+            Self::Death => "your death stripped every coat",
+            Self::ClassSwap => "the loadout no longer contains ROG",
+            // A BACKTICK, not an apostrophe, and it is the app's own spelling rather than a typo
+            // reproduced: the sentence is copied verbatim so a bug report quoting one line is
+            // findable in either tree.
+            Self::Epoch => "a character rebirth - the coats were the previous character`s",
+        }
+    }
 }
 
 /// A tracked PROC BUFF landed on you. Gated to the catalog — the same discipline the dispel family
@@ -324,6 +372,7 @@ pub fn route_proc(st: &mut EngineState, ev: &ProcLine) {
     st.zone_agg
         .procs
         .add_strike(&label, ambiguous, ev.ts, is_slow);
+    st.log(ev.ts, "poison", "you", format!("☠ {label} → {target}"));
 }
 
 /// Count a DISPEL landing on an engaged hostile.

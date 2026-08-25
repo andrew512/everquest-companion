@@ -462,7 +462,7 @@ impl EqModule for ConsiderModule {
     /// harness), so every golden still records `knowledge` absent from every row. `_now_ms` is
     /// unused deliberately: this is an EDGE, not a clock reading — the module wants to know that the
     /// tail has taken over, and the number that says so is not read.
-    fn on_tick(&mut self, _now_ms: i64) {
+    fn on_tick(&mut self, _now_ms: i64, _rows: &[crate::modules::buff_timer_rows::BuffTimerRow]) {
         if self.backfilled {
             return;
         }
@@ -529,6 +529,12 @@ mod tests {
                 found: true,
             }
         }
+        /// This double stands in for a CATALOG, so it says yes — and the point of it saying so
+        /// here is that nothing on this module's path asks. The con-card refusal reads it, and
+        /// that refusal lives one layer up (`engined::concard`).
+        fn known_mob(&self, _name: &str) -> bool {
+            true
+        }
         fn take_misses(&self) -> Vec<Miss> {
             Vec::new()
         }
@@ -559,7 +565,7 @@ mod tests {
         let mut module = ConsiderModule::new();
         module.on_event(&ev(&con(1, "a sand giant")), false);
         module.on_event(&ev(&con(2, "a sand giant")), true);
-        module.on_tick(1_787_181_708_000);
+        module.on_tick(1_787_181_708_000, &[]);
         for row in rows(&module) {
             assert_eq!(row.get("knowledge"), None, "{row}");
         }
@@ -617,7 +623,7 @@ mod tests {
         }
         assert!(recorder.asked.lock().expect("the recorder").is_empty());
 
-        module.on_tick(1_787_181_708_000);
+        module.on_tick(1_787_181_708_000, &[]);
         assert_eq!(
             recorder.asked.lock().expect("the recorder").len(),
             CONSIDER_BACKFILL,
@@ -631,7 +637,7 @@ mod tests {
         );
         assert!(rows[rows.len() - 1]["knowledge"].is_object());
 
-        module.on_tick(1_787_181_709_000);
+        module.on_tick(1_787_181_709_000, &[]);
         assert_eq!(
             recorder.asked.lock().expect("the recorder").len(),
             CONSIDER_BACKFILL,

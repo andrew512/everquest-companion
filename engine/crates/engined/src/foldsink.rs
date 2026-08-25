@@ -443,6 +443,23 @@ impl EventSink for FoldSink {
         self.fold.registry.define(family, payload)
     }
 
+    /// THE SESSION MARK, straight through to the engine that owns what one means (JOS-492).
+    ///
+    /// ONE LINE, and the whole of the decision is `fold::combat`'s: the hydrating refusal, the
+    /// deferred closure evaluated at the stamped instant, the frozen `closedBy: 'mark'` record and
+    /// the fresh accumulators. A sink with no engine answers `false` through the same `?` — no
+    /// engine, no meter, nothing split.
+    ///
+    /// NOT `combat_now()`: the instant is the CALLER'S, stamped once app-side for the whole click
+    /// so that the loot split and this split share one boundary. Substituting the fold's own clock
+    /// here would put the two halves of one user action at two different instants.
+    fn session_mark(&mut self, at: i64) -> bool {
+        self.fold
+            .combat
+            .as_mut()
+            .is_some_and(|engine| engine.session_mark(at))
+    }
+
     /// The alert fires the registry made while folding the last drain, converted from the FOLD's
     /// shape into the INGEST's at this seam — which is the whole reason both types exist. Neither
     /// `ingest.rs` nor `world.rs` ever learns what an alert is.
@@ -452,12 +469,18 @@ impl EventSink for FoldSink {
     ///
     /// A LINE THAT NAMES NOTHING IS DROPPED HERE rather than sent as an empty card, which is
     /// `noteConsider`'s own first guard: a creature name that folds to no key has no queue identity.
+    ///
+    /// …AND SO IS A PERSON (JOS-492). The corpus this sink already holds for the `knowledge.*` ops
+    /// is the second half of `conCardIsPlayer`, so the refusal the app has always made is made here
+    /// too — see `crate::concard`. It is the SAME `Arc` the registry was handed at construction, so
+    /// there is exactly one catalog in this process and the card cannot disagree with a lookup.
     fn take_con_cards(&mut self) -> Vec<protocol::generated::ConCardMessage> {
+        let knowledge = std::sync::Arc::clone(&self.knowledge);
         self.fold
             .registry
             .take_cons()
             .iter()
-            .filter_map(crate::concard::card)
+            .filter_map(|ev| crate::concard::card(ev, &*knowledge))
             .collect()
     }
 

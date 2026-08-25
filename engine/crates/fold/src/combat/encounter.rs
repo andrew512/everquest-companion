@@ -214,6 +214,10 @@ pub const CC_HOLD_MS: i64 = 120_000;
 /// Per-hit active-time cap AND the "in combat" freshness window.
 pub const ACTIVE_MS: i64 = 3_000;
 pub const ZONE_HISTORY_CAP: usize = 24;
+/// THE CLASSIFICATION RING'S BOUND — `RECENT_CAP`, how many classified lines the live processing log
+/// holds before the oldest falls off the front. A DISPLAY buffer: nothing keys, counts or attributes
+/// off it, and a snapshot serializes at most the newest 150 of them.
+pub const RECENT_CAP: usize = 300;
 /// How many recent QUALIFYING pulls (a slow-capable coat on at engage) the rolling time-to-slow ring
 /// keeps. Small on purpose: it answers "how is my poison doing right now", not "average my whole
 /// evening's loadouts together".

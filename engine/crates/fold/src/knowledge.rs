@@ -125,6 +125,23 @@ pub trait Knowledge: Send + Sync {
     /// "What does this thing drop", joined with what YOU have looted off it. Never fails.
     fn mob(&self, name: &str, loot: &dyn OwnLoot) -> Answer;
 
+    /// DOES THE COMMITTED CATALOG STATE THIS NAME AT ALL? — `mobLookupLocal.ts localMobEntry(n)
+    /// !== null`, as the one bit its callers actually want (JOS-492).
+    ///
+    /// A SEPARATE METHOD RATHER THAN `mob(…).found`, and the difference is not cosmetic — it is the
+    /// MISS LEDGER. [`Knowledge::mob`] is a lookup: a name it cannot answer is recorded and
+    /// announced, so the app goes and fetches a wiki page for it. This question is a TEST, asked
+    /// about names that are very often not creatures at all (the con-card player refusal asks it
+    /// about every proper-named thing the player cons, and the whole point is that some of them are
+    /// PEOPLE). Routing it through `mob` would send this process off to scrape the wiki for another
+    /// player's character name — a real privacy-shaped mistake and an etiquette violation besides.
+    /// So it reads the catalog, announces nothing, and builds no record.
+    ///
+    /// IT ASKS THE CATALOG AND NOT THE ALIAS TABLE, because `localMobEntry` does not either: the
+    /// index is keyed by the page's `|name` AND by the page TITLE, both `mobKey`-folded, and that
+    /// pair is what "the catalog has heard of this" has always meant here.
+    fn known_mob(&self, name: &str) -> bool;
+
     /// TAKE THE NAMES THIS PROCESS COULD NOT ANSWER, and forget them.
     ///
     /// A HAND-BACK RATHER THAN A CALLBACK, exactly like [`crate::EqModule::take_fires`] and for the

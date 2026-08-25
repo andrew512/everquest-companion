@@ -38,7 +38,7 @@
 //!     `· click` lane cannot occur in any of the six slices, and the goldens agree.
 
 use crate::combat::aggregate::{DamageEvent, MissType};
-use crate::combat::ally::{AllyCastLine, AllyLeaderLine};
+use crate::combat::ally::{AllyCastLine, AllyKind, AllyLeaderLine, AllyVerdict};
 use crate::combat::charm::CharmVerdict;
 use crate::combat::encounter::{ZoneSessionClose, CC_HOLD_MS};
 use crate::combat::lifecycle::{ensure_encounter, eval_closure, finalize_current};
@@ -48,7 +48,8 @@ use crate::combat::procdetect::{
 };
 use crate::combat::procrouting::{
     apply_stance, clear_coats, route_coat, route_dispel_landing, route_dry, route_proc,
-    route_proc_buff_apply, route_proc_buff_wear_off, route_self_landing_proc, CoatLine, ProcLine,
+    route_proc_buff_apply, route_proc_buff_wear_off, route_self_landing_proc, CoatClearReason,
+    CoatLine, ProcLine,
 };
 use crate::combat::procwindows::WindowFold;
 use crate::combat::routing::{self, Attribution, HealLine, MissLine, MitigationLine, ResistLine};
@@ -150,7 +151,7 @@ fn ingest_world(st: &mut EngineState, ev: &Event) -> bool {
             // leave the slots standing — the identical slot-versus-span disagreement the death rule was
             // written to cure, rebuilt one boundary over. A rebirth is a DIFFERENT CHARACTER; nothing
             // was on these blades. Same shared door, so the two can never drift apart again.
-            clear_coats(st, ev.ts());
+            clear_coats(st, ev.ts(), CoatClearReason::Epoch);
             // An epoch severs every active-state span: the beta character's stances, coats and buffs are
             // not this character's. CENSORED, never `observed`, and never a fabricated expiry.
             st.state_timeline.censor_all(ev.ts());
@@ -180,6 +181,8 @@ fn ingest_world(st: &mut EngineState, ev: &Event) -> bool {
             // Somebody else's charm cannot survive a zone either, and neither can a cast in flight.
             // The friendly SET survives — it is about people, not about the room.
             st.ally.zone();
+            let zone = ev.str("zone").unwrap_or_default().to_owned();
+            st.log(ev.ts(), "zone", "info", format!("▸ entered {zone}"));
             true
         }
         "charm" => {
@@ -196,7 +199,8 @@ fn ingest_world(st: &mut EngineState, ev: &Event) -> bool {
             // its absence is a property of the construction and not of the rule.
             if ev.str("via") != Some("petBuff") {
                 if let Some(name) = ev.str("name").map(str::to_string) {
-                    bind_pet_claim(st, &name, ev.ts());
+                    let via = ev.str("via").unwrap_or("tell").to_owned();
+                    bind_pet_claim(st, &name, ev.ts(), &via);
                 }
             }
             true
@@ -205,7 +209,8 @@ fn ingest_world(st: &mut EngineState, ev: &Event) -> bool {
             // The speaker just named somebody its leader, which settles what it IS whether or not
             // the ally model goes on to bind it.
             if let Some(pet) = ev.str("pet") {
-                st.retract_other(&id_key(pet));
+                let why = format!("named {} its leader", ev.str("owner").unwrap_or_default());
+                st.retract_other(&id_key(pet), &why);
             }
             ingest_ally_pet_leader(st, ev);
             true
@@ -218,7 +223,11 @@ fn ingest_world(st: &mut EngineState, ev: &Event) -> bool {
             // the strangers' pets in a raid keep rows of their own. Measured on the owner's whole
             // log: it settles 8 names no other rung reaches.
             if let Some(name) = ev.str("name") {
-                st.retract_other(&id_key(name));
+                let why = format!(
+                    "said a pet sentence ({})",
+                    ev.str("say").unwrap_or_default()
+                );
+                st.retract_other(&id_key(name), &why);
             }
             true
         }
@@ -233,6 +242,7 @@ fn ingest_world(st: &mut EngineState, ev: &Event) -> bool {
                 st.drain_retirements();
                 st.pet_names.remove(&key);
                 st.charm.release(&key);
+                st.log(ev.ts(), "uncharm", "info", format!("✕ charm broke: {mob}"));
             }
             true
         }
@@ -260,23 +270,66 @@ fn ingest_charm(st: &mut EngineState, ev: &Event) {
     // WHOEVER'S CHARM IT IS, THE THING IS A MOB. Stated before the ownership branch because it is
     // true of both arms: a name a charm broadcast has ever spoken is not a combatant the
     // record-everything ladder may keep its own row for.
-    st.retract_other(&key);
+    st.retract_other(&key, "a charm broadcast named it");
     if st.charm.charm_broadcast(&key, &mob, ev.ts()) == CharmVerdict::Foreign {
         // A charm broadcast that resolved none of YOUR casts, offered to the ally model before it is
         // dropped. THE WORLD MODEL IS DELIBERATELY NOT TOLD: `world.charm()` marks an instance as a
         // pet of YOURS — it exempts the instance from staleness, keeps it out of hostile presence and
         // puts it in the pet set. An ally's pet is none of those things to us; it is a mob that
         // happens to be fighting for somebody else, and it may very well be a mob we are killing.
-        st.ally.broadcast(&key, &mob, ev.ts());
+        // THE VERDICT IS SAID EITHER WAY, and the three sentences are the whole of what the ally
+        // model does that a person can otherwise only infer from a row appearing or not appearing.
+        let text = match st.ally.broadcast(&key, &mob, ev.ts()) {
+            AllyVerdict::Bind(bind) => {
+                let note = if bind.ambiguous {
+                    " (a same-named twin is active - crediting nothing)"
+                } else {
+                    ""
+                };
+                let line = format!(
+                    "⚡ {mob} charmed by {} - crediting its damage to them{note}",
+                    bind.charmer
+                );
+                st.log(ev.ts(), "charm", "info", line);
+                return;
+            }
+            AllyVerdict::Refuse(reason) => {
+                format!("⚡ {mob} charmed by someone else - {reason}")
+            }
+            AllyVerdict::None => format!("⚡ {mob} charmed by someone else - not your pet"),
+        };
+        st.log(ev.ts(), "charm", "dropped", text);
         return;
     }
     // YOUR charm wins outright over any ally bind of the same mob. It can happen — you charm what
     // somebody else's charm just broke off — and two models both calling one entity a pet is exactly
     // the duplicated-ownership shape law 4 is a scar from.
     st.ally.release(&key);
-    st.world.charm(&mob, ev.ts());
+    let inst = st.world.charm(&mob, ev.ts());
+    let (label, id) = (inst.label.clone(), inst.instance_id.clone());
     st.drain_retirements();
     st.note_pet(&key);
+    st.log(
+        ev.ts(),
+        "charm",
+        "info",
+        format!("⚡ charmed {label} [{id}]"),
+    );
+}
+
+/// The parenthetical a claim's ring line carries — `CLAIM_NOTE`, one per route.
+///
+/// `via` REACHES THE PROCESSING LOG AND NOTHING ELSE. The three routes are ownership-definitive in
+/// exactly the same way and the model treats them identically; what differs is what a person reading
+/// the log needs in order to know WHY the engine believes it, which is the whole reason a note
+/// exists.
+fn claim_note(via: &str) -> &'static str {
+    match via {
+        "leader" => " (it named you its leader)",
+        "petBuff" => " (you cast a pet-only spell on it)",
+        // `tell` — the private, unforgeable route, and the one that needs no explaining.
+        _ => "",
+    }
 }
 
 /// A pet identified you as its owner, so the named entity is your pet. THREE lines produce this ONE
@@ -288,18 +341,19 @@ fn ingest_charm(st: &mut EngineState, ev: &Event) {
 /// than summoned. Otherwise it binds a SUMMONED pet, idempotently — a charmed mob sends the tell too,
 /// and `world.claim()` leaves an already-charmed instance's kind alone, so a charmed pet is never
 /// reclassified as summoned.
-fn bind_pet_claim(st: &mut EngineState, name: &str, ts: i64) {
+fn bind_pet_claim(st: &mut EngineState, name: &str, ts: i64, via: &str) {
     let key = id_key(name);
     // Anything that names itself YOURS stops being anybody else's. All three claim routes are
     // ownership-definitive and first-person; an ally bind rests on a broadcast, which is weaker by
     // construction, so this direction of the override needs no tie-break.
     st.ally.release(&key);
     let promote = st.world.pet_instance(name).is_none() && st.charm.claim_is_charmed(&key, ts);
-    if promote {
-        st.world.charm(name, ts);
+    let inst = if promote {
+        st.world.charm(name, ts)
     } else {
-        st.world.claim(name, ts);
-    }
+        st.world.claim(name, ts)
+    };
+    let (label, id) = (inst.label.clone(), inst.instance_id.clone());
     st.drain_retirements();
     st.note_pet(&key);
     // The claim is also the corroboration a provisional charm bind was waiting for.
@@ -309,11 +363,24 @@ fn bind_pet_claim(st: &mut EngineState, name: &str, ts: i64) {
     // grace window means it was never drawn at all. All three routes go through this function, which
     // is the whole reason there is one place to say this.
     st.pet_nudge.note_bound();
+    let what = if promote { "charm claim" } else { "pet claim" };
+    st.log(
+        ts,
+        if promote { "charm" } else { "pet" },
+        "info",
+        format!("⚡ {what} {label} [{id}]{}", claim_note(via)),
+    );
     // SINGLE-PET SUCCESSION: claiming a NEW summoned pet retires the previous one inside the world
     // model, and the name index has to follow it out or routing would go on admitting the retired
     // pet's swings as yours. The world model decides; the index and the charm model are told.
     for gone in st.sync_pet_names() {
         st.charm.release(&gone);
+        st.log(
+            ts,
+            "pet",
+            "info",
+            format!("✕ {gone} retired - one pet at a time; {name} is yours now"),
+        );
     }
 }
 
@@ -336,7 +403,7 @@ fn ingest_ally_pet_leader(st: &mut EngineState, ev: &Event) {
         return;
     }
     let ever_charmed = st.charm.ever_charmed(&pet_key);
-    st.ally.bind_by_leader(&AllyLeaderLine {
+    let bind = st.ally.bind_by_leader(&AllyLeaderLine {
         pet_key: &pet_key,
         pet: &pet,
         owner: &owner,
@@ -344,6 +411,23 @@ fn ingest_ally_pet_leader(st: &mut EngineState, ev: &Event) {
         ts: ev.ts(),
         ever_charmed,
     });
+    // THE CLASSIFICATION IS SAID, because a lifecycle you cannot see is a lifecycle nobody can
+    // report a bug about — the two words are the whole difference between "it broke" and "it kept
+    // earning" eighteen minutes later.
+    let shape = if bind.kind == AllyKind::Summon {
+        "summoned pet"
+    } else {
+        "charmed"
+    };
+    st.log(
+        ev.ts(),
+        "charm",
+        "info",
+        format!(
+            "⚡ {pet} named {} its leader ({shape}) - crediting its damage to them",
+            bind.charmer
+        ),
+    );
 }
 
 /// Crowd control (mez/root, not charm). Evaluate any pending closure at this ts FIRST (a CC on a
@@ -360,6 +444,16 @@ fn ingest_ally_pet_leader(st: &mut EngineState, ev: &Event) {
 fn ingest_cc(st: &mut EngineState, ev: &Event) {
     let refresh = ev.bool("refresh");
     if !refresh && !st.charm.cc_broadcast(ev.ts()) {
+        // A stranger's crowd control is an observation about the room, not an event in our fight —
+        // and the refusal is SAID, because a line the engine dropped on purpose is the half a bug
+        // report can never see any other way.
+        let mob = ev.str("mob").unwrap_or_default().to_owned();
+        st.log(
+            ev.ts(),
+            "cc",
+            "dropped",
+            format!("✜ CC on {mob} - not ours (no own cast to resolve)"),
+        );
         return;
     }
     let Some(mob) = ev.str("mob").map(str::to_string) else {
@@ -370,6 +464,7 @@ fn ingest_cc(st: &mut EngineState, ev: &Event) {
     if inst.instance_id == "you" {
         return;
     }
+    let label = inst.label.clone();
     ensure_encounter(st, ev.ts());
     let enc = st.current.as_mut().expect("just ensured");
     enc.engaged.insert(inst.instance_id.clone());
@@ -377,6 +472,12 @@ fn ingest_cc(st: &mut EngineState, ev: &Event) {
     enc.cc_active_until
         .insert(inst.instance_id, ev.ts() + CC_HOLD_MS);
     st.last_activity_ts = ev.ts();
+    let tag = if refresh { "refresh" } else { "applied" };
+    let spell = match ev.str("spell") {
+        Some(s) => format!(" ({s})"),
+        None => String::new(),
+    };
+    st.log(ev.ts(), "cc", "info", format!("✜ CC {tag}: {label}{spell}"));
 }
 
 fn ingest_death(st: &mut EngineState, ev: &Event) {
@@ -389,13 +490,28 @@ fn ingest_death(st: &mut EngineState, ev: &Event) {
     // something of that name died, the honest reading is that the bind is over. Erring toward ending
     // it is the safe direction — the failure it prevents is crediting a stranger with a corpse's
     // damage, and the failure it risks is losing a few seconds of a survivor's.
-    st.ally.release(&key);
+    if let Some(gone) = st.ally.release(&key) {
+        st.log(
+            ev.ts(),
+            "charm",
+            "dropped",
+            format!("✕ {} died - {}'s pet is gone", gone.display, gone.charmer),
+        );
+    }
     let killer_key = if ev.bool("bySelf") {
         Some("you".to_string())
     } else {
         ev.str("killer").map(id_key)
     };
-    st.world.death(&name, ev.ts(), killer_key.as_deref());
+    let res = st.world.death(&name, ev.ts(), killer_key.as_deref());
+    let pet_note = if res.was_pet { " (pet)" } else { "" };
+    let amb_note = if res.ambiguous { " ~ambiguous" } else { "" };
+    st.log(
+        ev.ts(),
+        "death",
+        "info",
+        format!("☠ {name} died{pet_note}{amb_note} - {}", res.reason),
+    );
     // The retired instance stays in `engaged` — so an in-fight heal on the corpse still counts —
     // because closure consults `is_retired`, not set membership. Its CC hold is cleared by the world
     // model's own retirement announcement, which is what makes DEATH and STALENESS agree; this used
@@ -409,6 +525,17 @@ fn ingest_death(st: &mut EngineState, ev: &Event) {
 }
 
 // ── COMBAT ────────────────────────────────────────────────────────────────────────────────────
+
+/// The sentence a mitigation line gets in the ring — `mitigationLine`, verbatim, and the ONE branch
+/// on `mtype` that decides which of the three prevention shapes it was.
+fn mitigation_line(ev: &Event) -> String {
+    let source = ev.str("source").unwrap_or("?");
+    match ev.str("mtype") {
+        Some("rune") => format!("⛊ rune +{} absorption", ev.int("amount").unwrap_or(0)),
+        Some("absorbSwing") => format!("⛊ absorbed {source}'s blow"),
+        _ => format!("⛊ absorbed {source}'s damage shield"),
+    }
+}
 
 fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
     match ev.kind() {
@@ -428,6 +555,21 @@ fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
             };
             routing::route_heal(st, &line);
             fold_heal_analytics(st, &line, ev.bool("overTime"));
+            let spell = match &line.spell {
+                Some(s) => format!(" ({s})"),
+                None => String::new(),
+            };
+            st.log(
+                line.ts,
+                "heal",
+                "info",
+                format!(
+                    "+ {} → {} {}{spell}",
+                    line.healer.as_deref().unwrap_or("?"),
+                    line.target,
+                    line.amount
+                ),
+            );
             true
         }
         // A heal with NO AMOUNT cannot enter the proc model — a 0-amount "Mend proc" is a fabricated
@@ -435,6 +577,17 @@ fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
         // opens, joins or extends an encounter and never moves the damage timeline (law 8).
         "healUnstated" => {
             routing::route_heal_unstated(st, ev.ts(), ev.str("skill").unwrap_or_default());
+            // …and the ring SAYS SO out loud rather than printing a 0 that reads like a measurement.
+            let (target, skill) = (
+                ev.str("target").unwrap_or_default().to_owned(),
+                ev.str("skill").unwrap_or_default().to_owned(),
+            );
+            st.log(
+                ev.ts(),
+                "heal",
+                "info",
+                format!("+ {target} {skill} (amount not stated)"),
+            );
             true
         }
         // Damage PREVENTED, not hit points restored, so it never touches a DAMAGE total. It does reach
@@ -448,6 +601,7 @@ fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
                     amount: ev.int("amount"),
                 },
             );
+            st.log(ev.ts(), "mitigation", "info", mitigation_line(ev));
             true
         }
         "miss" => {
@@ -527,8 +681,10 @@ fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
 /// One canonical `damage` line: close any pending encounter at this ts BEFORE routing, so attributed
 /// damage after a closure starts a fresh encounter rather than reviving the old one.
 fn ingest_damage(st: &mut EngineState, ev: &Event) {
-    // Caster-less other-player DoTs (`attacker: null`) are not our fight.
+    // Caster-less other-player DoTs (`attacker: null`) are not our fight — and the RAW LINE is what
+    // the ring keeps for one, because there is nothing else to say about a line nobody owns.
     let Some(attacker) = ev.str("attacker").map(str::to_string) else {
+        st.log(ev.ts(), "other", "dropped", ev.raw().to_owned());
         return;
     };
     eval_closure(st, ev.ts());
@@ -833,12 +989,19 @@ fn ingest_choice(st: &mut EngineState, ev: &Event) -> bool {
         "stanceChange" => {
             if let Some(name) = ev.str("stance").map(str::to_string) {
                 apply_stance(st, "stance", &name, ev.ts());
+                st.log(ev.ts(), "stance", "info", format!("▸ stance: {name}"));
             }
             true
         }
         "invocationChange" => {
             if let Some(name) = ev.str("invocation").map(str::to_string) {
                 apply_stance(st, "invocation", &name, ev.ts());
+                st.log(
+                    ev.ts(),
+                    "invocation",
+                    "info",
+                    format!("▸ invocation: {name}"),
+                );
             }
             true
         }
@@ -846,8 +1009,24 @@ fn ingest_choice(st: &mut EngineState, ev: &Event) -> bool {
             // `You will now use Dragon Punch instead of Eagle Strike while attacking.` — the ONE line
             // that names the special behind an otherwise anonymous `You strike …`. It opens nothing,
             // closes nothing, and moves no total; it changes what a later swing is CALLED.
-            if let Some(skill) = ev.str("skill") {
-                st.specials.note(skill);
+            if let Some(skill) = ev.str("skill").map(str::to_string) {
+                let lane = st.specials.note(&skill);
+                // A special OUTSIDE the verified lane table is still SEEN and still logged. Saying so
+                // is the honest report: the line was read and deliberately not acted on.
+                let note = match lane {
+                    None => " (no verb lane - label unchanged)".to_owned(),
+                    Some(l) => format!(" ({l} lane)"),
+                };
+                let from = match ev.str("replaces") {
+                    Some(r) => format!(" instead of {r}"),
+                    None => String::new(),
+                };
+                st.log(
+                    ev.ts(),
+                    "special",
+                    "info",
+                    format!("▸ special attack: {skill}{from}{note}"),
+                );
             }
             true
         }
@@ -940,7 +1119,7 @@ fn ingest_modifier(st: &mut EngineState, ev: &Event) {
             // purity gate, and a minute in which the player died and four coats ended is the last
             // minute that should be believed clean. The censor then finds the coat groups already
             // closed and severs everything else.
-            clear_coats(st, ev.ts());
+            clear_coats(st, ev.ts(), CoatClearReason::Death);
             st.state_timeline.censor_all(ev.ts());
         }
         _ => {}
@@ -991,5 +1170,5 @@ fn bind_pet_buff_landing(st: &mut EngineState, ev: &Event) {
     if id_key(&target) == st.player_key.clone().unwrap_or_default() {
         return;
     }
-    bind_pet_claim(st, &target, ev.ts());
+    bind_pet_claim(st, &target, ev.ts(), "petBuff");
 }

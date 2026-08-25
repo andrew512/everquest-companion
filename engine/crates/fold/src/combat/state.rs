@@ -19,13 +19,13 @@
 //!      flag. A replay is not a moment in time. **A LIVE ENGINE CLEARS IT** at the fold-landed
 //!      moment (`engined::foldsink`'s `tick`) and from the first live event, exactly as `session.ts`
 //!      does — and the sweeps then run, which is the whole of JOS-488.
-//!   2. `recording` IS FALSE FOR THE WHOLE FOLD, for the same reason. So the classification ring is
-//!      a no-op from the first byte to the last, and `recent` is `[]` in every one of the six
-//!      goldens. The ring is therefore not ported at all: porting a buffer that provably never
-//!      receives a line would be inventing a code path. `set_live()` sets the flag anyway, because
-//!      the flag is the state — and A LIVE ENGINE THEREFORE PUBLISHES AN EMPTY `recent` WHERE THE
-//!      APP PUBLISHES CLASSIFIED LINES. That is a NAMED GAP as of JOS-488 and no longer a proof; it
-//!      is the ring itself that is missing, and nothing else reads the flag.
+//!   2. `recording` IS FALSE FOR THE WHOLE FOLD, for the same reason — and SINCE JOS-492 THE RING
+//!      IT GATES IS REAL ([`EngineState::log`]). `recent` is still `[]` in every one of the six
+//!      goldens, and now for the reason the TypeScript has: the gate is shut, not the buffer
+//!      missing. That is the difference the cutover ticket was for — the same absence, stated by
+//!      the thing that causes it — and it is what closes the NAMED GAP JOS-488 opened when
+//!      `set_live()` grew a caller and a live meter started publishing an empty ring where the app
+//!      publishes classified lines.
 //!   3. NO SESSION MARK CAN ENTER. A mark is refused while hydrating and is a user action stored
 //!      nowhere — so `closedBy` is `'zone'` on every zone session in every golden. Unchanged by
 //!      going live: there is no op, no command and no caller for one anywhere in this engine.
@@ -43,8 +43,11 @@
 //!
 //! ── THE FIELDS PORTED BY PROOF OF ABSENCE, WHICH IS DIFFERENT FROM BEING SKIPPED ───────────────
 //!
-//! THE CLASSIFICATION RING is not declared at all (fact 2): porting a buffer that provably never
-//! receives a line would be inventing a code path.
+//! THE CLASSIFICATION RING USED TO BE ONE OF THEM AND IS NOW REAL CODE (JOS-492 — [`EngineState::
+//! log`] and its forty call sites). Its absence from the goldens is unchanged and is now proven by
+//! the GATE — `if !self.recording { return }`, the TS's own first line — rather than by the buffer
+//! not existing. Same shape as the pet nudge below, and for the same reason: the cutover ticket's
+//! whole subject is turning a proof about a live world into code that a live world runs.
 //!
 //! THE PET NUDGE is armed only by `if (!st.hydrating && isPetSummonSpell(...))`, and fact 1 says
 //! `hydrating` is true for the whole of every recorded slice — so its arm is never set, `view(now)`
@@ -57,12 +60,14 @@
 //! is kept and advanced exactly where the TS advances it, because the THROTTLE is observable state even
 //! when the question behind it is never asked; the answer is not, so nothing here consults one.
 
+use serde::Serialize;
+
 use crate::combat::aggregate::Agg;
 use crate::combat::ally::AllyCharms;
 use crate::combat::charm::CharmModel;
 use crate::combat::encounter::{
     CoatSlot, Encounter, MarkerRaw, TimelineRaw, ZoneSession, ZoneSessionClose, FALLBACK_IDLE_MS,
-    MARKER_CAP, TIMELINE_CAP,
+    MARKER_CAP, RECENT_CAP, TIMELINE_CAP,
 };
 use crate::combat::others::{OtherCombatants, SpecialAttacks};
 use crate::combat::petnudge::PetNudgeState;
@@ -117,6 +122,24 @@ impl RosterFacts {
     }
 }
 
+/// ONE LINE AS THE ENGINE CLASSIFIED IT — `shared/combat.ts ClassifiedLine`, for the live
+/// processing log.
+///
+/// `cat` and `role` ARE STRINGS RATHER THAN ENUMS, deliberately. Over there `cat` is a bare `string`
+/// (the union is documented in a comment, not in the type) because the call sites pass an event's
+/// own `dtype` straight through — `melee`, `spell`, `dot`, `ds` — beside the file's own words
+/// (`charm`, `pet`, `death`, `zone`, `unparsed`). An enum here would have to enumerate a set the TS
+/// does not enumerate, and would turn a display label into a contract.
+#[derive(Debug, Clone, Serialize)]
+pub struct ClassifiedLine {
+    pub ts: i64,
+    pub cat: String,
+    /// Who it was attributed to — the four SOURCE kinds plus the two COMMENTARY roles: `info` for a
+    /// state transition the engine narrates, `dropped` for a line it deliberately refused.
+    pub role: String,
+    pub text: String,
+}
+
 /// Everything the engine folds into.
 pub struct EngineState {
     /// Canonical name keys of your LIVE PETS — charmed AND summoned alike. Kept in lockstep with the
@@ -168,6 +191,9 @@ pub struct EngineState {
     pub hydrating: bool,
     /// See the module header, fact 2.
     pub recording: bool,
+    /// THE CLASSIFICATION RING — one row per line the engine had something to say about, newest
+    /// last, capped drop-oldest at [`RECENT_CAP`]. Written only while `recording`.
+    pub recent: Vec<ClassifiedLine>,
     /// ts of the last encounter-relevant activity (attributed damage OR a CC event). Drives the
     /// `FALLBACK_IDLE_MS` closure independent of the damage timeline.
     pub last_activity_ts: i64,
@@ -255,6 +281,7 @@ impl EngineState {
             zone_seq: 0,
             hydrating: true,
             recording: false,
+            recent: Vec::new(),
             last_activity_ts: 0,
             stance: None,
             invocation: None,
@@ -317,10 +344,10 @@ impl EngineState {
     /// Before it, none of that may happen — a poll landing between two replay slices used to saw a
     /// fight in half on a clock that has nothing to do with the log (the JOS-208 measurement).
     ///
-    /// `recording` TRUE is the classification ring's gate over there. The ring is not ported (module
-    /// header, fact 2), so this flag drives nothing here; it is set anyway because it IS the state,
-    /// and a live engine that reported `recording: false` would be describing a different world than
-    /// the one it is.
+    /// `recording` TRUE opens the classification ring ([`EngineState::log`]) — the live processing
+    /// log the meter's own panel draws. It is the ONE flag that decides whether a classified line is
+    /// kept, which is what keeps a historical fold's `recent` empty without any caller having to
+    /// remember that it should be.
     ///
     /// IDEMPOTENT, and it has to be: the go-live beat is one call, but nothing structural stops a
     /// second, and `hydrating` is a latch rather than a toggle — nothing but `reset()` sets it back.
@@ -496,7 +523,7 @@ impl EngineState {
         self.pet_names.insert(name_key.to_string());
         self.ever_pet.insert(name_key.to_string());
         self.known_players.remove(name_key);
-        self.retract_other(name_key);
+        self.retract_other(name_key, "bound as your pet");
     }
 
     /// A STRONGER MODEL HAS CLAIMED A NAME — take back the row the record-everything ladder booked
@@ -516,7 +543,11 @@ impl EngineState {
     /// zone session already FROZEN keeps the row: its aggregate is immutable by design and a pet
     /// bound after you left the zone is not worth a thaw. Measured on the owner's whole log, every
     /// retraction fires within the same fight as the swings it takes back.
-    pub fn retract_other(&mut self, name_key: &str) {
+    /// `why` REACHES THE PROCESSING LOG AND NOTHING ELSE, exactly as it does over there: the four
+    /// callers each know a different reason this name stopped being a recorded combatant, and the
+    /// retraction is a row DISAPPEARING from a meter — which is the single most confusing thing this
+    /// engine can do without saying why.
+    pub fn retract_other(&mut self, name_key: &str, why: &str) {
         if name_key.is_empty() || self.roster.admitted.contains(name_key) {
             return;
         }
@@ -539,6 +570,15 @@ impl EngineState {
                 enc.summary = None;
             }
         }
+        // THE LAST ACTIVITY TS, not a clock: a retraction is triggered by a line the engine folded,
+        // and stamping it with the fight's own last instant is what the TS does.
+        let ts = self.last_activity_ts;
+        self.log(
+            ts,
+            "charm",
+            "dropped",
+            format!("✕ {name_key}: {why} - its recorded row is now the pet's"),
+        );
     }
 
     /// RE-INDEX `pet_names` off the world model's live pets, and report the name keys that fell out.
@@ -572,6 +612,12 @@ impl EngineState {
             self.world.uncharm(&d.display, now);
             self.drain_retirements();
             self.pet_names.remove(&d.name_key);
+            self.log(
+                now,
+                "charm",
+                "dropped",
+                format!("✕ {}: charm bind never corroborated - unbound", d.display),
+            );
         }
     }
 
@@ -580,7 +626,17 @@ impl EngineState {
         if self.ally.idle() {
             return;
         }
-        self.ally.sweep(now);
+        for e in self.ally.sweep(now) {
+            self.log(
+                now,
+                "charm",
+                "dropped",
+                format!(
+                    "✕ {}: {}'s charm has run its full duration - unbound",
+                    e.display, e.charmer
+                ),
+            );
+        }
     }
 
     /// MAY `name_key` BE A THIRD-PARTY CHARMER? The behavioural half of the caster gate — the name
@@ -756,6 +812,35 @@ impl EngineState {
             self.resolve(name, ts, false).label
         } else {
             name.to_string()
+        }
+    }
+
+    /// APPEND ONE CLASSIFIED LINE — `state.ts log()`, and the whole of the classification ring.
+    ///
+    /// `if (!this.recording) return` IS THE FIRST LINE OVER THERE AND IT IS THE FIRST LINE HERE, and
+    /// keeping the gate INSIDE this method rather than at the forty call sites is what makes "a
+    /// replay writes nothing" a structural fact instead of forty remembered ones. It is also what
+    /// keeps the six-slice oracle whole: the recorder never calls `set_live()`, so `recording` is
+    /// false for every recorded byte and `recent` is `[]` in every golden — the same answer it gave
+    /// before this buffer existed, now given by the flag the TypeScript gives it with.
+    ///
+    /// A DISPLAY BUFFER AND NOTHING ELSE. No count, no total, no attribution and no view reads it;
+    /// it is the live processing log a person opens when they want to know why the meter said what
+    /// it said. That is why a line is a SENTENCE rather than a record — the reader is a human, and
+    /// the sentences are copied verbatim from the app so a bug report quoting one is findable in
+    /// either tree.
+    pub fn log(&mut self, ts: i64, cat: &str, role: &str, text: String) {
+        if !self.recording {
+            return;
+        }
+        self.recent.push(ClassifiedLine {
+            ts,
+            cat: cat.to_owned(),
+            role: role.to_owned(),
+            text,
+        });
+        if self.recent.len() > RECENT_CAP {
+            self.recent.remove(0);
         }
     }
 

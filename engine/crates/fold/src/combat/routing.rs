@@ -366,6 +366,17 @@ fn route_incoming_damage(st: &mut EngineState, ev: &DamageEvent) {
             },
         );
     }
+    st.log(
+        ev.ts,
+        &ev.dtype,
+        "enemy",
+        format!(
+            "{name} → You  {}{}  {}",
+            ev.amount,
+            if ev.crit { "*" } else { "" },
+            ev.skill
+        ),
+    );
 }
 
 /// You, your pet or a group member landed a hit.
@@ -432,10 +443,26 @@ fn route_outgoing_damage(st: &mut EngineState, ev: &DamageEvent, at: &Attributio
                 kind: src.kind.as_str(),
                 outcome: None,
                 detail: None,
-                target: Some(tname),
+                target: Some(tname.clone()),
             },
         );
     }
+    // THE AMBIGUOUS MARK IS `~` AND IT REPLACES THE CRIT STAR rather than joining it: an ambiguous
+    // hit is one the engine could not attribute cleanly, and saying so outranks saying it crit.
+    let cat = if ambiguous { "ambiguous" } else { &ev.dtype };
+    let mark = if ambiguous {
+        "~"
+    } else if ev.crit {
+        "*"
+    } else {
+        ""
+    };
+    st.log(
+        ev.ts,
+        cat,
+        src.kind.as_str(),
+        format!("{} → {tname}  {}{mark}  {}", src.name, ev.amount, ev.skill),
+    );
 }
 
 // ── MISS ──────────────────────────────────────────────────────────────────────────────────────
@@ -522,6 +549,12 @@ pub fn route_miss(st: &mut EngineState, ev: &MissLine) {
         if ev.mtype == MissType::Absorb {
             both(st, ev.ts, true, |agg| agg.heal.add_absorbed_swing());
         }
+        st.log(
+            ev.ts,
+            "miss",
+            "enemy",
+            format!("{name} ✕ You ({})", ev.mtype.as_str()),
+        );
         return;
     }
     route_outgoing_miss(st, ev, &fold, at.out_kind());
@@ -553,8 +586,14 @@ fn route_outgoing_miss(st: &mut EngineState, ev: &MissLine, fold: &MissFold, kin
             kind: src.kind.as_str(),
             outcome: Some("miss"),
             detail: Some(ev.mtype.as_str().to_string()),
-            target: Some(tgt_name),
+            target: Some(tgt_name.clone()),
         },
+    );
+    st.log(
+        ev.ts,
+        "miss",
+        src.kind.as_str(),
+        format!("{} ✕ {tgt_name} ({})", src.name, ev.mtype.as_str()),
     );
 }
 
@@ -625,13 +664,29 @@ pub fn route_resist(st: &mut EngineState, ev: &ResistLine) {
                 target: Some("You".to_string()),
             },
         );
+        st.log(
+            ev.ts,
+            "resist",
+            "info",
+            format!("You resisted {name}'s {}", ev.spell),
+        );
         return;
     }
 
     let Some(kind) = resist_caster(st, &id_key(&ev.caster)) else {
         // A resisted cast by a combatant the log named — the same widening the damage path got,
         // asked of the CASTER because a resist has no attacker/defender pair to classify.
-        route_other_resist(st, ev, CATEGORY);
+        if route_other_resist(st, ev, CATEGORY) {
+            return;
+        }
+        // A hostile mob's spell resisted by another mob — out of scope for the meter, and SAID SO:
+        // a line the engine deliberately refused is exactly what the `dropped` role is for.
+        st.log(
+            ev.ts,
+            "resist",
+            "dropped",
+            format!("{}'s {} resisted by {}", ev.caster, ev.spell, ev.target),
+        );
         return;
     };
     let src = out_source(st, &ev.caster, kind, ev.ts);
@@ -660,8 +715,14 @@ pub fn route_resist(st: &mut EngineState, ev: &ResistLine) {
             kind: src.kind.as_str(),
             outcome: Some("resist"),
             detail: Some("resisted".to_string()),
-            target: Some(tgt_name),
+            target: Some(tgt_name.clone()),
         },
+    );
+    st.log(
+        ev.ts,
+        "resist",
+        src.kind.as_str(),
+        format!("{}'s {} resisted by {tgt_name}", src.name, ev.spell),
     );
 }
 
@@ -942,7 +1003,19 @@ fn route_other_damage(st: &mut EngineState, ev: &DamageEvent) -> bool {
     let src = other_source(st, &ev.attacker, &key, false);
     both(st, ev.ts, true, |agg| agg.add_out(&src, ev, false));
     let tgt_name = note_defender(st, &ev.target, ev.ts);
-    push_fresh_timeline(st, ev.ts, damage_instant(ev, "other", tgt_name));
+    push_fresh_timeline(st, ev.ts, damage_instant(ev, "other", tgt_name.clone()));
+    st.log(
+        ev.ts,
+        &ev.dtype,
+        "other",
+        format!(
+            "{} → {tgt_name}  {}{}  {}",
+            src.name,
+            ev.amount,
+            if ev.crit { "*" } else { "" },
+            ev.skill
+        ),
+    );
     true
 }
 
@@ -954,7 +1027,13 @@ fn route_other_miss(st: &mut EngineState, ev: &MissLine, fold: &MissFold) -> boo
     let src = other_source(st, &ev.attacker, &key, false);
     both(st, ev.ts, true, |agg| agg.add_out_miss(&src, fold));
     let tgt_name = note_defender(st, &ev.target, ev.ts);
-    push_fresh_timeline(st, ev.ts, miss_instant(ev, "other", tgt_name));
+    push_fresh_timeline(st, ev.ts, miss_instant(ev, "other", tgt_name.clone()));
+    st.log(
+        ev.ts,
+        "miss",
+        "other",
+        format!("{} ✕ {tgt_name} ({})", src.name, ev.mtype.as_str()),
+    );
     true
 }
 
@@ -982,8 +1061,14 @@ fn route_other_resist(st: &mut EngineState, ev: &ResistLine, category: &str) -> 
             kind: "other",
             outcome: Some("resist"),
             detail: Some("resisted".to_string()),
-            target: Some(tgt_name),
+            target: Some(tgt_name.clone()),
         },
+    );
+    st.log(
+        ev.ts,
+        "resist",
+        "other",
+        format!("{}'s {} resisted by {tgt_name}", src.name, ev.spell),
     );
     true
 }
@@ -1057,14 +1142,39 @@ fn note_ally_pet_evidence(st: &mut EngineState, attacker: &str, target: &str, ts
         return;
     }
     st.ally.note_activity(&a_key, ts);
+    // The bind is read again for its DISPLAY name and charmer at each of the two endings, because
+    // `mark_ambiguous`/`soft_hostile` take `&mut st.ally` and a borrow of the bind cannot span one.
     if a_key == id_key(target) {
-        st.ally.mark_ambiguous(&a_key);
+        let said = st.ally.mark_ambiguous(&a_key);
+        if said {
+            if let Some(b) = st.ally.bind_of(&a_key) {
+                let (display, charmer) = (b.display.clone(), b.charmer.clone());
+                st.log(
+                    ts,
+                    "charm",
+                    "dropped",
+                    format!("~ {display}: a second one is active - {charmer}'s pet is unreadable"),
+                );
+            }
+        }
         return;
     }
     if !st.ally_friendly(&id_key(target)) {
         return;
     }
-    st.ally.soft_hostile(&a_key);
+    // `soft_hostile` HANDS BACK THE BIND IT RETIRED, which is exactly what the line needs to name —
+    // after the call there is nothing left to look up.
+    if let Some(gone) = st.ally.soft_hostile(&a_key) {
+        st.log(
+            ts,
+            "charm",
+            "dropped",
+            format!(
+                "✕ {} turned on {target} - {}'s charm broke",
+                gone.display, gone.charmer
+            ),
+        );
+    }
 }
 
 /// Book one mob-vs-mob damage line to the ally who owns the attacker. Called only for lines
@@ -1080,7 +1190,19 @@ fn route_ally_pet_damage(st: &mut EngineState, ev: &DamageEvent) {
     let src = ally_pet_source(bind);
     both(st, ev.ts, true, |agg| agg.add_out(&src, ev, false));
     let tgt_name = note_defender(st, &ev.target, ev.ts);
-    push_fresh_timeline(st, ev.ts, damage_instant(ev, "allyPet", tgt_name));
+    push_fresh_timeline(st, ev.ts, damage_instant(ev, "allyPet", tgt_name.clone()));
+    st.log(
+        ev.ts,
+        &ev.dtype,
+        "allyPet",
+        format!(
+            "{} → {tgt_name}  {}{}  {}",
+            src.name,
+            ev.amount,
+            if ev.crit { "*" } else { "" },
+            ev.skill
+        ),
+    );
 }
 
 /// The avoided-swing twin, on the same aggregate-only terms. A miss carries no amount, so this can
@@ -1095,7 +1217,13 @@ fn route_ally_pet_miss(st: &mut EngineState, ev: &MissLine, fold: &MissFold) {
     let src = ally_pet_source(bind);
     both(st, ev.ts, true, |agg| agg.add_out_miss(&src, fold));
     let tgt_name = note_defender(st, &ev.target, ev.ts);
-    push_fresh_timeline(st, ev.ts, miss_instant(ev, "allyPet", tgt_name));
+    push_fresh_timeline(st, ev.ts, miss_instant(ev, "allyPet", tgt_name.clone()));
+    st.log(
+        ev.ts,
+        "miss",
+        "allyPet",
+        format!("{} ✕ {tgt_name} ({})", src.name, ev.mtype.as_str()),
+    );
 }
 
 #[cfg(test)]

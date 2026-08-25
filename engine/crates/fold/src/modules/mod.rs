@@ -19,6 +19,11 @@
 //! the two SHARE their cast anchors and their learner, which is the whole of JOS-140.
 
 pub mod alerts;
+/// The alerts module's SCHEDULE half (JOS-492) — `shared/earlyWarning.ts` plus
+/// `main/modules/alertsEarlyWarning.ts`, together because over there the split is an Electron
+/// boundary (the alert EDITOR asks the same questions and cannot import `main/`) and here there is
+/// none. It is what turns `earlyWarnSec` from a def the engine refused into a def the engine honours.
+pub mod alerts_early;
 /// The alerts module's MATCHER half (JOS-482), split out for the reason `alertsFields.ts` was split
 /// out of `alerts.ts` over there: the evaluator is a different kind of thing from the two maps the
 /// fold has always kept, and putting it in one file would put that file past the repo's factoring
