@@ -521,6 +521,23 @@ pub fn session_mark(id: i64, at: i64) -> ClientMessage {
     })
 }
 
+/// One `respawn.confirmSighting` request, naming the ROW the person pressed (JOS-494).
+///
+/// NO INSTANT, unlike [`session_mark`] — the clock it re-bases onto is the row's own `seenTs`,
+/// which the fold already holds, so a caller has nothing to stamp.
+#[must_use]
+pub fn respawn_confirm(id: i64, row_id: &str) -> ClientMessage {
+    ClientMessage::RespawnConfirmSightingRequest(
+        protocol::generated::RespawnConfirmSightingRequest {
+            id: RequestId(id),
+            op: protocol::generated::RespawnConfirmSightingRequestOp::RespawnConfirmSighting,
+            params: protocol::generated::RespawnConfirmSightingParams {
+                row_id: row_id.to_owned(),
+            },
+        },
+    )
+}
+
 /// One `combat.snapshot` request (JOS-485). `opts` absent is the ordinary call — the app's own
 /// `combat.snapshot(Date.now(), opts ?? {})`, with the instant left to the engine.
 #[must_use]

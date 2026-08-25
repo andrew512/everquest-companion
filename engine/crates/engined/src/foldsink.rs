@@ -460,6 +460,24 @@ impl EventSink for FoldSink {
             .is_some_and(|engine| engine.session_mark(at))
     }
 
+    /// THE CONFIRMED SIGHTING, straight through to the module that owns what one means (JOS-494).
+    ///
+    /// ONE LINE, like `session_mark` above and through the registry rather than around it: the
+    /// whole of the decision is `fold::modules::respawn`'s — the unknown id, the row that is not
+    /// currently seen, and the base that the next death takes back by arithmetic. A registry with
+    /// no respawn module answers `false` through the same `?`, which is the same honest `false`
+    /// the module itself gives a row it does not carry.
+    ///
+    /// IT GOES THROUGH `respawn_mut` AND NOT `respawn`, which is the compiler saying this is a
+    /// write: the six lines above it in `source_rows` read the same module by `&`, and the seam
+    /// they use will not let anything move.
+    fn confirm_sighting(&mut self, row_id: &str) -> bool {
+        self.fold
+            .registry
+            .respawn_mut()
+            .is_some_and(|respawn| respawn.confirm_sighting(row_id))
+    }
+
     /// The alert fires the registry made while folding the last drain, converted from the FOLD's
     /// shape into the INGEST's at this seam — which is the whole reason both types exist. Neither
     /// `ingest.rs` nor `world.rs` ever learns what an alert is.

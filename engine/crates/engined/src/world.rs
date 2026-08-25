@@ -1026,6 +1026,46 @@ impl World {
         (took, status)
     }
 
+    /// CONFIRM A SIGHTING (JOS-494) — `respawn.confirmSighting`, the last of the app's commands.
+    ///
+    /// IT HOLDS NOTHING AND STORES NOTHING, which is the whole difference from [`World::define`]
+    /// and is not a shortcut. A define is a PREFERENCE: the world records it under its family so
+    /// the next attach re-applies it at construction, because the user's watch list is a fact about
+    /// what they want and outlives any one fold. A confirmation is a judgement about one spawn of
+    /// one mob in one session — `src/main/ipc/respawn.ts` persists none of it either, and for the
+    /// stated reason that the fold is rebuilt from a log that has never heard of the click. So
+    /// there is nothing here to hold: a confirm pushed at a world with no ingest is a confirm about
+    /// a row that does not exist, and the honest answer is `false`.
+    ///
+    /// AND THERE IS NO STATUS GATE, which is the whole difference from [`World::session_mark`].
+    /// That one refuses while the fold is replaying because the model it reaches refuses
+    /// (`combat/engine.ts sessionMark`'s `if (st.hydrating) return false`) and because a mark
+    /// entering a replaying fold is the divergence class boundary verdict 6 exists to make
+    /// impossible. Neither applies here: `respawnModule.confirmSighting` has exactly two refusals
+    /// and both are about the ROW rather than about the world, and a confirmation cannot diverge a
+    /// replay for the same reason a mark cannot — nothing persists it, so a re-fold of this log
+    /// never sees one. Mirroring the app-side seam exactly is the bar this command is held to, and
+    /// a gate the app does not have would be this process quietly disagreeing with it.
+    ///
+    /// THE WAIT IS [`World::define`]'s, for [`World::define`]'s reason: the answer is meant to say
+    /// that the live fold has moved that clock, so a client can push and then reason about the
+    /// world it made. A timeout answers `false` — the honest reading of what this process knows,
+    /// exactly as `session_mark`'s does.
+    pub fn confirm_sighting(&self, row_id: &str) -> bool {
+        let Some(push) = self.lock().write_to.clone() else {
+            return false;
+        };
+        let (answer, wait) = channel();
+        let ask = ingest::Write::Confirm(ingest::ConfirmAsk {
+            row_id: row_id.to_owned(),
+            answer,
+        });
+        if push.send(ask).is_err() {
+            return false;
+        }
+        wait.recv_timeout(SNAPSHOT_PATIENCE).unwrap_or(false)
+    }
+
     /// THE PROCESS'S CORPUS, for the ops that read it directly — `knowledge.item`, `knowledge.spell`
     /// and `knowledge.search` name nothing a fold owns, so they are answered without one.
     #[must_use]

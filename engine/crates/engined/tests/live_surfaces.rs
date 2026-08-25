@@ -1,4 +1,4 @@
-//! THE THINGS A LIVE ENGINE SAYS WITHOUT BEING ASKED, and the one command it can refuse (JOS-487).
+//! THE THINGS A LIVE ENGINE SAYS WITHOUT BEING ASKED, and the commands it answers (JOS-487, 494).
 //!
 //! Three surfaces over a real socket, and every one of them is a claim the fold's own unit tests
 //! cannot make — because all three are about what happens on the boundary between the INGEST thread
@@ -11,6 +11,10 @@
 //!   * `sessionMarks.add` — refused while the fold is replaying and taken once it is live
 //!     (boundary verdict 6), which is `combat/engine.ts sessionMark`'s hydrating gate in the
 //!     protocol's own words.
+//!   * `respawn.confirmSighting` — the SECOND command, and the one that can refuse for a reason
+//!     that has nothing to do with the world (JOS-494). It re-bases one respawn clock onto the
+//!     sighting the log made, which is a write that has to cross the same thread boundary a define
+//!     does and land at a boundary between two events rather than inside one.
 //!   * `moduleChanged` — the dirty bit, at the serve cadence, naming a module whose cursor moved
 //!     because of a line the tail read while these tests were watching.
 //!
@@ -21,7 +25,10 @@
 
 mod harness;
 
-use harness::{attach, health, session_mark, subscribe, Client, Engine, PATIENCE};
+use harness::{
+    attach, health, module_snapshot, respawn_confirm, respawn_define, session_mark, subscribe,
+    Client, Engine, PATIENCE,
+};
 use protocol::generated::{
     ConCardMessage, EngineMessage, HealthResultStatus, ModuleChangedMessage, ReplyResult,
 };
@@ -41,6 +48,15 @@ const A_HISTORICAL_CON: &str =
 /// The same shape, appended while the tail is watching. THIS one is a card.
 const A_LIVE_CON: &str =
     "[Wed Aug 19 16:20:00 2026] A lava guardian glares at you threateningly -- looks like quite a gamble. (Lvl: 50)\n";
+
+/// THE KILL THAT STARTS A RESPAWN CLOCK, and the line that later says the thing is back up. The
+/// hit is a real shape (`<Mob> hits YOU for N points of damage.`, the very line the owner was
+/// looking at when the round-3 ruling was made) and it names the mob the death did — which is what
+/// makes it EVIDENCE the module can be asked to promote.
+const A_WATCHED_DEATH: &str =
+    "[Wed Aug 19 16:05:00 2026] a fire giant warlord has been slain by Primitive!\n";
+const A_SIGHTING: &str =
+    "[Wed Aug 19 16:06:00 2026] a fire giant warlord hits YOU for 106 points of damage.\n";
 
 /// A loot line the tail reads, so the `loot` module's cursor moves under a live append.
 const A_LIVE_LOOT: &str =
@@ -182,6 +198,15 @@ impl Conn {
         }
     }
 
+    /// One module's published state, off the live fold.
+    fn state(&mut self, id: i64, module: &str) -> serde_json::Value {
+        self.client.send(&module_snapshot(id, module));
+        match self.reply(id) {
+            ReplyResult::ModuleSnapshotResult(result) => result.state,
+            other => panic!("module.snapshot answers a snapshot, got {other:?}"),
+        }
+    }
+
     fn status(&mut self, id: i64) -> HealthResultStatus {
         self.client.send(&health(id));
         match self.reply(id) {
@@ -307,6 +332,68 @@ fn a_mark_is_refused_while_the_fold_replays_and_taken_once_it_is_live() {
         panic!("sessionMarks.add answers a SessionMarkAck");
     };
     assert!(again.accepted);
+}
+
+// ---- the confirmed sighting --------------------------------------------------------------------
+
+#[test]
+fn a_confirmed_sighting_re_bases_the_clock_and_an_unknown_row_moves_nothing() {
+    // THE WHOLE PATH, over a socket: a command composed on a connection thread reaches a fold on
+    // the ingest thread through the WRITE door, mutates one module, and the very next
+    // `module.snapshot` says so. `fold::modules::respawn`'s own unit tests own the SEMANTICS —
+    // which instant, which refusals — and this owns the crossing.
+    let staged = Staged::new("confirm", &format!("{A_WATCHED_DEATH}{A_SIGHTING}"));
+    let engine = Engine::start();
+    let mut conn = Conn::new(engine.connected());
+
+    // THE WATCH IS PUSHED BEFORE THE ATTACH, which is what the app does on connect and what this
+    // test needs: watching is the module's only admission rule, so a define arriving after the fold
+    // had already walked past the sighting line would leave nothing to confirm.
+    conn.client.send(&respawn_define(
+        1,
+        &[("a fire giant warlord", "a fire giant warlord")],
+    ));
+    let _acked = conn.reply(1);
+
+    conn.client.send(&attach(2, &staged.path()));
+    let _accepted = conn.reply(2);
+    conn.wait_for_live(3);
+
+    // THE CLOCK IS ON THE DEATH AND THE ROW IS LIT — the fold read the hit, and reading it moved
+    // no clock. That inaction is the round-3 ruling, and it is the state the press acts on.
+    let before = conn.state(20, "respawn");
+    let row = &before["rows"][0];
+    assert_eq!(row["basis"], "death", "{before}");
+    assert!(row["seenTs"].is_i64(), "the row is seen: {before}");
+    let row_id = row["id"].as_str().expect("a row id").to_owned();
+
+    conn.client.send(&respawn_confirm(21, &row_id));
+    let ReplyResult::RespawnConfirmAck(ack) = conn.reply(21) else {
+        panic!("respawn.confirmSighting answers a RespawnConfirmAck");
+    };
+    assert!(ack.confirmed);
+
+    let after = conn.state(22, "respawn");
+    let moved = &after["rows"][0];
+    assert_eq!(moved["basis"], "sighting", "{after}");
+    assert_eq!(
+        moved["baseTs"], before["rows"][0]["seenTs"],
+        "the clock counts from the instant the log named it: {after}"
+    );
+    // …AND THE ROW HAS LEFT THE SEEN STATE, because the evidence is now AT the base. Absent rather
+    // than null: the fold omits what it has nothing to say about.
+    assert!(moved.get("seenTs").is_none(), "{after}");
+
+    // A ROW THIS FOLD DOES NOT CARRY IS A NO-OP, REPORTED HONESTLY. It is not an error — the frame
+    // is well formed and the answer is that there was nothing to re-base — and nothing else in the
+    // module moves for it.
+    conn.client
+        .send(&respawn_confirm(23, "nagafen's lair::a mob nobody killed"));
+    let ReplyResult::RespawnConfirmAck(nothing) = conn.reply(23) else {
+        panic!("respawn.confirmSighting answers a RespawnConfirmAck");
+    };
+    assert!(!nothing.confirmed);
+    assert_eq!(conn.state(24, "respawn")["rows"][0]["basis"], "sighting");
 }
 
 // ---- the timer rows ----------------------------------------------------------------------------

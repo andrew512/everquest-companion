@@ -35,6 +35,27 @@
 // independently on purpose: the command reaching the engine and being acked is a claim that can be
 // made and pinned today, and it is the half that has to exist before the other half can be observed
 // at all.
+//
+// ── THE SECOND MEMBER, AND WHY THE FAMILY IS EXACTLY TWO (JOS-494) ─────────────────────────────
+//
+// `respawn.confirmSighting` joins the mark here rather than in `definePush.ts`, and the line
+// between the two files is what a push MEANS rather than which ipc file it happens to sit in. A
+// DEFINE is a preference: the engine's world records it under its family and re-applies it at the
+// next attach, because a watch list is a fact about what the person wants and outlives any one
+// fold. A COMMAND is a thing that happened at a moment — a press — and nothing on either side
+// stores one. `ipc/respawn.ts` therefore pushes through BOTH files, one per duty, which is not a
+// duplication: its setter edits a preference and its confirm makes a judgement, and the engine
+// treats them as differently as this app does.
+//
+// ── THE `shimServing()` GATE, RESTATED FOR A COMMAND THAT IS NOT PERSISTED ─────────────────────
+//
+// Both members ask it, and for a command it is a sharper question than for a define. A define
+// pushed at a not-yet-serving engine is still worth making — the world holds it and the next attach
+// applies it — which is why `definePush.ts` does not ask. A command is not held by anybody: an
+// engine that is not serving this app's log is an engine whose respawn clocks nobody is reading and
+// whose fold, when it does become the one being read, will have been rebuilt from a log that never
+// mentioned the press. So a command sent outside the serve window would be a statement about a
+// world with no audience, and its absence costs nothing.
 
 import { logInfo } from '../errorLog'
 import { engineRequest } from './engineClientHost'
@@ -65,6 +86,40 @@ export function serveSessionMark(at: number): void {
     },
     (err: unknown) => {
       note(`data-server sessionMark: ${String(at)} — the engine refused it (${describeErr(err)})`)
+    }
+  )
+}
+
+/**
+ * "THAT SIGHTING WAS THE SPAWN" — told to the engine, if this launch is serving from one.
+ *
+ * SYNCHRONOUS BY SIGNATURE for `serveSessionMark`'s reason: its caller is an ipc handler that has
+ * already answered the person out of this process's own module, and a click must never be made to
+ * wait on a socket.
+ *
+ * THE APP'S OWN ANSWER IS THE GATE HERE TOO. `ipc/respawn.ts` calls this only when its own
+ * `confirmSighting` returned true — a press this process itself read as a no-op (a stale click, a
+ * row that died between the render and the button) must not be announced to a second world as
+ * though it happened. The engine would answer `confirmed: false` for the same row anyway, and
+ * relying on that would be this app asking a question it already knows the answer to.
+ *
+ * A `false` COMING BACK IS STILL WORTH A LINE, and it is the interesting one: the app took the
+ * press and the engine did not, which means the two folds disagree about what is standing in that
+ * zone — a real divergence, and the sort of thing a developer flips the flag to read about.
+ */
+export function serveConfirmSighting(rowId: string): void {
+  if (!shimServing()) return
+  void engineRequest('respawn.confirmSighting', { rowId }).then(
+    (ack) => {
+      note(
+        `data-server confirmSighting: ${rowId} — ` +
+          (ack.confirmed
+            ? 'the engine re-based its clock'
+            : 'the engine had nothing to re-base, though this app did')
+      )
+    },
+    (err: unknown) => {
+      note(`data-server confirmSighting: ${rowId} — the engine refused it (${describeErr(err)})`)
     }
   )
 }

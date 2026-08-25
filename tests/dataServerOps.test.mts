@@ -50,6 +50,7 @@ const EVERY_OP: RequestOp[] = [
   'combo.define',
   'roster.define',
   'sessionMarks.add',
+  'respawn.confirmSighting',
   'combat.snapshot',
   'combat.searchFights',
   'knowledge.item',
@@ -97,6 +98,12 @@ test('EVERY GUARD IS DISCRIMINATING — no two ops accept each other’s result'
     // worth putting in the matrix: it is the answer a caller has to branch on, and it is the one an
     // over-eager guard reading `accepted` as a truthiness test would silently drop.
     'sessionMarks.add': { accepted: false, status: 'folding' },
+    // THE NO-OP, FOR THE REASON THE REFUSED MARK ABOVE IS HERE (JOS-494): both booleans are legal
+    // answers and the negative one is the trap. A guard that read `confirmed` as a truthiness test
+    // rather than as `in` would call a perfectly good ack the wrong shape — which is the mistake
+    // `knowledge.item`'s guard is written to avoid too, and it is worth making the matrix able to
+    // catch it here rather than trusting the comment beside the guard.
+    'respawn.confirmSighting': { confirmed: false },
     // THE COMBAT SURFACE (JOS-485). The snapshot's `now` is deliberately present in this shape and
     // deliberately NOT what the guard reads — the same trap `perf.snapshot`'s `status` sprang — and
     // the search result carries an EMPTY `hits` beside a non-zero `corpus`, because that is the

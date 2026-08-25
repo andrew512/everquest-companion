@@ -21,9 +21,10 @@ use protocol::generated::{
     KnowledgeMobRequestOp, KnowledgeRecord, KnowledgeResult, KnowledgeSearchRequestOp,
     KnowledgeSearchResult, KnowledgeSpellRequestOp, ModuleSnapshotRequestOp, ModuleSnapshotResult,
     PerfSnapshotRequestOp, ProtocolError, Reply, ReplyKind, ReplyResult, RequestId, ResetMessage,
-    ResetMessageKind, RespawnDefineRequestOp, RosterDefineRequestOp, SessionAttachRequestOp,
-    SessionHealthRequestOp, SessionMarkAck, SessionMarkAckStatus, SessionMarkAddRequestOp,
-    SessionProgressRequestOp, SubscribeAck, ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
+    ResetMessageKind, RespawnConfirmAck, RespawnConfirmSightingRequestOp, RespawnDefineRequestOp,
+    RosterDefineRequestOp, SessionAttachRequestOp, SessionHealthRequestOp, SessionMarkAck,
+    SessionMarkAckStatus, SessionMarkAddRequestOp, SessionProgressRequestOp, SubscribeAck,
+    ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
 };
 
 use crate::ingest::CombatOpts;
@@ -319,6 +320,27 @@ impl Session {
                     }),
                 )
             }
+
+            // RESPAWN.CONFIRMSIGHTING — the second COMMAND in this table, and the last one
+            // (JOS-494; the census pre-ruled it an impure input into the fold).
+            //
+            // `confirmed: false` IS NOT AN ERROR EITHER, and for a narrower reason than the mark's:
+            // there the request was well formed and the WORLD was not ready; here the request is
+            // well formed and there is simply nothing to re-base — the row is gone, or nothing has
+            // been seen on it since the clock started. Both are what a click that raced a death
+            // looks like, both are what the app's own handler already answered the person with, and
+            // an `ErrorReply` for either would put an ordinary press in every error log this app
+            // collects.
+            //
+            // NO STATUS RIDES THE ACK, unlike the mark's. There is nothing for one to explain: the
+            // two refusals are about the ROW, so a state the world happened to be in could not have
+            // caused either, and a status here would invite a client to branch on a coincidence.
+            ClientMessage::RespawnConfirmSightingRequest(request) => reply(
+                request.id,
+                ReplyResult::RespawnConfirmAck(RespawnConfirmAck {
+                    confirmed: world.confirm_sighting(&request.params.row_id),
+                }),
+            ),
 
             // ── THE COMBAT SURFACE (JOS-485) ───────────────────────────────────────────────────
             //
@@ -769,6 +791,7 @@ fn is_known_op(op: &str) -> bool {
         AlertsDefineRequestOp::AlertsDefine.to_string(),
         BuffTrustDefineRequestOp::BuffTrustDefine.to_string(),
         RespawnDefineRequestOp::RespawnDefine.to_string(),
+        RespawnConfirmSightingRequestOp::RespawnConfirmSighting.to_string(),
         ComboDefineRequestOp::ComboDefine.to_string(),
         RosterDefineRequestOp::RosterDefine.to_string(),
         SessionMarkAddRequestOp::SessionMarksAdd.to_string(),
