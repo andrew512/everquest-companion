@@ -31,6 +31,13 @@ tests/e2e/artifacts/
 # the contract; the bytes stay local (the bench falls back to the machine's own log and says so).
 .bench/
 tests/bench/fixtures/
+# THE GOLDEN ORACLE'S ARTIFACTS (JOS-465, `npm run oracle:record`). Covered by the line above
+# already — stated again on its own because the two directories are ignored for DIFFERENT
+# reasons and a future negation of `tests/bench/fixtures/` must not quietly publish these.
+# `slices/` is the owner's real game log; `goldens/` is that log SERIALIZED EVENT BY EVENT,
+# which is the same private bytes in a more readable form, at ~4x the size, plus every module's
+# folded state. Regenerable in two commands (goldens/README.md); never committed, never shared.
+tests/bench/fixtures/goldens/
 
 # MOB-SCRAPER wikitext cache (Task #63). The quests/spells caches ARE committed — they are ~900
 # and ~2k small files and they make a re-scrape free for anyone. The mob corpus is 7,879 pages /
