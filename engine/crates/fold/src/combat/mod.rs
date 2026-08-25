@@ -60,11 +60,17 @@
 //! different question every day it ran.
 
 pub mod aggregate;
+pub mod ally;
+pub mod charm;
 pub mod encounter;
 pub mod ingest;
 pub mod lifecycle;
+pub mod others;
 pub mod roster;
+pub mod routing;
+pub mod spellfacts;
 pub mod state;
+pub mod world;
 
 pub use encounter::ZoneSessionClose;
 pub use roster::{RosterMember, RosterSnap, RosterSource};
@@ -192,7 +198,13 @@ impl CombatEngine {
 
     /// Fold one canonical event. `live` drives the classification ring, which a historical fold
     /// never writes (`state.rs` fact 2) — so it is accepted, named, and has nothing to gate here.
-    pub fn on_event(&mut self, ev: &Event, _live: bool, _roster: Option<&dyn RosterSource>) {
+    ///
+    /// The ROSTER is refreshed first and once, which `state.rs RosterFacts` argues is exactly the
+    /// per-decision live pull rather than an approximation of it: the roster module is registered
+    /// before the engine, so it has already advanced for this line, and nothing on this dispatch
+    /// path can write it.
+    pub fn on_event(&mut self, ev: &Event, _live: bool, roster: Option<&dyn RosterSource>) {
+        self.st.refresh_roster(roster);
         ingest::ingest_event(&mut self.st, ev);
     }
 
@@ -220,16 +232,21 @@ impl CombatEngine {
 
         // The finalized fight summaries, newest-first and capped, then the whole-stay row the
         // caller appends. The current encounter is always included regardless of the cap.
-        let mut segments = Vec::new();
-        let _ = opts.max_segments;
+        let mut segments = lifecycle::collect_segments(st, now, opts.max_segments);
         segments.push(lifecycle::zone_summary(st));
 
-        // DEFAULT SELECTION = the FIGHT scope's head row: the open fight if there is one, else the
-        // most recent finalized fight. It must never wander into the zone aggregate — a meter that
-        // swapped to zone-overall between pulls is exactly what the owner rejected. Overall is
-        // reached by ASKING for a zone-session id, never by default. With no fights at all it
-        // resolves to nothing and `selected` is null, which is the honest answer here.
-        let selected_id = opts.selected_id.clone().unwrap_or_default();
+        // `inCombat` — the ONE thing `now` decides in a historical fold besides a summary's
+        // `active` flag: whether the open fight's last damage is inside the freshness window.
+        let in_combat = st
+            .current
+            .as_ref()
+            .is_some_and(|e| now - e.last_ts < ACTIVE_MS);
+
+        let selected_id = resolve_selected_id(st, opts);
+        // `buildSelected(st, selectedId, now)` — the view builders are the last stage of this port,
+        // so the SELECTION IS UNRESOLVED and the honest answer is null. `selectedId` itself is fully
+        // decided above, which is why it agrees with the golden while `selected` does not: the two
+        // answer different questions and only the second needs `segmentViews.ts`.
         let selected = Value::Null;
 
         // `recent` — the classification ring, empty for the whole of a historical fold.
@@ -240,7 +257,7 @@ impl CombatEngine {
             "selectedId": selected_id,
             "selected": selected,
             "segments": segments,
-            "inCombat": false,
+            "inCombat": in_combat,
             "recent": recent,
             "stance": stance_state(st),
             "poison": { "coat": { "combat": [] }, "slow": slow_rollup(st) },
@@ -248,17 +265,19 @@ impl CombatEngine {
             "hydrating": st.hydrating,
             "roster": st.roster_snap(roster),
         });
-        // ABSENT IS NOT NULL. `zone` is undefined until the first `You have entered X.` line, and
-        // `timeline` is undefined whenever the selection resolves to no timeline-carrying segment;
-        // both are dropped by `JSON.stringify` over there and must be dropped here.
+        // ABSENT IS NOT NULL. `zone` is undefined until the first `You have entered X.` line,
+        // `currentTarget` whenever no fight is open or the open one has landed no outgoing hit, and
+        // `timeline` whenever the selection resolves to no timeline-carrying segment. All three are
+        // dropped by `JSON.stringify` over there and must be dropped here.
         if let Some(zone) = &st.zone {
             out["zone"] = json!(zone);
+        }
+        if let Some(target) = current_target(st) {
+            out["currentTarget"] = json!(target);
         }
         if opts.timeline {
             // buildTimeline(st, selectedId, now) — unported with the encounter event ring.
         }
-        let _ = now;
-        let _ = ACTIVE_MS;
         out
     }
 
@@ -292,6 +311,52 @@ impl CombatEngine {
         }
         out
     }
+}
+
+/// DEFAULT SELECTION = the FIGHT scope's head row: the open fight if there is one, else the most
+/// recent finalized fight. It must never wander into the zone aggregate — a meter that swapped to
+/// zone-overall between pulls is exactly what the owner rejected. Overall is reached by ASKING for a
+/// zone-session id (`zone` / `zs<n>`), never by default. With no fights at all it resolves to
+/// nothing and the selection is empty, which is the honest answer.
+///
+/// AN EXPLICIT REQUEST IS VALIDATED AGAINST ALL ENCOUNTERS, not just the capped segment window — a
+/// selected finalized fight OUTSIDE the cap is still fully resolvable, because the cap is a PAYLOAD
+/// bound and never a retention one.
+fn resolve_selected_id(st: &EngineState, opts: &SnapshotOpts) -> String {
+    let default_id = st
+        .current
+        .as_ref()
+        .map(|e| e.id.clone())
+        .or_else(|| st.history.last().map(|e| e.id.clone()))
+        .unwrap_or_default();
+    let Some(want) = opts.selected_id.as_deref().filter(|s| !s.is_empty()) else {
+        return default_id;
+    };
+    let selectable = want == "zone"
+        || st.current.as_ref().is_some_and(|e| e.id == want)
+        || st.history.iter().any(|h| h.id == want)
+        || st.zone_history.iter().any(|z| z.id == want);
+    if selectable {
+        want.to_string()
+    } else {
+        default_id
+    }
+}
+
+/// The mob in front of you (world-model law 6, LIVE half). ABSENT when no encounter is open or when
+/// the open encounter has not yet landed an outgoing hit — never a guess, and never the largest
+/// target, which is the FINALIZED naming rule and would relabel a live pull retroactively.
+///
+/// READ-ONLY, and deliberately does NOT evaluate closure: the snapshot has already done that before
+/// it asks, so a fight that just closed on elapsed time reports nothing.
+fn current_target(st: &EngineState) -> Option<Value> {
+    let e = st.current.as_ref()?;
+    let name = e.last_out_target.as_ref()?;
+    Some(json!({
+        "name": name,
+        "others": e.agg.targets.len().saturating_sub(1),
+        "lastTs": e.last_ts,
+    }))
 }
 
 fn stance_state(st: &EngineState) -> StanceState {

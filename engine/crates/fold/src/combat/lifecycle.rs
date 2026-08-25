@@ -7,38 +7,42 @@
 //!
 //! ── THE `Math.max(1, …)` IN EVERY DENOMINATOR IS NOT DEFENSIVE, IT IS THE DEFINITION ──────────
 //!
-//! `durationSec` is `Math.max(1, (lastTs - startTs) / 1000)` and `activeDps` divides by
-//! `Math.max(1, activeSec)`. A one-line fight — one hit, one death — has a span of zero, and both
-//! the wall DPS and the active DPS of such a fight are defined to be its total rather than an
-//! infinity. The floor is therefore VISIBLE in the goldens: `patch-week`'s live zone summary reads
+//! `durationSec` is `max(1, (lastTs - startTs) / 1000)` and `activeDps` divides by
+//! `max(1, activeSec)`. A one-line fight — one hit, one death — has a span of zero, and both the
+//! wall DPS and the active DPS of such a fight are DEFINED to be its total rather than an infinity.
+//! The floor is therefore VISIBLE in the goldens: `patch-week`'s live zone summary reads
 //! `durationSec: 1, total: 8574, dps: 8574`, which is the floor doing exactly this. A port that
 //! guarded against division by zero some other way would produce a different number there.
 //!
-//! `activeSec` is `Math.min(dur, activeMs / 1000)` — the capped-gap active time can never exceed
-//! the wall span, because a fight cannot be active for longer than it lasted.
+//! `activeSec` is `min(dur, activeMs / 1000)` — the capped-gap active time can never exceed the wall
+//! span, because a fight cannot be active for longer than it lasted.
 
 use crate::combat::aggregate::Agg;
+use crate::combat::encounter::{
+    encounter_name, Encounter, ACTIVE_MS, FALLBACK_IDLE_MS, LINGER_MS, PRESENCE_GONE_MS,
+    SLOW_SAMPLE_CAP,
+};
 use crate::combat::state::EngineState;
 use serde::Serialize;
 
 /// One row of the snapshot's `segments` array — `shared/combat.ts SegmentSummary`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SegmentSummary {
     pub id: String,
     pub kind: &'static str,
     pub name: String,
     /// The zone this segment happened in (raw display name). ABSENT — never null — when no
-    /// `You have entered X.` line had been seen yet, which is a session that started mid-zone and
-    /// is a question the log genuinely cannot answer.
+    /// `You have entered X.` line had been seen yet, which is a session that started mid-zone and is
+    /// a question the log genuinely cannot answer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zone: Option<String>,
     pub duration_sec: f64,
     pub total: i64,
     pub dps: f64,
-    /// Active combat time (capped-gap sum) in seconds; never greater than `durationSec`.
+    /// Active combat time (capped-gap sum) in seconds; never greater than `duration_sec`.
     pub active_sec: f64,
-    /// `total / activeSec` — active-time DPS.
+    /// `total / active_sec` — active-time DPS.
     pub active_dps: f64,
     pub start_ts: i64,
     pub active: bool,
@@ -65,19 +69,127 @@ pub struct ZoneSessionSummary {
     pub live: bool,
 }
 
-/// The live zone stay's wall span in seconds, floored at 1 (see the module header).
-pub fn zone_duration_sec(st: &EngineState) -> f64 {
-    // The open encounter's span rides on top of the finalized total — the live half of the stay is
-    // as real as the finalized halves. Zero while nothing is open, which is the whole of a fold
-    // whose routing half is not ported yet.
-    let cur = 0_i64;
-    f64::max(1.0, (st.zone_finalized_ms + cur) as f64 / 1000.0)
+/// LAZILY OPEN a fight. Closure is decided by `eval_closure` (death-linger / CC-hold / fallback),
+/// which `ingest_event` runs BEFORE routing, so this only ever has to mint one.
+///
+/// It guarantees `st.current.is_some()` on return rather than handing back a borrow, because every
+/// caller goes on to touch other fields of the state in the same statement sequence and a returned
+/// `&mut Encounter` would lock all of them.
+pub fn ensure_encounter(st: &mut EngineState, ts: i64) {
+    if st.current.is_some() {
+        return;
+    }
+    st.seq += 1;
+    let id = format!("e{}", st.seq);
+    st.current = Some(Encounter::new(id, st.zone.clone(), ts));
 }
 
-/// The live zone stay's active seconds — finalized encounters' `activeMs` plus the open one's.
-pub fn zone_active_sec(st: &EngineState) -> f64 {
-    let cur = 0_i64;
-    (st.zone_active_ms + cur) as f64 / 1000.0
+/// Is every engaged HOSTILE instance gone? TWO DIFFERENT STANDARDS, because the evidence is
+/// different — and this split IS the multi-mob-pull fix:
+///
+///   RETIRED (dead/zoned) → gone IMMEDIATELY. The death line is the evidence; the `LINGER_MS` damage
+///     window in `eval_closure` still covers its trailing damage.
+///   LIVE → gone only after `PRESENCE_GONE_MS` with no presence evidence at all. The old rule reused
+///     `LINGER_MS` here and counted only DAMAGE as evidence, so a second mob that was merely missing
+///     (or casting, or being out-damaged by its friend) looked dead after 5 s — and the moment its
+///     friend actually died, the whole pull finalized and the survivor's remaining fight became a
+///     bogus second encounter.
+///
+/// A live charmed pet is never a mob we are killing, so it is excluded — otherwise the pet (which
+/// never dies) would pin every charm-grind encounter open forever.
+fn hostile_presence(st: &EngineState, enc: &Encounter, now: i64) -> (usize, bool) {
+    let mut hostiles = 0;
+    let mut all_gone = true;
+    for id in &enc.engaged {
+        if st.world.is_live_pet(id) {
+            continue;
+        }
+        hostiles += 1;
+        let seen = enc.engaged_seen.get(id).copied().unwrap_or(enc.last_ts);
+        let gone = st.world.is_retired(id) || now - seen >= PRESENCE_GONE_MS;
+        if !gone {
+            all_gone = false;
+            break;
+        }
+    }
+    (hostiles, all_gone)
+}
+
+/// Evaluate deferred closure of the current encounter as of `now`. Encounters can close purely from
+/// time passing, so this runs at the top of each damage/CC ingest AND (live only) from the snapshot.
+/// Finalization always stamps the encounter's own `last_ts` — a damage timestamp — never `now`, so
+/// startTs/lastTs/duration reflect the real fight rather than the eval moment.
+///
+/// THE HOLD IS A VETO ON ONE PATH, NOT ON CLOSURE. `CC_HOLD_MS` (120 s) deliberately exceeds
+/// `FALLBACK_IDLE_MS` (60 s), and the hold used to short-circuit this whole function — so ONE stale
+/// hold defeated EVERY closure path and pinned the fight open for two full minutes of silence. The
+/// semantics shipped instead: a hold vetoes only the DEATH-CLOSE, because that is the judgement it
+/// informs ("is this engaged instance still alive?"). The fallback asks a different question — "has
+/// anything at all happened?" — and a CC application or refresh stamps `last_activity_ts`, so an
+/// ACTIVELY refreshed mez still holds the fight open exactly as before.
+///
+/// AND THE HOLD ONLY EVER SPEAKS FOR AN ENGAGED HOSTILE. The two entities that can never be an
+/// answer to its question are excluded: a RETIRED instance (handled at the retirement SITE — the
+/// stamp is simply gone, so every retirement path agrees) and a LIVE PET of ours. The pet case is
+/// the one the owner actually hit: in the Plane of Hate his charmed pet and the mobs he is killing
+/// share ONE name, so when the last hostile twin died, `Your Dazzle spell has worn off of <name>`
+/// resolved to the only instance of that name still live — the pet — and stamped a 120-second hold
+/// on it. The skirmish could not close, and a pull 78 seconds later joined it.
+pub fn eval_closure(st: &mut EngineState, now: i64) {
+    let Some(enc) = &st.current else { return };
+
+    let since_damage = now - enc.last_ts;
+    let since_activity = now - st.last_activity_ts;
+
+    // Fallback: no damage and no CC for the idle window (mob fled / deaggroed). Evaluated FIRST, so
+    // it is reachable regardless of any outstanding hold.
+    if since_activity >= FALLBACK_IDLE_MS {
+        finalize_current(st);
+        return;
+    }
+
+    // CC-hold: any engaged instance still under an unexpired hold vetoes the death-close — EXCEPT
+    // one of your own live pets, for the reason `hostile_presence` states about the same judgement.
+    for (id, &until) in enc.cc_active_until.iter() {
+        if until > now && !st.world.is_live_pet(id) {
+            return;
+        }
+    }
+
+    let (hostiles, all_gone) = hostile_presence(st, enc, now);
+
+    // Death-close: every engaged hostile is dead or gone and the linger has elapsed.
+    if all_gone && hostiles > 0 && since_damage >= LINGER_MS {
+        finalize_current(st);
+    }
+}
+
+/// Freeze the open fight into history. A no-op when nothing is open.
+pub fn finalize_current(st: &mut EngineState) {
+    let Some(enc) = st.current.take() else { return };
+    // DROP EMPTY ENCOUNTERS: a CC application (or a lone miss) can open an encounter that never
+    // accrues any attributed damage — a mez lands and the mob is then killed by someone else — and a
+    // 0-damage shell must not pollute the history or the zone-session picker.
+    if enc.agg.is_empty() {
+        return;
+    }
+    let mut enc = enc;
+    // ROLLING TIME-TO-SLOW GOES HERE, and in this fold it is UNREACHABLE rather than skipped. The
+    // qualifying gate is `enc.coatAtEngage && isSlowCapable(coat.poison)` — a pull only counts when
+    // a SLOW-CAPABLE utility coat was already on AT ENGAGE, otherwise "how long to slow" is a
+    // question nobody asked and including it would deflate the denominator with pulls that could
+    // never land one. The blade-coat model is unported (state.rs's header), so `coatAtEngage` is
+    // never set, no pull can qualify, and `slow_samples` stays empty. Writing the branch anyway
+    // would be writing a code path that provably never runs; the consequence is instead COUNTED —
+    // `poison.slow` reads all-zero, which is what five of the six goldens carry verbatim and is a
+    // genuine divergence on the sixth. `SLOW_SAMPLE_CAP` is the ring bound the branch would apply.
+    let _ = SLOW_SAMPLE_CAP;
+    st.zone_finalized_ms += (enc.last_ts - enc.start_ts).max(0);
+    st.zone_active_ms += enc.active_ms;
+    // Compute the immutable summary once, now that the encounter is frozen. A finalized fight's
+    // summary never uses `now` (its `active` is always false), so 0 is a safe sentinel.
+    enc.summary = Some(enc_summary(&enc, "fight", 0));
+    st.history.push(enc);
 }
 
 /// The whole-stay row that `snapshot()` appends to `segments` after the fights.
@@ -99,6 +211,46 @@ pub fn zone_summary(st: &EngineState) -> SegmentSummary {
         active: false,
         enemy_heal_total: Agg::sum_heal(&st.zone_agg.enemy_heal),
     }
+}
+
+/// One fight's summary. `kind` is `current` for the open one and `fight` for a finalized one, and it
+/// decides both the NAMING mode and whether `active` can be true at all.
+pub fn enc_summary(e: &Encounter, kind: &'static str, now: i64) -> SegmentSummary {
+    let total = Agg::sum(&e.agg.out);
+    let dur = f64::max(1.0, (e.last_ts - e.start_ts) as f64 / 1000.0);
+    let active_sec = f64::min(dur, e.active_ms as f64 / 1000.0);
+    SegmentSummary {
+        id: e.id.clone(),
+        kind,
+        name: encounter_name(e, kind == "current"),
+        // ZONE ON THE SUMMARY: the fight-search haystack is name + zone, so a fight has to carry
+        // where it happened. It is stamped at open from the same field a zone session is named from,
+        // so the two can never disagree, and `finalize_current` memoizes this summary, which freezes
+        // the zone with it.
+        zone: e.zone.clone(),
+        duration_sec: dur,
+        total,
+        dps: total as f64 / dur,
+        active_sec,
+        active_dps: total as f64 / f64::max(1.0, active_sec),
+        start_ts: e.start_ts,
+        active: kind == "current" && now - e.last_ts < ACTIVE_MS,
+        enemy_heal_total: Agg::sum_heal(&e.agg.enemy_heal),
+    }
+}
+
+/// The live zone stay's wall span in seconds, floored at 1 (see the module header). The OPEN
+/// encounter's span rides on top of the finalized total — the live half of the stay is as real as
+/// the finalized halves.
+pub fn zone_duration_sec(st: &EngineState) -> f64 {
+    let cur = st.current.as_ref().map_or(0, |e| e.last_ts - e.start_ts);
+    f64::max(1.0, (st.zone_finalized_ms + cur) as f64 / 1000.0)
+}
+
+/// The live zone stay's active seconds — finalized encounters' `active_ms` plus the open one's.
+pub fn zone_active_sec(st: &EngineState) -> f64 {
+    let cur = st.current.as_ref().map_or(0, |e| e.active_ms);
+    (st.zone_active_ms + cur) as f64 / 1000.0
 }
 
 /// The zone-session list for the snapshot: the LIVE session first (id `zone`), then the finalized
@@ -132,4 +284,166 @@ pub fn zone_session_summaries(st: &EngineState) -> Vec<ZoneSessionSummary> {
         });
     }
     out
+}
+
+/// The finalized fight summaries a snapshot serializes, NEWEST-FIRST and capped. Only the current
+/// encounter is recomputed per call; finalized summaries are memoized (immutable). THE CURRENT
+/// ENCOUNTER IS ALWAYS INCLUDED regardless of the cap, and the zone summary is appended by the
+/// caller.
+pub fn collect_segments(st: &EngineState, now: i64, max_segments: usize) -> Vec<SegmentSummary> {
+    let mut segments = Vec::new();
+    if let Some(cur) = &st.current {
+        segments.push(enc_summary(cur, "current", now));
+    }
+    let stop = st.history.len().saturating_sub(max_segments);
+    for i in (stop..st.history.len()).rev() {
+        let e = &st.history[i];
+        segments.push(match &e.summary {
+            Some(s) => s.clone(),
+            None => enc_summary(e, "fight", now),
+        });
+    }
+    segments
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::combat::aggregate::{DamageEvent, SourceKind, SourceRef};
+
+    fn hit(amount: i64) -> DamageEvent {
+        DamageEvent {
+            ts: 0,
+            attacker: "You".into(),
+            target: "a bat".into(),
+            amount,
+            dtype: "melee".into(),
+            dclass: None,
+            skill: "Melee".into(),
+            crit: false,
+            category: "melee".into(),
+            modifiers: Vec::new(),
+            verb: None,
+        }
+    }
+
+    fn you() -> SourceRef {
+        SourceRef {
+            id: "you".into(),
+            name: "You".into(),
+            kind: SourceKind::You,
+        }
+    }
+
+    /// THE ONE-SECOND FLOOR IS THE DEFINITION: a one-line fight's DPS is its total, not an infinity.
+    #[test]
+    fn a_zero_span_fight_reports_its_total_as_its_dps() {
+        let mut e = Encounter::new("e1".into(), None, 1_000);
+        e.agg.add_out(&you(), &hit(8_574), false);
+        e.agg.bump_target("a bat#1", "a bat", 8_574);
+        let s = enc_summary(&e, "fight", 0);
+        assert_eq!(s.duration_sec, 1.0);
+        assert_eq!(s.dps, 8_574.0);
+        assert_eq!(s.active_dps, 8_574.0);
+        assert_eq!(s.active_sec, 0.0);
+    }
+
+    /// AN EMPTY ENCOUNTER IS DROPPED — a mez that landed and a mob somebody else killed leaves no
+    /// 0-damage shell in the history.
+    #[test]
+    fn an_encounter_that_accrued_nothing_is_dropped_at_finalize() {
+        let mut st = EngineState::new();
+        ensure_encounter(&mut st, 1_000);
+        finalize_current(&mut st);
+        assert!(st.history.is_empty());
+        assert_eq!(st.zone_finalized_ms, 0);
+    }
+
+    /// …and one that accrued anything at all is KEPT, with its wall span folded into the stay.
+    #[test]
+    fn a_fight_that_landed_a_hit_is_frozen_with_its_span() {
+        let mut st = EngineState::new();
+        ensure_encounter(&mut st, 1_000);
+        {
+            let enc = st.current.as_mut().expect("open");
+            enc.agg.add_out(&you(), &hit(100), false);
+            enc.last_ts = 5_000;
+            enc.active_ms = 2_000;
+        }
+        finalize_current(&mut st);
+        assert_eq!(st.history.len(), 1);
+        assert_eq!(st.zone_finalized_ms, 4_000);
+        assert_eq!(st.zone_active_ms, 2_000);
+        assert!(st.history[0].summary.is_some());
+    }
+
+    /// THE FALLBACK IS REACHABLE THROUGH A HOLD — one unrefreshed mez may not pin a fight open past
+    /// a minute of total silence.
+    #[test]
+    fn a_stale_cc_hold_does_not_defeat_the_idle_fallback() {
+        let mut st = EngineState::new();
+        ensure_encounter(&mut st, 0);
+        {
+            let enc = st.current.as_mut().expect("open");
+            enc.agg.add_out(&you(), &hit(10), false);
+            enc.engaged.insert("a bat#1".into());
+            enc.cc_active_until.insert("a bat#1".into(), 120_000);
+        }
+        st.last_activity_ts = 0;
+        eval_closure(&mut st, FALLBACK_IDLE_MS);
+        assert!(
+            st.current.is_none(),
+            "the fallback must reach past the hold"
+        );
+    }
+
+    /// …and an unexpired hold DOES veto the death-close, which is the judgement it informs.
+    #[test]
+    fn a_live_cc_hold_vetoes_the_death_close() {
+        let mut st = EngineState::new();
+        ensure_encounter(&mut st, 0);
+        {
+            let enc = st.current.as_mut().expect("open");
+            enc.agg.add_out(&you(), &hit(10), false);
+            enc.engaged.insert("a bat#1".into());
+            enc.engaged_seen.insert("a bat#1".into(), 0);
+            enc.cc_active_until.insert("a bat#1".into(), 120_000);
+        }
+        st.last_activity_ts = 30_000;
+        // The mob is unseen past PRESENCE_GONE_MS and the linger has elapsed, so only the hold is
+        // holding this open.
+        eval_closure(&mut st, 30_000);
+        assert!(st.current.is_some());
+    }
+
+    /// The live zone stay counts the OPEN fight's span, so a stay does not appear to stop while a
+    /// fight is running.
+    #[test]
+    fn the_live_stay_includes_the_open_fights_span() {
+        let mut st = EngineState::new();
+        st.zone_finalized_ms = 4_000;
+        ensure_encounter(&mut st, 10_000);
+        st.current.as_mut().expect("open").last_ts = 16_000;
+        assert_eq!(zone_duration_sec(&st), 10.0);
+    }
+
+    /// The segment cap is a PAYLOAD bound: the current fight is included regardless of it.
+    #[test]
+    fn the_cap_never_hides_the_open_fight() {
+        let mut st = EngineState::new();
+        for _ in 0..3 {
+            ensure_encounter(&mut st, 0);
+            st.current
+                .as_mut()
+                .expect("open")
+                .agg
+                .add_out(&you(), &hit(1), false);
+            finalize_current(&mut st);
+        }
+        ensure_encounter(&mut st, 1_000);
+        let segs = collect_segments(&st, 1_000, 1);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].kind, "current");
+        assert_eq!(segs[1].id, "e3");
+    }
 }

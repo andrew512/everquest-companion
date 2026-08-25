@@ -21,8 +21,10 @@ printed as SKIP on every parity run, green ones included.
 The combat engine is not in `WIRING_ORDER` — it is not a module. It is the bus subscriber that sits
 AFTER all twenty of them (`pipeline.ts:311,326`), and `Fold` carries it in its own `combat` field
 for exactly that reason; `src/combat/mod.rs`'s header carries the submodule-vs-crate argument. Its
-port is **deliberately partial** and the header says which half is which. Prove it with `--ledger`
-(below), never by eye.
+port is **deliberately partial** and the header says which half is which — as of JOS-477's second
+landing the world model, the whole attribution ladder, the encounter lifecycle and the aggregate's
+sums/lanes are in, and the VIEW BUILDERS are what is left. Prove it with `--ledger` (below), never
+by eye.
 
 The constructor takes a `ClusterDeps` struct (JOS-475). Add a FIELD to it and a `register` line at
 your modules' `WIRING_ORDER` positions; do not re-thread the call sites. Rename it again when it
@@ -85,36 +87,68 @@ The engine is not a module and does not follow the recipe above — it is `src/c
 `src/main/combat/*.ts`, subscribed behind the registry. What it owes is stated by measurement rather
 than by opinion: run `--ledger` over all six slices and the classes it prints ARE the worklist.
 
-As of JOS-477 the `combat` section agrees on **48–60% of leaves** per slice, and the divergences fall
-into exactly five groups. In dependency order, because each one is a prerequisite for the next:
+JOS-477 opened with the `combat` section agreeing on **48–60% of leaves** per slice, and the
+divergences falling into five groups. GROUPS 1–3 HAVE LANDED and the ledger now reads:
 
-1. **`world.ts` — instance identity.** `nameKey#gen`, the `(4)` display labels, `resolve`/`label`,
-   the retirement clock and `isLivePet`/`isRetired`. Nothing below can be right without it: an
-   encounter's `engaged` set is a set of instance ids, and the golden's fight names read
-   `a spite golem (4) +7`.
-2. **The attribution ladder** — `routing.ts classify`, then `charmModel.ts`, `allyCharms.ts`,
-   `otherCombatants.ts`, `petClaims.ts`. This decides which aggregate a line lands in, and it is the
-   one place where a PARTIAL port is actively harmful: half a ladder mis-files a pet's damage, which
-   mis-fills `engaged`, which mis-segments the fight. Port it whole or not at all.
-3. **The encounter lifecycle** — `ensureEncounter` / `evalClosure` / `finalizeCurrent`. This is what
-   turns `.segments.length` from 1 into 78, and `.selectedId` from `""` into `e77`.
-4. **The aggregate's other half** — per-skill, per-category, rounds, modifier tallies, the proc
-   ledger and the healing accumulator (`aggregate.rs` carries only the sums today, deliberately).
+| slice | `combat` leaves | `scopes` leaves |
+| --- | --- | --- |
+| early-leveling | 4202 / 4204 (100.0%) | 720 / 1080 (66.7%) |
+| mid-grind | 9750 / 9759 (99.9%) | 1638 / 2457 (66.7%) |
+| sky-era | 6525 / 6527 (100.0%) | 1100 / 1650 (66.7%) |
+| patch-week | 1149 / 1151 (99.8%) | 204 / 306 (66.7%) |
+| hate-pets | 2648 / 2650 (99.9%) | 444 / 666 (66.7%) |
+| current | 7821 / 7823 (100.0%) | 1316 / 1974 (66.7%) |
+
+So the worklist below is the same five groups with the first three struck out — the order was
+argued and it held:
+
+1. ~~**`world.ts` — instance identity.**~~ **LANDED** (`world.rs`). One caution for anyone touching
+   it: the TS installs an `onRetire` CLOSURE from `EngineState`, which Rust will not take, so
+   retirement is ANNOUNCED on a queue that `EngineState` drains at every call site that can retire.
+   Add a world call and you must drain after it, or a mez'd mob aged out by staleness goes on
+   vetoing the death-close.
+2. ~~**The attribution ladder**~~ **LANDED WHOLE** (`charm.rs`, `ally.rs`, `others.rs`, `routing.rs`,
+   `spellfacts.rs`) — `classify` still pure, and the two doors an `'ignore'` verdict is offered to
+   still aggregate-only.
+3. ~~**The encounter lifecycle**~~ **LANDED** (`lifecycle.rs`). `.segments.length` and `.selectedId`
+   agree on all six.
+4. **The aggregate's other half** — what is left of it is the ROUND grouper (`rounds.ts`), the
+   minute-WINDOW ledger (`procWindows.ts`), the modifier tallies and the meter-grade HEALING
+   accumulator (`healing.ts`). `aggregate.rs` now carries the per-skill and per-category
+   breakdowns, the accuracy and resist counters and the target/heal ledgers; the four above are
+   read ONLY by a view builder, so they land WITH group 5 rather than before it.
 5. **The view builders** — `segmentViews.ts`, `sourceViews.ts`, `healing.ts`, `procViews.ts`,
-   `defenseViews.ts`, `roundViews.ts`. These are `.combat.selected`, `.combat.timeline` and the
-   whole of `scopes`, which is ~92% of the section's byte weight and the last thing to land.
+   `defenseViews.ts`, `roundViews.ts`, and behind them `procDetect.ts` / `procRouting.ts` /
+   `stateTimeline.ts` / `coatClass.ts`. These are `.combat.selected`, `.combat.timeline` and the
+   whole of `scopes` — ~92% of the section's byte weight, and now the whole of what is red.
 
-**Two divergences are NOT 2d's to fix**, and both were measured rather than assumed:
+**THE THREE CLASSES THAT REMAIN, and nothing else is red on any slice:**
 
-- ~~`.roster.seen` / `.roster.lastSignalTs` on the `current` slice ONLY~~ — **CLOSED by JOS-475**.
-  Cluster 2b's `roster` module arrived at `EqModule::as_roster` and answers all three of
-  `RosterSource`'s methods; `current`'s combat ledger went from 21/37 leaves to 23/37 and the class
-  is gone. The other five slices carried `EMPTY_ROSTER` verbatim and still do.
-- `.poison.slow.*` on the `mid-grind` slice ONLY, which needs the encounter lifecycle (group 3) plus
-  the blade-coat routing to have run at all.
+- `.selected` — one per slice, plus every `scopes[].selected`. Group 5.
+- `.timeline` — one per slice. Group 5 (`buildTimeline` plus the per-encounter event ring, which
+  `routing.rs` does not push today).
+- `.poison.slow.*` on `mid-grind` ALONE — seven fields. The BLADE COATS (`procRouting.ts routeCoat`
+  / `routeDry`, `shared/poisons.isSlowCapable`) plus the proc ledger's `firstSlowTs`. The gate is
+  `enc.coatAtEngage && isSlowCapable(...)`, so with no coat model no pull can qualify;
+  `lifecycle.rs finalize_current` states that at the site the sample would be pushed rather than
+  writing a branch that provably never runs.
 
-Six sections already agree on all six slices and are the regression surface a later shift must not
-break: `zone`, `stance`, `hydrating`, `recent`, `inCombat`, `poison.coat`.
+**One divergence was NOT 2d's to fix and is now closed:** ~~`.roster.seen` / `.roster.lastSignalTs`
+on the `current` slice~~ — **CLOSED by JOS-475**. Cluster 2b's `roster` module arrived at
+`EqModule::as_roster` and answers all three of `RosterSource`'s methods.
+
+The regression surface a later shift must not break is now most of the section: `zone`, `stance`,
+`hydrating`, `recent`, `inCombat`, `poison.coat`, `roster`, `selectedId`, `currentTarget`, every
+field of `segments[]` and every field of `zoneSessions[]`, on all six slices.
+
+**THE TRAP THIS STAGE ACTUALLY HIT**, because it will catch the view-builder shift too: a function
+whose RETURN VALUE feeds only an unported view can still be load-bearing for a ported number.
+`st.defenderLabel(...)` looked like pure serialization — its result goes to the timeline instant and
+the processing line — but it resolves through the world model, and `resolve()` retires stale
+instances and ADOPTS the sighting's casing as the instance display. `bumpTarget` freezes the label it
+is handed (first write wins), so skipping the call left 25/71/2/1/53 FIGHT NAMES per slice
+sentence-capitalized (`A Teir\`Dal ranger (9) +1` for `a Teir\`Dal ranger (9) +1`). Before deciding a
+call is view-only, check what it MUTATES on the way to its return.
 
 ### Two rules that are not style
 
