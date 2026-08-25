@@ -103,6 +103,23 @@ impl<V> JsMap<V> {
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.entries.iter().map(|(_, v)| v)
     }
+
+    /// `for (const v of map.values()) v.field = …` — the roster's offline-gap sweep walks every
+    /// member and marks the stale ones in place.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.entries.iter_mut().map(|(_, v)| v)
+    }
+
+    /// The keys in insertion order — the LRU order the respawn module's history evicts from.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.entries.iter().map(|(k, _)| k.as_str())
+    }
+
+    /// `[...map.values()]` — the values, owned, in insertion order. The combo scorer turns three of
+    /// its maps straight into arrays this way, and the array's order is a published claim.
+    pub fn into_values(self) -> Vec<V> {
+        self.entries.into_iter().map(|(_, v)| v).collect()
+    }
 }
 
 impl<V: serde::Serialize> serde::Serialize for JsMap<V> {

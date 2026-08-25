@@ -8,13 +8,13 @@ add a module and how to prove it.
 ## Where the clusters stand
 
 `fold::WIRING_ORDER` is all twenty modules of `src/main/modules/wiring.ts`, in delivery order. What
-this crate has registered is `cluster_2a`; everything else is named by `Registry::missing()` and
+this crate has registered is `cluster_2a_2b`; everything else is named by `Registry::missing()` and
 printed as SKIP on every parity run, green ones included.
 
 | cluster | ticket | modules |
 | --- | --- | --- |
 | 2a | JOS-471 ✅ | `loot` `turnins` `classUnlocks` `kills` `leveling` `outputFiles` `spellSets` `itemTiers` `observedSpellRanks` |
-| 2b | — | `respawn` `progression` `character` `roster` `combo` |
+| 2b | JOS-475 ✅ | `respawn` `progression` `character` `roster` `combo` |
 | 2c | — | `alerts` `buffs` `buffTimers` |
 | 2d | JOS-477 🟡 | `consider` `resist` `eventFeed` + **the combat engine** (`src/combat/`, partial) |
 
@@ -23,6 +23,10 @@ AFTER all twenty of them (`pipeline.ts:311,326`), and `Fold` carries it in its o
 for exactly that reason; `src/combat/mod.rs`'s header carries the submodule-vs-crate argument. Its
 port is **deliberately partial** and the header says which half is which. Prove it with `--ledger`
 (below), never by eye.
+
+The constructor takes a `ClusterDeps` struct (JOS-475). Add a FIELD to it and a `register` line at
+your modules' `WIRING_ORDER` positions; do not re-thread the call sites. Rename it again when it
+stops being 2a+2b alone.
 
 ## Adding a module (the 2b/2c/2d recipe)
 
@@ -62,12 +66,18 @@ port is **deliberately partial** and the header says which half is which. Prove 
   free (the bar is deep equality); ARRAY order is not.
 - **`camelCase`.** `#[serde(rename_all = "camelCase")]` on every published struct.
 - **Derived events are not in the phase-1 goldens and you may still need them.** `epoch` is
-  synthesized here (`src/epoch.rs`) because nine modules reset on it. **2c owes the other two**:
-  `buffs` derives `buffExpired` while folding, and the offline-gap detector derives `offlineGap` —
-  neither exists yet, and `alerts`/`buffs`/`buffTimers` cannot be proven without them. Both stamp
-  themselves with the current primary event's `seq`/`ts`, which is why omitting them is provably
-  harmless for 2a and is not for 2c. The producer must be queued into `Fold::derived` and drained
-  through the same dispatch loop, after the primary event — that is `LogBus.emit`.
+  synthesized here (`src/epoch.rs`) because nine modules reset on it, and `offlineGap` is
+  (`src/session.rs`) because `progression` publishes every gap's instants verbatim in three columns
+  and `roster` marks members stale across one. **2c owes the LAST one**: `buffs` derives
+  `buffExpired` while folding, and `alerts`/`buffs`/`buffTimers` cannot be proven without it. The
+  producer must be queued into `Fold::derived` and drained through the same dispatch loop, after the
+  primary event — that is `LogBus.emit`.
+  **CHECK THE GOLDENS BEFORE BELIEVING A CLUSTER DOES NOT NEED ONE.** This bullet said "2c owes the
+  other two" until JOS-475, which was true of cluster 2a and false of 2b — the argument for omitting
+  a derived event (it stamps itself with the current primary event's `seq`/`ts`, so it can only move
+  the `seq` every module carries over unchanged) only holds for modules that do not READ the event.
+  Grep the TS module for the kind, then read the golden's own numbers: the six slices carry
+  4 / 7 / 6 / 0 / 3 / 2 offline intervals and they are right there in `progression.offlineStart`.
 
 ### Adding to the COMBAT engine (2d), and the order the ledger says to do it in
 
@@ -96,9 +106,10 @@ into exactly five groups. In dependency order, because each one is a prerequisit
 
 **Two divergences are NOT 2d's to fix**, and both were measured rather than assumed:
 
-- `.roster.seen` / `.roster.lastSignalTs` on the `current` slice ONLY — the other five carry
-  `EMPTY_ROSTER` verbatim, and even `current` has an empty member list. That is cluster **2b**'s
-  `roster` module arriving at `EqModule::as_roster`; nothing in `combat/` can close it.
+- ~~`.roster.seen` / `.roster.lastSignalTs` on the `current` slice ONLY~~ — **CLOSED by JOS-475**.
+  Cluster 2b's `roster` module arrived at `EqModule::as_roster` and answers all three of
+  `RosterSource`'s methods; `current`'s combat ledger went from 21/37 leaves to 23/37 and the class
+  is gone. The other five slices carried `EMPTY_ROSTER` verbatim and still do.
 - `.poison.slow.*` on the `mid-grind` slice ONLY, which needs the encounter lifecycle (group 3) plus
   the blade-coat routing to have run at all.
 
@@ -151,6 +162,13 @@ twenty agreed" and "the fold agrees" are different sentences.
 **Check the harness still bites** after changing it. Two one-line faults are enough: bump
 `KILLS_SHAPE_VERSION` and change `SETTLE_MS`, rebuild, run one slice, and confirm you get
 `FAIL kills at .state.v` and a `FAIL spellSets at .state.sets.<name>.observedAt`. Then revert.
+
+**AND INJECT ONE INTO EACH MODULE YOU ADDED, ON A SLICE THAT EXERCISES IT.** A fault that does not
+bite proves nothing about the comparator and everything about the slice you picked: `patch-week`
+carries no `group` line and no `level` line, so a roster fault and a character fault both PASS there
+while biting on `current` and `hate-pets`. The 2b run that was accepted: `.state.v` (respawn),
+`.state.recentKills.length` (progression), `.state.intervals[0].slots[0].confidence` (combo),
+`.state.lastSignalTs` (roster) and `.state.level.source` (character), across three slices.
 
 House rules for the whole crate: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D
 warnings`, `cargo test -p fold`, and the Node side's `npm run typecheck && npm run lint && npm test`.
