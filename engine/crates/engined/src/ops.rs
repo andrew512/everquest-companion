@@ -147,19 +147,33 @@ impl Session {
                 }
             }
 
-            // SUBSCRIBE. Acknowledge, then open the stream with a reset — reset-then-diffs is rule
-            // 1 of the diff protocol, and it holds even when the window is empty. A client that
-            // special-cased "no reset because there was nothing" would be a client that cannot tell
-            // an empty view from a view that never opened.
+            // SUBSCRIBE. Validate the descriptor, acknowledge, then open the stream with a reset —
+            // reset-then-diffs is rule 1 of the diff protocol, and it holds even when the window is
+            // empty. A client that special-cased "no reset because there was nothing" would be a
+            // client that cannot tell an empty view from a view that never opened.
             //
-            // EVERY DESCRIPTOR IS ACCEPTED IN PHASE 0. The views schema says an unknown source is a
-            // `notFound` error and never an empty result — that is the right rule and it arrives
-            // with the source registry in phase 3. Until a source exists to be unknown, refusing
-            // every subscription would make this op untestable and prove nothing.
+            // THE SOURCE REGISTRY IS HERE NOW (JOS-480), and phase 0's accept-everything is gone.
+            // The views schema is explicit that an unknown source is a `notFound` error and never
+            // an empty result; `views::validate` is where that becomes true, along with every other
+            // name in the descriptor — a sort term over a field the source does not carry, a
+            // direction that is not asc/desc, a window outside the payload budget. Each is refused
+            // BY NAME, because a client that silently gets a window it did not ask for has no way
+            // to notice.
+            //
+            // THE OPENING RESET IS EMPTY EVEN OVER A LIVE FOLD, and that is a property of where the
+            // rows live rather than of the protocol: they are on the ingest thread, this is a
+            // connection thread, and the full window arrives from the fold at the next boundary it
+            // already reaches. See `World::open_subscription`.
             ClientMessage::ViewSubscribeRequest(request) => {
+                let view = match crate::views::validate(&request.params) {
+                    Ok(view) => view,
+                    Err(refusal) => {
+                        return error(request.id, refusal.code, refusal.message);
+                    }
+                };
                 // THE REGISTRATION AND THE STAMP ARE ONE ACT (`World::open_subscription`), so the
                 // epoch this reset names cannot be superseded between reading it and sending it.
-                let epoch = world.open_subscription(self.listener, *request.id);
+                let epoch = world.open_subscription(self.listener, *request.id, view);
                 let subscription = RequestId(*request.id);
                 let ack = Reply {
                     kind: ReplyKind::Reply,

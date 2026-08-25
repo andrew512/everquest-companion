@@ -81,6 +81,7 @@ use eqlog::tail::{FileTail, TailCore, TailStart, DEFAULT_POLL_INTERVAL, LIVE};
 use eqlog::{host_timezone, spelldb, Clock};
 
 use crate::spawn::DIAGNOSTIC_PREFIX;
+use crate::views::{self, Meter};
 use crate::world::{FoldMark, World};
 
 /// How many bytes one scan read asks for.
@@ -161,6 +162,43 @@ pub trait EventSink {
     /// CALLED ON THE INGEST THREAD, between events, and on no other — see [`SnapshotAsk`].
     fn snapshot(&self, _module: &str) -> Option<ModuleSnapshot> {
         None
+    }
+
+    /// EVERY ROW OF ONE VIEW SOURCE, in its natural order — the view layer's door onto this fold
+    /// (JOS-480). `None` for a source this sink does not carry, which is not an error: a counting
+    /// sink folds no modules at all and a subscription over it gets an honest empty window.
+    ///
+    /// `&self` FOR THE SAME REASON `snapshot` TAKES IT, and called at the same boundaries: on the
+    /// ingest thread, between events, never inside one — so the rows a window is cut from are a
+    /// real prefix state rather than a torn one.
+    fn source_rows(&self, _source: &'static views::SourceDef) -> Option<Vec<views::SourceRow>> {
+        None
+    }
+
+    /// A monotonic signal that moves whenever `source` could have changed.
+    ///
+    /// THE WHOLE COST MODEL OF THE VIEW LAYER RESTS ON THIS. A subscription is re-cut only when its
+    /// source's revision has moved since the window it holds was built, so an idle session — which
+    /// is most of a session — pays a comparison per cadence tick and nothing else. It must be
+    /// CHEAP (a counter read, never a serialization) and it must be honest: a signal that could
+    /// repeat across a change would let a stale window stand.
+    fn source_revision(&self, _source: &'static views::SourceDef) -> Option<u64> {
+        None
+    }
+}
+
+/// The view layer's [`views::Rows`], over whatever sink this attach is folding into.
+///
+/// A BORROW, built per pass and dropped with it: the sink lives on the ingest thread and this is
+/// only the shape the world asks it questions in.
+pub struct SinkRows<'a>(pub &'a dyn EventSink);
+
+impl views::Rows for SinkRows<'_> {
+    fn rows(&self, source: &'static views::SourceDef) -> Option<Vec<views::SourceRow>> {
+        self.0.source_rows(source)
+    }
+    fn revision(&self, source: &'static views::SourceDef) -> Option<u64> {
+        self.0.source_revision(source)
     }
 }
 
@@ -540,6 +578,7 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
     // states the whole fold — `pct` at its ceiling and the exact event count — and a client whose
     // loading bar depends on it must never lose it to a fold that finished inside one interval.
     let landed = mark(&core, size, seq, &*sink);
+    let landed_at = Instant::now();
     if !world.report_progress(generation, landed) {
         return Ok(Ended::Preempted);
     }
@@ -550,7 +589,17 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
     // last COMPLETE line the scan folded, so bytes appended DURING the scan are read rather than
     // skipped and none are read twice. That seam is the lossless one the architecture diagram
     // names, and the mark law (eqlog::tail's header) is what makes the arithmetic exact.
-    if !world.report_fold_landed(generation, landed) {
+    // THE FOLD LANDS AS A RESET, per open subscription, carrying rows (JOS-480). `landed_at` is the
+    // instant the scan finished, so the first frame of a generation reports the honest fold-to-frame
+    // cost of building and cutting every open window off a whole log.
+    let mut serving = Serving::new();
+    if !world.report_fold_landed(
+        generation,
+        landed,
+        &SinkRows(&*sink),
+        Some(landed_at),
+        &mut serving.meter,
+    ) {
         return Ok(Ended::Preempted);
     }
     // READ BACK THROUGH THE ONE DOOR, deliberately: this diagnostic is the only place the engine
@@ -563,6 +612,11 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
         recorded.checkpoint,
         recorded.log.as_deref().unwrap_or(log).display()
     );
+    // …and beside it, what serving every open window off that fold cost. FORCED rather than left to
+    // the meter's cadence: the first frames of a generation are the measurement anybody debugging a
+    // slow view wants first, and a session quiet enough never to reach the cadence would otherwise
+    // never report the one pass it did make.
+    serving.say(true);
     let mut tail = FileTail::open(log, TailStart::At(landed.checkpoint));
 
     // ---- the tail: live, until something newer takes the world ------------------------------
@@ -576,6 +630,7 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
         if !world.owns(generation) {
             return Ok(Ended::Preempted);
         }
+        let before = seq;
         let polled = tail.poll(|line| {
             if parser.parse_event(line, seq, &mut ev) {
                 sink.event(&Event {
@@ -586,6 +641,13 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
                 seq += 1;
             }
         });
+        // WHEN THE FOLD PRODUCED WHAT THE NEXT FRAME WILL REPORT. Read here, once, at the end of the
+        // drain that produced it — the origin of ruling 19's fold-to-frame measurement, and the one
+        // number that cannot be recovered later. A drain that folded nothing sets nothing, so a
+        // frame with no fold behind it is not timed against the age of the session.
+        if seq != before {
+            serving.folded_at.get_or_insert_with(Instant::now);
+        }
         if let Err(e) = polled {
             // A FAILED POLL LEAVES THE TAIL RUNNING — `FileTail` drops its handle and the next
             // cycle opens a fresh one under a counted reason. This is `Tailer`'s `'error'` event
@@ -614,7 +676,66 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
             }
         }
         answer_snapshots(&answers, &*sink);
-        nap(DEFAULT_POLL_INTERVAL, world, generation, &answers, &*sink);
+        // THE VIEWS, AT THEIR OWN CADENCE. Everything the drain above folded collapses into at most
+        // one frame per subscription per `views::SERVE_EVERY` — rule 2 of the diff protocol, held
+        // as a cadence rather than as a per-event push.
+        if !serving.tick(world, generation, &*sink) {
+            return Ok(Ended::Preempted);
+        }
+        nap(
+            DEFAULT_POLL_INTERVAL,
+            world,
+            generation,
+            &answers,
+            &*sink,
+            &mut serving,
+        );
+    }
+}
+
+/// WHAT THE LIVE TAIL OWES THE VIEW LAYER: a cadence, the counters, and the fold instant the next
+/// frame will be measured against.
+///
+/// One per attach, like the sink and the parser — a new generation is a new world, and last world's
+/// measurements are not this one's.
+struct Serving {
+    cadence: Cadence,
+    meter: Meter,
+    /// When the fold produced what the next frame will report, or `None` when it has produced
+    /// nothing since the last one. TAKEN by a frame, never merely read: a second frame with no new
+    /// events behind it must not be timed against the first one's fold.
+    folded_at: Option<Instant>,
+}
+
+impl Serving {
+    fn new() -> Self {
+        Self {
+            cadence: Cadence::every(views::SERVE_EVERY),
+            meter: Meter::new(),
+            folded_at: None,
+        }
+    }
+
+    /// One cadence tick. `false` when this turn no longer owns the world.
+    fn tick(&mut self, world: &World, generation: u64, sink: &dyn EventSink) -> bool {
+        if !self.cadence.due() {
+            return true;
+        }
+        let served = world.serve_views(
+            generation,
+            &SinkRows(sink),
+            self.folded_at.take(),
+            &mut self.meter,
+        );
+        self.say(false);
+        served
+    }
+
+    /// Print whatever the meter owes. `force` ignores its cadence — what a landing fold does.
+    fn say(&mut self, force: bool) {
+        for line in self.meter.take_report(force) {
+            eprintln!("{DIAGNOSTIC_PREFIX} {line}");
+        }
     }
 }
 
@@ -630,12 +751,18 @@ fn nap(
     generation: u64,
     answers: &Receiver<SnapshotAsk>,
     sink: &dyn EventSink,
+    serving: &mut Serving,
 ) {
     let mut slept = Duration::ZERO;
     while slept < interval && world.owns(generation) {
         thread::sleep(TAIL_NAP);
         slept += TAIL_NAP;
         answer_snapshots(answers, sink);
+        // A SUBSCRIPTION OPENED WHILE THE TAIL IS NAPPING IS OWED A RESET, and the nap is where a
+        // live engine spends almost all of its time — the same argument `answer_snapshots` makes
+        // one line up. Serving here makes the wait for a full window one nap instead of one poll.
+        // Nothing is built when nothing owes and nothing moved.
+        serving.tick(world, generation, sink);
     }
 }
 
@@ -688,23 +815,35 @@ fn pct_of(offset: u64, total: u64) -> f64 {
     pct.clamp(0.0, 100.0)
 }
 
-/// The progress pacer. See the module header on which clock reads are allowed and why this one is.
+/// A pacer. See the module header on which clock reads are allowed and why this one is: it decides
+/// HOW OFTEN something is announced, never what is announced, and a skipped tick changes no state.
+///
+/// TWO CADENCES USE IT and they are different rates for different reasons — progress is ~4/s
+/// because a loading bar does not need more, and the view layer is ~10/s because that is the rate
+/// the diff protocol names for a live meter.
 struct Cadence {
     last: Instant,
+    every: Duration,
 }
 
 impl Cadence {
+    /// The progress pacer.
     fn new() -> Self {
+        Self::every(PROGRESS_EVERY)
+    }
+
+    fn every(interval: Duration) -> Self {
         // Set back a full interval so the FIRST boundary of a long fold announces immediately
         // rather than after a quarter second of silence.
         Self {
-            last: Instant::now() - PROGRESS_EVERY,
+            last: Instant::now() - interval,
+            every: interval,
         }
     }
 
     fn due(&mut self) -> bool {
         let now = Instant::now();
-        if now.duration_since(self.last) < PROGRESS_EVERY {
+        if now.duration_since(self.last) < self.every {
             return false;
         }
         self.last = now;
@@ -1090,7 +1229,21 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let world = recording_world(&ledger, Some(Arc::clone(&gate)));
         let listener = world.join();
-        world.open_subscription(listener.id, 7);
+        // A REAL SUBSCRIPTION OVER THE ONE REGISTERED SOURCE. The recording sink folds no modules,
+        // so every window it cuts is empty — which is exactly the claim this test is making: one
+        // reset, naming the generation that landed, whatever is (not) in it.
+        world.open_subscription(
+            listener.id,
+            7,
+            crate::views::validate(&protocol::generated::ViewDescriptor {
+                source: "loot.ledger".to_owned(),
+                filter: None,
+                sort: Vec::new(),
+                window: None,
+            })
+            .ok()
+            .expect("loot.ledger is registered"),
+        );
 
         // The first fold reaches its first event and stops there, holding the world.
         let first = world.attach(&log.to_string_lossy());

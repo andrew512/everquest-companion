@@ -53,6 +53,8 @@ pub struct Engine {
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     stdout: Option<BufReader<ChildStdout>>,
+    /// Every stderr line this engine has written, when it was started with [`Engine::watched`].
+    diagnostics: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
     /// The loopback port from the announce line.
     pub port: u16,
     /// The protocol version from the announce line.
@@ -68,13 +70,63 @@ impl Engine {
         Self::start_with(TOKEN)
     }
 
+    /// Spawn an engine whose STDERR IS READ, so a test can assert on a diagnostic.
+    ///
+    /// The suite's default is `Stdio::null()` for the reason `spawn` states — most of these tests
+    /// refuse connections on purpose and the noise would bury the runner. A test that is ABOUT a
+    /// diagnostic needs the other arrangement, and it needs the pipe DRAINED on a thread rather
+    /// than read on demand: an undrained pipe eventually blocks the child inside `eprintln!`, which
+    /// would turn an assertion about a log line into a hung fold.
+    ///
+    /// # Panics
+    /// If the binary will not run, or does not announce a port in the agreed shape.
+    #[must_use]
+    pub fn watched() -> Self {
+        let mut engine = Self::start_from(spawn_with(Stdio::piped()), TOKEN);
+        let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stderr = engine
+            .child
+            .as_mut()
+            .expect("the engine is held")
+            .stderr
+            .take()
+            .expect("stderr is piped");
+        let sink = std::sync::Arc::clone(&lines);
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                sink.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(line);
+            }
+        });
+        engine.diagnostics = Some(lines);
+        engine
+    }
+
+    /// Every stderr line seen so far.
+    ///
+    /// # Panics
+    /// If this engine was not started with [`Engine::watched`].
+    #[must_use]
+    pub fn diagnostics(&self) -> Vec<String> {
+        self.diagnostics
+            .as_ref()
+            .expect("this engine was not started watched")
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     /// Spawn an engine holding a token of the caller's choosing.
     ///
     /// # Panics
     /// If the binary will not run, or does not announce a port in the agreed shape.
     #[must_use]
     pub fn start_with(token: &str) -> Self {
-        let (mut child, mut stdin) = spawn();
+        Self::start_from(spawn(), token)
+    }
+
+    fn start_from((mut child, mut stdin): (Child, ChildStdin), token: &str) -> Self {
         // THE TERMINATOR IS AN EXPLICIT LF. `writeln!` would be the same bytes today, but the
         // contract says LF and this file is one half of a cross-language agreement — the other half
         // is a Node `child.stdin.write()`, which has no opinion about platform line endings either.
@@ -99,6 +151,7 @@ impl Engine {
             child: Some(child),
             stdin: Some(stdin),
             stdout: Some(stdout),
+            diagnostics: None,
             port,
             protocol_version,
             announce,
@@ -191,10 +244,15 @@ impl Drop for Engine {
 /// expected noise, and piping it without draining it would eventually block the child on a full
 /// pipe. When a test needs to see a diagnostic, run the binary by hand — the crate README says how.
 fn spawn() -> (Child, ChildStdin) {
+    spawn_with(Stdio::null())
+}
+
+/// Spawn the binary with stderr arranged as the caller asks. See [`Engine::watched`].
+fn spawn_with(stderr: Stdio) -> (Child, ChildStdin) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_engined"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(stderr)
         .spawn()
         .expect("the engine binary runs");
     let stdin = child.stdin.take().expect("stdin is piped");
@@ -441,19 +499,45 @@ pub fn module_snapshot(id: i64, module: &str) -> ClientMessage {
     })
 }
 
-/// One `view.subscribe` request over the named source.
+/// One `view.subscribe` request over the named source, with the source's own defaults.
 #[must_use]
 pub fn subscribe(id: i64, source: &str) -> ClientMessage {
-    ClientMessage::ViewSubscribeRequest(ViewSubscribeRequest {
-        id: RequestId(id),
-        op: ViewSubscribeRequestOp::ViewSubscribe,
-        params: ViewDescriptor {
+    subscribe_to(
+        id,
+        ViewDescriptor {
             source: source.to_owned(),
             filter: None,
             sort: Vec::new(),
             window: None,
         },
+    )
+}
+
+/// One `view.subscribe` request carrying a descriptor the caller built — a sort, a window, a
+/// filter. The shape is still the generated one; only the contents are the test's.
+#[must_use]
+pub fn subscribe_to(id: i64, descriptor: ViewDescriptor) -> ClientMessage {
+    ClientMessage::ViewSubscribeRequest(ViewSubscribeRequest {
+        id: RequestId(id),
+        op: ViewSubscribeRequestOp::ViewSubscribe,
+        params: descriptor,
     })
+}
+
+/// A view over `loot.ledger` with an explicit window, and optionally an explicit order.
+#[must_use]
+pub fn ledger(sort: &[(&str, &str)], offset: i64, limit: i64) -> ViewDescriptor {
+    ViewDescriptor {
+        source: "loot.ledger".to_owned(),
+        filter: None,
+        sort: sort
+            .iter()
+            .map(|(field, direction)| {
+                protocol::generated::SortTerm([(*field).to_owned(), (*direction).to_owned()])
+            })
+            .collect(),
+        window: Some(protocol::generated::ViewWindow { offset, limit }),
+    }
 }
 
 /// One `view.unsubscribe` request naming a subscription.

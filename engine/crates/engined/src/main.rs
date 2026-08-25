@@ -40,6 +40,7 @@ mod foldsink;
 mod ingest;
 mod ops;
 mod spawn;
+mod views;
 mod wire;
 mod world;
 

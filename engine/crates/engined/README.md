@@ -2,8 +2,11 @@
 
 JOS-459. A binary that can be spawned, handed a secret, talked to over loopback TCP, and killed
 (phase 0, JOS-466); one that INGESTS (JOS-474): `session.attach` opens the named log, scans it at
-full speed and follows it live; and, since **JOS-478**, one that SERVES — the twenty-module fold
-runs on the ingest thread and `module.snapshot` answers a client with a module's published state.
+full speed and follows it live; one that SERVES (JOS-478) — the twenty-module fold runs on the ingest
+thread and `module.snapshot` answers a client with a module's published state; and, since
+**JOS-480**, one that serves VIEWS: `view.subscribe` answers a descriptor with rows that are
+filtered, sorted, windowed and render-ready, and follows them with coalesced diffs. It measures its
+own serve path while it does it.
 
 **The game logic is not in this crate.** `eqlog` owns what an event is (JOS-469, proven
 byte-identical to the TS parser) and what a line is (JOS-472, proven scan-equivalent); the fold that
@@ -42,7 +45,7 @@ never the process.
 | `module.snapshot` | `ModuleSnapshotResult` | **The first data-bearing op.** One module's published `{seq, state}`, straight off the fold on the ingest thread. `notFound` for a name the registry does not carry; `unavailable` when nothing is attached. See "The fold seam". |
 | `session.attach` | `AttachResult` | Bumps the epoch, broadcasts an `EpochMessage { reason: "attach" }` to every connection, replies `accepted: true`, and **starts an ingest** over `logPath`. Preempts any in-flight attach. |
 | `session.progress` | `SubscribeAck` | Acknowledges the connection-wide progress channel. Its frames are `EpochMessage { reason: "progress", progress: { pct, events } }` — the schema says progress is not a fourth stream kind, it is this. Connection-wide, so an attach on *another* connection is heard here too. |
-| `view.subscribe` | `SubscribeAck`, then a `reset` | Reset-then-diffs holds for an empty window: `total: 0`, `rows: []`. Every descriptor is accepted; the source registry (and its `notFound`) arrives in phase 3. The reset is stamped with the epoch **inside** the registration's critical section. |
+| `view.subscribe` | `SubscribeAck`, then a `reset`, then diffs | **The heart of the protocol** (JOS-480). The descriptor is validated against the SOURCE REGISTRY — an unknown source is `notFound`, a term over a field the source does not carry is `badParams` — then acknowledged, then opened with a reset. The opening reset is EMPTY even over a live fold, because the rows live on the ingest thread; the fold answers with the full window at its next boundary. See "Views". |
 | `view.unsubscribe` | `SubscribeAck { subscribed: false }` | `notFound` for a subscription this connection does not hold. Subscriptions are keyed by (connection, id), so one client can never close another's stream. |
 | anything else | `ErrorReply { unknownOp }` | The connection survives — a refused request is not a broken conversation. |
 
@@ -155,9 +158,187 @@ the full argument, including the two shapes that were rejected.
 
 **The combat engine is deliberately not subscribed.** It is not a module — `WIRING_ORDER` does not
 name it and `module.snapshot` is a registry op — and its surfaces are views (`.combat.selected`,
-`.combat.timeline`, the scopes walk). The ticket that builds `view.subscribe`'s source registry turns
-it on with one builder call (`Fold::with_combat`) and nothing else here moves; the coupling is
-one-way and checked, so a fold without it publishes exactly what a fold with it publishes.
+`.combat.timeline`, the scopes walk). The source registry exists now (JOS-480) and does not carry
+them yet: turning them on is one builder call (`Fold::with_combat`) plus a source per surface, and
+nothing else here moves. The coupling is one-way and checked, so a fold without it publishes exactly
+what a fold with it publishes.
+
+## Views
+
+`src/views/` is the second data-bearing surface and the one every list in the product eventually
+becomes. A subscription names a SOURCE, a filter, a sort and a window; the engine answers with rows
+that are filtered, sorted, windowed and **render-ready** (owner ruling 4), and then with coalesced
+diffs as the fold moves.
+
+| Source | Reads | Default order | Cells |
+| --- | --- | --- | --- |
+| `loot.ledger` | the `loot` module's rows | `at` desc, then `seq` desc — newest first, which is what the flat ledger draws | `at`, `item`, `count`, `from`, `zone`, `disposition`, `created` |
+
+`eventFeed.recent` is **skipped, and named rather than forgotten**: the fold's event feed admits
+nothing that did not arrive live through an injected item probe, an injected consider table, or an
+out-of-band alert push, and this engine carries none of the three. Its ring is empty in every fold
+this build can perform, so a view over it could only ever serve an empty window and no test could
+tell a working one from a broken one. It arrives with the sources that feed it.
+
+**A query FIELD is not a CELL, and the whole layer turns on that.** A sort term names `at`; a cell is
+also called `at`; they are different values. The cell is `"Aug 19, 04:14 PM"` because that is what the
+ledger draws — sorting a column of those strings would put August before April, which is exactly the
+failure ruling 4 exists to prevent, one level below the renderer. So every source declares the
+comparable FIELDS a descriptor may name beside the CELLS it renders, and a field with no cell (`seq`,
+the row's position in the ledger) is not an oversight. **Every sort ends in the source's tiebreak**,
+because EQ stamps to the second and a corpse yielding three items writes three rows at one instant:
+an order that is not total is a window that shuffles, and a shuffled window is diff churn for a list
+nobody touched.
+
+**Two judgment calls in `loot.ledger`'s cells, both argued in `src/views/loot.rs`'s header.** The
+stack size is its own number beside the item name rather than composed into `"2 × Bone Chips"` — the
+composed string is what the pixel says, but it is lossy for every other reader of the row, and a
+client splitting it back apart would be doing the munging the ruling forbids. And an absent value is
+`null` rather than the `-` the renderer draws: a cell of `"-"` cannot be told from an item genuinely
+called `-`, and it would take the diff protocol's explicit-null clear away from this source entirely.
+The timestamp is a **fixed en-US pattern**, not a locale call — a host locale in the serve path makes
+the engine's answer a property of the machine, and determinism is cacheability (ruling 18 law 1). The
+ZONE is honoured: the instant resolves through the parser's own clock, so the string says the wall
+clock the player's machine would show.
+
+**The diffs are computed where the fold lives.** A serve pass takes a short lock to learn which
+sources are subscribed, builds them OUTSIDE the lock on the ingest thread, and cuts, diffs and pushes
+under it — so the reset stamp and the epoch stay one critical section (a reset can only ever name the
+generation it was cut in) while a connection asking `session.health` is never queued behind a loot
+ledger. Ownership is re-asked inside the lock like every other `report_*`, so a preempted turn that
+built a window publishes nothing. A subscription is re-cut only when its source's REVISION moved — a
+counter the `loot` module bumps on every push and every clear, read through the same kind of pull seam
+`as_roster` is — so an idle session costs one comparison per cadence tick and nothing else. The rate
+is a ceiling (~10 Hz, `views::SERVE_EVERY`), not a heartbeat: nothing is sent when nothing moved.
+
+**`src/views/diff.rs` is the engine half of `src/shared/dataServer/viewWindow.ts`, and that file is
+its specification.** The client refuses rather than guesses — an anchor it does not hold, a key it
+does not hold, a key it already holds — so every op this engine emits must be one the client can
+apply as sent. Drops go first, so every anchor a later insert names is a row the client still holds;
+anchors are computed against a working copy that advances with the batch, because "the row before it"
+means after the earlier ops applied; an update carries changed cells only, with an explicit null for a
+cell that went away. The client's applier is ported beside it as the test oracle, and the one
+assertion every case makes is that it refuses nothing.
+
+**The engine measures its own serve path** (owner ruling 19, foundations). `src/views/meter.rs` counts
+fold-to-frame latency per source — from the instant the ingest folded the event to the instant the
+frame reached the outbox — and diff sizes per subscription, in ops and in the frame's own serialized
+bytes. A stderr line at a 10 s cadence, forced once when the fold lands. The `perf.budgets` surface is
+a later ticket; what exists now is the measurement, so that surface has numbers to serve rather than a
+place to put numbers nobody took.
+
+## Watching a view serve, by hand
+
+A third **real session**, same shape as the two above: a release build, twenty copies of the same
+committed fixture — which carries no loot at all, so four real loot lines are written after it, and
+those four are the ledger. The driver subscribes to `loot.ledger` with a **three-row** window before
+the attach, subscribes to a source this build does not serve, attaches, and appends one line when the
+fold lands.
+
+```js
+// scratch/drive480.mjs — node scratch/drive480.mjs <repo root> [repeats]
+// (spawn and frame printing are drive.mjs's, verbatim; the log's TAIL and `talk` differ)
+fs.appendFileSync(log, [
+  "[Wed Aug 19 16:00:00 2026] You have entered Nagafen's Lair.",
+  '[Wed Aug 19 16:11:19 2026] You have looted 2 Giant Warlord Bracer from a fire giant warlord corpse.',
+  '[Wed Aug 19 16:13:52 2026] You have looted a Flowing Black Silk Sash from a fire giant warlord corpse.',
+  '[Wed Aug 19 16:14:07 2026] You have looted a Cloak of Flames from a fire giant warlord corpse.',
+  ''
+].join('\n'))
+
+function talk(port) {
+  const s = net.connect({ host: '127.0.0.1', port })
+  let buf = ''
+  let appended = false
+  const send = (o) => { console.log('-> ' + JSON.stringify(o)); s.write(JSON.stringify(o) + '\n') }
+  s.on('connect', () => {
+    send({ op: 'hello', token: TOKEN, protocolVersion: 1 })
+    send({ id: 7, op: 'view.subscribe', params: { source: 'loot.ledger', sort: [['at', 'desc']], window: { offset: 0, limit: 3 } } })
+    send({ id: 8, op: 'view.subscribe', params: { source: 'combat.live' } })   // not served here
+    send({ id: 3, op: 'session.attach', params: { logPath: log } })
+  })
+  s.on('data', (d) => {
+    buf += d.toString()
+    const parts = buf.split('\n'); buf = parts.pop()
+    for (const line of parts.filter(Boolean)) {
+      console.log('<- ' + line)
+      const msg = JSON.parse(line)
+      if (!appended && msg.kind === 'reset' && msg.epoch === 2) {     // the fold landed
+        appended = true
+        setTimeout(() => {
+          console.log('# the game writes a line')
+          fs.appendFileSync(log, '[Wed Aug 19 16:16:44 2026] You have looted a Golden Efreeti Boots from Efreeti Lord Djarn corpse.\n')
+        }, 200)
+      }
+      if (msg.kind === 'diff') {
+        // Long enough for the meter's own 10 s cadence to say what the DIFF cost too.
+        console.log('# waiting out the meter cadence')
+        setTimeout(() => { s.end(); engine.stdin.end(); fs.rmSync(dir, { recursive: true }) }, 11000)
+      }
+    }
+  })
+}
+```
+
+**Every byte below is what came off the socket** — nothing is elided, including the reset's rows.
+
+```console
+$ cargo build --release -p engined
+$ node scratch/drive480.mjs C:/Users/jmoye/everquest-companion 20
+# staged C:\Users\…\Temp\engined-480-fJUtbz\eqlog_Primitive_freeport.txt (9185598 bytes)
+EQC-ENGINE PORT=50834 PROTOCOL=1
+-> {"op":"hello","token":"0f7d…7089","protocolVersion":1}
+-> {"id":7,"op":"view.subscribe","params":{"source":"loot.ledger","sort":[["at","desc"]],"window":{"offset":0,"limit":3}}}
+-> {"id":8,"op":"view.subscribe","params":{"source":"combat.live"}}
+-> {"id":3,"op":"session.attach","params":{"logPath":"C:\\Users\\…\\eqlog_Primitive_freeport.txt"}}
+<- {"engineVersion":"0.1.0","kind":"hello","ok":true,"protocolVersion":1}
+<- {"id":7,"kind":"reply","ok":true,"result":{"subscribed":true,"subscription":7}}
+<- {"epoch":1,"id":7,"kind":"reset","rows":[],"total":0}
+<- {"error":{"code":"notFound","message":"this engine serves no view source named \"combat.live\"; it serves loot.ledger"},"id":8,"kind":"error","ok":false}
+<- {"epoch":2,"kind":"epoch","reason":"attach"}
+<- {"id":3,"kind":"reply","ok":true,"result":{"accepted":true,"epoch":2}}
+[eqc-engine] ingest: spell db ready in 383 ms
+<- {"epoch":2,"kind":"epoch","progress":{"events":15932,"pct":11.414956326196727},"reason":"progress"}
+<- {"epoch":2,"kind":"epoch","progress":{"events":79788,"pct":57.077035158734354},"reason":"progress"}
+[eqc-engine] fold landed: 139864 events, mark 9185598 of C:\Users\…\eqlog_Primitive_freeport.txt, now live
+[eqc-engine] views: loot.ledger 1 frames (1 reset / 0 diff), 3 rows, 0 ops, 593 B (widest 593 B); fold->frame mean 29 us max 29 us over 1
+<- {"epoch":2,"kind":"epoch","progress":{"events":139864,"pct":100.0},"reason":"progress"}
+<- {"epoch":2,"kind":"epoch","progress":{"events":139864,"pct":100.0},"reason":"progress"}
+<- {"epoch":2,"id":7,"kind":"reset","rows":[{"cells":{"at":"Aug 19, 04:14 PM","count":null,"created":null,"disposition":null,"from":"a fire giant warlord","item":"Cloak of Flames","zone":"Nagafen's Lair"},"key":"loot:2"},{"cells":{"at":"Aug 19, 04:13 PM","count":null,"created":null,"disposition":null,"from":"a fire giant warlord","item":"Flowing Black Silk Sash","zone":"Nagafen's Lair"},"key":"loot:1"},{"cells":{"at":"Aug 19, 04:11 PM","count":2,"created":null,"disposition":null,"from":"a fire giant warlord","item":"Giant Warlord Bracer","zone":"Nagafen's Lair"},"key":"loot:0"}],"total":3}
+# the game writes a line
+<- {"epoch":2,"kind":"epoch","progress":{"events":139865,"pct":100.0},"reason":"progress"}
+<- {"epoch":2,"id":7,"kind":"diff","ops":[{"key":"loot:0","op":"drop"},{"before":"loot:2","op":"insert","row":{"cells":{"at":"Aug 19, 04:16 PM","count":null,"created":null,"disposition":null,"from":"Efreeti Lord Djarn","item":"Golden Efreeti Boots","zone":"Nagafen's Lair"},"key":"loot:3"}}],"total":4}
+# waiting out the meter cadence
+[eqc-engine] views: loot.ledger 2 frames (1 reset / 1 diff), 3 rows, 2 ops, 892 B (widest 593 B); fold->frame mean 50.3 ms max 100.6 ms over 2
+```
+
+Eight things in that transcript are this ticket:
+
+1. **The registry answers.** `combat.live` is `notFound`, and the refusal names what IS served rather
+   than leaving a client to guess whether it typed the source wrong or met an older build. That is
+   phase 0's accept-everything gone: there is a list to be absent from now.
+2. **The opening reset is empty and the fold's is not.** `{"epoch":1,…,"rows":[],"total":0}` arrives
+   on the connection thread the instant the subscription exists; the full window arrives at generation
+   2, when the fold has landed. A client cannot tell the two apart — which is precisely why
+   reset-then-diffs has to hold for an empty window.
+3. **The rows are render-ready.** `"at":"Aug 19, 04:14 PM"` is the string the flat ledger draws, in
+   the log's own zone. `"count":2` is a number because the ledger's stack size is a magnitude, and
+   `"count":null` on the other three is an absence rather than a dash — the renderer's `-` is a
+   display decision about nothing.
+4. **The window is honoured and `total` is not the window.** Three rows for `limit: 3`, and
+   `"total":3` because that is all the ledger holds — then `"total":4` on the diff, when it does not.
+5. **Newest first, by the sort the client asked for.** `loot:2`, `loot:1`, `loot:0` — the ledger,
+   reversed, with the tiebreak under `at` deciding rows that share an instant.
+6. **The live diff is one frame with two ops, in an order the client can apply.** The drop goes first
+   so `before: "loot:2"` names a row the window still holds; the new loot enters at the head; the
+   oldest of three falls out, and `total` says it is still in the VIEW. That is fixture moment 02,
+   against a real fold.
+7. **The engine says what its own serve path cost.** Cutting a three-row window off a 139,864-event
+   fold and putting it on the wire took **29 µs**. The diff's 100.6 ms is not compute — it is the
+   COALESCING CADENCE, the ~10 Hz ceiling the frame waited out — and reading that number off the
+   engine rather than guessing at it is the whole point of ruling 19's foundations.
+8. **593 bytes for a three-row window.** The payload budget ruling 4 asks for is only a discipline if
+   somebody is weighing it; this is the scale that weighs it.
 
 Three things worth knowing about the seam:
 
@@ -496,6 +677,27 @@ directory under the product's own file-name shape. **Every count is settled agai
 would stop meaning anything the first time the parser learned a line shape. Nothing here touches a
 real game log.
 
+**And the views are proven end to end** (`tests/views.rs`). That suite writes its OWN log rather than
+staging a fixture, and that is the one place this crate does: the committed fixtures carry no loot at
+all, and a claim about an ORDER needs a ledger whose every row is known. Four real loot lines, dated
+after the launch anchor so the rebirth boundary fires on the zone line before there is anything to
+lose, with the instants and the item names deliberately in DIFFERENT orders so that an assertion
+about a sort by `at` is not silently an assertion about a sort by `item`. Over a real socket, against
+the real binary: an unknown source is `notFound` and the connection survives it; a descriptor naming a
+field the source does not carry is `badParams`; the fold's landing reset carries the rows, newest
+first, with the cells the flat ledger draws; offset and limit are honoured while `total` ignores them;
+a stated sort is the one the window arrives in; an appended line is an insert at the head; a FULL
+window drops its oldest row in the same batch; three lines written in one breath are one frame; two
+subscriptions over one source hold their own windows and one append reaches them differently; the
+committed moments 01 and 02 are held against the engine's own frames by their field sets; and the
+engine's serve-path measurement reaches stderr.
+
+`update` ops are the one shape that suite cannot make, and it says so: `loot.ledger` is append-only,
+so a live window over it produces inserts and drops. The op is proven exhaustively in
+`views::diff`'s unit tests — changed cells only, an explicit null for a cell that went away,
+newest-wins within a batch — against the ported client applier, with every case asserting that the
+client would refuse nothing.
+
 ## Reading order
 
 * `src/main.rs` — the spawn contract, stated in full, and the accept loop.
@@ -510,6 +712,10 @@ real game log.
 * `src/foldsink.rs` — **the join.** One `impl EventSink`, and the only place either crate's
   construction is spelled: what an attach builds, which `ClusterDeps` fields are app knowledge, and
   why the combat engine is not in it.
+* `src/views/mod.rs` — **the query.** The source registry, descriptor validation, and why a query
+  FIELD is not a CELL. `views/diff.rs` is the engine half of the client's `applyDiff` and is written
+  against it; `views/loot.rs` argues every cell of the first product source against the renderer that
+  draws it; `views/meter.rs` is ruling 19's measurement.
 * `src/ops.rs` — the op table, and the argument for why the inbound type is `serde_json::Value`
   rather than `ClientMessage`.
 * `src/conn.rs` — one connection from hello to close, and the two-thread/one-outbox shape.

@@ -90,6 +90,51 @@ const CASES: DiffCase[] = [
     expectKeys: ['a', 'b']
   },
   {
+    // THE ENGINE'S OWN ORDER (JOS-480). `engined`'s diff emits every drop FIRST, so that every
+    // anchor a later insert names is a row the window still holds — the reverse of the case above,
+    // and the ordering `tests/views.rs` observes coming off a real fold. Both are legal: ops apply
+    // in order and either sequence lands the same window, which is exactly what this pins.
+    what: 'a drop and the insert that follows it, in the order the engine sends them',
+    // The window as a newest-first ledger holds it: the highest key is the head.
+    rows: [
+      { key: 'loot:2', cells: {} },
+      { key: 'loot:1', cells: {} },
+      { key: 'loot:0', cells: {} }
+    ],
+    ops: [
+      { op: 'drop', key: 'loot:0' },
+      { op: 'insert', before: 'loot:2', row: { key: 'loot:3', cells: {} } }
+    ],
+    total: 4,
+    expectKeys: ['loot:3', 'loot:2', 'loot:1'],
+    expectTotal: 4
+  },
+  {
+    // AN ABSENT VALUE ARRIVES AS null, not as the dash the renderer draws (`views/loot.rs` argues
+    // why). A row full of nulls is an ordinary row and must not be treated as a row with holes.
+    what: 'a row whose cells are null is a row like any other',
+    rows: [{ key: 'loot:2', cells: { item: 'Cloak of Flames', from: 'a fire giant warlord' } }],
+    ops: [
+      {
+        op: 'insert',
+        before: 'loot:2',
+        row: {
+          key: 'loot:3',
+          cells: { item: 'Golden Efreeti Boots', count: null, disposition: null, created: null }
+        }
+      }
+    ],
+    expectKeys: ['loot:3', 'loot:2'],
+    expectCells: {
+      'loot:3': {
+        item: 'Golden Efreeti Boots',
+        count: null,
+        disposition: null,
+        created: null
+      }
+    }
+  },
+  {
     what: 'drop shrinks the window',
     rows: [
       { key: 'a', cells: {} },
