@@ -285,6 +285,10 @@ function describeEngine(message: EngineMessage): string {
       return `diff#${String(message.id)} epoch=${String(message.epoch)} ops=${String(message.ops.length)}`
     case 'epoch':
       return `epoch=${String(message.epoch)} ${message.reason}`
+    // NO id AND NO epoch, and the description says so: a fire belongs to the world rather than to a
+    // subscription, and it is a thing that happened rather than window state to reconcile.
+    case 'fire':
+      return `fire ${message.rule} [${message.sound}] at ${String(message.at)}`
     default: {
       const unreachable: never = message
       throw new Error(`unhandled engine message ${JSON.stringify(unreachable)}`)
@@ -292,8 +296,44 @@ function describeEngine(message: EngineMessage): string {
   }
 }
 
+/**
+ * THE FIVE `*.define` COMMANDS (JOS-482), split out of `describeClient` rather than folded into it.
+ *
+ * A SPLIT, NOT A WILDCARD: the exhaustive-switch trick is the whole point of these two functions —
+ * a message shape added to the schema without being described here is a TYPECHECK failure — and it
+ * survives the split intact, because the two halves are disjoint by TYPE (`DefineMessage` and its
+ * exclusion) rather than by a runtime string test. Each says the size of the set it replaced, which
+ * is the one thing a full-set replace has to be readable as.
+ */
+type DefineMessage = Extract<ClientMessage, { op: `${string}.define` }>
+
+function describeDefine(message: DefineMessage): string {
+  const at = `define#${String(message.id)}`
+  switch (message.op) {
+    case 'alerts.define':
+      return `${at} alerts×${String(message.params.defs.length)}`
+    case 'buffTrust.define':
+      return `${at} buffTrust×${String(message.params.trust.externals.length)}`
+    case 'respawn.define':
+      return `${at} respawn×${String(message.params.prefs.watches.length)}`
+    case 'combo.define':
+      return `${at} combo×${String(message.params.corrections.length)}`
+    case 'roster.define':
+      return `${at} roster×${String(message.params.edits.length)}`
+    default: {
+      const unreachable: never = message
+      throw new Error(`unhandled define ${JSON.stringify(unreachable)}`)
+    }
+  }
+}
+
+function isDefine(message: ClientMessage): message is DefineMessage {
+  return message.op.endsWith('.define')
+}
+
 /** Same trick on the client half. */
 function describeClient(message: ClientMessage): string {
+  if (isDefine(message)) return describeDefine(message)
   switch (message.op) {
     case 'hello':
       return `hello v${String(message.protocolVersion)}`
@@ -373,11 +413,17 @@ test('every fixture message VALIDATES against the schema and narrows through the
     'module.snapshot',
     'view.subscribe',
     'view.unsubscribe',
+    'alerts.define',
+    'buffTrust.define',
+    'respawn.define',
+    'combo.define',
+    'roster.define',
     'reply',
     'error',
     'reset',
     'diff',
-    'epoch'
+    'epoch',
+    'fire'
   ]) {
     assert.ok(seen.has(tag), `no fixture demonstrates \`${tag}\``)
   }

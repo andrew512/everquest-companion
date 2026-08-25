@@ -196,6 +196,47 @@ pub struct RosterModule {
     never_member: HashSet<String>,
     /// The tailed character's own key — `session.ts` installs it, the bench does not (header).
     self_key: String,
+    /// THE USER'S OWN EDITS (JOS-482) — `roster.define`. Empty in every world constructed without a
+    /// push, which is what the bench recorded and what all six goldens carry.
+    edits: Vec<RosterEdit>,
+    /// The ts of the last epoch boundary, and of the last `You have been removed from the group.`
+    /// An edit older than either described a character or a group that no longer exists — see
+    /// [`RosterModule::live_edits`]. Kept as instants rather than by clearing the list, because the
+    /// list is the APP's and the fold does not get to edit it.
+    epoch_ts: i64,
+    left_ts: i64,
+}
+
+/// One persisted user edit — `shared/progressState.ts RosterEdit`.
+#[derive(Debug, Clone)]
+pub struct RosterEdit {
+    key: String,
+    name: String,
+    /// True for `add`, false for `remove`. A closed pair, so a bool rather than a second enum.
+    add: bool,
+    set_at: i64,
+}
+
+impl RosterEdit {
+    /// Read one pushed edit. `None` for anything that is not the shape the store writes — refused
+    /// whole, never silently repaired, which is `ipc/roster.ts`'s own rule at its own door.
+    fn read(v: &Value) -> Option<RosterEdit> {
+        let action = v.get("action")?.as_str()?;
+        let key = v.get("key")?.as_str()?;
+        if key.is_empty() {
+            return None;
+        }
+        Some(RosterEdit {
+            key: key.to_owned(),
+            name: v.get("name")?.as_str()?.to_owned(),
+            add: match action {
+                "add" => true,
+                "remove" => false,
+                _ => return None,
+            },
+            set_at: v.get("setAt")?.as_i64()?,
+        })
+    }
 }
 
 impl RosterModule {
@@ -256,6 +297,8 @@ impl RosterModule {
         if change == "selfLeave" {
             self.log.clear();
             self.admitted_keys.clear();
+            // …and every user edit written before the group ended described THAT group.
+            self.left_ts = ev.ts();
             // The group itself is over, so the licence to read a future burst as membership is too.
             self.party_exp = false;
             self.fan_out.reset();
@@ -307,6 +350,57 @@ impl RosterModule {
             cur.name = name.to_string();
         }
     }
+
+    /// The persisted edits that STILL APPLY: written after the last epoch AND after the last
+    /// self-leave. Everything older described a character or a group that is gone.
+    fn live_edits(&self) -> impl Iterator<Item = &RosterEdit> {
+        let (epoch_ts, left_ts) = (self.epoch_ts, self.left_ts);
+        self.edits
+            .iter()
+            .filter(move |e| e.set_at >= epoch_ts && e.set_at > left_ts)
+    }
+
+    /// THE EFFECTIVE ROSTER = the log's roster, PLUS your adds, MINUS your removes.
+    ///
+    /// User edits are a LAYER over the log rather than a mutation of it, and that is what makes
+    /// them stick the way the user means: the next `<Name> has joined the group.` cannot undo a
+    /// remove, and the next `<Name> has left the group.` cannot undo an add. Undoing an edit is the
+    /// user's own job, and the only thing that should be able to.
+    ///
+    /// An add for somebody the LOG already named keeps their real join time and gains the top
+    /// provenance rung — the user's statement is a stronger claim about the same person, not a
+    /// different person.
+    fn effective(&self) -> Vec<RosterMember> {
+        if self.live_edits().next().is_none() {
+            return self.log.values().cloned().collect();
+        }
+        let mut out: JsMap<RosterMember> = JsMap::new();
+        for m in self.log.values() {
+            out.insert(m.key.clone(), m.clone());
+        }
+        for e in self.live_edits() {
+            if !e.add {
+                out.remove(&e.key);
+                continue;
+            }
+            if let Some(cur) = out.get_mut(&e.key) {
+                cur.source = "user";
+                continue;
+            }
+            out.insert(
+                e.key.clone(),
+                RosterMember {
+                    key: e.key.clone(),
+                    name: e.name.clone(),
+                    source: "user",
+                    since_ts: e.set_at,
+                    last_confirmed_ts: e.set_at,
+                    stale: false,
+                },
+            );
+        }
+        out.into_values()
+    }
 }
 
 impl EqModule for RosterModule {
@@ -331,8 +425,12 @@ impl EqModule for RosterModule {
         self.seq = ev.seq();
         match ev.kind() {
             "epoch" => {
-                // Character rebirth: this group belonged to the wiped character.
+                // Character rebirth: this group belonged to the wiped character. Everything goes,
+                // the persisted edits included — and they go by DATE rather than by deletion,
+                // because the list belongs to the app and the fold does not get to edit it:
+                // `live_edits` drops every edit older than this boundary.
                 self.reset();
+                self.epoch_ts = ev.ts();
             }
             "offlineGap" => {
                 // The world stopped being observable. Nothing SAID the group broke — EQ never does
@@ -363,9 +461,10 @@ impl EqModule for RosterModule {
     }
 
     fn snapshot(&self) -> Value {
-        // THE EFFECTIVE ROSTER = the log's roster, plus your adds, minus your removes. The edits
-        // layer is ABSENT here (header), so this is the log's map in join order.
-        let members: Vec<&RosterMember> = self.log.values().collect();
+        // THE EFFECTIVE ROSTER = the log's roster, plus your adds, minus your removes. With no
+        // edits pushed this is the log's map in join order, verbatim — which is the world the
+        // goldens were recorded under.
+        let members = self.effective();
         json!({
             "seq": self.seq,
             "state": {
@@ -380,6 +479,31 @@ impl EqModule for RosterModule {
     /// downcast, and `None` everywhere else.
     fn as_roster(&self) -> Option<&dyn crate::combat::RosterSource> {
         Some(self)
+    }
+
+    fn as_defines(&mut self) -> Option<&mut dyn crate::Defines> {
+        Some(self)
+    }
+}
+
+impl crate::Defines for RosterModule {
+    fn family(&self) -> &'static str {
+        "roster"
+    }
+
+    /// `rosterModule.setEdits(list)` — the whole edit list, replaced.
+    ///
+    /// A PUSH RATHER THAN THE TS'S PULL, and the difference is the process boundary rather than a
+    /// design change. Over there `setEditsProvider(() => getRosterEdits(activeCharId()))` re-asks
+    /// the store on every read, so a character switch needs no notification: the provider simply
+    /// answers for whoever is active. The engine has no store to ask, so the app pushes on connect
+    /// and on every write — and because a define is a FULL-SET REPLACE, a switch is one push and
+    /// not a reconciliation.
+    fn define(&mut self, payload: &Value) {
+        let Some(list) = payload.as_array() else {
+            return;
+        };
+        self.edits = list.iter().filter_map(RosterEdit::read).collect();
     }
 }
 
@@ -397,8 +521,8 @@ impl crate::combat::RosterSource for RosterModule {
     fn snap(&self) -> crate::combat::RosterSnap {
         crate::combat::RosterSnap {
             members: self
-                .log
-                .values()
+                .effective()
+                .iter()
                 .map(|m| crate::combat::RosterMember {
                     key: m.key.clone(),
                     name: m.name.clone(),
@@ -412,13 +536,22 @@ impl crate::combat::RosterSource for RosterModule {
     }
 
     fn members(&self) -> Vec<String> {
-        self.log.keys().map(str::to_string).collect()
+        self.effective().into_iter().map(|m| m.key).collect()
     }
 
     /// WIDER THAN `members`, and it never shrinks within an epoch: a member who left an hour ago is
     /// still the person whose row carries that fight's damage, which is what lets a recorded row's
     /// kind upgrade from `'other'` to `'member'` MONOTONICALLY.
+    ///
+    /// A user ADD joins it and a user REMOVE does not leave it — the same asymmetry, for the same
+    /// reason: the meter's Everyone scope still has to show the damage a removed name really did.
     fn admitted(&self) -> Vec<String> {
-        self.admitted_keys.keys().map(str::to_string).collect()
+        let mut out: Vec<String> = self.admitted_keys.keys().map(str::to_string).collect();
+        for e in self.live_edits() {
+            if e.add && !out.contains(&e.key) {
+                out.push(e.key.clone());
+            }
+        }
+        out
     }
 }

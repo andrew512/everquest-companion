@@ -43,7 +43,12 @@ const EVERY_OP: RequestOp[] = [
   'module.snapshot',
   'perf.snapshot',
   'view.subscribe',
-  'view.unsubscribe'
+  'view.unsubscribe',
+  'alerts.define',
+  'buffTrust.define',
+  'respawn.define',
+  'combo.define',
+  'roster.define'
 ]
 
 test('the registry names every op, and the compile-time pin agrees', () => {
@@ -70,19 +75,42 @@ test('EVERY GUARD IS DISCRIMINATING — no two ops accept each other’s result'
     // carrying `status` is what makes that a real assertion in the matrix below.
     'perf.snapshot': { status: 'live', epoch: 2, uptimeMs: 925, ingest: {}, serve: [] },
     'view.subscribe': { subscription: 7, subscribed: true },
-    'view.unsubscribe': { subscription: 7, subscribed: false }
+    'view.unsubscribe': { subscription: 7, subscribed: false },
+    // The five defines share `DefineAck` the way the three above share `SubscribeAck`, and for the
+    // same reason: the schema has one ack arm and five ops that mean it. The two shapes below are
+    // BOTH legal answers — a list payload counts, an object payload does not — and each op is given
+    // one of them so the matrix exercises both.
+    'alerts.define': { applied: true, count: 1 },
+    'buffTrust.define': { applied: true },
+    'respawn.define': { applied: true },
+    'combo.define': { applied: true, count: 2 },
+    'roster.define': { applied: true, count: 0 }
   }
   for (const op of EVERY_OP) {
     assert.equal(RESULT_GUARDS[op](shapes[op]), true, `${op} refused its own result`)
   }
-  // `session.progress`, `view.subscribe` and `view.unsubscribe` share the SubscribeAck shape by
-  // design — the schema has one ack arm and three ops that mean it — so they are the one triple
-  // this matrix may not separate, and naming them here is what keeps the exception deliberate.
-  const ackOps = new Set<RequestOp>(['session.progress', 'view.subscribe', 'view.unsubscribe'])
+  // TWO FAMILIES SHARE A SHAPE BY DESIGN, and naming them here is what keeps each exception
+  // deliberate rather than a hole. `session.progress`, `view.subscribe` and `view.unsubscribe` all
+  // mean `SubscribeAck` — the schema has one ack arm and three ops that use it — and since JOS-482
+  // the five `*.define` commands all mean `DefineAck` for the same reason: a full-set replace has
+  // nothing per-family to report back, so five near-identical answers are one shape rather than
+  // five. Within a family the matrix may not separate; ACROSS them it still must.
+  const families: Set<RequestOp>[] = [
+    new Set<RequestOp>(['session.progress', 'view.subscribe', 'view.unsubscribe']),
+    new Set<RequestOp>([
+      'alerts.define',
+      'buffTrust.define',
+      'respawn.define',
+      'combo.define',
+      'roster.define'
+    ])
+  ]
+  const shareShape = (a: RequestOp, b: RequestOp): boolean =>
+    families.some((family) => family.has(a) && family.has(b))
   for (const op of EVERY_OP) {
     for (const other of EVERY_OP) {
       if (op === other) continue
-      if (ackOps.has(op) && ackOps.has(other)) continue
+      if (shareShape(op, other)) continue
       assert.equal(
         RESULT_GUARDS[op](shapes[other]),
         false,

@@ -13,11 +13,12 @@
 //! argument `protocol::transport::memory` makes one layer down.
 
 use protocol::generated::{
-    ClientMessage, EchoRequestOp, EchoResult, EngineMessage, ErrorCode, ErrorReply, ErrorReplyKind,
+    AlertsDefineRequestOp, BuffTrustDefineRequestOp, ClientMessage, ComboDefineRequestOp,
+    DefineAck, EchoRequestOp, EchoResult, EngineMessage, ErrorCode, ErrorReply, ErrorReplyKind,
     HelloOp, ModuleSnapshotRequestOp, ModuleSnapshotResult, PerfSnapshotRequestOp, ProtocolError,
     Reply, ReplyKind, ReplyResult, RequestId, ResetMessage, ResetMessageKind,
-    SessionAttachRequestOp, SessionHealthRequestOp, SessionProgressRequestOp, SubscribeAck,
-    ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
+    RespawnDefineRequestOp, RosterDefineRequestOp, SessionAttachRequestOp, SessionHealthRequestOp,
+    SessionProgressRequestOp, SubscribeAck, ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
 };
 
 use crate::world::{ListenerId, PerfAnswer, SnapshotAnswer, World};
@@ -232,8 +233,111 @@ impl Session {
                     )
                 }
             }
+
+            // ── THE FIVE `*.define` COMMANDS (JOS-482, boundary verdict 3) ──────────────────────
+            //
+            // APP KNOWLEDGE FLOWS IN HERE and nowhere else. The store stays persistence truth on
+            // the app side — the engine never reads a settings file — and every preference the fold
+            // used to read out of it arrives as one of these, pushed on connect and on change.
+            //
+            // EACH IS AN IDEMPOTENT FULL-SET REPLACE, which is why five near-identical arms are the
+            // right shape rather than one generic one: the payload is TYPED per family (that is
+            // what `count` is read off), and the only thing they share is the law. `World::define`
+            // records the push and hands it to the live fold; see it for why the ack waits.
+            //
+            // THERE IS NO REFUSAL PATH. A payload that reached this point deserialized against the
+            // schema, and a family this build folds no module for would be an engine bug rather
+            // than a client mistake — so `applied` is pinned true by the schema and the honest
+            // failure mode is a `badParams` refusal one layer up, in `classify`.
+            ClientMessage::AlertsDefineRequest(request) => define(
+                world,
+                request.id,
+                "alerts",
+                &request.params.defs,
+                json(&request.params.defs),
+            ),
+
+            ClientMessage::BuffTrustDefineRequest(request) => define(
+                world,
+                request.id,
+                "buffTrust",
+                // NOT A LIST: the family's knowledge is one object, so the ack carries no `count`.
+                &(),
+                json(&request.params.trust),
+            ),
+
+            ClientMessage::RespawnDefineRequest(request) => define(
+                world,
+                request.id,
+                "respawn",
+                &(),
+                json(&request.params.prefs),
+            ),
+
+            ClientMessage::ComboDefineRequest(request) => define(
+                world,
+                request.id,
+                "combo",
+                &request.params.corrections,
+                json(&request.params.corrections),
+            ),
+
+            ClientMessage::RosterDefineRequest(request) => define(
+                world,
+                request.id,
+                "roster",
+                &request.params.edits,
+                json(&request.params.edits),
+            ),
         }
     }
+}
+
+/// WHAT A DEFINE'S `count` IS — the number of entries a LIST-shaped payload carried, and nothing
+/// for a payload that is one object.
+///
+/// A trait rather than a parameter so the two answers are decided by the payload's own TYPE at each
+/// call site: `()` is the family that pushes an object, a slice is the family that pushes a list.
+/// A hand-written `Some(n)` at five call sites would be five chances to count the wrong thing.
+trait Counted {
+    fn count(&self) -> Option<i64>;
+}
+
+impl Counted for () {
+    fn count(&self) -> Option<i64> {
+        None
+    }
+}
+
+impl<T> Counted for Vec<T> {
+    fn count(&self) -> Option<i64> {
+        Some(i64::try_from(self.len()).unwrap_or(i64::MAX))
+    }
+}
+
+/// The payload as the fold reads it — the INNER value (the list, or the prefs object), never the
+/// request's params wrapper. The wrapper is the protocol's envelope and the fold has no business
+/// knowing the op it arrived under.
+fn json<T: serde::Serialize>(value: &T) -> serde_json::Value {
+    serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
+}
+
+/// Record one family's push, apply it to the live fold, and acknowledge it.
+fn define(
+    world: &World,
+    id: RequestId,
+    family: &str,
+    counted: &dyn Counted,
+    payload: serde_json::Value,
+) -> Outcome {
+    world.define(family, payload);
+    reply(
+        id,
+        ReplyResult::DefineAck(DefineAck {
+            applied: true,
+            count: counted.count(),
+        }),
+    )
 }
 
 /// Wrap one result in the reply envelope.
@@ -360,6 +464,11 @@ fn is_known_op(op: &str) -> bool {
         PerfSnapshotRequestOp::PerfSnapshot.to_string(),
         ViewSubscribeRequestOp::ViewSubscribe.to_string(),
         ViewUnsubscribeRequestOp::ViewUnsubscribe.to_string(),
+        AlertsDefineRequestOp::AlertsDefine.to_string(),
+        BuffTrustDefineRequestOp::BuffTrustDefine.to_string(),
+        RespawnDefineRequestOp::RespawnDefine.to_string(),
+        ComboDefineRequestOp::ComboDefine.to_string(),
+        RosterDefineRequestOp::RosterDefine.to_string(),
     ]
     .iter()
     .any(|known| known == op)

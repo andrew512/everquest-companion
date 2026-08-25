@@ -19,6 +19,11 @@
 //! the two SHARE their cast anchors and their learner, which is the whole of JOS-140.
 
 pub mod alerts;
+/// The alerts module's MATCHER half (JOS-482), split out for the reason `alertsFields.ts` was split
+/// out of `alerts.ts` over there: the evaluator is a different kind of thing from the two maps the
+/// fold has always kept, and putting it in one file would put that file past the repo's factoring
+/// ceiling.
+pub mod alerts_rules;
 pub mod buff_anchors;
 pub mod buff_landing;
 pub mod buff_rounds;

@@ -675,4 +675,32 @@ impl EqModule for BuffsModule {
     fn take_derived(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.derived)
     }
+
+    fn as_defines(&mut self) -> Option<&mut dyn crate::Defines> {
+        Some(self)
+    }
+}
+
+impl crate::Defines for BuffsModule {
+    fn family(&self) -> &'static str {
+        "buffTrust"
+    }
+
+    /// `buffsModule.setTrust(next)` — the externals allowlist, replaced whole.
+    ///
+    /// IT LANDS ON THE SHARED CORE and therefore on BOTH modules at once, which is the whole of
+    /// JOS-140 ruling 1: the cast anchors exist once, so the buff bar and the crowd-control bar
+    /// cannot end up with two ideas of whose spell just landed. `buffs` is the module that answers
+    /// for the family because it is the one that owns the core's construction; `buffTimers` clones
+    /// the same handle and needs no define of its own.
+    fn define(&mut self, payload: &Value) {
+        let Some(list) = payload.get("externals").and_then(Value::as_array) else {
+            return;
+        };
+        let names: Vec<String> = list
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect();
+        self.core.borrow_mut().anchors.set_trust(names);
+    }
 }

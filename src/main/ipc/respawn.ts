@@ -27,6 +27,10 @@ import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
 import { respawnWithoutWatch } from '../../shared/respawn'
 import { getRespawnPrefs, setRespawnPrefs } from '../storeRespawn'
+// A FOURTH DUTY, ADDITIVE (JOS-482): the engine's own respawn module holds the same watch list and
+// bumps its own revision on the push, which is the engine-side spelling of duties 2 and 3 above.
+// Duty 1 — persistence — stays here and only here; the engine never reads a settings file.
+import { pushAppKnowledge } from '../dataServer/definePush'
 import { registry, respawnModule } from '../pipeline'
 
 /**
@@ -50,6 +54,7 @@ export function registerRespawnIpc(): void {
     const next = setRespawnPrefs(value)
     respawnModule.setPrefs(next)
     registry.flushNow()
+    pushAppKnowledge('respawn.define')
     return next
   })
   /**
@@ -71,6 +76,7 @@ export function registerRespawnIpc(): void {
     if (next.watches.length === current.watches.length) return false
     respawnModule.setPrefs(setRespawnPrefs(next))
     registry.flushNow()
+    pushAppKnowledge('respawn.define')
     return true
   })
   /**

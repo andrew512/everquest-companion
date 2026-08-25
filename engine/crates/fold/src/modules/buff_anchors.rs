@@ -91,6 +91,14 @@ pub struct CastAnchors {
     ever_cast: JsMap<i64>,
     /// ts of the last `You activate Quick Buff.` — the spell-less self anchor.
     quick_buff_ts: i64,
+    /// THE EXTERNALS ALLOWLIST (JOS-140, pushed since JOS-482) — caster KEYS, not display
+    /// spellings. Empty is the shipped default and the world this crate constructs on its own: you
+    /// and nobody else.
+    ///
+    /// IT IS NOT CLEARED BY `reset`, and that is the same rule the module's own `never_member` set
+    /// obeys: it is a user PREFERENCE rather than log state, so a character switch does not
+    /// withdraw it. The anchors it produced are cleared, because those are log state.
+    externals: std::collections::HashSet<String>,
 }
 
 impl CastAnchors {
@@ -109,11 +117,27 @@ impl CastAnchors {
         self.note(spell, ts, SELF_CASTER.to_string());
     }
 
+    /// REPLACE THE EXTERNALS ALLOWLIST — `buffsModule.setTrust(next)`, whole (JOS-482).
+    ///
+    /// UNLIKE the graphics switches, this DOES bring the running session into line: a name added
+    /// mid-session anchors the very next cast rather than the next launch. What it does NOT do is
+    /// retro-admit anything that already landed — a landing was either anchored when it arrived or
+    /// it was not, and rewriting the past would be a second opinion about a decision the log has
+    /// already settled. Nothing here touches `by_line`, which is exactly that guarantee.
+    pub fn set_trust(&mut self, externals: impl IntoIterator<Item = String>) {
+        self.externals = externals.into_iter().map(|n| caster_key(&n)).collect();
+    }
+
+    /// `casterTrusted` against THIS world's allowlist: you, plus whoever the user named.
+    fn trusted(&self, caster: &str) -> bool {
+        caster_trusted(caster) || self.externals.contains(&caster_key(caster))
+    }
+
     /// `<Name> begins casting <S>.` — recorded ONLY for a caster on the externals allowlist. An
     /// anchor from anybody else is exactly the stranger's-buff case the gate exists to refuse, and
     /// keeping it would make the refusal a matter of who asked later.
     pub fn note_other_cast(&mut self, caster: &str, spell: &str, ts: i64) {
-        if !caster_trusted(caster) {
+        if !self.trusted(caster) {
             return;
         }
         self.note(spell, ts, caster_key(caster));
@@ -164,7 +188,9 @@ impl CastAnchors {
     /// narrowing. Nothing else admits anything (ruling 3: an unanchored landing produces nothing).
     pub fn attribute(&self, spell: &str, ts: i64) -> Option<Attribution> {
         if let Some(a) = self.by_line.get(&spell_key(spell)) {
-            if ts >= a.ts && ts - a.ts <= OWN_CAST_WINDOW_MS && caster_trusted(&a.caster) {
+            // The anchor is re-checked against the CURRENT allowlist, which is what makes a name
+            // the user just REMOVED stop anchoring immediately rather than at the next cast.
+            if ts >= a.ts && ts - a.ts <= OWN_CAST_WINDOW_MS && self.trusted(&a.caster) {
                 return Some(Attribution {
                     caster: a.caster.clone(),
                     display: Some(a.display.clone()),

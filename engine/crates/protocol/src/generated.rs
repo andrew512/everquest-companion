@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:36e6cac9ad8c2f5c752f2e97c32a391593942b825ee1c32dc17c2ea3657a8686
+//! schema-digest: sha256:d27bc88f8048d384cf5b01d87b2df086cf5ef77a70c5a8a19b5f097ef7e0fd43
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -35,6 +35,178 @@ pub mod error {
         fn from(value: String) -> Self {
             Self(value.into())
         }
+    }
+}
+///One alert, EXACTLY AS THE STORE HOLDS IT — `src/shared/alertTypes.ts AlertDef`. The protocol states nothing about its shape, and that is the `ModuleState`/`Cells` argument at full strength rather than a shortcut. Two reasons, and the second is the load-bearing one. (1) The field set is the STORE's contract: a def carries an id, a name, an enabled flag, a trigger grammar and a sound reference that the engine's evaluator reads, plus volume, audio channel, speech phrase, banner colour, notes and the early-warning offset that belong entirely to the app — and an alert growing a field must not be a protocol change or turn a whole push into `badParams`. (2) A DEFINITION ROUND-TRIPS: the fold republishes the pushed list as the `alerts` module's own `defs`, which is what the app's alert list is drawn from, so a typed protocol shape that quietly dropped an unlisted field would REWRITE THE USER'S ALERTS as they passed through the engine. Typed-where-cheap is not cheap here. The engine reads what it needs with its own reader (`fold::modules::alerts_rules::Rule::compile`), exactly as the fold reads an event.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "AlertDefinition",
+///  "description": "One alert, EXACTLY AS THE STORE HOLDS IT — `src/shared/alertTypes.ts AlertDef`. The protocol states nothing about its shape, and that is the `ModuleState`/`Cells` argument at full strength rather than a shortcut. Two reasons, and the second is the load-bearing one. (1) The field set is the STORE's contract: a def carries an id, a name, an enabled flag, a trigger grammar and a sound reference that the engine's evaluator reads, plus volume, audio channel, speech phrase, banner colour, notes and the early-warning offset that belong entirely to the app — and an alert growing a field must not be a protocol change or turn a whole push into `badParams`. (2) A DEFINITION ROUND-TRIPS: the fold republishes the pushed list as the `alerts` module's own `defs`, which is what the app's alert list is drawn from, so a typed protocol shape that quietly dropped an unlisted field would REWRITE THE USER'S ALERTS as they passed through the engine. Typed-where-cheap is not cheap here. The engine reads what it needs with its own reader (`fold::modules::alerts_rules::Rule::compile`), exactly as the fold reads an event.",
+///  "type": "object",
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct AlertDefinition(pub ::serde_json::Map<::std::string::String, ::serde_json::Value>);
+impl ::std::ops::Deref for AlertDefinition {
+    type Target = ::serde_json::Map<::std::string::String, ::serde_json::Value>;
+    fn deref(&self) -> &::serde_json::Map<::std::string::String, ::serde_json::Value> {
+        &self.0
+    }
+}
+impl ::std::convert::From<AlertDefinition>
+    for ::serde_json::Map<::std::string::String, ::serde_json::Value>
+{
+    fn from(value: AlertDefinition) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for AlertDefinition
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self(value)
+    }
+}
+///`AlertsDefineParams`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "AlertsDefineParams",
+///  "type": "object",
+///  "required": [
+///    "defs"
+///  ],
+///  "properties": {
+///    "defs": {
+///      "description": "THE WHOLE SET, always. Not a delta: a define replaces what the engine holds, so a crash-respawn is a replay of the latest push and a command input is hash-friendly.",
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/AlertDefinition"
+///      }
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct AlertsDefineParams {
+    ///THE WHOLE SET, always. Not a delta: a define replaces what the engine holds, so a crash-respawn is a replay of the latest push and a command input is hash-friendly.
+    pub defs: ::std::vec::Vec<AlertDefinition>,
+}
+///THE USER'S ALERT DEFINITIONS, pushed (boundary verdict 3). The store stays persistence truth app-side and the engine never reads a settings file; the app pushes the WHOLE set on connect and on every save/delete. Since ruling 22 the engine is also what EVALUATES them: a match on a LIVE event becomes a `FireMessage` on the stream, and the app-side alert system reduces to receive-fire-make-sound.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "AlertsDefineRequest",
+///  "description": "THE USER'S ALERT DEFINITIONS, pushed (boundary verdict 3). The store stays persistence truth app-side and the engine never reads a settings file; the app pushes the WHOLE set on connect and on every save/delete. Since ruling 22 the engine is also what EVALUATES them: a match on a LIVE event becomes a `FireMessage` on the stream, and the app-side alert system reduces to receive-fire-make-sound.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "alerts.define"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/AlertsDefineParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct AlertsDefineRequest {
+    pub id: RequestId,
+    pub op: AlertsDefineRequestOp,
+    pub params: AlertsDefineParams,
+}
+///`AlertsDefineRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "alerts.define"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AlertsDefineRequestOp {
+    #[serde(rename = "alerts.define")]
+    AlertsDefine,
+}
+impl ::std::fmt::Display for AlertsDefineRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::AlertsDefine => f.write_str("alerts.define"),
+        }
+    }
+}
+impl ::std::str::FromStr for AlertsDefineRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "alerts.define" => Ok(Self::AlertsDefine),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AlertsDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for AlertsDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AlertsDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
     }
 }
 ///`AttachResult`
@@ -68,6 +240,165 @@ pub struct AttachResult {
     ///False when the attach was preempted by a later one before it began — the caller's own attach is the one that lost, and the epoch names the winner.
     pub accepted: bool,
     pub epoch: Epoch,
+}
+///`BuffTrustDefineParams`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "BuffTrustDefineParams",
+///  "type": "object",
+///  "required": [
+///    "trust"
+///  ],
+///  "properties": {
+///    "trust": {
+///      "$ref": "#/$defs/BuffTrustPrefs"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct BuffTrustDefineParams {
+    pub trust: BuffTrustPrefs,
+}
+///WHOSE CASTS, BESIDES YOUR OWN, MAY ANCHOR A LANDING (JOS-140). Pushed like every other piece of app knowledge; it ships empty and stays empty for almost everybody.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "BuffTrustDefineRequest",
+///  "description": "WHOSE CASTS, BESIDES YOUR OWN, MAY ANCHOR A LANDING (JOS-140). Pushed like every other piece of app knowledge; it ships empty and stays empty for almost everybody.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "buffTrust.define"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/BuffTrustDefineParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct BuffTrustDefineRequest {
+    pub id: RequestId,
+    pub op: BuffTrustDefineRequestOp,
+    pub params: BuffTrustDefineParams,
+}
+///`BuffTrustDefineRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "buffTrust.define"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum BuffTrustDefineRequestOp {
+    #[serde(rename = "buffTrust.define")]
+    BuffTrustDefine,
+}
+impl ::std::fmt::Display for BuffTrustDefineRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::BuffTrustDefine => f.write_str("buffTrust.define"),
+        }
+    }
+}
+impl ::std::str::FromStr for BuffTrustDefineRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "buffTrust.define" => Ok(Self::BuffTrustDefine),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for BuffTrustDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for BuffTrustDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for BuffTrustDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`src/shared/buffTrust.ts BuffTrustPrefs`. Typed because it is cheap to type: one list of display spellings, in the order the user added them.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "BuffTrustPrefs",
+///  "description": "`src/shared/buffTrust.ts BuffTrustPrefs`. Typed because it is cheap to type: one list of display spellings, in the order the user added them.",
+///  "type": "object",
+///  "required": [
+///    "externals"
+///  ],
+///  "properties": {
+///    "externals": {
+///      "type": "array",
+///      "items": {
+///        "type": "string"
+///      }
+///    }
+///  },
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+pub struct BuffTrustPrefs {
+    pub externals: ::std::vec::Vec<::std::string::String>,
 }
 ///A row's fields by name. Open by design — the field set is the VIEW's contract, not the protocol's, so a new column is not a protocol change.
 ///
@@ -142,6 +473,21 @@ impl ::std::convert::From<::std::collections::BTreeMap<::std::string::String, cr
 ///    },
 ///    {
 ///      "$ref": "#/$defs/ViewUnsubscribeRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/AlertsDefineRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/BuffTrustDefineRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/RespawnDefineRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/ComboDefineRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/RosterDefineRequest"
 ///    }
 ///  ]
 ///}
@@ -159,6 +505,11 @@ pub enum ClientMessage {
     PerfSnapshotRequest(PerfSnapshotRequest),
     ViewSubscribeRequest(ViewSubscribeRequest),
     ViewUnsubscribeRequest(ViewUnsubscribeRequest),
+    AlertsDefineRequest(AlertsDefineRequest),
+    BuffTrustDefineRequest(BuffTrustDefineRequest),
+    RespawnDefineRequest(RespawnDefineRequest),
+    ComboDefineRequest(ComboDefineRequest),
+    RosterDefineRequest(RosterDefineRequest),
 }
 impl ::std::convert::From<Hello> for ClientMessage {
     fn from(value: Hello) -> Self {
@@ -204,6 +555,256 @@ impl ::std::convert::From<ViewUnsubscribeRequest> for ClientMessage {
     fn from(value: ViewUnsubscribeRequest) -> Self {
         Self::ViewUnsubscribeRequest(value)
     }
+}
+impl ::std::convert::From<AlertsDefineRequest> for ClientMessage {
+    fn from(value: AlertsDefineRequest) -> Self {
+        Self::AlertsDefineRequest(value)
+    }
+}
+impl ::std::convert::From<BuffTrustDefineRequest> for ClientMessage {
+    fn from(value: BuffTrustDefineRequest) -> Self {
+        Self::BuffTrustDefineRequest(value)
+    }
+}
+impl ::std::convert::From<RespawnDefineRequest> for ClientMessage {
+    fn from(value: RespawnDefineRequest) -> Self {
+        Self::RespawnDefineRequest(value)
+    }
+}
+impl ::std::convert::From<ComboDefineRequest> for ClientMessage {
+    fn from(value: ComboDefineRequest) -> Self {
+        Self::ComboDefineRequest(value)
+    }
+}
+impl ::std::convert::From<RosterDefineRequest> for ClientMessage {
+    fn from(value: RosterDefineRequest) -> Self {
+        Self::RosterDefineRequest(value)
+    }
+}
+///`src/shared/classCombo.ts ComboCorrection` — a span the user re-labelled, and when they said so.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ComboCorrection",
+///  "description": "`src/shared/classCombo.ts ComboCorrection` — a span the user re-labelled, and when they said so.",
+///  "type": "object",
+///  "required": [
+///    "classes",
+///    "endTs",
+///    "setAt",
+///    "startTs"
+///  ],
+///  "properties": {
+///    "classes": {
+///      "description": "One to three class codes, as the `/who` row spells them.",
+///      "type": "array",
+///      "items": {
+///        "type": "string"
+///      }
+///    },
+///    "endTs": {
+///      "description": "`null` means `from startTs onward`, i.e. it applies to the open interval too. REQUIRED AND NULLABLE rather than optional, because the store's own type says `number | null` and its only writer always writes one of the two — and because an optional nullable is a field that does not survive a round trip: a generator lowers it to `Option`, drops the null on the way back out, and a fixture that carried the store's own shape stops matching itself.",
+///      "type": [
+///        "integer",
+///        "null"
+///      ]
+///    },
+///    "setAt": {
+///      "description": "When the user set it — a later correction wins over an earlier overlapping one.",
+///      "type": "integer"
+///    },
+///    "startTs": {
+///      "type": "integer"
+///    }
+///  },
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+pub struct ComboCorrection {
+    ///One to three class codes, as the `/who` row spells them.
+    pub classes: ::std::vec::Vec<::std::string::String>,
+    ///`null` means `from startTs onward`, i.e. it applies to the open interval too. REQUIRED AND NULLABLE rather than optional, because the store's own type says `number | null` and its only writer always writes one of the two — and because an optional nullable is a field that does not survive a round trip: a generator lowers it to `Option`, drops the null on the way back out, and a fixture that carried the store's own shape stops matching itself.
+    #[serde(rename = "endTs")]
+    pub end_ts: ::std::option::Option<i64>,
+    ///When the user set it — a later correction wins over an earlier overlapping one.
+    #[serde(rename = "setAt")]
+    pub set_at: i64,
+    #[serde(rename = "startTs")]
+    pub start_ts: i64,
+}
+///`ComboDefineParams`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ComboDefineParams",
+///  "type": "object",
+///  "required": [
+///    "corrections"
+///  ],
+///  "properties": {
+///    "corrections": {
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/ComboCorrection"
+///      }
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ComboDefineParams {
+    pub corrections: ::std::vec::Vec<ComboCorrection>,
+}
+///THE USER'S CLASS-COMBO CORRECTIONS — the one input to the loadout model that the log cannot state. Character-scoped app-side; the engine holds whatever the app last pushed for the character it is folding.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ComboDefineRequest",
+///  "description": "THE USER'S CLASS-COMBO CORRECTIONS — the one input to the loadout model that the log cannot state. Character-scoped app-side; the engine holds whatever the app last pushed for the character it is folding.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "combo.define"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/ComboDefineParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ComboDefineRequest {
+    pub id: RequestId,
+    pub op: ComboDefineRequestOp,
+    pub params: ComboDefineParams,
+}
+///`ComboDefineRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "combo.define"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ComboDefineRequestOp {
+    #[serde(rename = "combo.define")]
+    ComboDefine,
+}
+impl ::std::fmt::Display for ComboDefineRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ComboDefine => f.write_str("combo.define"),
+        }
+    }
+}
+impl ::std::str::FromStr for ComboDefineRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "combo.define" => Ok(Self::ComboDefine),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ComboDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ComboDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ComboDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///The answer to every `*.define` command, and it is deliberately the SAME shape for all five. A define is an idempotent FULL-SET REPLACE (the cutover ledger's command law: replayable, order-collapsing, hash-friendly for ruling 18's cache key), so there is nothing per-family to report back — the engine either took the set or refused the frame. `count` is how many entries it took, which is the one number a caller can check its own push against; it is absent for a family whose payload is not a list (`buffTrust`, `respawn` push one object each).
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "DefineAck",
+///  "description": "The answer to every `*.define` command, and it is deliberately the SAME shape for all five. A define is an idempotent FULL-SET REPLACE (the cutover ledger's command law: replayable, order-collapsing, hash-friendly for ruling 18's cache key), so there is nothing per-family to report back — the engine either took the set or refused the frame. `count` is how many entries it took, which is the one number a caller can check its own push against; it is absent for a family whose payload is not a list (`buffTrust`, `respawn` push one object each).",
+///  "type": "object",
+///  "required": [
+///    "applied"
+///  ],
+///  "properties": {
+///    "applied": {
+///      "type": "boolean",
+///      "enum": [
+///        true
+///      ]
+///    },
+///    "count": {
+///      "description": "Entries taken, for a list-shaped payload. Absent means the payload was not a list, NEVER that nothing was taken — an empty list answers `count: 0`, which is how a caller clears a family and can tell it worked.",
+///      "type": "integer"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct DefineAck {
+    pub applied: bool,
+    ///Entries taken, for a list-shaped payload. Absent means the payload was not a list, NEVER that nothing was taken — an empty list answers `count: 0`, which is how a caller clears a family and can tell it worked.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub count: ::std::option::Option<i64>,
 }
 ///One coalesced batch of changes to the open window. Ops apply IN ORDER. `total` is present only when it moved.
 ///
@@ -650,6 +1251,9 @@ pub struct EchoResult {
 ///    },
 ///    {
 ///      "$ref": "#/$defs/EpochMessage"
+///    },
+///    {
+///      "$ref": "#/$defs/FireMessage"
 ///    }
 ///  ]
 ///}
@@ -664,6 +1268,7 @@ pub enum EngineMessage {
     ResetMessage(ResetMessage),
     DiffMessage(DiffMessage),
     EpochMessage(EpochMessage),
+    FireMessage(FireMessage),
 }
 impl ::std::convert::From<HelloReply> for EngineMessage {
     fn from(value: HelloReply) -> Self {
@@ -693,6 +1298,11 @@ impl ::std::convert::From<DiffMessage> for EngineMessage {
 impl ::std::convert::From<EpochMessage> for EngineMessage {
     fn from(value: EpochMessage) -> Self {
         Self::EpochMessage(value)
+    }
+}
+impl ::std::convert::From<FireMessage> for EngineMessage {
+    fn from(value: FireMessage) -> Self {
+        Self::FireMessage(value)
     }
 }
 ///The world's generation. Monotonic within one engine process. A client that sees an epoch it did not expect DROPS ALL STATE and waits for the reset — it never reconciles across a bump.
@@ -1144,6 +1754,130 @@ impl ::std::convert::TryFrom<&::std::string::String> for ErrorReplyKind {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for ErrorReplyKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///AN ALERT FIRED (owner ruling 22). The engine evaluates the user's alert definitions against LIVE events — replay must never make a sound, which is the same boundary law the app-side evaluator has always obeyed — and this is what it says when one matches. CONNECTION-WIDE, and therefore carrying NO `id`: a fire belongs to the world rather than to any subscription, which is the `EpochMessage` precedent. It carries no `epoch` either, and that is the difference from an epoch message rather than an oversight: every other stream frame describes WINDOW STATE a client has to reconcile across a generation, while a fire is a thing that happened once — there is nothing to drop and nothing to re-request, so a generation number would be a field with no reader. IT IS FULLY RESOLVED SERVER-SIDE (the conCard principle): everything the app needs in order to make the identical noise is in these four fields, so no client ever has to hold the definition the fire came from.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "FireMessage",
+///  "description": "AN ALERT FIRED (owner ruling 22). The engine evaluates the user's alert definitions against LIVE events — replay must never make a sound, which is the same boundary law the app-side evaluator has always obeyed — and this is what it says when one matches. CONNECTION-WIDE, and therefore carrying NO `id`: a fire belongs to the world rather than to any subscription, which is the `EpochMessage` precedent. It carries no `epoch` either, and that is the difference from an epoch message rather than an oversight: every other stream frame describes WINDOW STATE a client has to reconcile across a generation, while a fire is a thing that happened once — there is nothing to drop and nothing to re-request, so a generation number would be a field with no reader. IT IS FULLY RESOLVED SERVER-SIDE (the conCard principle): everything the app needs in order to make the identical noise is in these four fields, so no client ever has to hold the definition the fire came from.",
+///  "type": "object",
+///  "required": [
+///    "at",
+///    "kind",
+///    "message",
+///    "rule",
+///    "sound"
+///  ],
+///  "properties": {
+///    "at": {
+///      "description": "When it fired, on THE LOG'S OWN CLOCK — the `ts` of the event that matched, never the host's wall clock. A fire is a statement about the log (ruling 18 law 1).",
+///      "type": "integer"
+///    },
+///    "kind": {
+///      "type": "string",
+///      "enum": [
+///        "fire"
+///      ]
+///    },
+///    "message": {
+///      "description": "THE TEXT THAT MATCHED — the log line the trigger fired on, which is what `FiredAlert.matchedText` has always carried and what the event log prints beside the alert's name.",
+///      "type": "string"
+///    },
+///    "rule": {
+///      "description": "The alert's LABEL — `AlertDefinition.name`. What fired, in the words the user gave it, so a log line or a banner needs nothing else to be readable.",
+///      "type": "string"
+///    },
+///    "sound": {
+///      "description": "THE KEY THE APP WOULD PLAY: `<packId>/<soundId>`, joined from the definition's `sound` reference, which is exactly how the renderer's sound cache is keyed. Resolved here rather than sent as a reference for the conCard reason — an app that had to look the definition back up to know what to play would be holding a second copy of the rule set, which is the coupling this boundary exists to delete.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct FireMessage {
+    ///When it fired, on THE LOG'S OWN CLOCK — the `ts` of the event that matched, never the host's wall clock. A fire is a statement about the log (ruling 18 law 1).
+    pub at: i64,
+    pub kind: FireMessageKind,
+    ///THE TEXT THAT MATCHED — the log line the trigger fired on, which is what `FiredAlert.matchedText` has always carried and what the event log prints beside the alert's name.
+    pub message: ::std::string::String,
+    ///The alert's LABEL — `AlertDefinition.name`. What fired, in the words the user gave it, so a log line or a banner needs nothing else to be readable.
+    pub rule: ::std::string::String,
+    ///THE KEY THE APP WOULD PLAY: `<packId>/<soundId>`, joined from the definition's `sound` reference, which is exactly how the renderer's sound cache is keyed. Resolved here rather than sent as a reference for the conCard reason — an app that had to look the definition back up to know what to play would be holding a second copy of the rule set, which is the coupling this boundary exists to delete.
+    pub sound: ::std::string::String,
+}
+///`FireMessageKind`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "fire"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum FireMessageKind {
+    #[serde(rename = "fire")]
+    Fire,
+}
+impl ::std::fmt::Display for FireMessageKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Fire => f.write_str("fire"),
+        }
+    }
+}
+impl ::std::str::FromStr for FireMessageKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "fire" => Ok(Self::Fire),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for FireMessageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for FireMessageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for FireMessageKind {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -2557,6 +3291,9 @@ impl ::std::convert::TryFrom<::std::string::String> for ReplyKind {
 ///    },
 ///    {
 ///      "$ref": "#/$defs/PerfSnapshotResult"
+///    },
+///    {
+///      "$ref": "#/$defs/DefineAck"
 ///    }
 ///  ]
 ///}
@@ -2571,6 +3308,7 @@ pub enum ReplyResult {
     SubscribeAck(SubscribeAck),
     ModuleSnapshotResult(ModuleSnapshotResult),
     PerfSnapshotResult(PerfSnapshotResult),
+    DefineAck(DefineAck),
 }
 impl ::std::convert::From<EchoResult> for ReplyResult {
     fn from(value: EchoResult) -> Self {
@@ -2600,6 +3338,11 @@ impl ::std::convert::From<ModuleSnapshotResult> for ReplyResult {
 impl ::std::convert::From<PerfSnapshotResult> for ReplyResult {
     fn from(value: PerfSnapshotResult) -> Self {
         Self::PerfSnapshotResult(value)
+    }
+}
+impl ::std::convert::From<DefineAck> for ReplyResult {
+    fn from(value: DefineAck) -> Self {
+        Self::DefineAck(value)
     }
 }
 ///Client-chosen correlation id. A reply carries the id of its request; every stream message carries the id of the subscribe request that opened it.
@@ -2770,6 +3513,461 @@ impl ::std::convert::TryFrom<&::std::string::String> for ResetMessageKind {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for ResetMessageKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`RespawnDefineParams`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "RespawnDefineParams",
+///  "type": "object",
+///  "required": [
+///    "prefs"
+///  ],
+///  "properties": {
+///    "prefs": {
+///      "$ref": "#/$defs/RespawnPrefs"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct RespawnDefineParams {
+    pub prefs: RespawnPrefs,
+}
+///WHICH MOBS GET A CLOCK (JOS-194) — tracking is opt-in per mob, so this list is the whole of what the respawn fold knows that the log did not tell it.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "RespawnDefineRequest",
+///  "description": "WHICH MOBS GET A CLOCK (JOS-194) — tracking is opt-in per mob, so this list is the whole of what the respawn fold knows that the log did not tell it.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "respawn.define"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/RespawnDefineParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct RespawnDefineRequest {
+    pub id: RequestId,
+    pub op: RespawnDefineRequestOp,
+    pub params: RespawnDefineParams,
+}
+///`RespawnDefineRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "respawn.define"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum RespawnDefineRequestOp {
+    #[serde(rename = "respawn.define")]
+    RespawnDefine,
+}
+impl ::std::fmt::Display for RespawnDefineRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::RespawnDefine => f.write_str("respawn.define"),
+        }
+    }
+}
+impl ::std::str::FromStr for RespawnDefineRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "respawn.define" => Ok(Self::RespawnDefine),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for RespawnDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for RespawnDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for RespawnDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`src/shared/respawn.ts RespawnPrefs`. An object rather than a bare array because that is the shape the store holds and the shape a later preference would grow into.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "RespawnPrefs",
+///  "description": "`src/shared/respawn.ts RespawnPrefs`. An object rather than a bare array because that is the shape the store holds and the shape a later preference would grow into.",
+///  "type": "object",
+///  "required": [
+///    "watches"
+///  ],
+///  "properties": {
+///    "watches": {
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/RespawnWatch"
+///      }
+///    }
+///  },
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+pub struct RespawnPrefs {
+    pub watches: ::std::vec::Vec<RespawnWatch>,
+}
+///One mob the user chose to watch, and the number they typed if they typed one.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "RespawnWatch",
+///  "description": "One mob the user chose to watch, and the number they typed if they typed one.",
+///  "type": "object",
+///  "required": [
+///    "display",
+///    "key"
+///  ],
+///  "properties": {
+///    "customSec": {
+///      "description": "The user's own respawn, in SECONDS. Absent means `use what you learn`, which is a different statement from zero.",
+///      "type": "integer"
+///    },
+///    "display": {
+///      "type": "string"
+///    },
+///    "key": {
+///      "description": "Canonical (lowercased) mob name — what a death line's name canonicalizes to.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+pub struct RespawnWatch {
+    ///The user's own respawn, in SECONDS. Absent means `use what you learn`, which is a different statement from zero.
+    #[serde(
+        rename = "customSec",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub custom_sec: ::std::option::Option<i64>,
+    pub display: ::std::string::String,
+    ///Canonical (lowercased) mob name — what a death line's name canonicalizes to.
+    pub key: ::std::string::String,
+}
+///`RosterDefineParams`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "RosterDefineParams",
+///  "type": "object",
+///  "required": [
+///    "edits"
+///  ],
+///  "properties": {
+///    "edits": {
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/RosterEdit"
+///      }
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct RosterDefineParams {
+    pub edits: ::std::vec::Vec<RosterEdit>,
+}
+///THE USER'S GROUP-ROSTER EDITS — names they added the log never named, and names they removed that it did.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "RosterDefineRequest",
+///  "description": "THE USER'S GROUP-ROSTER EDITS — names they added the log never named, and names they removed that it did.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "roster.define"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/RosterDefineParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct RosterDefineRequest {
+    pub id: RequestId,
+    pub op: RosterDefineRequestOp,
+    pub params: RosterDefineParams,
+}
+///`RosterDefineRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "roster.define"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum RosterDefineRequestOp {
+    #[serde(rename = "roster.define")]
+    RosterDefine,
+}
+impl ::std::fmt::Display for RosterDefineRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::RosterDefine => f.write_str("roster.define"),
+        }
+    }
+}
+impl ::std::str::FromStr for RosterDefineRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "roster.define" => Ok(Self::RosterDefine),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for RosterDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for RosterDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for RosterDefineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`src/shared/progressState.ts RosterEdit` — one name, one verb, and the instant the user said it. The instant is load-bearing rather than provenance: an edit older than the last character rebirth, or older than the last `You have been removed from the group.`, described a group that no longer exists and is dropped by the fold rather than by the pusher.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "RosterEdit",
+///  "description": "`src/shared/progressState.ts RosterEdit` — one name, one verb, and the instant the user said it. The instant is load-bearing rather than provenance: an edit older than the last character rebirth, or older than the last `You have been removed from the group.`, described a group that no longer exists and is dropped by the fold rather than by the pusher.",
+///  "type": "object",
+///  "required": [
+///    "action",
+///    "key",
+///    "name",
+///    "setAt"
+///  ],
+///  "properties": {
+///    "action": {
+///      "type": "string",
+///      "enum": [
+///        "add",
+///        "remove"
+///      ]
+///    },
+///    "key": {
+///      "description": "The canonical identity key — `idKey(name)`.",
+///      "type": "string"
+///    },
+///    "name": {
+///      "type": "string"
+///    },
+///    "setAt": {
+///      "type": "integer"
+///    }
+///  },
+///  "additionalProperties": true
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+pub struct RosterEdit {
+    pub action: RosterEditAction,
+    ///The canonical identity key — `idKey(name)`.
+    pub key: ::std::string::String,
+    pub name: ::std::string::String,
+    #[serde(rename = "setAt")]
+    pub set_at: i64,
+}
+///`RosterEditAction`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "add",
+///    "remove"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum RosterEditAction {
+    #[serde(rename = "add")]
+    Add,
+    #[serde(rename = "remove")]
+    Remove,
+}
+impl ::std::fmt::Display for RosterEditAction {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Add => f.write_str("add"),
+            Self::Remove => f.write_str("remove"),
+        }
+    }
+}
+impl ::std::str::FromStr for RosterEditAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "add" => Ok(Self::Add),
+            "remove" => Ok(Self::Remove),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for RosterEditAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for RosterEditAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for RosterEditAction {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,

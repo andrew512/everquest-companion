@@ -197,6 +197,30 @@ pub trait EventSink {
         None
     }
 
+    /// TAKE ONE FAMILY OF APP KNOWLEDGE — the `*.define` commands (JOS-482, boundary verdict 3).
+    ///
+    /// `true` when a module took it, `false` when this sink folds nothing that answers to that
+    /// family. Defaulted to `false` because a counting sink folds no modules at all, and a define
+    /// it cannot apply is not an error: the world still HOLDS the push, and the next attach that
+    /// builds a real fold applies it at construction.
+    ///
+    /// `&mut self` AND CALLED ON THE INGEST THREAD, at the same boundaries [`EventSink::snapshot`]
+    /// is answered at — between two reads of the scan, or between two naps of the tail. That is
+    /// what makes a define a point on the event stream rather than a race with one: every event
+    /// before it folded without it and every event after it folded with it, and no event folded
+    /// half-way.
+    fn define(&mut self, _family: &str, _payload: &serde_json::Value) -> bool {
+        false
+    }
+
+    /// THE ALERT FIRES THIS SINK PRODUCED SINCE THE LAST DRAIN (JOS-482, owner ruling 22).
+    ///
+    /// Structurally empty for a historical scan: firing is live-only by the boundary law, which the
+    /// fold enforces where the TypeScript enforces it — one gate above the matcher loop.
+    fn take_fires(&mut self) -> Vec<Fire> {
+        Vec::new()
+    }
+
     /// A monotonic signal that moves whenever `source` could have changed.
     ///
     /// THE WHOLE COST MODEL OF THE VIEW LAYER RESTS ON THIS. A subscription is re-cut only when its
@@ -235,6 +259,43 @@ pub struct ModuleSnapshot {
     /// `kills` publishes an object, `loot` publishes an array, and nothing between the module and
     /// the wire is allowed an opinion about which.
     pub state: serde_json::Value,
+}
+
+/// ONE ALERT FIRE, as the ingest hands it to the world.
+///
+/// The ingest's OWN vocabulary, exactly as [`ModuleSnapshot`] is: `crate::foldsink` converts the
+/// fold's shape into it at the seam, so neither this module nor `world.rs` learns what an alert is.
+/// The world turns it into the protocol's `FireMessage`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fire {
+    /// The `ts` of the event that matched — the LOG's own clock.
+    pub at: i64,
+    /// The alert's label.
+    pub rule: String,
+    /// `<packId>/<soundId>` — the key the app plays. Resolved by the fold, never a reference.
+    pub sound: String,
+    /// The text that matched.
+    pub message: String,
+}
+
+/// ONE PUSH OF APP KNOWLEDGE, and the way back.
+///
+/// THE SAME SHAPE AS [`SnapshotAsk`] AND FOR THE SAME REASON, one direction reversed: the fold
+/// lives on the ingest thread and a `*.define` arrives on a connection thread. A `Mutex<Fold>`
+/// would put a second owner on state whose whole design is one door; a copy applied later would
+/// make the moment a define takes effect unknowable. So the writer posts and waits, and the ingest
+/// applies it at a boundary it already reaches.
+///
+/// THE WAIT IS WHAT MAKES THE ACK MEAN SOMETHING. `applied: true` is a statement that the LIVE fold
+/// has this set, not that a queue accepted it — which is the difference between a client that can
+/// push a rule and immediately reason about it and one that has to poll.
+pub struct DefineAsk {
+    /// The family: `alerts`, `buffTrust`, `respawn`, `combo`, `roster`.
+    pub family: String,
+    /// The whole set, as the app pushed it.
+    pub payload: serde_json::Value,
+    /// Where the answer goes: `true` when a module took it.
+    pub answer: std::sync::mpsc::Sender<bool>,
 }
 
 /// ONE REQUEST FOR ONE MODULE'S STATE, and the way back.
@@ -606,6 +667,18 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
         attached_at_ms: now_ms(),
     });
 
+    // ── APP KNOWLEDGE, APPLIED BEFORE THE FIRST BYTE (JOS-482, boundary verdict 3) ───────────────
+    //
+    // A `*.define` pushed BEFORE this attach — which is what an ordinary launch looks like, since
+    // the app pushes all five the moment it connects and attaches afterwards — is HELD by the world
+    // and applied here, at construction. That timing is the whole point: alert defs, buff trust,
+    // respawn watches, combo corrections and roster edits all change what a fold PRODUCES, so a
+    // world that took them after the historical scan would have folded the log twice into two
+    // different answers. It is the same instant `pipeline.ts` passes them to `createModules`.
+    for (family, payload) in world.held_defines() {
+        sink.define(&family, &payload);
+    }
+
     let mut file = File::open(log)?;
     let size = file.metadata()?.len();
 
@@ -618,6 +691,15 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
     // like every other statement an ingest makes, so a turn that has already lost installs nothing.
     let (asks, answers) = channel::<Ask>();
     if !world.serve_asks(generation, asks) {
+        return Ok(Ended::Preempted);
+    }
+
+    // …AND SO DOES THE DEFINE DOOR, for the same reason and at the same instant: a preference the
+    // user changes while a 200 MB log is folding must reach the fold that is folding it, not the
+    // next one. A second channel rather than a second arm on the first: the two carry opposite
+    // directions (a read out, a write in) and share nothing but the boundary they are serviced at.
+    let (define_to, defines) = channel::<DefineAsk>();
+    if !world.serve_defines(generation, define_to) {
         return Ok(Ended::Preempted);
     }
 
@@ -660,6 +742,12 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
             return Ok(Ended::Preempted);
         }
         answer_asks(&answers, &*sink, &serving);
+        // A DEFINE MID-SCAN IS TAKEN MID-SCAN, and the fold does not restart for it. That is the
+        // honest reading of a full-set replace: it is a fact about the world from here on, and the
+        // events already folded were folded under what the user had said at the time. The app
+        // pushes on connect, before it attaches, so this path is the mid-fold EDIT rather than the
+        // ordinary one.
+        answer_defines(&defines, &mut *sink);
     }
 
     // THE FINAL MEASUREMENT IS NOT OPTIONAL and does not ask the cadence. It is the one frame that
@@ -792,6 +880,17 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
             }
         }
         answer_asks(&answers, &*sink, &serving);
+        answer_defines(&defines, &mut *sink);
+        // THE FIRES, IMMEDIATELY AND NOT AT A CADENCE (owner ruling 22). Everything else this loop
+        // publishes is STATE, which coalesces by definition — the newest window is the whole
+        // answer. A fire is not state: two charm breaks are two sounds, and folding them would
+        // silence one. So every fire the drain produced goes out now, in the order the fold made
+        // them, and the ~10 Hz view cadence never touches them.
+        for fire in sink.take_fires() {
+            if !world.report_fire(generation, &fire) {
+                return Ok(Ended::Preempted);
+            }
+        }
         // THE VIEWS, AT THEIR OWN CADENCE. Everything the drain above folded collapses into at most
         // one frame per subscription per `views::SERVE_EVERY` — rule 2 of the diff protocol, held
         // as a cadence rather than as a per-event push.
@@ -803,7 +902,8 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
             world,
             generation,
             &answers,
-            &*sink,
+            &defines,
+            &mut *sink,
             &mut serving,
         );
     }
@@ -919,19 +1019,24 @@ fn nap(
     world: &World,
     generation: u64,
     answers: &Receiver<Ask>,
-    sink: &dyn EventSink,
+    defines: &Receiver<DefineAsk>,
+    sink: &mut dyn EventSink,
     serving: &mut Serving,
 ) {
     let mut slept = Duration::ZERO;
     while slept < interval && world.owns(generation) {
         thread::sleep(TAIL_NAP);
         slept += TAIL_NAP;
-        answer_asks(answers, sink, serving);
+        answer_asks(answers, &*sink, serving);
+        // A DEFINE ARRIVING WHILE THE TAIL NAPS IS TAKEN IN THAT NAP, for the same reason: a live
+        // engine spends almost all of its time here, so a preference saved on an idle log would
+        // otherwise wait out a whole poll interval before the fold had heard of it.
+        answer_defines(defines, sink);
         // A SUBSCRIPTION OPENED WHILE THE TAIL IS NAPPING IS OWED A RESET, and the nap is where a
         // live engine spends almost all of its time — the same argument `answer_snapshots` makes
         // one line up. Serving here makes the wait for a full window one nap instead of one poll.
         // Nothing is built when nothing owes and nothing moved.
-        serving.tick(world, generation, sink);
+        serving.tick(world, generation, &*sink);
     }
 }
 
@@ -954,6 +1059,19 @@ fn answer_asks(answers: &Receiver<Ask>, sink: &dyn EventSink, serving: &Serving)
                 let _dropped = ask.answer.send(serving.perf());
             }
         }
+    }
+}
+
+/// Apply every define pushed since the last boundary, and block on none of them.
+///
+/// `try_recv` UNTIL EMPTY, exactly as [`answer_snapshots`] is, and for the same reason: this runs
+/// inside the fold's own loop and must never stall it. A send that fails is a pusher whose deadline
+/// passed or whose connection closed — the define is STILL APPLIED, because the world already holds
+/// it and the fold is now in step with what the world holds; only the receipt went nowhere.
+fn answer_defines(defines: &Receiver<DefineAsk>, sink: &mut dyn EventSink) {
+    while let Ok(ask) = defines.try_recv() {
+        let took = sink.define(&ask.family, &ask.payload);
+        let _dropped = ask.answer.send(took);
     }
 }
 

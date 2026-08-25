@@ -40,6 +40,7 @@ import {
   type Epoch,
   type EpochMessage,
   type ErrorReply,
+  type FireMessage,
   type FoldProgress,
   type Hello,
   type HelloReply,
@@ -91,6 +92,17 @@ export interface EngineClient {
   onState(listener: (state: ConnectionState) => void): () => void
   /** Fold progress, for the loading UI. Arrives on connection-wide epoch frames. */
   onProgress(listener: (progress: FoldProgress) => void): () => void
+  /**
+   * ALERT FIRES (JOS-482, owner ruling 22). Connection-wide, like progress, and for the same
+   * reason: a fire belongs to the world rather than to any subscription, and every window plays
+   * the same sound.
+   *
+   * IT IS NOT A SUBSCRIPTION AND HAS NO WINDOW. A fire is a thing that happened once — there is
+   * nothing to reset, nothing to diff and nothing to re-request — so it does not go through
+   * `subscribe`, it does not touch the epoch, and a listener that missed one has missed it. That is
+   * the honest shape for a sound: an alert nobody was listening for is not an alert to replay.
+   */
+  onFire(listener: (fire: FireMessage) => void): () => void
   close(): void
 }
 
@@ -124,6 +136,7 @@ interface ClientState {
   readonly subs: Map<RequestId, LiveSubscription>
   readonly stateListeners: Set<(state: ConnectionState) => void>
   readonly progressListeners: Set<(progress: FoldProgress) => void>
+  readonly fireListeners: Set<(fire: FireMessage) => void>
 }
 
 function setConnectionState(s: ClientState, next: ConnectionState): void {
@@ -435,6 +448,10 @@ function receive(s: ClientState, message: EngineMessage): void {
   else if (message.kind === 'error') onErrorReply(s, message)
   else if (message.kind === 'epoch') onEpochMessage(s, message)
   else if (message.kind === 'reset') onReset(s, message)
+  // A FIRE TOUCHES NO WINDOW AND NO EPOCH. It carries neither, deliberately — see `onFire` — so it
+  // is handed straight to the listeners without passing through `noteEpoch`, which is the one place
+  // this client is entitled to drop state.
+  else if (message.kind === 'fire') for (const listener of s.fireListeners) listener(message)
   else onDiff(s, message)
 }
 
@@ -450,7 +467,8 @@ export function createEngineClient(options: EngineClientOptions): EngineClient {
     outbox: [],
     subs: new Map(),
     stateListeners: new Set(),
-    progressListeners: new Set()
+    progressListeners: new Set(),
+    fireListeners: new Set()
   }
   return {
     get state() {
@@ -475,6 +493,12 @@ export function createEngineClient(options: EngineClientOptions): EngineClient {
       s.progressListeners.add(listener)
       return (): void => {
         s.progressListeners.delete(listener)
+      }
+    },
+    onFire: (listener): (() => void) => {
+      s.fireListeners.add(listener)
+      return (): void => {
+        s.fireListeners.delete(listener)
       }
     },
     close: (): void => {

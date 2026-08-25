@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:36e6cac9ad8c2f5c752f2e97c32a391593942b825ee1c32dc17c2ea3657a8686
+// schema-digest: sha256:d27bc88f8048d384cf5b01d87b2df086cf5ef77a70c5a8a19b5f097ef7e0fd43
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -27,6 +27,11 @@ export type ClientMessage =
   | PerfSnapshotRequest
   | ViewSubscribeRequest
   | ViewUnsubscribeRequest
+  | AlertsDefineRequest
+  | BuffTrustDefineRequest
+  | RespawnDefineRequest
+  | ComboDefineRequest
+  | RosterDefineRequest
 /**
  * The per-launch shared secret. Minted by Electron main at spawn, handed to the engine out of band, presented once at hello. It is never persisted and never reused across launches. Compare it in CONSTANT TIME (src/main/dataServer/token.ts, engine/crates/protocol/src/token.rs) - a byte-at-a-time compare over a loopback socket is a timing oracle. The shape rules are environment-neutral and live in src/shared/dataServer/token.ts.
  */
@@ -50,7 +55,7 @@ export type SortTerm = [string, string]
  * Every message the engine sends the app. Internally tagged on `kind`.
  */
 export type EngineMessage =
-  HelloReply | Reply | ErrorReply | ResetMessage | DiffMessage | EpochMessage
+  HelloReply | Reply | ErrorReply | ResetMessage | DiffMessage | EpochMessage | FireMessage
 /**
  * THE RESULT REGISTRY, and it is CLOSED. Which shape a reply carries is decided by the OP of the request whose id it names - the envelope does not repeat it, because a reply that had to restate its own op would be a second place for the two to disagree. This list is the additive seam for the eight API surfaces: a new op adds an arm and nothing else in the envelope moves. There is deliberately NO open arm for a shape this build does not know: both sides generate from this one artifact and a protocolVersion mismatch is fatal at hello, so an engine that could answer with an unnamed shape is an engine this client already refused to talk to. A wildcard arm would also make the whole list unusable - an open object matches every named shape too, so `oneOf` could never pick one.
  */
@@ -61,6 +66,7 @@ export type ReplyResult =
   | SubscribeAck
   | ModuleSnapshotResult
   | PerfSnapshotResult
+  | DefineAck
 /**
  * The world's generation. Monotonic within one engine process. A client that sees an epoch it did not expect DROPS ALL STATE and waits for the reset — it never reconciles across a bump.
  */
@@ -202,6 +208,131 @@ export interface ViewUnsubscribeRequest {
 }
 export interface ViewUnsubscribeParams {
   subscription: RequestId
+}
+/**
+ * THE USER'S ALERT DEFINITIONS, pushed (boundary verdict 3). The store stays persistence truth app-side and the engine never reads a settings file; the app pushes the WHOLE set on connect and on every save/delete. Since ruling 22 the engine is also what EVALUATES them: a match on a LIVE event becomes a `FireMessage` on the stream, and the app-side alert system reduces to receive-fire-make-sound.
+ */
+export interface AlertsDefineRequest {
+  id: RequestId
+  op: 'alerts.define'
+  params: AlertsDefineParams
+}
+export interface AlertsDefineParams {
+  /**
+   * THE WHOLE SET, always. Not a delta: a define replaces what the engine holds, so a crash-respawn is a replay of the latest push and a command input is hash-friendly.
+   */
+  defs: AlertDefinition[]
+}
+/**
+ * One alert, EXACTLY AS THE STORE HOLDS IT — `src/shared/alertTypes.ts AlertDef`. The protocol states nothing about its shape, and that is the `ModuleState`/`Cells` argument at full strength rather than a shortcut. Two reasons, and the second is the load-bearing one. (1) The field set is the STORE's contract: a def carries an id, a name, an enabled flag, a trigger grammar and a sound reference that the engine's evaluator reads, plus volume, audio channel, speech phrase, banner colour, notes and the early-warning offset that belong entirely to the app — and an alert growing a field must not be a protocol change or turn a whole push into `badParams`. (2) A DEFINITION ROUND-TRIPS: the fold republishes the pushed list as the `alerts` module's own `defs`, which is what the app's alert list is drawn from, so a typed protocol shape that quietly dropped an unlisted field would REWRITE THE USER'S ALERTS as they passed through the engine. Typed-where-cheap is not cheap here. The engine reads what it needs with its own reader (`fold::modules::alerts_rules::Rule::compile`), exactly as the fold reads an event.
+ */
+export interface AlertDefinition {
+  [k: string]: unknown
+}
+/**
+ * WHOSE CASTS, BESIDES YOUR OWN, MAY ANCHOR A LANDING (JOS-140). Pushed like every other piece of app knowledge; it ships empty and stays empty for almost everybody.
+ */
+export interface BuffTrustDefineRequest {
+  id: RequestId
+  op: 'buffTrust.define'
+  params: BuffTrustDefineParams
+}
+export interface BuffTrustDefineParams {
+  trust: BuffTrustPrefs
+}
+/**
+ * `src/shared/buffTrust.ts BuffTrustPrefs`. Typed because it is cheap to type: one list of display spellings, in the order the user added them.
+ */
+export interface BuffTrustPrefs {
+  externals: string[]
+  [k: string]: unknown
+}
+/**
+ * WHICH MOBS GET A CLOCK (JOS-194) — tracking is opt-in per mob, so this list is the whole of what the respawn fold knows that the log did not tell it.
+ */
+export interface RespawnDefineRequest {
+  id: RequestId
+  op: 'respawn.define'
+  params: RespawnDefineParams
+}
+export interface RespawnDefineParams {
+  prefs: RespawnPrefs
+}
+/**
+ * `src/shared/respawn.ts RespawnPrefs`. An object rather than a bare array because that is the shape the store holds and the shape a later preference would grow into.
+ */
+export interface RespawnPrefs {
+  watches: RespawnWatch[]
+  [k: string]: unknown
+}
+/**
+ * One mob the user chose to watch, and the number they typed if they typed one.
+ */
+export interface RespawnWatch {
+  /**
+   * Canonical (lowercased) mob name — what a death line's name canonicalizes to.
+   */
+  key: string
+  display: string
+  /**
+   * The user's own respawn, in SECONDS. Absent means `use what you learn`, which is a different statement from zero.
+   */
+  customSec?: number
+  [k: string]: unknown
+}
+/**
+ * THE USER'S CLASS-COMBO CORRECTIONS — the one input to the loadout model that the log cannot state. Character-scoped app-side; the engine holds whatever the app last pushed for the character it is folding.
+ */
+export interface ComboDefineRequest {
+  id: RequestId
+  op: 'combo.define'
+  params: ComboDefineParams
+}
+export interface ComboDefineParams {
+  corrections: ComboCorrection[]
+}
+/**
+ * `src/shared/classCombo.ts ComboCorrection` — a span the user re-labelled, and when they said so.
+ */
+export interface ComboCorrection {
+  startTs: number
+  /**
+   * `null` means `from startTs onward`, i.e. it applies to the open interval too. REQUIRED AND NULLABLE rather than optional, because the store's own type says `number | null` and its only writer always writes one of the two — and because an optional nullable is a field that does not survive a round trip: a generator lowers it to `Option`, drops the null on the way back out, and a fixture that carried the store's own shape stops matching itself.
+   */
+  endTs: number | null
+  /**
+   * One to three class codes, as the `/who` row spells them.
+   */
+  classes: string[]
+  /**
+   * When the user set it — a later correction wins over an earlier overlapping one.
+   */
+  setAt: number
+  [k: string]: unknown
+}
+/**
+ * THE USER'S GROUP-ROSTER EDITS — names they added the log never named, and names they removed that it did.
+ */
+export interface RosterDefineRequest {
+  id: RequestId
+  op: 'roster.define'
+  params: RosterDefineParams
+}
+export interface RosterDefineParams {
+  edits: RosterEdit[]
+}
+/**
+ * `src/shared/progressState.ts RosterEdit` — one name, one verb, and the instant the user said it. The instant is load-bearing rather than provenance: an edit older than the last character rebirth, or older than the last `You have been removed from the group.`, described a group that no longer exists and is dropped by the fold rather than by the pusher.
+ */
+export interface RosterEdit {
+  /**
+   * The canonical identity key — `idKey(name)`.
+   */
+  key: string
+  name: string
+  action: 'add' | 'remove'
+  setAt: number
+  [k: string]: unknown
 }
 /**
  * The handshake answer. `ok: false` is a courtesy sent immediately before the engine closes the connection — a client must treat a closed connection with no reply as the same outcome.
@@ -368,6 +499,16 @@ export interface PerfServeSource {
   subscribers: number
 }
 /**
+ * The answer to every `*.define` command, and it is deliberately the SAME shape for all five. A define is an idempotent FULL-SET REPLACE (the cutover ledger's command law: replayable, order-collapsing, hash-friendly for ruling 18's cache key), so there is nothing per-family to report back — the engine either took the set or refused the frame. `count` is how many entries it took, which is the one number a caller can check its own push against; it is absent for a family whose payload is not a list (`buffTrust`, `respawn` push one object each).
+ */
+export interface DefineAck {
+  applied: true
+  /**
+   * Entries taken, for a list-shaped payload. Absent means the payload was not a list, NEVER that nothing was taken — an empty list answers `count: 0`, which is how a caller clears a family and can tell it worked.
+   */
+  count?: number
+}
+/**
  * A refused request. An error is always a reply to a request id — a failure with no request behind it closes the connection instead.
  */
 export interface ErrorReply {
@@ -461,6 +602,28 @@ export interface FoldProgress {
    */
   pct: number
   events: number
+}
+/**
+ * AN ALERT FIRED (owner ruling 22). The engine evaluates the user's alert definitions against LIVE events — replay must never make a sound, which is the same boundary law the app-side evaluator has always obeyed — and this is what it says when one matches. CONNECTION-WIDE, and therefore carrying NO `id`: a fire belongs to the world rather than to any subscription, which is the `EpochMessage` precedent. It carries no `epoch` either, and that is the difference from an epoch message rather than an oversight: every other stream frame describes WINDOW STATE a client has to reconcile across a generation, while a fire is a thing that happened once — there is nothing to drop and nothing to re-request, so a generation number would be a field with no reader. IT IS FULLY RESOLVED SERVER-SIDE (the conCard principle): everything the app needs in order to make the identical noise is in these four fields, so no client ever has to hold the definition the fire came from.
+ */
+export interface FireMessage {
+  kind: 'fire'
+  /**
+   * When it fired, on THE LOG'S OWN CLOCK — the `ts` of the event that matched, never the host's wall clock. A fire is a statement about the log (ruling 18 law 1).
+   */
+  at: number
+  /**
+   * The alert's LABEL — `AlertDefinition.name`. What fired, in the words the user gave it, so a log line or a banner needs nothing else to be readable.
+   */
+  rule: string
+  /**
+   * THE KEY THE APP WOULD PLAY: `<packId>/<soundId>`, joined from the definition's `sound` reference, which is exactly how the renderer's sound cache is keyed. Resolved here rather than sent as a reference for the conCard reason — an app that had to look the definition back up to know what to play would be holding a second copy of the rule set, which is the coupling this boundary exists to delete.
+   */
+  sound: string
+  /**
+   * THE TEXT THAT MATCHED — the log line the trigger fired on, which is what `FiredAlert.matchedText` has always carried and what the event log prints beside the alert's name.
+   */
+  message: string
 }
 
 /**

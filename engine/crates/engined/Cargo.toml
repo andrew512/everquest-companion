@@ -14,6 +14,10 @@ publish.workspace = true
 # the binary joins the code-signing set. If a later phase measures a reason, adding it is a change
 # inside this crate and nothing above it moves.
 protocol = { path = "../protocol" }
+# `serde` is named only for the `Serialize` BOUND on the one helper that turns a typed `*.define`
+# payload into the JSON the fold reads (`ops::json`). It is already in this tree under
+# `serde_json`; naming it adds no dependency, it makes an existing one addressable.
+serde.workspace = true
 serde_json.workspace = true
 
 # THE PARSER AND THE TAIL, as a library. Both halves of ingest are proven standalone (JOS-469's

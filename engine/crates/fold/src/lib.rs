@@ -139,6 +139,59 @@ pub trait EqModule {
     fn as_loot(&self) -> Option<&modules::loot::LootModule> {
         None
     }
+
+    /// THE APP-KNOWLEDGE SEAM (JOS-482, boundary verdict 3) — the one door a `*.define` command
+    /// reaches a module through.
+    ///
+    /// Exactly the shape `as_roster` and `as_loot` are, and for exactly their reason: a handful of
+    /// modules can answer, so those modules implement one method and the rest say nothing. What is
+    /// different is the MUTABILITY, and that is the whole of what a define is — the app telling the
+    /// fold something the log cannot.
+    ///
+    /// FIVE FAMILIES, ONE PER MODULE (see [`Defines::family`]). The mapping is total and static, so
+    /// `Registry::define` is a lookup rather than a negotiation.
+    fn as_defines(&mut self) -> Option<&mut dyn Defines> {
+        None
+    }
+
+    /// THE ALERT FIRES THIS MODULE PRODUCED WHILE FOLDING THE LIVE EVENT IT WAS JUST HANDED, in
+    /// emission order (JOS-482, owner ruling 22).
+    ///
+    /// A HAND-BACK RATHER THAN A CALLBACK, exactly like [`EqModule::take_derived`] and for the same
+    /// ownership reason: a module cannot hold a mutable reference to a queue the registry is
+    /// iterating, so it buffers its own and the caller takes them. Unlike `take_derived` these do
+    /// not re-enter the bus — a fire leaves the process — so they are drained by the INGEST at its
+    /// own boundary rather than by `Fold::on_primary`.
+    ///
+    /// One producer (`alerts`). Defaulted empty for the other nineteen, and structurally empty for
+    /// every historical fold: firing is live-only by the boundary law.
+    fn take_fires(&mut self) -> Vec<modules::alerts_rules::Fire> {
+        Vec::new()
+    }
+}
+
+/// WHAT A MODULE DOES WITH APP KNOWLEDGE. One method, one law.
+///
+/// A DEFINE IS AN IDEMPOTENT FULL-SET REPLACE. Not a delta, not a merge: the payload is the whole
+/// of what this family knows, so pushing A and then B leaves exactly what pushing B alone would
+/// have left. That is the cutover ledger's command law and it buys three things — a crash-respawn
+/// is a replay of the latest push, an order of arrival cannot matter, and the input is hash-friendly
+/// for ruling 18's eventual cache key.
+///
+/// THE PAYLOAD IS A `Value` AND THAT IS DELIBERATE. These shapes are the STORE's contract rather
+/// than the protocol's (the `Cells` argument), so the module reads what it needs out of the JSON the
+/// way `Event` reads what a module needs out of an event — one reader, at the place that knows what
+/// the fields mean, rather than a typed mirror in the protocol crate that would have to be kept in
+/// step with a settings file.
+pub trait Defines {
+    /// The family this module answers to: `alerts`, `buffTrust`, `respawn`, `combo`, `roster` —
+    /// the `*.define` op's own prefix, so the wire name and the module's claim on it are one string.
+    fn family(&self) -> &'static str;
+
+    /// Take the whole set. A payload this module cannot read leaves it exactly as it was, which is
+    /// the honest outcome for app knowledge that arrived malformed: the previous set is still the
+    /// last thing the user actually said.
+    fn define(&mut self, payload: &Value);
 }
 
 /// REGISTRATION ORDER = BUS DELIVERY ORDER, and it is load-bearing — `src/main/modules/wiring.ts`
@@ -273,6 +326,34 @@ impl Registry {
             .iter()
             .find(|m| m.id() == id)
             .map(|m| m.snapshot())
+    }
+
+    /// PUSH ONE FAMILY OF APP KNOWLEDGE INTO THE MODULE THAT OWNS IT (JOS-482).
+    ///
+    /// `false` for a family no registered module claims, which is the answer rather than an
+    /// absence: the registry is the authority on what a module is, exactly as it is for
+    /// `snapshot_of`. A linear scan over at most twenty entries, made a handful of times per
+    /// session rather than once per event.
+    pub fn define(&mut self, family: &str, payload: &Value) -> bool {
+        for m in &mut self.mods {
+            if let Some(d) = m.as_defines() {
+                if d.family() == family {
+                    d.define(payload);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// EVERY ALERT FIRE ANY MODULE PRODUCED SINCE THE LAST DRAIN, in registration order. Empty for
+    /// every historical fold — see [`EqModule::take_fires`].
+    pub fn take_fires(&mut self) -> Vec<modules::alerts_rules::Fire> {
+        let mut out = Vec::new();
+        for m in &mut self.mods {
+            out.append(&mut m.take_fires());
+        }
+        out
     }
 
     /// Every id `WIRING_ORDER` names that nothing registered — the harness's SKIPPED list.
@@ -1205,6 +1286,272 @@ mod tests {
             r#"{"kind":"unknown","seq":3,"ts":60000,"raw":"x"}"#,
         ]);
         assert_eq!(state_of(&snaps, "resist"), json!({ "rows": 1, "mobs": 1 }));
+    }
+
+    // ── THE `*.define` SEAM (JOS-482) ──────────────────────────────────────────────────────────
+    //
+    // ONE WORKED EXAMPLE PER FAMILY, each asserting that the push moves the module the TypeScript
+    // seam moves — `ipc/alerts.ts setDefs`, `ipc/buffTrust.ts setTrust`, `ipc/respawn.ts setPrefs`,
+    // `ipc/combo.ts setCorrection`, `ipc/roster.ts setEdit`. They live HERE, over hand-written
+    // events, because a claim about what a preference does to a fold is sharpest when the event it
+    // does it to is written out: the socket suite in `engined` proves the push TRAVELS.
+
+    /// Push one family's set into a registry and take the snapshots.
+    ///
+    /// THE LAUNCH ANCHOR IS STATED IN BOTH PLACES, and that is not redundancy: the epoch DETECTOR
+    /// takes it from `Fold::new` while `combo` takes it from its own construction, and a correction
+    /// older than the launch describes the wiped beta character. A world where the two disagreed
+    /// would refuse a correction the boundary then kept, or the reverse.
+    fn folded_with(family: &str, payload: Value, lines: &[&str]) -> Value {
+        let deps = ClusterDeps {
+            launch_ms: 1000,
+            ..ClusterDeps::default()
+        };
+        let mut fold = Fold::new(registered(deps), 1000);
+        assert!(
+            fold.registry.define(family, &payload),
+            "no module answers to {family}"
+        );
+        for line in lines {
+            let ev = Event::from_json(line).expect("a JSON object");
+            fold.on_primary(&ev, false);
+        }
+        fold.registry.snapshots()
+    }
+
+    /// `alertsModule.setDefs(list)` — the store's list, published back verbatim, EXTRAS AND ALL.
+    /// A def carries fields no evaluator reads, and the module's `defs` is what the app's alert
+    /// list is drawn from, so anything dropped in transit would be an alert the user re-opened and
+    /// found rewritten.
+    #[test]
+    fn a_pushed_alert_definition_round_trips_through_the_module_untouched() {
+        let defs = json!([{
+            "id": "a1", "name": "Charm break", "enabled": true,
+            "sound": { "packId": "classic", "soundId": "bell" },
+            "trigger": { "type": "event", "kind": "uncharm" },
+            "volume": 0.4, "audio": "speech", "speech": { "mode": "custom", "phrase": "loose!" }
+        }]);
+        let snaps = folded_with("alerts", defs.clone(), &[]);
+        assert_eq!(state_of(&snaps, "alerts")["defs"], defs);
+    }
+
+    /// A HISTORICAL FOLD MAKES NO SOUND, however many defs are loaded — the boundary law, which is
+    /// also what keeps the six-slice oracle looking at the module it always looked at.
+    #[test]
+    fn a_replay_fires_nothing_and_a_live_line_fires_once() {
+        let defs = json!([{
+            "id": "a1", "name": "Charm break", "enabled": true,
+            "sound": { "packId": "classic", "soundId": "bell" },
+            "trigger": { "type": "event", "kind": "uncharm" }
+        }]);
+        let mut fold = Fold::new(registered(ClusterDeps::default()), 1000);
+        fold.registry.define("alerts", &defs);
+        let ev = Event::from_json(
+            r#"{"kind":"uncharm","seq":0,"ts":5000,"raw":"Your charm spell has worn off.","mob":"a rat"}"#,
+        )
+        .expect("object");
+
+        fold.on_primary(&ev, false);
+        assert!(fold.registry.take_fires().is_empty(), "replay is silent");
+
+        fold.on_primary(&ev, true);
+        let fires = fold.registry.take_fires();
+        assert_eq!(fires.len(), 1);
+        assert_eq!(fires[0].rule, "Charm break");
+        assert_eq!(fires[0].sound, "classic/bell");
+        assert_eq!(fires[0].at, 5000, "the LOG's clock");
+        assert_eq!(fires[0].message, "Your charm spell has worn off.");
+        // …and the fire is in the module's own ring, which is the app-visible half of it.
+        assert_eq!(
+            state_of(&fold.registry.snapshots(), "alerts")["history"]["a1"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+    }
+
+    /// `buffsModule.setTrust(next)` — an allowlisted caster's cast ANCHORS a landing, and a
+    /// stranger's still does not. The `cc` event is written out with its candidates so the claim is
+    /// about the ALLOWLIST rather than about which spells share an emote in the committed catalog.
+    #[test]
+    fn a_pushed_buff_trust_admits_an_external_casters_anchor() {
+        const LINES: [&str; 2] = [
+            r#"{"kind":"otherCastBegin","seq":0,"ts":2000,"raw":"c","caster":"Dranix","spell":"Mesmerization"}"#,
+            r#"{"kind":"cc","seq":1,"ts":3000,"raw":"m","mob":"a spiroc banisher","verb":"mesmerized","candidates":[{"name":"Mesmerization","durationMs":24000}]}"#,
+        ];
+        // THE CONTROL FIRST: under the shipped default the allowlist is empty, so a stranger's cast
+        // anchors nothing and the mez opens no hold (JOS-140 ruling 3).
+        let mut stranger = Fold::new(registered(ClusterDeps::default()), 1000);
+        for line in LINES {
+            stranger.on_primary(&Event::from_json(line).expect("object"), false);
+        }
+        assert_eq!(
+            state_of(&stranger.registry.snapshots(), "buffTimers")["holds"],
+            json!([])
+        );
+
+        // …and with the name pushed, the IDENTICAL rule admits it — not a looser one.
+        let snaps = folded_with("buffTrust", json!({ "externals": ["Dranix"] }), &LINES);
+        let holds = state_of(&snaps, "buffTimers")["holds"].clone();
+        assert_eq!(holds.as_array().map(Vec::len), Some(1), "{holds}");
+        assert_eq!(holds[0]["key"], "a spiroc banisher", "{holds}");
+    }
+
+    /// `respawnModule.setPrefs(next)` — the watch list is the ONLY admission rule, so the same
+    /// death produces a clock with the push and nothing without it.
+    #[test]
+    fn a_pushed_respawn_watch_is_what_admits_a_mob_to_a_clock() {
+        const LINES: [&str; 2] = [
+            r#"{"kind":"zone","seq":0,"ts":2000,"raw":"z","zone":"Permafrost Keep"}"#,
+            r#"{"kind":"death","seq":1,"ts":3000,"raw":"d","name":"a ghoul","bySelf":true}"#,
+        ];
+        let unwatched = fold_lines(&LINES);
+        assert_eq!(state_of(&unwatched, "respawn")["rows"], json!([]));
+
+        let snaps = folded_with(
+            "respawn",
+            json!({ "watches": [{ "key": "a ghoul", "display": "a ghoul", "customSec": 300 }] }),
+            &LINES,
+        );
+        let respawn = state_of(&snaps, "respawn");
+        assert_eq!(
+            respawn["prefs"]["watches"][0]["customSec"], 300,
+            "{respawn}"
+        );
+        assert_eq!(respawn["rows"][0]["key"], "a ghoul", "{respawn}");
+        assert_eq!(
+            respawn["rows"][0]["customMs"], 300_000,
+            "the user's own number is rung 1, in ms: {respawn}"
+        );
+    }
+
+    /// A watch payload is NORMALIZED the way `shared/respawn.ts` normalizes it — at both ends, so a
+    /// hand-edited settings file and a renderer cannot hold two ideas of what a watch is.
+    #[test]
+    fn a_pushed_watch_list_is_normalized_rather_than_trusted() {
+        let snaps = folded_with(
+            "respawn",
+            json!({ "watches": [
+                { "key": "  A Ghoul  ", "display": "" },
+                { "key": "a ghoul", "display": "duplicate" },
+                { "key": "", "display": "keyless" },
+                { "key": "a rat", "display": "a rat", "customSec": 0 }
+            ]}),
+            &[],
+        );
+        let watches = state_of(&snaps, "respawn")["prefs"]["watches"].clone();
+        assert_eq!(watches.as_array().map(Vec::len), Some(2), "{watches}");
+        assert_eq!(watches[0]["key"], "a ghoul", "trimmed and case-folded");
+        assert_eq!(
+            watches[0]["display"], "a ghoul",
+            "an empty display is the key"
+        );
+        assert!(
+            watches[1].get("customSec").is_none(),
+            "an out-of-range number is ABSENT, never zero: {watches}"
+        );
+    }
+
+    /// `comboModule.setCorrection(...)` — the user's span re-labels the intervals, and says so.
+    #[test]
+    fn a_pushed_combo_correction_relabels_the_span_it_names() {
+        // A CLASS OBSERVATION FIRST, because a correction RE-LABELS an interval and does not conjure
+        // one: the log has to have said something about the loadout before there is anything for the
+        // user to disagree with. Coating your own blades is the observation that needs no catalog —
+        // only rogues have poison disciplines on Legends.
+        //
+        // TWO OF THEM, because the launch anchor is 1000 here and the first event past it fires the
+        // rebirth boundary — which clears the observation it fired on, exactly as it does for every
+        // other character-scoped module. The second coat is the new world's.
+        const LINES: [&str; 2] = [
+            r#"{"kind":"poisonCoat","seq":0,"ts":5000,"raw":"p","who":"you","poison":"Weakening Poison"}"#,
+            r#"{"kind":"poisonCoat","seq":1,"ts":6000,"raw":"p","who":"you","poison":"Weakening Poison"}"#,
+        ];
+        let snaps = folded_with(
+            "combo",
+            json!([{ "startTs": 2000, "endTs": null, "classes": ["ENC", "ROG"], "setAt": 9000 }]),
+            &LINES,
+        );
+        let combo = state_of(&snaps, "combo");
+        assert_eq!(combo["current"]["userLocked"], true, "{combo}");
+        assert_eq!(combo["current"]["slots"][0]["candidates"], json!(["ENC"]));
+        assert_eq!(combo["current"]["slots"][0]["provenance"], "user");
+    }
+
+    /// A correction is REFUSED WHOLE rather than filtered — `ipc/combo.ts`'s door rule, restated at
+    /// the engine's door because a define is a second door onto the same state.
+    #[test]
+    fn a_combo_correction_that_is_not_the_shape_the_app_validates_is_dropped() {
+        for bad in [
+            json!({ "startTs": 500, "endTs": null, "classes": ["ENC"], "setAt": 9000 }),
+            json!({ "startTs": 2000, "endTs": 1000, "classes": ["ENC"], "setAt": 9000 }),
+            json!({ "startTs": 2000, "endTs": null, "classes": ["ENC", "ENC"], "setAt": 9000 }),
+            json!({ "startTs": 2000, "endTs": null, "classes": ["XYZ"], "setAt": 9000 }),
+            json!({ "startTs": 2000, "endTs": null, "classes": [], "setAt": 9000 }),
+        ] {
+            let snaps = folded_with(
+                "combo",
+                json!([bad.clone()]),
+                &[
+                    r#"{"kind":"poisonCoat","seq":0,"ts":5000,"raw":"p","who":"you","poison":"Weakening Poison"}"#,
+                    r#"{"kind":"poisonCoat","seq":1,"ts":6000,"raw":"p","who":"you","poison":"Weakening Poison"}"#,
+                ],
+            );
+            assert_eq!(
+                state_of(&snaps, "combo")["current"]["userLocked"],
+                false,
+                "the interval stands on its own evidence, unlocked: {bad}"
+            );
+        }
+    }
+
+    /// `rosterModule.setEdit(...)` — a name the log never named is a member at the top provenance
+    /// rung, and a name it DID name can be removed. The edits are a LAYER over the log, so the
+    /// removal is not undone by anything the log says afterwards.
+    #[test]
+    fn pushed_roster_edits_add_and_remove_over_the_logs_own_roster() {
+        const LINES: [&str; 1] =
+            [r#"{"kind":"group","seq":0,"ts":2000,"raw":"g","change":"join","name":"Dranix"}"#];
+        let snaps = folded_with(
+            "roster",
+            json!([
+                { "key": "rowel", "name": "Rowel", "action": "add", "setAt": 3000 },
+                { "key": "dranix", "name": "Dranix", "action": "remove", "setAt": 3000 }
+            ]),
+            &LINES,
+        );
+        let members = state_of(&snaps, "roster")["members"].clone();
+        assert_eq!(members.as_array().map(Vec::len), Some(1), "{members}");
+        assert_eq!(members[0]["key"], "rowel");
+        assert_eq!(members[0]["source"], "user", "the top rung: {members}");
+    }
+
+    /// AN EDIT OLDER THAN THE LAST REBIRTH DESCRIBED A DEAD CHARACTER'S GROUP, and the fold drops
+    /// it by DATE rather than by deleting it — the list belongs to the app.
+    #[test]
+    fn a_roster_edit_written_before_the_last_epoch_applies_to_nothing() {
+        let snaps = folded_with(
+            "roster",
+            json!([{ "key": "rowel", "name": "Rowel", "action": "add", "setAt": 500 }]),
+            &[r#"{"kind":"loot","seq":0,"ts":1500,"raw":"l","item":"Live Sword"}"#],
+        );
+        // The launch anchor is 1000 here, so the ts-1500 line fires the rebirth boundary.
+        assert_eq!(state_of(&snaps, "roster")["members"], json!([]));
+    }
+
+    /// EVERY FAMILY IS CLAIMED BY EXACTLY ONE MODULE, and a name nothing claims is refused rather
+    /// than silently dropped — the `snapshot_of` rule, one direction reversed.
+    #[test]
+    fn the_five_families_are_claimed_and_nothing_else_is() {
+        let mut fold = Fold::new(registered(ClusterDeps::default()), 1000);
+        for family in ["alerts", "buffTrust", "respawn", "combo", "roster"] {
+            assert!(
+                fold.registry.define(family, &json!([])),
+                "{family} is claimed"
+            );
+        }
+        assert!(!fold.registry.define("buffTimers", &json!([])));
+        assert!(!fold.registry.define("", &json!([])));
     }
 
     /// A CAST THAT NEVER HAPPENED IS NOT A RESIST: a fizzle disarms, so the landing sentence that

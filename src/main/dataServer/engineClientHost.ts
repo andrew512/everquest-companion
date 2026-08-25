@@ -62,6 +62,8 @@ import type {
   EngineMessage,
   PerfSnapshotResult
 } from '../../shared/dataServer/protocol.generated'
+import { readDefine } from './appKnowledge'
+import { DEFINE_OPS, setAppKnowledgePusher, type DefineOp } from './definePush'
 import { connectToEngine } from './socketChannel'
 import {
   PARITY_PROBE_MODULES,
@@ -187,8 +189,84 @@ async function openConnection(mine: number, info: ReadyEngine, client: EngineCli
   // The hello rides this call — the client sends it the moment it has a transport, and queues
   // everything else behind the answer, so there is no handshake to sequence here.
   client.attach(createNdjsonTransport<ClientMessage, EngineMessage>(channel))
+  // THE FIRES, LOGGED AND COUNTED — NEVER PLAYED. See `onFire`.
+  client.onFire((fire) => {
+    noteFire(fire)
+  })
   debug(`data-server client: connected to the engine on port ${String(info.port)}`)
   await attachAndProbe(mine)
+}
+
+// ── app knowledge, pushed (JOS-482, boundary verdict 3) ────────────────────────────────────────
+
+/**
+ * PUSH ONE FAMILY. The store is read HERE rather than by the setter that changed it, so what the
+ * engine is handed is what was persisted — see `appKnowledge.ts`.
+ *
+ * IT IS VOIDED AND IT NEVER THROWS. A define is fire-and-forget from a preference write's point of
+ * view: the user's click is answered by the app's own state, and an engine that refused the push is
+ * a dev-log line rather than a failed save. Nothing in the product reads the answer.
+ */
+async function pushDefine(mine: number, op: DefineOp): Promise<void> {
+  const l = live
+  if (l === null || gen !== mine) return
+  try {
+    const ack = await l.client.request(op, readDefine(op))
+    if (gen !== mine) return
+    const count = ack.count === undefined ? '' : ` (${String(ack.count)})`
+    debug(`data-server define: ${op}${count}`)
+  } catch (err) {
+    debug(`data-server client: ${op} was refused (${describeErr(err)})`)
+  }
+}
+
+/**
+ * ALL FIVE, IN ONE BREATH — what the app says the moment it has a connection, and again whenever
+ * the world is rebuilt.
+ *
+ * BEFORE THE ATTACH, ALWAYS. A define pushed at a world with no fold is HELD and applied at the
+ * next attach's construction, which is the only timing that makes the engine's fold reproducible:
+ * alert defs, buff trust, respawn watches, combo corrections and roster edits all change what a
+ * fold produces, and a world that took them afterwards would have folded the log under a different
+ * set of rules than it then serves.
+ *
+ * ALL FIVE ON EVERY REBUILD, not just the two that are character-scoped. It costs five small round
+ * trips at a moment that already costs a whole re-fold, and it is the shape a full-set replace
+ * asks for: the app states what it knows, rather than reasoning about what the engine might be
+ * remembering.
+ */
+async function pushAllDefines(mine: number): Promise<void> {
+  for (const op of DEFINE_OPS) {
+    await pushDefine(mine, op)
+    if (gen !== mine) return
+  }
+}
+
+// ── the fires (owner ruling 22) ────────────────────────────────────────────────────────────────
+
+/** How many fires this launch has heard from the engine. Reported beside each one. */
+let firesHeard = 0
+
+/**
+ * ONE ALERT FIRE FROM THE ENGINE — LOGGED AND COUNTED, AND DELIBERATELY NOT PLAYED.
+ *
+ * THE APP'S OWN `AlertsModule` IS STILL FIRING, and it is still the only thing that makes a sound.
+ * Playing this one too would double every alert the owner hears — and the owner is the regression
+ * test for this whole program, so a duplicated sound would not be a cosmetic bug, it would corrupt
+ * the evidence the cutover is being judged on. The audio cutover is the alerts-surface ticket:
+ * that one deletes the app-side evaluator in the same change that gives this line a speaker, so the
+ * two can never both be live.
+ *
+ * WHAT THE LINE PROVES is everything a sound would: the def reached the engine, the engine
+ * evaluated it against a LIVE event, and the frame it sent back is fully resolved — the pack key is
+ * right there, so the app would need nothing else to play it.
+ */
+function noteFire(fire: { at: number; rule: string; sound: string; message: string }): void {
+  firesHeard += 1
+  debug(
+    `data-server fire: ${fire.rule} [${fire.sound}] at ${String(fire.at)} — ` +
+      `${fire.message} (fires this launch: ${String(firesHeard)}; logged, not played)`
+  )
 }
 
 // ── the attach ─────────────────────────────────────────────────────────────────────────────────
@@ -208,6 +286,9 @@ async function attachAndProbe(mine: number): Promise<void> {
     debug('data-server client: no character is attached here, so the engine is left idle')
     return
   }
+  // WHAT THE APP KNOWS GOES FIRST, before any attach can be sent — see `pushAllDefines`.
+  await pushAllDefines(mine)
+  if (gen !== mine) return
   // AN ATTACH IS A WHOLE RE-FOLD, so it is sent only when the FILE changes. This runs twice on an
   // ordinary launch — once when the engine becomes ready (pointed at the log this process is
   // already tailing) and once when this process's own fold lands on that same log — and issuing a
@@ -422,12 +503,21 @@ export async function enginePerfSnapshot(): Promise<PerfSnapshotResult | null> {
  */
 export function installEngineClient(): void {
   setWorldRebuiltObserver(onWorldRebuilt)
+  // THE PREFERENCE-WRITE EDGE (JOS-482). One slot, filled here and nowhere else, so an ipc setter
+  // can say "this family moved" without importing the engine client — and so that a launch with
+  // `EQC_ENGINE` unset finds a null and pays one comparison per preference write.
+  setAppKnowledgePusher((op) => {
+    const mine = gen
+    void pushDefine(mine, op)
+  })
 }
 
-/** Let go: no observer, no connection. Idempotent, and safe on a process that never armed one. */
+/** Let go: no observer, no connection, no pusher. Idempotent, and safe on a process that never
+ *  armed one. */
 export function stopEngineClient(): void {
   gen += 1
   setWorldRebuiltObserver(null)
+  setAppKnowledgePusher(null)
   live?.client.close()
   live = null
   lastParity = null
