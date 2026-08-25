@@ -13,8 +13,10 @@ members = [
 # PARSER and TAILER (`eqlog`, JOS-469/JOS-472) — proven byte-identical against the TS pipeline's
 # recorded event streams by the `parity` binary beside it — and the process that answers the
 # protocol over loopback TCP and INGESTS through them (`engined`, JOS-466/JOS-474): a spawn
-# contract, a handshake, the ops, and one attach that scans a log and then tails it. The FOLD lands
-# in a later crate and reaches `engined` through one sink trait.
+# contract, a handshake, the ops, and one attach that scans a log and then tails it. The FOLD
+# (`fold`, JOS-471 onward) is proven against the TS snapshots slice by slice and is not yet wired
+# into `engined` — when it is, it arrives through one sink trait (`engined::ingest::EventSink`) and
+# nothing else in that crate moves.
 #
 # TWO STANDING RULES FOR EVERYTHING UNDER engine/:
 #   * Nothing here may shell out to powershell.exe, ever, at build time or at run time.

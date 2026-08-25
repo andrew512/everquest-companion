@@ -107,17 +107,39 @@ pub trait EventSink: Send {
 }
 ```
 
-The whole edit is **construction**, in two places:
+The whole edit is **construction**, in two places. Written against the `fold` crate as it stands on
+main (JOS-471/477), whose `Fold` facade already has exactly the shape this seam wants — one
+`on_primary(&Event, live)`, and its own `events()`/`last_ts()` to answer with:
 
 ```rust
 // 1. one impl — it must live in THIS crate anyway, by the orphan rule
-impl ingest::EventSink for fold::Registry {
-    fn event(&mut self, event: &ingest::Event<'_>) { self.on_event(event.json, event.live) }
+impl ingest::EventSink for fold::Fold {
+    fn event(&mut self, event: &ingest::Event<'_>) {
+        // `Event::from_json` is the fold's own door; a line it declines is a line no module wanted.
+        if let Some(ev) = fold::Event::from_json(event.json) {
+            self.on_primary(&ev, event.live);
+        }
+    }
+    fn report(&self) -> ingest::SinkReport {
+        ingest::SinkReport {
+            events: i64::try_from(self.events()).unwrap_or(i64::MAX),
+            last_ts: Some(self.last_ts()),
+            ..ingest::SinkReport::default()
+        }
+    }
 }
 
 // 2. one line in main.rs
-let world = World::with_ingest(ingest::starter(Arc::new(|| Box::new(fold::Registry::new()))));
+let world = World::with_ingest(ingest::starter(Arc::new(|| {
+    Box::new(fold::Fold::new(fold::cluster_2a(known_spell()), LAUNCH_MS))
+})));
 ```
+
+Two questions that construction raises and this crate does not answer, both for the integrator:
+`cluster_2a` wants the spell DB's key set, which today is built **inside** the ingest thread (see
+the measured note above — that is the same knot); and `Fold::new` wants the launch instant, which
+is app knowledge and therefore a `*.define` command's job rather than a constant (boundary verdict
+3: the engine never reads a settings file).
 
 Three things worth knowing before writing that impl:
 
