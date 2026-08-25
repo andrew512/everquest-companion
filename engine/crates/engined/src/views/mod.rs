@@ -47,6 +47,7 @@
 //! What that costs in practice is not a guess: [`meter`] measures it and the ingest prints it
 //! (owner ruling 19).
 
+pub mod combat;
 pub mod diff;
 pub mod loot;
 pub mod meter;
@@ -197,9 +198,15 @@ pub struct SourceDef {
     pub default_limit: i64,
 }
 
-/// EVERY SOURCE THIS BUILD SERVES. One, for now, and the registry exists so that "one" is a fact
-/// the code states rather than a gap a reader infers — an unknown source is `notFound`, which is
-/// only answerable because there is a list to be absent from.
+/// EVERY SOURCE THIS BUILD SERVES. The registry exists so that the LIST is a fact the code states
+/// rather than a gap a reader infers — an unknown source is `notFound`, which is only answerable
+/// because there is a list to be absent from.
+///
+/// THE TWO ARE DIFFERENT KINDS OF SOURCE and that is worth knowing before reading either.
+/// `loot.ledger` APPENDS: a row, once written, never changes, so a live window over it produces
+/// inserts and drops and never an `update`. `combat.live` EDITS: the same six keys sit in the
+/// window for a whole fight while their numbers move, which is what makes it the source that
+/// exercises the diff protocol's third op against a real fold (JOS-485).
 ///
 /// `eventFeed.recent` IS DELIBERATELY NOT HERE, and it is named rather than forgotten. The fold's
 /// event feed admits NOTHING that did not arrive live through an injected item probe, an injected
@@ -207,7 +214,7 @@ pub struct SourceDef {
 /// (`fold/src/modules/event_feed.rs` argues all four sources). Its ring is therefore empty in
 /// every fold this build can perform, so a view over it could only ever serve an empty window and
 /// no test could tell a working one from a broken one. It arrives with the sources that feed it.
-pub const SOURCES: &[SourceDef] = &[loot::LEDGER];
+pub const SOURCES: &[SourceDef] = &[loot::LEDGER, combat::LIVE];
 
 /// The source by that name, or `None`.
 #[must_use]
@@ -470,11 +477,14 @@ mod tests {
 
     #[test]
     fn an_unregistered_source_is_not_found_and_the_answer_names_what_is_served() {
-        let error = validate(&descriptor("combat.live"))
+        // `eventFeed.recent` is the source this build names and does not serve (see `SOURCES`), so
+        // it is the honest stand-in here — `combat.live` used to be, and it is registered now.
+        let error = validate(&descriptor("eventFeed.recent"))
             .err()
             .expect("a refusal");
         assert!(matches!(error.code, ErrorCode::NotFound));
         assert!(error.message.contains("loot.ledger"), "{}", error.message);
+        assert!(error.message.contains("combat.live"), "{}", error.message);
         // …and `loot` — the MODULE id — is not a source either. The two vocabularies are separate
         // on purpose, and confusing them has to be told rather than guessed at.
         assert!(matches!(

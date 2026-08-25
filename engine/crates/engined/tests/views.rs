@@ -208,14 +208,18 @@ fn a_source_this_engine_does_not_serve_is_not_found() {
     let engine = Engine::start();
     let mut client = engine.connected();
 
-    client.send(&subscribe(7, "combat.live"));
+    // `eventFeed.recent` is the source `views::SOURCES` names and deliberately does not serve, so it
+    // is the honest stand-in for "a name a client could plausibly try". `combat.live` used to stand
+    // here and is registered since JOS-485.
+    client.send(&subscribe(7, "eventFeed.recent"));
     let EngineMessage::ErrorReply(refusal) = client.recv() else {
         panic!("a refusal");
     };
     assert_eq!(*refusal.id, 7);
     assert!(matches!(refusal.error.code, ErrorCode::NotFound));
     assert!(
-        refusal.error.message.contains("loot.ledger"),
+        refusal.error.message.contains("loot.ledger")
+            && refusal.error.message.contains("combat.live"),
         "the refusal names what IS served: {}",
         refusal.error.message
     );

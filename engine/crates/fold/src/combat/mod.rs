@@ -304,6 +304,25 @@ impl CombatEngine {
         out
     }
 
+    /// THE FIGHT-SEARCH CORPUS (JOS-485) — `engine.ts searchFights`'s own, and nothing else.
+    ///
+    /// The open fight as `kind: "current"`, then every finalized encounter NEWEST-FIRST and
+    /// UNCAPPED, which is `collect_segments` at the cap `snapshot()` never passes: over there
+    /// `history` is uncapped (only the per-encounter timeline rings and the zone list are capped),
+    /// so "search goes back for all time" needs no storage that does not already exist. It is a
+    /// separate door rather than a read of `snapshot()` because a search must not pay for a
+    /// selection, a zone list, a stance and a roster it throws away — and because the whole-stay
+    /// `kind: "zone"` row that `snapshot()` appends is not a fight and must not be findable as one.
+    ///
+    /// READ-ONLY, like every other reader here: no closure evaluation, no memoization, nothing
+    /// mutated. Typing in a search box must never be able to finalize a fight.
+    pub fn fight_summaries(&self, now: i64) -> Vec<Value> {
+        lifecycle::collect_segments(&self.st, now, usize::MAX)
+            .into_iter()
+            .filter_map(|s| serde_json::to_value(s).ok())
+            .collect()
+    }
+
     /// THE PER-SCOPE WALK, exactly as `goldenOracle.mts walkScopes` performs it: every ZONE SESSION
     /// and every FINALIZED FIGHT resolved through the same `snapshot({selectedId})` door the UI
     /// uses, so a change that moved a number the UI shows cannot hide behind an internal field that
