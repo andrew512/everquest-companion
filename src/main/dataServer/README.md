@@ -7,6 +7,13 @@ the map, plus the one thing no single file can state: **how the pieces connect a
 
 Nothing in this directory does anything without `EQC_ENGINE=1` in the environment. That is the one
 switch for the whole feature, read in exactly one place (`engineHost.ts engineEnabled`). Since
+JOS-489 there is a SECOND switch, and it is subordinate rather than parallel: `EQC_ENGINE_SERVE=1`
+lets the engine answer three of the app's own read IPCs, and `serveShim.ts` gates it on
+`engineEnabled()` rather than on a second reading of the environment — so the serve flag alone is
+off, not half-on. It is separate because `EQC_ENGINE=1` is what every engine ticket up to that one
+shipped ("no branch in the product reads anything the engine says"), and ending that invariant
+deserves its own switch rather than a silent change of meaning for a flag developers already have
+in a shell. Since
 JOS-484 there is one channel registered in every build — `engine:connect`, beside `registerDevIpc` —
 and it is not an exception to that rule: the handler holds no flag, is never told about a launch
 without one, and therefore refuses. A registered door with nothing behind it, so the refusal is a
@@ -22,8 +29,10 @@ decision a test can watch being made rather than an absence nobody can observe.
 | `engineHost.ts` | The composition root's half: which binary, which spawn, which socket, which clock, where a line goes. The only file anyone would rewrite to run the engine some other way. |
 | `socketChannel.ts` | The only file in the feature that knows a socket exists. |
 | `engineHealth.ts` | "Is it actually serving?", asked as `hello` + `session.health` over the product's own door. |
-| `engineClientHost.ts` | **The app as a CLIENT** (JOS-479): connect, attach, re-attach, and run the parity probe. Since JOS-483 it also answers two READS for the performance panel — `enginePerfSnapshot()` and `lastParitySummary()` — and still owns no channel. |
+| `engineClientHost.ts` | **The app as a CLIENT** (JOS-479): connect, attach, re-attach, and run the parity probe. Since JOS-483 it also answers two READS for the performance panel — `enginePerfSnapshot()` and `lastParitySummary()` — and since JOS-489 it exposes the main-side request bridge, `engineServeReadiness()` + `engineRequest(op, params)`. It still owns no channel, and no client handle escapes it. |
 | `parityProbe.ts` | The probe's pure half — two snapshots in, one verdict out, one line. |
+| `readShim.ts` | **The compat shim's pure half** (JOS-489): which world answers a read, and what happens when the engine cannot. Readiness, a bounded round trip, a projection that says whether a reply was an ANSWER, and the coalesced fallback tally. No app imports, so the whole matrix is a unit test. |
+| `serveShim.ts` | The shim, wired: the `EQC_ENGINE_SERVE` gate, the three channels' projections, the `SnapshotOpts` translation, and the `EQ_E2E`-only parity seam. |
 | `byteRelay.ts` | **The pump** (JOS-484): chunks between a socket and a MessagePort. Electron-free, so every teardown path is a unit test. |
 | `rendererBroker.ts` | **The brokerage** (JOS-484): the `engine:connect` handler, the port handover, and the live-connection lifecycle. |
 
@@ -264,6 +273,59 @@ closes the spec goes red and somebody deletes the exemption. Neither is a fold d
    engine-side is a phase-3 design question**, and it is the first thing this program has met that
    the equivalence oracle cannot decide, because the oracle never ticks either side.
 
+## The compat shim (JOS-489, phase 1 of the cutover)
+
+`EQC_ENGINE_SERVE=1`, beside `EQC_ENGINE=1`, moves three of the app's own read IPCs onto the engine:
+
+| IPC channel | op | what the shim hands back |
+| --- | --- | --- |
+| `module:getSnapshot` | `module.snapshot` | `{ seq, state }`, when the echoed module is the one asked for |
+| `combat:snapshot` | `combat.snapshot` | `result.snapshot`, when `result.now` is this process's wall clock and not the fold's |
+| `combat:searchFights` | `combat.searchFights` | `{ hits, corpus }` |
+
+Both arms live side by side in `src/main/ipc/world.ts` and the flag decides **per call**. With the
+flag off, each handler's expression is exactly the one it has always been with one boolean read in
+front of it — no promise where there was a value, and `serveShim.ts` allocates nothing.
+
+**The one law is that the shim must never make the app worse than the flag-off world**, and every
+other rule follows from it. Seven ways the engine can fail to answer — no client, a connection that
+is not ready, an engine on another log, an engine still folding, a refusal, a silence, and a reply
+that is not an answer — all resolve to the very call the old path would have made, so a caller of
+these three channels can never see an error the TypeScript arm would not have thrown. **Silence is
+the one the promise-shaped arm adds** that a synchronous handler never had, which is why the engine
+arm carries a 2 s deadline: an engine that accepted a request and never replied would otherwise hang
+a renderer's `invoke` forever.
+
+Readiness is four questions asked fresh per call (`engineClientHost.ts engineServeReadiness`): is
+there a client, is its connection `ready`, is the engine attached to the log **this process folded**,
+and has its fold on that log gone `live`. The last is taken off the `session.health` round trip the
+parity probe is already making, and it dies with the turn — a respawn, a character switch and a
+rebuild all clear it, so the shim falls back to the app's own fold until health says `live` again.
+
+The fallback note is **coalesced**, because the failure mode is a burst: these channels are polled,
+so a disconnected engine would otherwise print hundreds of lines a second and bury the narration a
+developer flipped the flag to read. One sentence per five-second window, naming every reason with
+its count, and the first fallback of a launch prints immediately.
+
+### The asymmetries (measured 2026-08-25, JOS-489) — and there are none left
+
+All three surfaces are **fully deep-equal**, at every path, and `KNOWN_ASYMMETRY` in
+`tests/e2e/engine-shim.e2e.mts` is empty **by fix rather than by omission**.
+
+The measurement is worth keeping. Against the engine as it stood before JOS-488, the combat snapshot
+diverged at exactly three paths — `.hydrating` (engine `true`, app `false`), `.currentTarget` (engine
+still holding the last mob, app absent) and `.segments[0].kind` (engine `"current"`, app `"fight"`).
+They were **one gap, not three**: the snapshot-time sweep block the cutover ledger names (charm
+sweep, ally expiry, pet nudge, deferred encounter closure), unported. In the app's own implementation
+`hydrating` is literally the flag that gates it — `if (!this.st.hydrating) { … evalClosure(…) }` in
+`combat/engine.ts snapshot` — so an engine that could not honestly say `hydrating: false` was exactly
+an engine that had not ported it, and the other two paths were what the block does. JOS-488 ported
+it, this spec went red on all three rows demanding they be deleted, and they were: **the pin contract
+cuts both ways**, which is what makes an empty table a claim rather than a silence.
+
+The shim never rewrote a served field to reach that state, and it should not: a shim that
+manufactured agreement would hide the gap being tracked.
+
 ## Tests
 
 | | |
@@ -272,6 +334,8 @@ closes the spec goes red and somebody deletes the exemption. Neither is a fold d
 | `tests/dataServerBroker.test.mts` | Both ends of the brokered wire: splits cross unchanged, four teardown paths, and a real conversation delivered one character at a time. |
 | `tests/e2e/engine-loot-view.e2e.mts` | The row-parity oracle — the app-fed and served ledgers, compared as DOM. |
 | `tests/dataServerParity.test.mts` | The probe's judgement: agreement, divergence, drift-is-a-skip, the two refusal sentences, the line's shape. |
+| `tests/dataServerShim.test.mts` | The compat shim's arm selection and its whole fallback matrix, driven by fake clients — connected, disconnected, idle, answering, erroring — plus the coalescing rule and the one throw it must NOT swallow (the app's own). |
+| `tests/e2e/engine-shim.e2e.mts` | The shim in the running product: both arms of three channels compared at a matched mark in ONE launch, `window.eq` checked against the served answer, and a staged refusal proving the renderer still gets the flag-off answer. |
 | `tests/dataServerEngineChild.test.mts` | The real child, pipe and socket against a Node fake engine. |
 | `tests/e2e/engine-boots.e2e.mts` | The real binary under the real app: spawn, ready, respawn, wrong token, quit, absence. |
 | `tests/enginePerf.test.mts` | The performance panel's engine row above the FFI boundary: the per-pid CPU arithmetic over a fake pid, the formatters' absent cases, and `useEnginePerf` run for real (arming, disarming, the null push). |

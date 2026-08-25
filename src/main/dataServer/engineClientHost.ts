@@ -74,7 +74,9 @@ import {
   type ParityAsk,
   type ParityVerdict
 } from './parityProbe'
+import { SERVABLE, type Readiness } from './readShim'
 import type { ReadyEngine } from './supervisor'
+import type { ParamsFor, RequestOp, ResultFor } from '../../shared/dataServer/ops'
 import type { CharacterRef } from '../../shared/types'
 
 /** How long the client's own loopback connect may take. The supervisor's probe just completed a
@@ -110,6 +112,29 @@ let tsWorldPath: string | null = null
 /** THE TURN. Bumped by every event that replaces the world: a new engine, a character switch, a
  *  rebuild. Read after every `await` — see the header. */
 let gen = 0
+
+/**
+ * THE LOG THE ENGINE HAS BEEN OBSERVED LIVE ON, in THIS turn — null until a `session.health` in
+ * this generation came back `live` (JOS-489).
+ *
+ * It is the compat shim's readiness half and it is a MEASUREMENT rather than a belief: nothing
+ * infers it from having sent an attach. `waitForFold` is already polling health on every attach and
+ * every rebuild, so the shim rides a round trip the probe was making anyway and no read path ever
+ * has to ask the engine how it is feeling.
+ *
+ * IT DIES WITH THE TURN. A respawn, a character switch and a rebuild all replace the world, and an
+ * engine that was live on the world somebody has since replaced is not live on this one — so
+ * `bumpGen` clears it and the shim falls back to the app's own fold until health says `live` again.
+ * That is a handful of TS-arm answers during a re-fold, which is exactly what those moments are.
+ */
+let engineLiveOn: string | null = null
+
+/** THE ONE PLACE THE TURN ADVANCES, so nothing that must die with it can be forgotten. */
+function bumpGen(): number {
+  gen += 1
+  engineLiveOn = null
+  return gen
+}
 
 function debug(line: string): void {
   logInfo(`[everquest-companion] ${line}`)
@@ -152,8 +177,7 @@ function attachTarget(): string | null {
  * starts is voided deliberately: a supervisor must never be made to wait on a client.
  */
 export function onEngineReady(info: ReadyEngine | null): void {
-  gen += 1
-  const mine = gen
+  const mine = bumpGen()
   live?.client.close()
   live = null
   // THE LAST VERDICT DIES WITH THE ENGINE THAT EARNED IT. A respawn is a launch and a fresh world
@@ -336,8 +360,7 @@ async function sendAttach(mine: number, l: LiveEngine, logPath: string): Promise
  */
 function onWorldRebuilt(character: CharacterRef | null): void {
   tsWorldPath = character?.logPath ?? null
-  gen += 1
-  const mine = gen
+  const mine = bumpGen()
   const l = live
   if (l === null) return
   if (tsWorldPath === null) {
@@ -423,6 +446,12 @@ async function waitForFold(mine: number, l: LiveEngine): Promise<EngineHealthSay
       return null
     }
     if (gen !== mine) return null
+    // THE SHIM'S READINESS, TAKEN OFF A ROUND TRIP THE PROBE WAS MAKING ANYWAY (JOS-489). It is
+    // recorded on the way past rather than in the caller because THIS is the only place in the file
+    // that has heard the engine say `live`, and because the loop can exit either way: a budget
+    // expiry returns a health that is still `folding`, and recording that as live would be the shim
+    // serving prefixes to a hydrating window.
+    if (health.status === 'live') engineLiveOn = l.attachedTo
     if (health.status === 'live' || Date.now() >= deadline) return health
     await delay(FOLD_POLL_MS)
     if (gen !== mine) return null
@@ -495,6 +524,62 @@ export async function enginePerfSnapshot(): Promise<PerfSnapshotResult | null> {
   }
 }
 
+// ── the typed request bridge, for main-side callers (JOS-489) ──────────────────────────────────
+//
+// `enginePerfSnapshot` above was the first main-side caller of this connection and it is a
+// DIAGNOSTIC: it asks one op, swallows every failure into `null`, and nothing branches on the
+// answer. The compat shim is the first caller whose answer a USER sees, so it needs two things that
+// one did not — any op rather than one, and a statement about whether asking is worth doing at all.
+// Those are the two exports below, and they are still the whole of what this file lets anybody do
+// with the socket: no client handle escapes, so a caller cannot subscribe, cannot re-attach, and
+// cannot outlive the launch it is talking to.
+
+/**
+ * IS THE ENGINE IN A STATE WHERE ITS ANSWERS MAY BE THIS APP'S ANSWERS?
+ *
+ * FOUR QUESTIONS, IN THE ORDER THAT MAKES EACH ONE MEANINGFUL. Is there a client at all; is its
+ * connection up; are the two worlds on the SAME FILE; and has the engine's fold on that file gone
+ * live. The third is the one the parity probe taught (`parityProbe.ts whereBoth`, "two folds of
+ * different files is the one failure that would make every other number a lie") — and it is asked
+ * against `tsWorldPath` rather than against the active character, because `tsWorldPath` is the log
+ * THIS PROCESS has finished folding and therefore the only one whose answers the shim is choosing
+ * between. During a historical scan of a newly-picked character the two differ, and falling back
+ * there is right: this app's own fold is mid-scan too.
+ *
+ * IT IS CHEAP ON PURPOSE — four field reads, no allocation, no round trip — because it is asked on
+ * every read IPC, which is a channel a hydrating window opens a dozen of at once.
+ */
+export function engineServeReadiness(): Readiness {
+  const l = live
+  if (l === null) return { ok: false, why: 'noClient' }
+  if (l.client.state !== 'ready') return { ok: false, why: 'notConnected' }
+  const ours = tsWorldPath
+  if (ours === null || l.attachedTo !== ours) return { ok: false, why: 'notAttached' }
+  if (engineLiveOn !== ours) return { ok: false, why: 'notLive' }
+  return SERVABLE
+}
+
+/**
+ * ONE TYPED REQUEST TO THE ENGINE, for a main-side caller.
+ *
+ * IT REJECTS RATHER THAN ANSWERING `null`, which is the difference from `enginePerfSnapshot` and is
+ * deliberate: a diagnostic that cannot be taken has nothing to say, but a READ that could not be
+ * served has to tell its caller WHY so the fallback can be counted and named. `readShim.ts` is that
+ * caller and it catches everything; the rejection never reaches a renderer.
+ *
+ * NO READINESS CHECK HERE. The shim asks `engineServeReadiness` first and would rather have a
+ * refusal describe the request than have this function guess at which of two states it was in —
+ * one authority per question.
+ */
+export async function engineRequest<O extends RequestOp>(
+  op: O,
+  params: ParamsFor<O>
+): Promise<ResultFor<O>> {
+  const l = live
+  if (l === null) throw new EngineError('unavailable', 'there is no engine on this launch')
+  return l.client.request(op, params)
+}
+
 // ── the composition root's two verbs ────────────────────────────────────────────────────────────
 
 /**
@@ -515,7 +600,7 @@ export function installEngineClient(): void {
 /** Let go: no observer, no connection, no pusher. Idempotent, and safe on a process that never
  *  armed one. */
 export function stopEngineClient(): void {
-  gen += 1
+  bumpGen()
   setWorldRebuiltObserver(null)
   setAppKnowledgePusher(null)
   live?.client.close()
