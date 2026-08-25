@@ -156,6 +156,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
 
 [[package]]
+name = "fold"
+version = "0.1.0"
+dependencies = [
+ "eqlog",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -291,6 +301,8 @@ name = "parity"
 version = "0.1.0"
 dependencies = [
  "eqlog",
+ "fold",
+ "serde_json",
 ]
 
 [[package]]

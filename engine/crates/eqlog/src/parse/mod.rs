@@ -51,6 +51,14 @@ pub struct Parser {
 }
 
 impl Parser {
+    /// The effective spell DB this parser was built with, if any. Read by the FOLD (JOS-471): the
+    /// observedSpellRanks module's catalog probe is `spellDb.byKey`, and it must be the SAME
+    /// database the parser is emitting `candidates` out of — two loads is two answers waiting to
+    /// disagree after an overlay change.
+    pub fn spell_db(&self) -> Option<&SpellDb> {
+        self.db.as_ref()
+    }
+
     pub fn new(clock: Clock, db: Option<SpellDb>, character: Option<String>) -> Self {
         Parser {
             clock,
