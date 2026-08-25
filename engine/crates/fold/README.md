@@ -16,7 +16,13 @@ printed as SKIP on every parity run, green ones included.
 | 2a | JOS-471 ✅ | `loot` `turnins` `classUnlocks` `kills` `leveling` `outputFiles` `spellSets` `itemTiers` `observedSpellRanks` |
 | 2b | — | `respawn` `progression` `character` `roster` `combo` |
 | 2c | — | `alerts` `buffs` `buffTimers` |
-| 2d | — | `consider` `resist` `eventFeed` |
+| 2d | JOS-477 🟡 | `consider` `resist` `eventFeed` + **the combat engine** (`src/combat/`, partial) |
+
+The combat engine is not in `WIRING_ORDER` — it is not a module. It is the bus subscriber that sits
+AFTER all twenty of them (`pipeline.ts:311,326`), and `Fold` carries it in its own `combat` field
+for exactly that reason; `src/combat/mod.rs`'s header carries the submodule-vs-crate argument. Its
+port is **deliberately partial** and the header says which half is which. Prove it with `--ledger`
+(below), never by eye.
 
 ## Adding a module (the 2b/2c/2d recipe)
 
@@ -63,6 +69,42 @@ printed as SKIP on every parity run, green ones included.
   harmless for 2a and is not for 2c. The producer must be queued into `Fold::derived` and drained
   through the same dispatch loop, after the primary event — that is `LogBus.emit`.
 
+### Adding to the COMBAT engine (2d), and the order the ledger says to do it in
+
+The engine is not a module and does not follow the recipe above — it is `src/combat/`, one file per
+`src/main/combat/*.ts`, subscribed behind the registry. What it owes is stated by measurement rather
+than by opinion: run `--ledger` over all six slices and the classes it prints ARE the worklist.
+
+As of JOS-477 the `combat` section agrees on **48–60% of leaves** per slice, and the divergences fall
+into exactly five groups. In dependency order, because each one is a prerequisite for the next:
+
+1. **`world.ts` — instance identity.** `nameKey#gen`, the `(4)` display labels, `resolve`/`label`,
+   the retirement clock and `isLivePet`/`isRetired`. Nothing below can be right without it: an
+   encounter's `engaged` set is a set of instance ids, and the golden's fight names read
+   `a spite golem (4) +7`.
+2. **The attribution ladder** — `routing.ts classify`, then `charmModel.ts`, `allyCharms.ts`,
+   `otherCombatants.ts`, `petClaims.ts`. This decides which aggregate a line lands in, and it is the
+   one place where a PARTIAL port is actively harmful: half a ladder mis-files a pet's damage, which
+   mis-fills `engaged`, which mis-segments the fight. Port it whole or not at all.
+3. **The encounter lifecycle** — `ensureEncounter` / `evalClosure` / `finalizeCurrent`. This is what
+   turns `.segments.length` from 1 into 78, and `.selectedId` from `""` into `e77`.
+4. **The aggregate's other half** — per-skill, per-category, rounds, modifier tallies, the proc
+   ledger and the healing accumulator (`aggregate.rs` carries only the sums today, deliberately).
+5. **The view builders** — `segmentViews.ts`, `sourceViews.ts`, `healing.ts`, `procViews.ts`,
+   `defenseViews.ts`, `roundViews.ts`. These are `.combat.selected`, `.combat.timeline` and the
+   whole of `scopes`, which is ~92% of the section's byte weight and the last thing to land.
+
+**Two divergences are NOT 2d's to fix**, and both were measured rather than assumed:
+
+- `.roster.seen` / `.roster.lastSignalTs` on the `current` slice ONLY — the other five carry
+  `EMPTY_ROSTER` verbatim, and even `current` has an empty member list. That is cluster **2b**'s
+  `roster` module arriving at `EqModule::as_roster`; nothing in `combat/` can close it.
+- `.poison.slow.*` on the `mid-grind` slice ONLY, which needs the encounter lifecycle (group 3) plus
+  the blade-coat routing to have run at all.
+
+Six sections already agree on all six slices and are the regression surface a later shift must not
+break: `zone`, `stance`, `hydrating`, `recent`, `inCombat`, `poison.coat`.
+
 ### Two rules that are not style
 
 - **No module reads a wall clock, ever** (cache transparency, ruling 18). A time-based rule advances
@@ -77,9 +119,19 @@ printed as SKIP on every parity run, green ones included.
 ## Proving it
 
 ```
-npm run oracle:rust-fold -- [slice...] [--snapshots=<module,module>] [--no-build] [--keep-going]
-                            [--slices=<dir>] [--goldens=<dir>] [--tz=<zone>]
+npm run oracle:rust-fold -- [slice...] [--snapshots=<module,module>] [--ledger] [--no-build]
+                            [--keep-going] [--slices=<dir>] [--goldens=<dir>] [--tz=<zone>]
 ```
+
+`--snapshots=<list>` accepts the two COMBAT sections by name as well — `--snapshots=combat,scopes`
+narrows a run to the engine, and `--snapshots=kills` narrows it away from one.
+
+`--ledger` swaps the first-divergence report for a full walk that buckets every disagreement by
+class (`.combat.segments[].total`, indices erased), prints the count per class with one worked
+example, and states the agreement rate. It exists because the combat engine will be red for several
+shifts and "it diverged at `.combat.selected`" is equally true on the first shift and the fifth.
+**It is not a second bar and it cannot turn a red run green** — the exit code is still decided by
+whether anything diverged at all (`tests/bench/parityLedger.mts` carries the argument).
 
 The slices and goldens are gitignored and machine-local, so a **worktree** run needs the two
 directory flags pointing at the main checkout, plus `--tz` matching the zone the goldens were

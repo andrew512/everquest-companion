@@ -6,7 +6,7 @@
  *
  *   npm run oracle:rust-parser -- [slice...] [--slices=<dir>] [--goldens=<dir>] [--tz=<zone>]
  *                                 [--no-build] [--keep-going]
- *   npm run oracle:rust-fold   -- [slice...] [--snapshots=<module,module>] [the same flags]
+ *   npm run oracle:rust-fold   -- [slice...] [--snapshots=<module,module>] [--ledger] [the same]
  *
  * TWO BARS, ONE HARNESS. Both come from the owner's ruling 12 (docs/plans/data-server.md), and
  * they are deliberately different claims:
@@ -19,6 +19,29 @@
  *      demand out of maps and view builders, so key ORDER is not a claim either implementation
  *      makes (goldenOracle.mts `firstDiff` carries the argument, and this file reuses it rather
  *      than spelling a second comparator).
+ *
+ *      SINCE JOS-477 THAT SWEEP INCLUDES THE COMBAT ENGINE. The golden carries two more sections
+ *      beside `modules`: `combat` — the full-fat snapshot at `now = lastEventTs` — and `scopes`,
+ *      the uncapped per-scope walk (every zone session and every finalized fight resolved through
+ *      `snapshot({selectedId, maxSegments:1}).selected`). They are compared HERE, on exactly the
+ *      same terms as a module and under the same `updatedAt` strip, and they are compared ONLY
+ *      WHEN BOTH SIDES CARRY THEM — a build whose fold has no engine subscribed reports them as
+ *      SKIPPED by name rather than passing for having said nothing.
+ *
+ * ── `--ledger`: WHAT A PARTIAL PORT IS ALLOWED TO CLAIM ────────────────────────────────────────
+ *
+ * `firstDiff` answers "are these the same?" and it is the right instrument for a bar that is
+ * binary. The combat engine is the largest surface in the program and will be red for several
+ * shifts before it is green, and over that stretch the only honest progress report is a COUNT: how
+ * many leaves agreed, how many diverged, and — grouped by CLASS — where. So `--ledger` swaps the
+ * first-divergence report for a full walk that buckets every disagreement by its dotted path with
+ * the array indices erased (`.combat.segments[].total`), prints the count per class newest-largest
+ * first with one worked example each, and states the agreement rate.
+ *
+ * IT IS NOT A SECOND BAR AND IT CANNOT TURN A RED RUN GREEN. The exit code is still decided by
+ * whether anything diverged at all; the ledger only changes what gets PRINTED about a run that
+ * already failed. A ledger that could be quoted as an acceptance result would be exactly the
+ * silent cap this harness exists to refuse.
  *
  * WHERE EACH DIFF HAPPENS, and it is a SIZE decision rather than a taste one. The six event goldens
  * are 380 MB of NDJSON, so phase 1's comparison runs INSIDE the Rust binary — piping them through
@@ -54,6 +77,7 @@ import {
   snapshotsPath,
   type Diff
 } from './goldenOracle.mjs'
+import { buildLedger, type Ledger } from './parityLedger.mjs'
 import { SIDECAR, renderSidecar } from '../../scripts/gen-engine-spell-overlay.mjs'
 
 const ENGINE_DIR = join(ROOT, 'engine')
@@ -70,6 +94,8 @@ interface Args {
   snapshots: boolean
   /** `--snapshots=a,b` — compare only these module ids. Empty means every one the fold ported. */
   onlyModules: string[]
+  /** `--ledger` — report EVERY divergence bucketed by class, not just the first (see the header). */
+  ledger: boolean
 }
 
 function parseArgs(argv: string[]): Args {
@@ -83,12 +109,17 @@ function parseArgs(argv: string[]): Args {
     build: true,
     keepGoing: false,
     snapshots: false,
-    onlyModules: []
+    onlyModules: [],
+    ledger: false
   }
   for (const a of argv) {
     if (a === '--no-build') out.build = false
     else if (a === '--keep-going') out.keepGoing = true
-    else if (a === '--snapshots') out.snapshots = true
+    // The ledger is a report about the phase-2 comparison, so asking for it asks for phase 2.
+    else if (a === '--ledger') {
+      out.ledger = true
+      out.snapshots = true
+    } else if (a === '--snapshots') out.snapshots = true
     else if (a.startsWith('--snapshots=')) {
       out.snapshots = true
       out.onlyModules = a
@@ -190,12 +221,16 @@ interface Result {
   skipped?: { id: string; why: string }[]
 }
 
-/** One module's verdict on one slice. */
+/** One module's verdict on one slice. Also carries the two combat SECTIONS, under the ids
+ *  `combat` and `scopes` — they are compared on exactly a module's terms, so they are reported on
+ *  exactly a module's terms rather than through a second row shape. */
 interface ModuleResult {
   id: string
   ok: boolean
   /** The FIRST place the two structures stopped agreeing, or undefined when they never did. */
   diff?: Diff
+  /** `--ledger` only: every divergence, bucketed by class (see the header). */
+  ledger?: Ledger
 }
 
 /** The envelope `parity --snapshots` writes. */
@@ -203,12 +238,37 @@ interface RustSnapshots {
   modules: { id: string; snapshot: unknown }[]
   /** `fold::WIRING_ORDER` minus what this build registered — the modules 2b/2c/2d still owe. */
   skipped: string[]
-  meta: { events: number; ms: number; character: string; tz: string; launchMs: number }
+  /** PHASE 2d: the combat engine's full-fat snapshot, when an engine was subscribed. */
+  combat?: unknown
+  /** PHASE 2d: the per-scope walk, when an engine was subscribed. */
+  scopes?: unknown
+  meta: {
+    events: number
+    ms: number
+    character: string
+    tz: string
+    launchMs: number
+    /** The instant `combat`/`scopes` were taken at — see `checkInstant`. */
+    lastEventTs?: number
+  }
 }
 
 /** The half of `<slice>.snapshots.json` this bar is about. */
 interface GoldenSnapshots {
   modules: { id: string; snapshot: unknown }[]
+  combat?: unknown
+  scopes?: unknown
+  lastEventTs?: number
+}
+
+/** The two PHASE-2d sections of the golden, compared on exactly a module's terms. */
+const COMBAT_SECTIONS = ['combat', 'scopes'] as const
+
+/** The two lists a comparison fills: what it judged, and what it declined to judge and why. They
+ *  travel together because every path that appends to one may append to the other instead. */
+interface Verdicts {
+  modules: ModuleResult[]
+  skipped: { id: string; why: string }[]
 }
 
 /**
@@ -290,18 +350,79 @@ function runSnapshots(args: Args, slice: SliceRow, log: string): Result {
       })
       continue
     }
-    const diff = firstDiff(stripUpdatedAt(want), stripUpdatedAt(m.snapshot), '')
-    modules.push(diff ? { id: m.id, ok: false, diff } : { id: m.id, ok: true })
+    modules.push(compare(args, m.id, want, m.snapshot))
   }
+  compareSections(args, golden, rust, { modules, skipped })
+  const lines = checkInstant(golden, rust)
   return {
     name: slice.name,
-    ok: modules.length > 0 && modules.every((m) => m.ok),
+    // A LINE IN `lines` IS A FAILURE ON ITS OWN. `checkInstant` only ever speaks when the two folds
+    // disagreed about WHICH instant they were snapshotting, and a comparison of two different
+    // moments is not a comparison at all.
+    ok: modules.length > 0 && modules.every((m) => m.ok) && lines.length === 0,
     events: rust.meta.events,
     ms: rust.meta.ms,
-    lines: [],
+    lines,
     modules,
     skipped
   }
+}
+
+/**
+ * PHASE 2d: the two combat sections, joined by name and on exactly a module's terms.
+ *
+ * A SECTION THE RUST FOLD DID NOT PUBLISH IS SKIPPED BY NAME, never passed over — the same
+ * no-silent-caps law the module list obeys. `--snapshots=<list>` narrows these two exactly as it
+ * narrows a module, and the narrowing is reported too.
+ */
+function compareSections(args: Args, golden: GoldenSnapshots, rust: RustSnapshots, out: Verdicts): void {
+  const { modules, skipped } = out
+  for (const section of COMBAT_SECTIONS) {
+    const got = rust[section]
+    if (got === undefined) {
+      skipped.push({ id: section, why: 'no engine subscribed to this fold' })
+      continue
+    }
+    if (args.onlyModules.length > 0 && !args.onlyModules.includes(section)) {
+      skipped.push({ id: section, why: '--snapshots filter' })
+      continue
+    }
+    const want = golden[section]
+    if (want === undefined) {
+      const diff: Diff = { path: '', expected: '(no such section in the golden)', actual: section }
+      modules.push({ id: section, ok: false, diff })
+      continue
+    }
+    modules.push(compare(args, section, want, got))
+  }
+}
+
+/** One deep-equal, plus the full ledger when `--ledger` asked for one. */
+function compare(args: Args, id: string, want: unknown, got: unknown): ModuleResult {
+  const a = stripUpdatedAt(want)
+  const b = stripUpdatedAt(got)
+  const diff = firstDiff(a, b, '')
+  if (!diff) return { id, ok: true }
+  return { id, ok: false, diff, ...(args.ledger ? { ledger: buildLedger(a, b) } : {}) }
+}
+
+/**
+ * DID THE TWO FOLDS AGREE ABOUT WHICH INSTANT THEY WERE ASKED ABOUT? (JOS-477.)
+ *
+ * The combat snapshot's `now` is the slice's LAST EVENT TS on both sides, and everything
+ * time-shaped in it hangs off that one number — the hydration gate, the deferred closure, every
+ * summary's `active`. If the two folds picked different instants then every divergence downstream
+ * is a consequence of that and none of them is worth reading, so it is checked FIRST and reported
+ * as its own failure rather than as a thousand mysterious ones.
+ *
+ * Silent when either side does not state it: an older `parity` binary carries no `lastEventTs` in
+ * `meta`, and an unstated fact must not be reported as an agreeing one.
+ */
+function checkInstant(golden: GoldenSnapshots, rust: RustSnapshots): string[] {
+  const want = golden.lastEventTs
+  const got = rust.meta.lastEventTs
+  if (want === undefined || got === undefined || want === got) return []
+  return [`lastEventTs disagrees — golden ${String(want)}, rust ${String(got)}; the snapshots describe two different moments`]
 }
 
 function runSlice(args: Args, slice: SliceRow): Result {
@@ -408,11 +529,43 @@ function reportModules(r: Result): void {
     console.error(`       FAIL ${m.id} at ${m.diff.path === '' ? '(the whole snapshot)' : m.diff.path}`)
     console.error(`         golden : ${short(m.diff.expected)}`)
     console.error(`         rust   : ${short(m.diff.actual)}`)
+    if (m.ledger) reportLedger(m.id, m.ledger)
   }
   for (const why of new Set((r.skipped ?? []).map((s) => s.why))) {
     const ids = (r.skipped ?? []).filter((s) => s.why === why).map((s) => s.id)
     console.log(`       SKIP ${ids.join(' · ')} (${why})`)
   }
+}
+
+/** How many classes of divergence one section's ledger prints before it stops naming them. A
+ *  hundred is well past the point where a reader is still reading, and the count line below always
+ *  states how many were left unnamed — a truncation that hides its own existence is the thing this
+ *  harness refuses everywhere else. */
+const LEDGER_CLASSES = 20
+
+/**
+ * The `--ledger` half of a phase-2 report: the agreement rate, then the largest classes of
+ * divergence with one worked example each.
+ *
+ * NOTHING FROM A SLICE IS PRINTED BEYOND THE ONE DIVERGING PAIR PER CLASS — the file's standing
+ * rule about slice content, applied per bucket rather than per run. The example is `short()`-capped
+ * exactly as a first-divergence report's is.
+ */
+function reportLedger(id: string, l: Ledger): void {
+  const pct = l.leaves === 0 ? 0 : (l.agreed / l.leaves) * 100
+  const diverged = l.classes.reduce((n, c) => n + c.count, 0)
+  console.error(
+    `         ledger : ${String(l.agreed)}/${String(l.leaves)} leaves agree (${pct.toFixed(1)}%) · ` +
+      `${String(diverged)} divergence(s) in ${String(l.classes.length)} class(es)`
+  )
+  for (const c of l.classes.slice(0, LEDGER_CLASSES)) {
+    console.error(`         ${String(c.count).padStart(7)}x ${c.path === '' ? '(the whole section)' : c.path}`)
+    console.error(`                 at ${c.example.path === '' ? '(root)' : c.example.path}`)
+    console.error(`                 golden : ${short(c.example.expected)}`)
+    console.error(`                 rust   : ${short(c.example.actual)}`)
+  }
+  const rest = l.classes.length - LEDGER_CLASSES
+  if (rest > 0) console.error(`         …and ${String(rest)} more class(es) in ${id}, not listed`)
 }
 
 main().catch((err: unknown) => {

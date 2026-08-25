@@ -38,6 +38,7 @@
 //! nine files rather than a change to the contract every later cluster will have been written
 //! against.
 
+pub mod combat;
 pub mod epoch;
 pub mod event;
 pub mod jsfn;
@@ -69,6 +70,22 @@ pub trait EqModule {
     /// Everything since the last flush, or `None`. PHASE 3 — see the header. Nothing calls it yet
     /// and no module overrides it; it is here so the contract does not have to change later.
     fn flush_delta(&mut self) -> Option<Value> {
+        None
+    }
+
+    /// THE GROUP-ROSTER PULL SEAM (JOS-477 / cluster 2b's `roster` module).
+    ///
+    /// `pipeline.ts` wires `combat.setRoster(modules.roster)` — the combat engine does not FOLD the
+    /// roster, it ASKS the module for it, and it asks DURING the same delivery, after the module
+    /// has already advanced for the line (`engine.ts:215`, and `state.ts rosterProvider`'s note
+    /// about why a pull rather than a stored copy). Over here the registry has already dispatched
+    /// by the time `Fold` hands the event to the engine, so the same guarantee holds for free.
+    ///
+    /// A DEFAULTED METHOD RATHER THAN A DOWNCAST, so that the one module which can answer it
+    /// implements one method and every other module says nothing. Defaulted to `None`, which is
+    /// exactly `EMPTY_ROSTER` / `EMPTY_ROSTER_VIEW` at the reading end — an engine constructed
+    /// without the seam behaves as it did before the group model existed.
+    fn as_roster(&self) -> Option<&dyn combat::RosterSource> {
         None
     }
 }
@@ -138,6 +155,13 @@ impl Registry {
         self.mods.iter().map(|m| m.id()).collect()
     }
 
+    /// The registered module that answers the roster pull, or `None` when none does (2b has not
+    /// landed, or this build registered a cluster without it). One linear scan over at most twenty
+    /// modules, made once per delivery — the TS's `rosterProvider` closure costs a call too.
+    pub fn roster(&self) -> Option<&dyn combat::RosterSource> {
+        self.mods.iter().find_map(|m| m.as_roster())
+    }
+
     /// Every id `WIRING_ORDER` names that nothing registered — the harness's SKIPPED list.
     pub fn missing(&self) -> Vec<&'static str> {
         let have: HashSet<&str> = self.ids().into_iter().collect();
@@ -165,29 +189,57 @@ impl Registry {
 /// The registry plus the derived-event producers that sit beside it on the bus.
 pub struct Fold {
     pub registry: Registry,
+    /// THE POST-REGISTRY SUBSCRIBER (JOS-477). `pipeline.ts:311,326` and `foldArm.mts construct()`
+    /// both subscribe the combat engine to the bus AFTER `registry.attach(bus)` and BEFORE the
+    /// epoch/offline-gap detectors, and that position is load-bearing in two directions: the
+    /// twenty modules have all folded the line before the engine sees it (which is what makes the
+    /// roster PULL answer for the same line), and the engine's own work happens before any derived
+    /// event the detectors synthesize off it.
+    ///
+    /// AN `Option` FIELD RATHER THAN A LISTENER VECTOR, because the engine is not only dispatched
+    /// to — it is READ BACK, exactly as `foldArm.mts`'s `World { bus, combat, registry }` hands the
+    /// engine out so its snapshots can be taken. A `Vec<Box<dyn …>>` would deliver the events and
+    /// then have nothing to hand the recorder. `None` on every 2a/2b/2c call site, and `None` means
+    /// the fold behaves precisely as it did before this field existed.
+    pub combat: Option<combat::CombatEngine>,
     epoch: epoch::EpochDetector,
     /// The bus's derived queue. One producer today (`epoch`); 2c adds `buffExpired` beside it.
     derived: Vec<Event>,
     events: u64,
+    last_ts: i64,
 }
 
 impl Fold {
     pub fn new(registry: Registry, launch_ms: i64) -> Self {
         let mut f = Fold {
             registry,
+            combat: None,
             epoch: epoch::EpochDetector::new(launch_ms),
             derived: Vec::new(),
             events: 0,
+            last_ts: 0,
         };
         f.reset();
         f
     }
 
+    /// Subscribe the combat engine behind the registry (see the field). Builder-shaped so the
+    /// existing `Fold::new` call sites do not move — the parallel-worker fence.
+    pub fn with_combat(mut self, engine: combat::CombatEngine) -> Self {
+        self.combat = Some(engine);
+        self.reset();
+        self
+    }
+
     pub fn reset(&mut self) {
         self.registry.reset();
+        if let Some(c) = &mut self.combat {
+            c.reset();
+        }
         self.epoch.reset();
         self.derived.clear();
         self.events = 0;
+        self.last_ts = 0;
     }
 
     /// How many PRIMARY events were folded — `ScanResult.seq`.
@@ -195,11 +247,27 @@ impl Fold {
         self.events
     }
 
+    /// THE HIGHEST TIMESTAMP ANY EVENT CARRIED — `goldenOracle.mts`'s `lastTs`, which is the
+    /// instant the combat snapshot is taken at. Accumulated with `max` rather than "the last one",
+    /// exactly as the recorder's bus listener does (`if (ev.ts > lastTs) lastTs = ev.ts`): the
+    /// stream is not guaranteed monotonic across a log rollover, and the snapshot's `now` must not
+    /// be able to travel backwards because one line did.
+    pub fn last_ts(&self) -> i64 {
+        self.last_ts
+    }
+
     /// One primary event: dispatch to the modules, let the detectors observe it, then drain
     /// whatever they queued through the SAME dispatch loop. That is `LogBus.emit` exactly.
     pub fn on_primary(&mut self, ev: &Event, live: bool) {
         self.events += 1;
+        self.last_ts = self.last_ts.max(ev.ts());
         self.registry.dispatch(ev, live);
+        // …then the engine, which is the next subscriber on the bus (see the `combat` field). The
+        // two field borrows are disjoint, which is what lets the engine pull the roster out of the
+        // registry that has just finished folding this same line.
+        if let Some(c) = &mut self.combat {
+            c.on_event(ev, live, self.registry.roster());
+        }
         if let Some(derived) = self.epoch.observe(ev) {
             self.derived.push(derived);
         }
@@ -209,6 +277,14 @@ impl Fold {
             let d = self.derived[i].clone();
             i += 1;
             self.registry.dispatch(&d, live);
+            // A DERIVED EVENT REACHES THE ENGINE TOO. `LogBus.emit` drains through the same
+            // listener loop, and the engine is one of those listeners — `epoch` is a kind
+            // `ingest.ts:182` handles by name (it drops the fight, the zone and the world), so
+            // delivering it to the modules alone would leave the engine holding a dead
+            // character's encounter.
+            if let Some(c) = &mut self.combat {
+                c.on_event(&d, live, self.registry.roster());
+            }
         }
         self.derived.clear();
     }
