@@ -50,6 +50,10 @@ import { registerConCardIpc } from '../conCard'
 import { registerTrayIpc } from '../tray'
 import { registerWindowIpc } from './windowControls'
 import { registerWorldIpc } from './world'
+// The data server's renderer brokerage (JOS-484). It lives beside the supervisor that owns the
+// launch it hands out (src/main/dataServer/), like the toast and con-card producer channels above,
+// rather than in a file here — everything it does is socket + port lifecycle.
+import { registerRendererBrokerIpc } from '../dataServer/rendererBroker'
 
 export function registerIpc(): void {
   registerCharacterIpc()
@@ -90,4 +94,8 @@ export function registerIpc(): void {
   // handler rather than around this call, so it is a decision a test can watch being made.
   // See ./dev.ts.
   registerDevIpc()
+  // Registered in EVERY build too, and for the same reason: the handler refuses when there is no
+  // engine on this launch, which is every launch without `EQC_ENGINE=1`. One gate, in engineHost.ts
+  // — a second `if` around this call would be a second place to forget.
+  registerRendererBrokerIpc()
 }

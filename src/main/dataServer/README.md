@@ -5,8 +5,12 @@ design and the owner's twenty rulings live in `docs/plans/data-server.md`; the e
 `engine/crates/engined/README.md`. Every file here carries its argument in its header — this page is
 the map, plus the one thing no single file can state: **how the pieces connect at run time**.
 
-Nothing in this directory is reachable without `EQC_ENGINE=1` in the environment. That is the one
-switch for the whole feature, read in exactly one place (`engineHost.ts engineEnabled`).
+Nothing in this directory does anything without `EQC_ENGINE=1` in the environment. That is the one
+switch for the whole feature, read in exactly one place (`engineHost.ts engineEnabled`). Since
+JOS-484 there is one channel registered in every build — `engine:connect`, beside `registerDevIpc` —
+and it is not an exception to that rule: the handler holds no flag, is never told about a launch
+without one, and therefore refuses. A registered door with nothing behind it, so the refusal is a
+decision a test can watch being made rather than an absence nobody can observe.
 
 ## The files
 
@@ -20,6 +24,8 @@ switch for the whole feature, read in exactly one place (`engineHost.ts engineEn
 | `engineHealth.ts` | "Is it actually serving?", asked as `hello` + `session.health` over the product's own door. |
 | `engineClientHost.ts` | **The app as a CLIENT** (JOS-479): connect, attach, re-attach, and run the parity probe. |
 | `parityProbe.ts` | The probe's pure half — two snapshots in, one verdict out, one line. |
+| `byteRelay.ts` | **The pump** (JOS-484): chunks between a socket and a MessagePort. Electron-free, so every teardown path is a unit test. |
+| `rendererBroker.ts` | **The brokerage** (JOS-484): the `engine:connect` handler, the port handover, and the live-connection lifecycle. |
 
 ## The connect flow (JOS-479, phase 3)
 
@@ -70,6 +76,116 @@ character switch or an engine respawn. `switchController.ts`'s answer is used ve
 counter, re-asked after each suspension point. A turn that has lost touches nothing and — crucially
 — writes no line, because a verdict about a world somebody has since replaced is a measurement of
 nothing printed with authority.
+
+## The renderer brokerage (JOS-484, ruling 7)
+
+Owner ruling 7, verbatim: *"one connection per renderer, brokered by main"*. Everything above is
+main talking to the engine for its own reasons; this is main getting out of the way so a **renderer**
+can talk to it.
+
+```
+ renderer                         MAIN                                  engine
+  window.eq.engineConnect()
+      │ invoke engine:connect(nonce) ──────►  rendererBroker.onConnect
+      │                                         ├─ connectToEngine(port)  ──── TCP ────►  accept
+      │                                         ├─ new MessageChannelMain()
+      │                                         ├─ relayBytes(socketChannel, port1)
+      │  ◄── postMessage(engine:port,           └─ sender.postMessage(…, [port2])
+      │        {nonce, token}, [port])
+      │
+   preload wraps the port           ┌──────────────────────────────────────────┐
+   messagePortChannel(port)         │  socket chunk  →  port.postMessage(chunk) │  byteRelay.ts
+      │                             │  port message  →  socket.write(chunk)     │  (no parsing,
+   createNdjsonTransport            └──────────────────────────────────────────┘   no protocol
+      │                                                                             types at all)
+   createEngineClient({token}).attach(…) ── hello ─────────────────────────────►  hello reply
+```
+
+### Why BYTES and not frames
+
+The obvious brokerage is a proxy: main runs an `EngineClient`, renderers ask over IPC, main
+serializes an answer per window. **That is exactly the cost the engine exists to delete** — JOS-458
+measured the per-window serialization of fold state, and a broker that re-created it would have moved
+the fold and kept the bill.
+
+So main relays raw chunks and never parses one. `byteRelay.ts` imports no protocol type, no codec and
+no Electron; the only thing it can do to a chunk is move it, and its one type check exists because a
+renderer's message reaches a socket (`socket.write` would coerce an object to `[object Object]` and
+hand the engine a frame nobody sent). The renderer runs the real `EngineClient` over
+`shared/dataServer/messagePortChannel.ts` and is a **first-class peer of the engine**: its
+subscriptions, its diffs, its epoch, its window state. Main's cost per view is zero, because there is
+nothing in the path to cost anything.
+
+The temptation on this wire is to post one protocol message per `postMessage` and delete the codec on
+the renderer's side — a MessagePort is message-oriented, after all. That would be a **second framing,
+in a second place**, disagreeing with the first the day either changed (owner ruling 15). The port
+carries the socket's own chunks, unaligned, and `LineDecoder` reassembles them exactly once.
+`tests/dataServerBroker.test.mts` feeds a real conversation **one character at a time** to keep that
+honest.
+
+### The token handoff
+
+Loopback is not a permission boundary — the token is (`token.ts`) — so a renderer holding a socket has
+to present one. It rides the **same `postMessage` that carries the port**: one delivery, so there is
+no window in which a renderer holds a wire it cannot use or a secret with nothing to use it on.
+
+Where it lives: the preload's closure, and the `EngineClient` that preload's channel serves. Not the
+store, not a URL, not the DOM, not `localStorage`. **The MessagePort itself never crosses the context
+bridge at all** — `src/preload/engine.ts` wraps it and hands the renderer four plain functions
+(`write`/`onData`/`onClose`/`close`), because a preload that gives out a port it cannot take back is a
+preload that cannot enforce a lifetime. A respawn mints a new secret regardless (spawn contract
+rule 5), which is why every launch invalidates every port below.
+
+### Lifecycle, all five directions
+
+| What happened | What closes | How |
+| --- | --- | --- |
+| The renderer lets go | the socket | the channel posts the end sentinel; the relay destroys the socket |
+| The window is destroyed | the socket | `webContents 'destroyed'` → `dropRelay` |
+| The window's port is collected | the socket | `MessagePortMain 'close'` → the same settle |
+| The engine dies | the port | the socket ends; the relay posts the sentinel and closes the port; the renderer's transport reports a failed connection |
+| The engine respawns | **every** relay | `noteEngineLaunch` — the port and token a renderer holds name a process that no longer exists |
+
+A respawn is answered by the renderers asking again: a fresh connect, a fresh token, a fresh reset.
+That is **resume-is-re-query** (diff-protocol rule 3), which the client library already enforces on its
+own window state, so there is nothing to carry across and nothing to resume. `EngineProvider`'s retry
+is a flat 4 s timer rather than a backoff — the whole feature is behind a developer's environment
+variable and the cost of being wrong is one refused IPC call.
+
+**One connection per renderer is enforced, not trusted**: the relays are keyed by `webContents.id`, so
+a second `engine:connect` from a window that already holds one closes the first. A renderer that
+reloads replaces its connection instead of leaking one per reload.
+
+**There is no second gate.** `rendererBroker.ts` reads no environment variable: `engineHost.ts` owns
+the one flag and simply never calls `noteEngineLaunch`, so the handler finds no launch and answers
+`{ok:false}`. The IPC channel is registered in every build, exactly like `registerDevIpc` beside it —
+the refusal is a decision a test can watch being made.
+
+### The first surface, and what it proved
+
+`src/renderer/src/features/loot/EngineLootLedger.tsx` is the first product surface on `useView`: the
+loot ledger drawn from `loot.ledger`, behind a dev-only toggle that is gated on a **live connection**
+rather than on a flag. `tests/e2e/engine-loot-view.e2e.mts` opens the flat ledger, reads every
+rendered row, flips the toggle, reads them again and asserts they are identical cell for cell — the
+DOM as the oracle, one layer above what `engine-parity` can see.
+
+Two things that comparison found, both worth keeping written down:
+
+1. **The plan's example descriptor draws a different ledger.** `sort: [["at","desc"]]` is not the flat
+   ledger's order. Every sort ends in the source's tiebreak and `loot.ledger`'s is `seq` ASC, so the
+   one-term form orders each same-second group backwards — and EQ stamps to the second, so a corpse
+   yielding three items is exactly such a group. The descriptor names `["at","desc"], ["seq","desc"]`.
+2. **The two modes do not mount the same number of rows, and should not.** Both virtualize over the
+   same row height, but the app-fed ledger carries a slice bar, a toolbar, a caption, a strip and its
+   notices above the scroll box while the served one carries a toggle and a caption — so the served
+   box is taller and shows more of the same list (29 vs 35). The e2e asserts the served window
+   *covers* the app's and agrees with it over the whole of it, rather than pretending the counts match.
+
+**The ledger virtualizes; it does not page.** There is no page control, no offset state and no next
+button on that tab, so there is no paging to wire the descriptor's window to; it is a fixed newest-50
+and the caption says so against the view's own `total`. Moving `offset` into state and re-subscribing
+per page is the upgrade when a surface wants one — cheap, because `useView` already treats a changed
+descriptor as a new query — and it is deliberately not built speculatively.
 
 ## The parity probe
 
@@ -146,6 +262,8 @@ closes the spec goes red and somebody deletes the exemption. Neither is a fold d
 | | |
 | --- | --- |
 | `tests/dataServerSupervisor.test.mts` | Every lifecycle failure path, plus the READY handover. No app, no Rust. |
+| `tests/dataServerBroker.test.mts` | Both ends of the brokered wire: splits cross unchanged, four teardown paths, and a real conversation delivered one character at a time. |
+| `tests/e2e/engine-loot-view.e2e.mts` | The row-parity oracle — the app-fed and served ledgers, compared as DOM. |
 | `tests/dataServerParity.test.mts` | The probe's judgement: agreement, divergence, drift-is-a-skip, the two refusal sentences, the line's shape. |
 | `tests/dataServerEngineChild.test.mts` | The real child, pipe and socket against a Node fake engine. |
 | `tests/e2e/engine-boots.e2e.mts` | The real binary under the real app: spawn, ready, respawn, wrong token, quit, absence. |
