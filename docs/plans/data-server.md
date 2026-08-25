@@ -44,6 +44,20 @@ parses, aggregates, compresses, and serves; the UI becomes a query/subscribe cli
 13. Adjacent standing laws that shape this program: the app is **never in the machine's mouse
     path** (JOS-370); no wiki scrapes or committed-data regeneration while the perf/equivalence
     baseline holds (owner freeze, lift is the owner's call).
+14. *(2026-08-24, JOS-464 gate)* **Protocol source of truth is a neutral JSON Schema** in its
+    own `protocol/` folder; TypeScript and Rust types are both generated from it, committed,
+    and pinned by a staleness test (the telemetry-doc/data-weight house pattern). Neither
+    language is privileged.
+15. *(2026-08-24, JOS-464 gate)* **Framing is one JSON message per line — behind a swappable
+    transport adapter.** The owner's constraint verbatim: "make sure the way this works we
+    could change the wire method at a later date and need to just swap an artifact. im
+    thinking over the open internet via websockets etc." Nothing above the adapter may know
+    the framing or the socket; a future WebSocket transport is a new adapter on each side,
+    with the schema artifact and everything above it unchanged.
+16. *(2026-08-24, correction)* **PowerShell was the AV trigger, not child processes** —
+    JOS-182/184 removed `powershell.exe`/`reg.exe`/`wmic` launches because *those binaries*
+    trip heuristics. A shipped Rust engine child process is acceptable; it must simply never
+    shell out to PowerShell, and it joins the code-signing set like any shipped executable.
 
 ## The shape
 
