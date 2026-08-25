@@ -9,12 +9,14 @@
  * spawn_contract.rs` drives the whole contract with no app and no TypeScript — and neither of them
  * can see the thing this file is about: THE TWO REAL BINARIES, agreeing, in the running product.
  *
- * WHY THE APP HAS TO BE ASKED FOR AN ENGINE. `EQC_ENGINE=1` is the only switch (engineHost.ts), and
- * `EQ_E2E` is deliberately NOT a second gate there — the flag is a thing a developer sets in a
- * shell, and since JOS-490 the harness is a developer who always sets it (`appWindow.mts ENGINE_ON`,
- * which is what makes the whole suite a regression proof for the cutover). So this spec's opt-in is
- * now redundant and kept anyway, because a spec whose subject IS the flag should name it; and the
- * absence half at step 5 opts OUT by name (`ENGINE_OFF`) rather than by the harness's silence.
+ * WHY THE APP IS STILL ASKED FOR AN ENGINE BY NAME. `EQC_ENGINE` is the only switch (engineHost.ts)
+ * and since JOS-495 it is an ESCAPE HATCH rather than an opt-in — every launch gets an engine unless
+ * something says `EQC_ENGINE=0`. `EQ_E2E` is deliberately NOT a second gate there: the flag is a
+ * thing a developer sets in a shell, and since JOS-490 the harness is a developer who always sets it
+ * (`appWindow.mts ENGINE_ON`, which is what makes the whole suite a regression proof for the
+ * cutover). So this spec's opt-in is doubly redundant and kept anyway, because a spec whose subject
+ * IS the flag should name it — and the absence half at step 5 opts OUT by name (`ENGINE_OFF`), which
+ * after the flip is the ONLY way to reach that path at all.
  *
  * HOW READINESS IS OBSERVED, and why the spec KILLS the engine to see it.
  * `supervisor.ts reachedReady` narrates through `logInfo`, i.e. `console.log` in the main process,

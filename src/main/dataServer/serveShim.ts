@@ -7,19 +7,26 @@
 // answers must look like to count as answers, and installs the harness seam the parity e2e reads.
 // `src/main/ipc/world.ts` calls four things from here and nothing else.
 //
-// ── THE SECOND FLAG, AND WHY IT IS A SECOND FLAG ───────────────────────────────────────────────
+// ── THE SECOND FLAG, AND WHAT IT IS FOR NOW (JOS-495) ──────────────────────────────────────────
 //
-// `EQC_ENGINE=1` means "run an engine". `EQC_ENGINE_SERVE=1` means "and let it answer the app's
-// reads". They are separate because the first is already the whole of what the program has shipped
-// so far and a developer must be able to keep it — an engine folding beside the app, the parity
-// probe running, the performance panel populated — WITHOUT the product's answers moving. Every
-// engine ticket up to this one had "no branch in the product reads anything the engine says" as an
-// invariant; this is the ticket that ends it, and ending it deserves its own switch rather than a
-// silent change of meaning for a flag developers already have in a shell.
+// THE ENGINE ANSWERS THE APP'S READS BY DEFAULT. `EQC_ENGINE_SERVE=0` takes that away and leaves
+// everything else — the engine still folds beside the app, the parity probe still compares the two
+// worlds, the performance panel is still populated — while the product's answers come back out of
+// this process's own fold. Unset, which is every ordinary launch, means SERVED.
 //
-// The serve flag is MEANINGLESS ALONE: `engineEnabled()` gates it, so `EQC_ENGINE_SERVE=1` with no
-// engine asked for is off, not half-on. That is the same one-gate rule `engineHost.ts` states for
-// the client and the broker, kept by importing its answer rather than by re-reading its variable.
+// IT WAS A SECOND FLAG FOR A DIFFERENT REASON WHEN IT WAS WRITTEN, and the reason is worth keeping
+// visible because it is what the flag is still SHAPED by. Every engine ticket up to JOS-489 held
+// "no branch in the product reads anything the engine says" as an invariant; ending that invariant
+// deserved a switch of its own rather than a silent change of meaning for a flag developers already
+// had in a shell. The cutover ruling ends the other half — the default — and what the flag becomes
+// is the narrower of two diagnostics: `EQC_ENGINE=0` says "no engine at all", this one says "an
+// engine, but not in the read path". Two launches instead of a build, which is the whole reason the
+// granular forms survive the flip at all.
+//
+// The serve flag is still MEANINGLESS ALONE, in both directions: `engineEnabled()` gates it, so
+// `EQC_ENGINE=0` serves nothing no matter what this variable says, and the app is exactly the app it
+// was before any of this existed. That is the same one-gate rule `engineHost.ts` states for the
+// client and the broker, kept by importing its answer rather than by re-reading its variable.
 //
 // ── WHAT `world.ts` PAYS WHEN THE FLAG IS OFF ──────────────────────────────────────────────────
 //
@@ -27,7 +34,9 @@
 // expression is otherwise the one it has always been: same `timeSeam`, same synchronous return,
 // same value. This file allocates nothing, opens nothing and registers nothing in that world — the
 // shim object below is built lazily, on the first served call, so a launch that never serves never
-// makes one.
+// makes one. THAT PATH IS THE EXCEPTION NOW RATHER THAN THE RULE, and it is priced here anyway:
+// what a dev checkout with no `cargo build` runs is exactly this path, because the supervisor finds
+// no binary and no client is ever ready to serve (`readShim.ts`'s `noClient` outcome).
 //
 // ── THE THREE PROJECTIONS, AND THE TWO GUESS TESTS ─────────────────────────────────────────────
 //
@@ -60,6 +69,7 @@
 
 import { E2E } from '../e2e'
 import { logInfo } from '../errorLog'
+import { engineFlagOn } from '../../shared/dataServer/engineFlags'
 import { engineEnabled } from './engineHost'
 import { engineLogMtimeMs, engineRequest, engineServeReadiness } from './engineClientHost'
 import { createReadShim, type ReadShim, type ServeOutcome } from './readShim'
@@ -121,8 +131,11 @@ const NOW_SKEW_MS = 60_000
  * IS THE ENGINE ANSWERING THIS APP'S READS ON THIS LAUNCH? Read once, at module load, for
  * `engineEnabled()`'s reason: an environment variable is a fact about how the process was started,
  * and re-reading it per call would invite the belief that it can change.
+ *
+ * TRUE BY DEFAULT since JOS-495, and still the AND of both gates — `EQC_ENGINE=0` closes this one
+ * too, because there is nothing to serve from.
  */
-const SERVING = engineEnabled() && process.env.EQC_ENGINE_SERVE === '1'
+const SERVING = engineEnabled() && engineFlagOn(process.env.EQC_ENGINE_SERVE)
 
 /** The gate `world.ts` branches on. */
 export function shimServing(): boolean {

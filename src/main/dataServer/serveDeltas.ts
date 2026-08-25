@@ -49,14 +49,22 @@
 //
 // ── THE GATE, AND WHY IT IS ONE `process.env` READ HERE ─────────────────────────────────────────
 //
-// `serveShim.ts` spells the gate `engineEnabled() && EQC_ENGINE_SERVE === '1'` and this file spells
-// only the second half — deliberately, and it is not a second gate. Every function below is reached
-// from ONE place, `engineClientHost.ts`, which exists only because `engineHost.ts` called
+// `serveShim.ts` spells the gate `engineEnabled() && engineFlagOn(EQC_ENGINE_SERVE)` and this file
+// spells only the second half — deliberately, and it is not a second gate. Every function below is
+// reached from ONE place, `engineClientHost.ts`, which exists only because `engineHost.ts` called
 // `installEngineClient` from inside its own `EQC_ENGINE` guard. The first half of the gate is
 // therefore structural: with no engine there is no client, with no client there is no
 // `moduleChanged` frame, and nothing here is ever called. Importing `engineEnabled()` to say it
 // again would buy a module-evaluation CYCLE for a boolean that is already true —
 // engineHost → engineClientHost → here → engineHost, with a top-level call in the middle of it.
+//
+// IT INVERTS WITH THE SHIM, AND IT HAS TO (JOS-495). The two halves of the read path are one
+// feature described by one flag: a launch whose SNAPSHOTS come from the engine and whose CURSORS
+// were still suppressed is the exact defect this file was written to fix (see above — engine seq 4
+// against app seq 3, and every surface frozen). So when the serve default flipped to ON, a gate
+// here still reading `=== '1'` would have shipped that defect to every ordinary launch. The
+// comparison is `engineFlagOn` for that reason: one predicate, five readers, no chance to invert
+// four of them (`shared/dataServer/engineFlags.ts`).
 //
 // ── AND IT IMPORTS THE PIPELINE, WHICH `serveShim.ts` REFUSES TO ───────────────────────────────
 //
@@ -66,13 +74,14 @@
 // since JOS-172, and a second copy of that list is precisely how the overlays came to be missing
 // from a fan-out once already.
 
+import { engineFlagOn } from '../../shared/dataServer/engineFlags'
 import { IPC } from '../../shared/ipc'
 import { MODULE_WORLD_CHANGED, type ModuleChanged } from '../../shared/types'
 import { sendToModuleOverlays } from '../pipeline'
 import { sendToMain } from '../windows'
 
-/** See the header: the second half of a gate whose first half is structural. */
-const SERVE_ASKED = process.env.EQC_ENGINE_SERVE === '1'
+/** See the header: the second half of a gate whose first half is structural, and ON by default. */
+const SERVE_ASKED = engineFlagOn(process.env.EQC_ENGINE_SERVE)
 
 /** Every window that folds a module — the main window and `pipeline.ts`'s own overlay list. */
 function push(frame: ModuleChanged): void {

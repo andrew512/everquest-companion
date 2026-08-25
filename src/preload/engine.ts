@@ -30,8 +30,16 @@
 // for an answer that cannot change. It is a READOUT, never a grant — main registers the handler
 // unconditionally and refuses when no engine is running, so a renderer that ignored this flag would
 // find `{ok:false}` on the other side of the door.
+//
+// AND IT READS THE FLAG THE WAY MAIN DOES, THROUGH THE SAME PREDICATE (JOS-495). The default is ON
+// now, and a readout still comparing `=== '1'` would answer FALSE on every ordinary launch — so
+// `engineProvider.tsx` would never even attempt the connect that `rendererBroker.ts` was standing
+// ready to serve, and the renderer half of the cutover would be dark in exactly the builds it is
+// meant to run in. The mismatch would be silent at both ends: main refuses nothing, the renderer
+// asks nothing. `shared/dataServer/engineFlags.ts` is why the two cannot drift.
 
 import { ipcRenderer } from 'electron'
+import { engineFlagOn } from '../shared/dataServer/engineFlags'
 import { IPC } from '../shared/ipc'
 import { messagePortChannel } from '../shared/dataServer/messagePortChannel'
 import type { ByteChannel } from '../shared/dataServer/ndjson'
@@ -77,12 +85,13 @@ ipcRenderer.on(IPC.onEnginePort, (event, payload: PortPush) => {
 
 export const engineBridge = {
   /**
-   * Was this launch started with `EQC_ENGINE=1`? A readout, not a grant — see the header.
+   * Does this launch want an engine — i.e. was it started WITHOUT `EQC_ENGINE=0`? A readout, not a
+   * grant, and true by default since JOS-495 — see the header.
    *
-   * The renderer uses it to decide whether to try at all, which keeps every launch that is not a
-   * developer's from making one IPC call it knows the answer to.
+   * The renderer uses it to decide whether to try at all, which keeps a launch that deliberately
+   * turned the engine off from making one IPC call it already knows the answer to.
    */
-  engineEnabled: process.env.EQC_ENGINE === '1',
+  engineEnabled: engineFlagOn(process.env.EQC_ENGINE),
 
   /**
    * Open this window's ONE connection to the engine, or answer null.
