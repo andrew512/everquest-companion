@@ -404,13 +404,25 @@ mid-fold answer is a pure function of the bytes folded so far and re-asking it a
 gives the same answer — ruling 18 law 1, for this surface. And the wall clock enters exactly where it
 already entered: a live world, which the six-slice oracle has never described and cannot.
 
-**`hydrating` IS `true` IN EVERY ANSWER THIS BUILD GIVES, and that is a named gap rather than a
-bug.** `fold/src/combat/state.rs` fact 1: the snapshot-time sweep block — the charm sweep, the ally
-expiry, the pet nudge and the deferred encounter closure — is unported, because a historical fold
-provably never enters it and porting a code path nothing can reach would be inventing one. Clearing
-the flag without porting those four would promise a liveness the fold does not have, and the app's
-own UI reads it to decide whether to draw a loading state. **The meter-cutover ticket is where it
-changes, and it changes by porting the sweeps.** Nothing here should clear it on its own.
+**`hydrating` CLEARS AT THE GO-LIVE BEAT, AND THE FOUR SWEEPS ARE WHAT EARNED IT** (JOS-488).
+JOS-485 answered `true` here in every state, deliberately: the snapshot-time sweep block was unported,
+and clearing the flag without it would have promised a liveness the fold did not have. Both halves
+landed together. `EventSink::tick` calls `CombatEngine::set_live()` on its FIRST beat and only there
+— the same place `session.ts` puts `combat.setLive()`, before `startHeartbeat`'s single
+`registry.tick(Date.now())` — and from then on every combat answer runs the charm sweep, the ally-bind
+expiry, the pet nudge and the deferred encounter closure at the instant it was taken at. **So a live
+meter closes a fight the log stopped talking about**, on the log's own numbers and stamped at the
+fight's own clock, exactly as the app's does.
+
+**ONE FLAG DECIDES BOTH QUESTIONS, and that is the point**: a world entitled to a wall clock is
+exactly a world entitled to age itself against one. The historical path reaches neither — the scan
+cannot call `tick`, so it cannot leave hydration, so it cannot enter the sweep block — which is what
+keeps a mid-fold answer a pure function of its bytes and keeps the six-slice oracle green without a
+line of special-casing. Two smaller consequences are stated rather than inherited: a live combat
+answer MUTATES the fold (see `answer_asks`, and `CombatEngine`'s `st` field for why the mutation
+stays inside the engine), and the CLASSIFICATION RING is still unported — so `recent` is `[]` in a
+live answer where the app publishes classified lines. That is now this engine's named combat gap, and
+it is a much smaller one: nothing on the meter's rows reads it.
 
 ## Defines and fires
 
@@ -894,6 +906,19 @@ Eight things in that transcript are this ticket:
 > lines are stamped today, and the first event past the launch anchor fires the character-rebirth
 > boundary — which clears the world. So the only fight in the history is the one the driver wrote,
 > which is also why `selectedId` is empty in the mid-fold answer.
+
+**RECORDED UNDER JOS-485, AND TWO OF ITS FRAMES WOULD READ DIFFERENTLY TODAY.** It is kept as it was
+run rather than edited to match, because a transcript is a record; here is exactly what JOS-488 moved
+and why. The LIVE answer (`id:4`) would say `hydrating: false` now, and — because the driver stamped
+its fight **56 seconds** before the instant that answer was taken — the snapshot-time sweeps would
+finalize it: `kind: "fight"` instead of `"current"`, no `currentTarget`, and the hit appended
+afterwards would open a fresh encounter rather than joining that one, so frame 6's two updates would
+be a drop and an update instead. **That is the engine being right, and it is an artifact of the
+staging rather than of the meter**: a real live session writes its lines at the instant they happen,
+so its open fight is seconds old and stays open — which is precisely what `tests/combat.rs` stages
+now, and what `Staged::stale` stages deliberately to watch a fight close on the clock alone. The
+MID-FOLD answer (`id:3`) is unchanged in every field, including `hydrating: true`: the scan cannot
+reach the flag, so a replay is still not a moment in time.
 
 ## Running it by hand
 

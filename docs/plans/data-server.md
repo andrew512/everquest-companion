@@ -368,11 +368,14 @@ light, app connected with the parity probe, packaging signed). Remaining to buil
 3. **The remaining view sources** — every list in the product. ~~`combat.live`~~ **DONE** (JOS-485)
    and it is where update-op coverage arrived: the meter's rows edit rather than append, so the
    diff protocol's third op is proven over a socket at last. The two combat OPS landed with it —
-   `combat.snapshot` (verdict 1) and `combat.searchFights`. ONE NAMED GAP for the meter-cutover
-   ticket: `hydrating` is `true` in every answer this build gives, because the snapshot-time sweep
-   block (charm sweep, ally expiry, pet nudge, deferred encounter closure) is unported and a fold
-   that provably never enters it cannot honestly say otherwise — clearing the flag means porting
-   those four, not editing a boolean. Still open: encounters/drilldown, the INCOMING meter,
+   `combat.snapshot` (verdict 1) and `combat.searchFights`. ~~ONE NAMED GAP: `hydrating` is `true`
+   in every answer this build gives~~ **CLOSED** (JOS-488): the snapshot-time sweep block — charm
+   sweep, ally expiry, pet nudge, deferred encounter closure — is ported, `set_live()` is wired to
+   the go-live beat, and a live meter now closes a fight the log stopped talking about. The oracle
+   stayed green without special-casing because the parity path has no tail to hand over to and so
+   cannot enter the block. THE SMALLER GAP THAT REPLACES IT: the classification ring is still
+   unported, so `recent` is `[]` in a live answer where the app publishes classified lines — nothing
+   on the meter's rows reads it. Still open: encounters/drilldown, the INCOMING meter,
    buff+timer rows (the overlays), respawn, progression, kills, and the Knowledge surface
    (items/spells/mobs/quests move engine-side — deletes ~12 MB from main's heap and the
    renderer-bundled corpora).
