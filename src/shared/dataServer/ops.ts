@@ -119,17 +119,18 @@ export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> 
   // JOS-483's — a guard is only worth its line if no other arm can pass it — and `status` losing its
   // discriminating power the moment `perf.snapshot` restated it is what taught it.
   'combat.snapshot': (r) => 'snapshot' in r,
-  // `hits` rather than `corpus`, for the same reason and one step further: `corpus` is a count and
-  // counts are exactly what other shapes grow.
-  'combat.searchFights': (r) => 'hits' in r,
+  // `corpus`, NOT `hits` — the integration lesson two parallel workers taught the matrix: both the
+  // fight search and the knowledge search reached for `hits` independently, and the matrix caught
+  // the collision at merge. `corpus` is this shape's own word and no other arm carries it.
+  'combat.searchFights': (r) => 'corpus' in r,
   // `record` rather than `found`: it is the field no other arm carries, and a boolean guard would
   // read `false` as "wrong shape" if `in` were ever swapped for a truthiness test by a later hand.
   'knowledge.item': (r) => 'record' in r,
   'knowledge.mob': (r) => 'record' in r,
   'knowledge.spell': (r) => 'record' in r,
-  // `hits` rather than `query`: a search result and a lookup result must be separable, and `hits`
-  // is required by the schema and carried by no other shape.
-  'knowledge.search': (r) => 'hits' in r,
+  // `query` — same collision, same lesson: `hits` stopped discriminating the moment two searches
+  // existed. The query echo is required by the schema and carried by no other shape.
+  'knowledge.search': (r) => 'query' in r,
   'knowledge.define': (r) => 'applied' in r
 }
 
