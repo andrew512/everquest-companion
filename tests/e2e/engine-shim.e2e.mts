@@ -27,6 +27,12 @@
  *      wire — and the renderer gets `null`, which is precisely what the flag-off world returns for
  *      an unknown id. No throw, no error dialog, no difference. The app says so in one coalesced
  *      dev-log sentence naming the reason.
+ *   5. THE ONE FACT NO FOLD CAN CARRY IS STILL SERVED (JOS-493, owner ruling 21). The character
+ *      snapshot's `lastPlayed` is the log file's mtime, which the ENGINE stats and serves on
+ *      `session.health` and its FOLD deliberately never holds — so under the serve flag the product
+ *      was being handed a character ref with the field gone. The shim grafts the served number on;
+ *      this claim is that it arrives, that it is the engine's own answer about this file, and that
+ *      it agrees with the app's own fold at the millisecond the protocol carries.
  *
  * ── WHY ONE LAUNCH AND A SEAM, RATHER THAN FLIPPING THE FLAG PER LAUNCH ────────────────────────
  *
@@ -72,9 +78,10 @@
  *
  * Run: `npm run test:e2e -- engine-shim`
  */
+import { statSync } from 'node:fs'
 import { buildEngineIfStale, buildIfStale, check, failures, note, reportRun } from './appHarness.mjs'
 import { closeWindows, mainWindow } from './appWindow.mjs'
-import { launchOnFixture } from './logFixture.mjs'
+import { launchOnFixture, type FixtureLaunch } from './logFixture.mjs'
 import { settleParity, tapOutput } from './engineSteps.mjs'
 import { firstDiff } from '../../src/shared/deepDiff'
 import { normalizeState } from '../../src/main/dataServer/parityProbe'
@@ -428,6 +435,86 @@ async function stepProductPath(page: Page, app: ElectronApplication): Promise<vo
 }
 
 /**
+ * CLAIM 5 — THE `lastPlayed` GRAFT (JOS-493, owner ruling 21's served fact).
+ *
+ * WHAT WAS LEAKING, and why it is the shim's problem rather than the fold's. The app's own
+ * `character` module publishes a `CharacterRef` carrying `lastPlayed = statSync(logPath).mtimeMs` —
+ * a FILESYSTEM fact pushed in by `session.ts`, never folded from a line. The ENGINE's character
+ * module cannot carry it and must not: ruling 18 says a served process fact is not addressed by
+ * (log identity, byte offset) and has no business inside fold state. So with the serve flag on, the
+ * character snapshot reaching the product had the field simply GONE — and the character picker's
+ * whole sort key is that field (`TitleBar.tsx`). JOS-490 found it in the product path and JOS-479
+ * had already pinned the same divergence in the probe.
+ *
+ * RULING 21 SAYS WHERE THE FACT LIVES: the engine SERVES it, on `session.health` as `logMtimeMs`,
+ * because the engine is the process that owns the file. The shim now grafts that served number onto
+ * the served snapshot (`serveShim.ts graftLastPlayed`), which closes the leak in the product and
+ * closes the JOS-479/481 exemption UNDER SERVE. `engine-parity.e2e.mts` KEEPS its row, and that is
+ * not an inconsistency: that spec's probe compares the RAW engine module snapshot against the TS
+ * fold, with no shim between them, so it is still measuring the thing ruling 18 requires to stay
+ * absent. This spec measures what the PRODUCT is handed.
+ *
+ * THE PRECISION IS PINNED RATHER THAN FUDGED. The protocol carries an integer millisecond and Node
+ * reports the NTFS stamp as a float with sub-millisecond digits, so the served value is `Math.floor`
+ * of the app's own — the identical truncation `engine-parity.e2e.mts` already asserts against the
+ * disk. Asserting equality at that precision is the honest claim; asserting bit equality would be a
+ * claim about a stamp neither side promises.
+ */
+async function stepLastPlayed(
+  launch: FixtureLaunch,
+  page: Page,
+  app: ElectronApplication
+): Promise<void> {
+  const arms = await askSeam<ModuleSnap>(app, { kind: 'module', module: 'character' })
+  if (!served('character', arms)) return
+  const fromEngine = lastPlayedOf(arms.engine)
+  const fromApp = lastPlayedOf(arms.ts)
+  const onDisk = Math.floor(statSync(launch.log.logPath).mtimeMs)
+  if (
+    !check(
+      '…character: the SERVED snapshot carries a lastPlayed at all — the JOS-490 leak is closed',
+      fromEngine !== undefined,
+      fromEngine === undefined ? 'the served ref has no lastPlayed' : String(fromEngine)
+    )
+  ) {
+    return
+  }
+  check(
+    '…character: and it is the ENGINE’S OWN answer about this file — the mtime it serves on session.health',
+    fromEngine === onDisk,
+    `served ${String(fromEngine)} · disk ${String(onDisk)}`
+  )
+  check(
+    '…character: which is the same fact the app’s own fold publishes, at the protocol’s millisecond',
+    fromApp !== undefined && Math.floor(fromApp) === fromEngine,
+    `served ${String(fromEngine)} · app ${String(fromApp)}`
+  )
+  // AND THROUGH THE PRODUCT'S OWN DOOR, for claim 3's reason: the graft is only worth anything if
+  // the renderer gets it, and `window.eq` is what the picker actually calls.
+  const overIpc = (await page.evaluate(
+    () =>
+      (window as unknown as { eq: { getModuleSnapshot: (id: string) => Promise<unknown> } }).eq
+        .getModuleSnapshot('character')
+  )) as { seq: number; state: unknown } | null
+  check(
+    'character over window.eq: the renderer sees the grafted lastPlayed, not an absent field',
+    lastPlayedOf(overIpc) === fromEngine,
+    `window.eq ${String(lastPlayedOf(overIpc))} · seam ${String(fromEngine)}`
+  )
+}
+
+/** `.character.lastPlayed` out of one arm's module snapshot, or undefined when it is not there. */
+function lastPlayedOf(snap: ModuleSnap): number | undefined {
+  if (snap === null) return undefined
+  const state = snap.state
+  if (state === null || typeof state !== 'object') return undefined
+  const ref = (state as { character?: unknown }).character
+  if (ref === null || typeof ref !== 'object') return undefined
+  const value = (ref as { lastPlayed?: unknown }).lastPlayed
+  return typeof value === 'number' ? value : undefined
+}
+
+/**
  * CLAIM 4 — FALLBACK HONESTY, STAGED.
  *
  * An id neither registry carries: the engine refuses it on the wire (`notFound`, `ops.rs`) and the
@@ -494,6 +581,7 @@ async function main(): Promise<void> {
       await stepCombat(launch.app)
       await stepSearch(launch.app)
       await stepProductPath(page, launch.app)
+      await stepLastPlayed(launch, page, launch.app)
       await stepFallback(page, launch.app)
     }
     // The coalesced note the staged refusal above must have produced. Read after it, because the
@@ -516,6 +604,11 @@ async function main(): Promise<void> {
       'and it agrees at EVERY path: JOS-489 measured three divergences (`.hydrating`, ' +
         '`.currentTarget`, `.segments[0].kind` — one gap, the unported snapshot-time sweep block), ' +
         'JOS-488 ported it, and KNOWN_ASYMMETRY is empty by fix'
+    )
+    note(
+      '…and the character ref reaches the product WHOLE: `lastPlayed` is grafted from the mtime the ' +
+        'engine serves (ruling 21), so the JOS-479/481 exemption is closed UNDER SERVE while ' +
+        'engine-parity keeps its row for the raw fold, which must never hold a filesystem fact'
     )
   }
   reportRun()

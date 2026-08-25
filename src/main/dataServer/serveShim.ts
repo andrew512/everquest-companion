@@ -61,15 +61,27 @@
 import { E2E } from '../e2e'
 import { logInfo } from '../errorLog'
 import { engineEnabled } from './engineHost'
-import { engineRequest, engineServeReadiness } from './engineClientHost'
+import { engineLogMtimeMs, engineRequest, engineServeReadiness } from './engineClientHost'
 import { createReadShim, type ReadShim, type ServeOutcome } from './readShim'
 import type { CombatSnapshot, FightSearchResult, SnapshotOpts } from '../../shared/combat'
-import type { CombatSnapshotOpts } from '../../shared/dataServer/protocol.generated'
+import type {
+  CombatSnapshotOpts,
+  ModuleSnapshotResult
+} from '../../shared/dataServer/protocol.generated'
 
 /** What `registry.snapshot(id)` answers with, and therefore what `module:getSnapshot` returns. */
 export interface ModuleSnap {
   readonly seq: number
   readonly state: unknown
+  /**
+   * THE ENGINE ANSWERED THIS ONE (JOS-493). Absent on the app's own arm — including every launch
+   * with the flag off — which is what keeps the flag-off reply the shape it has always been.
+   *
+   * It is a fact about the ANSWER, not about the launch, and the folders need it to be: `seq` above
+   * is a cursor in whichever world produced it, so a renderer must know which channel of the two
+   * carries its increments (`shared/types.ts ModuleSnapshot.served`, `serveDeltas.ts`).
+   */
+  readonly served?: true
 }
 
 /**
@@ -179,7 +191,68 @@ export const OPTS_ARE_STATED: Record<keyof SnapshotOpts, true> = {
 
 // ── the three channels ─────────────────────────────────────────────────────────────────────────
 
-/** `module:getSnapshot`, served — see the header for the echo test. */
+// ── the module projection, and the one fact it grafts ──────────────────────────────────────────
+
+/** The module whose published state carries a fact no fold can produce — see `graftLastPlayed`. */
+const CHARACTER_MODULE = 'character'
+
+/**
+ * THE `lastPlayed` GRAFT (JOS-493, owner ruling 21's served fact).
+ *
+ * WHAT WAS LEAKING. `CharacterSnap.character` is a `CharacterRef`, and the app's own fold publishes
+ * it with `lastPlayed = statSync(logPath).mtimeMs` — pushed in by `session.ts`, never folded from a
+ * line (`main/log/config.ts`). The ENGINE's `character` module cannot carry it and must not: it
+ * derives its ref from the log's file NAME, and ruling 18 says a served PROCESS fact is not
+ * addressed by (log identity, byte offset) and has no business inside fold state. So under
+ * `EQC_ENGINE_SERVE=1` the served snapshot reached the product with the field simply gone, and the
+ * character picker — whose whole sort key is `lastPlayed` (`TitleBar.tsx`) — silently lost it.
+ * JOS-490 caught it as an unpinned fold divergence in the product path.
+ *
+ * WHY A GRAFT AND NOT A FOLD CHANGE. Ruling 21 already settled where the fact lives: the ENGINE
+ * SERVES it, on `session.health` as `logMtimeMs`, because the engine is the process that owns the
+ * file. This puts the served answer where the app's contract expects to find it, and it is the
+ * SHIM's job by construction — the shim is the compatibility layer, and the alternative (teaching
+ * the Rust fold to stat a file) is the thing the ruling forbids. It is temporary in exactly the way
+ * the shim is: the graft goes when the picker reads `session.health` for itself, which is the
+ * character-picker cutover.
+ *
+ * IT IS NOT MANUFACTURED AGREEMENT. `engine-shim.e2e.mts` states the honest residual: the protocol
+ * carries an INTEGER millisecond and Node reports the NTFS stamp as a float, so what is grafted is
+ * `Math.floor` of what the app's own fold publishes, and the spec pins it at that precision rather
+ * than pretending the two are bit-identical. Nothing else about the served state is touched — a
+ * shim that rewrote a served field would hide the very gaps the ledger is tracking (this file's
+ * header, and `engine-shim.e2e.mts KNOWN_ASYMMETRY`).
+ *
+ * ABSENT STAYS ABSENT. No mtime from the engine means no graft, never a zero: a `lastPlayed` of 0
+ * is a card that says 1970, which is worse than a card that says nothing.
+ */
+function graftLastPlayed(state: unknown): unknown {
+  const mtime = engineLogMtimeMs()
+  if (mtime === null) return state
+  if (state === null || typeof state !== 'object') return state
+  const snap = state as { character?: unknown }
+  const ref = snap.character
+  // A null ref is the honest "no character attached", and inventing an mtime for nobody would be a
+  // guess in exactly the sense `readShim.ts` means it.
+  if (ref === null || typeof ref !== 'object') return state
+  return { ...snap, character: { ...(ref as Record<string, unknown>), lastPlayed: mtime } }
+}
+
+/**
+ * One `module.snapshot` reply, as this app's own reply.
+ *
+ * ONE FUNCTION FOR BOTH THE PRODUCT AND THE PROBE, and that is the point of pulling it out of the
+ * two call sites: the harness seam's engine arm must be what the SHIM would serve, or a spec
+ * comparing the two arms would be pinning a projection nothing ships. The echo test (see the
+ * header) and the graft above are both part of "what this app answers", so both live here.
+ */
+function projectModule(moduleId: string, r: ModuleSnapshotResult): ModuleSnap | null {
+  if (r.module !== moduleId) return null
+  const state = moduleId === CHARACTER_MODULE ? graftLastPlayed(r.state) : r.state
+  return { seq: r.seq, state, served: true }
+}
+
+/** `module:getSnapshot`, served — see the header for the echo test, `projectModule` for the graft. */
 export function serveModuleSnapshot(
   moduleId: string,
   own: () => ModuleSnap | null
@@ -187,7 +260,7 @@ export function serveModuleSnapshot(
   return readShim().serve(
     'module.snapshot',
     { module: moduleId },
-    (r) => (r.module === moduleId ? { seq: r.seq, state: r.state } : null),
+    (r) => projectModule(moduleId, r),
     own
   )
 }
@@ -273,9 +346,10 @@ function buildProbe(arms: TsArms): ShimProbe {
   return {
     module: async (moduleId) =>
       both(
-        await s.ask('module.snapshot', { module: moduleId }, (r) =>
-          r.module === moduleId ? { seq: r.seq, state: r.state } : null
-        ),
+        // THE SHIM'S OWN PROJECTION, not a second spelling of it — see `projectModule`. What the
+        // spec compares against the app's fold has to be the answer the product would have been
+        // given, graft included, or the comparison is about a code path nobody ships.
+        await s.ask('module.snapshot', { module: moduleId }, (r) => projectModule(moduleId, r)),
         arms.module(moduleId)
       ),
     combat: async (opts) =>

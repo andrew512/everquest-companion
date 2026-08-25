@@ -79,6 +79,10 @@ import {
   type ParityAsk,
   type ParityVerdict
 } from './parityProbe'
+// THE DELTA ARM (JOS-493). It owns the serve flag's second half and the fan-out; this file supplies
+// the only thing it cannot get for itself — the engine's own `moduleChanged` frames, and the two
+// edges where the world that answers a read changes hands.
+import { pushModuleChanged, pushWorldChanged } from './serveDeltas'
 import { SERVABLE, type Readiness } from './readShim'
 import type { ReadyEngine } from './supervisor'
 import type { ParamsFor, RequestOp, ResultFor } from '../../shared/dataServer/ops'
@@ -134,11 +138,34 @@ let gen = 0
  */
 let engineLiveOn: string | null = null
 
+/**
+ * THE LOG FILE'S mtime AS THE ENGINE STATS IT (owner ruling 21's served fact), taken off the same
+ * `session.health` round trip `engineLiveOn` is — null until the engine has said `live` in this
+ * turn, and null again the moment the turn is replaced.
+ *
+ * IT IS KEPT HERE RATHER THAN RE-STATTED BY ITS READER, and that is the whole of ruling 21: this
+ * process could `statSync` the log in one line (`main/log/config.ts` does), and doing so would prove
+ * nothing about who owns the fact. The compat shim grafts THIS number onto the served `character`
+ * snapshot (`serveShim.ts`), so what a picker under serve reads is the engine's answer about the
+ * file, quoted rather than re-derived.
+ *
+ * IT DIES WITH THE TURN for `engineLiveOn`'s reason exactly: an mtime measured on the world somebody
+ * has since replaced is a fact about a different file.
+ */
+let engineLogMtime: number | null = null
+
 /** THE ONE PLACE THE TURN ADVANCES, so nothing that must die with it can be forgotten. */
 function bumpGen(): number {
   gen += 1
   engineLiveOn = null
+  engineLogMtime = null
   return gen
+}
+
+/** What the engine last said this log's mtime was, or null when it has not said. `serveShim.ts` is
+ *  the only caller — see `engineLogMtime`. */
+export function engineLogMtimeMs(): number | null {
+  return engineLogMtime
 }
 
 function debug(line: string): void {
@@ -182,9 +209,16 @@ function attachTarget(): string | null {
  * starts is voided deliberately: a supervisor must never be made to wait on a client.
  */
 export function onEngineReady(info: ReadyEngine | null): void {
+  // WAS THE OUTGOING ENGINE ANSWERING READS? Asked BEFORE `bumpGen` clears the answer, because the
+  // windows that were being served have to be told the world changed hands — they are ignoring
+  // `module:delta` precisely because they were served, so nothing else would ever move them again
+  // (serveDeltas.ts `pushWorldChanged`). A launch whose engine was never live has served nobody and
+  // says nothing.
+  const wasServing = engineLiveOn !== null
   const mine = bumpGen()
   live?.client.close()
   live = null
+  if (wasServing) pushWorldChanged()
   // THE LAST VERDICT DIES WITH THE ENGINE THAT EARNED IT. A respawn is a launch and a fresh world
   // has proven nothing yet; leaving the counts standing would let the panel report "5 agree" about
   // a process that no longer exists.
@@ -221,6 +255,27 @@ async function openConnection(mine: number, info: ReadyEngine, client: EngineCli
   // THE FIRES — logged and counted always, PLAYED when the cutover armed. See `noteFire`.
   client.onFire((fire) => {
     noteFire(fire)
+  })
+  // THE CURSORS (JOS-493) — the engine saying a module's published state moved, forwarded to every
+  // window that folds one. Two guards, and each answers a different question:
+  //
+  //   * IS THIS STILL THE CONNECTION THIS APP IS USING. A subscription is CONNECTION-scoped, not
+  //     turn-scoped, and that distinction cost a whole e2e round to learn: the first draft asked
+  //     `gen !== mine` — the rule every `await` in this file is followed by — and `gen` advances on
+  //     every WORLD REBUILD (`onWorldRebuilt`), which happens the moment this process's own fold
+  //     lands. So the listener went permanently silent one second into every launch and the live
+  //     fold stopped reaching every renderer. MEASURED: a loot line played into the log never
+  //     reached the ledger, and a watched respawn never drew a clock. Identity is the right
+  //     question, and `live` is where the answer is.
+  //   * `engineServeReadiness().ok` — the READ path is not taking this engine's answers right now
+  //     (still folding, on another log, connection not ready). A window's held snapshot therefore
+  //     came from THIS PROCESS's fold, and handing it a cursor from the other world is the very
+  //     mixing this ticket exists to end. That is the question a turn number was reaching for, and
+  //     it is asked here of the one function that owns it.
+  client.onModuleChanged((changed) => {
+    if (live?.client !== client) return
+    if (!engineServeReadiness().ok) return
+    pushModuleChanged(changed.module, changed.seq)
   })
   debug(`data-server client: connected to the engine on port ${String(info.port)}`)
   await attachAndProbe(mine)
@@ -461,7 +516,19 @@ async function waitForFold(mine: number, l: LiveEngine): Promise<EngineHealthSay
     // that has heard the engine say `live`, and because the loop can exit either way: a budget
     // expiry returns a health that is still `folding`, and recording that as live would be the shim
     // serving prefixes to a hydrating window.
-    if (health.status === 'live') engineLiveOn = l.attachedTo
+    if (health.status === 'live') {
+      // THE GO-LIVE EDGE (JOS-493), taken exactly once per turn: the shim starts serving on this
+      // assignment, so the windows that hydrated during the fold are holding this process's own
+      // state and are about to be handed the other world's cursors. `pushWorldChanged` tells them
+      // to take the served world now rather than at whatever unrelated moment re-hydrates them
+      // next — and it is inside the `first` test because this loop can run many times per turn.
+      const first = engineLiveOn === null
+      engineLiveOn = l.attachedTo
+      // THE SERVED FILE FACT, on the way past (owner ruling 21). Absent means absent — never zero,
+      // which would graft a `lastPlayed` of 1970 onto a character card.
+      engineLogMtime = health.logMtimeMs ?? null
+      if (first) pushWorldChanged()
+    }
     if (health.status === 'live' || Date.now() >= deadline) return health
     await delay(FOLD_POLL_MS)
     if (gen !== mine) return null
@@ -610,7 +677,10 @@ export function installEngineClient(): void {
 /** Let go: no observer, no connection, no pusher. Idempotent, and safe on a process that never
  *  armed one. */
 export function stopEngineClient(): void {
+  // The same edge `onEngineReady(null)` reports, for the path that lets go deliberately.
+  const wasServing = engineLiveOn !== null
   bumpGen()
+  if (wasServing) pushWorldChanged()
   setWorldRebuiltObserver(null)
   setAppKnowledgePusher(null)
   live?.client.close()

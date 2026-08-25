@@ -1,0 +1,296 @@
+// ONE WORLD, ONE NUMBERING SPACE — the delta arm, the mark command and the served fact (JOS-493).
+//
+// THE DEFECT THESE PINS EXIST FOR, in one sentence: with `EQC_ENGINE_SERVE=1` a renderer hydrated
+// its module snapshot from the RUST ENGINE and then rode `module:delta` out of the TypeScript fold,
+// so `knownSeq` and `delta.seq` were unrelated numbers and every increment was dropped as a dupe
+// (MEASURED at engine seq 4 against app seq 3 on a respawn watch; STRUCTURAL for the four modules
+// that publish a private revision counter — combo, character, respawn, buffTimers).
+//
+// WHAT CAN BE PINNED HERE AND WHAT CANNOT. The behaviour end to end needs a real engine, a real
+// socket and two renderers, and it is claimed by `tests/e2e/engine-shim.e2e.mts` and the
+// engine-on suite. What a node suite CAN hold is the set of structural properties the fix rests on,
+// each of which would compile, ship and fail silently if it regressed:
+//
+//   1. THE TWO CHANNELS ARE DISTINCT and both bridges expose the second one under the SAME name —
+//      `tests/sessionMarks.test.mts` pin 3's argument, and the same failure mode: a second name for
+//      one signal is how the two windows end up folding two different worlds.
+//   2. EACH FOLDER RIDES EXACTLY ONE OF THEM, and the SNAPSHOT decides which. A hook that read a
+//      flag instead would hold a stale opinion the moment the shim fell back mid-session.
+//   3. THE MARK IS STILL ONE INSTANT. The engine's command must carry the number main already
+//      stamped — a second clock read here would be a third boundary.
+//   4. THE SERVED FACT IS QUOTED, NEVER RE-DERIVED (owner ruling 21). The shim grafts the mtime the
+//      ENGINE reported; a `statSync` in that file would prove nothing about who owns the fact.
+//
+// SOURCE PINS in `tests/fightSelection.test.mts`' technique — comments are stripped first, because
+// this repo explains itself in prose that would otherwise satisfy its own greps. They are source
+// pins rather than behavioural ones because every module involved reaches Electron: the hooks are
+// renderer React, `serveShim.ts` imports the error log, and `serveDeltas.ts` imports the pipeline.
+//
+// Imported RELATIVELY: node tests run through tsx with no `@shared` alias.
+
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { IPC } from '../src/shared/ipc'
+import { MODULE_WORLD_CHANGED } from '../src/shared/types'
+
+const src = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8')
+
+/** The same file with its COMMENTS removed — see the header. */
+const code = (rel: string): string =>
+  src(rel)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+
+/** The two folding hooks. They are separate files by an old decision (`useOverlayModule.ts`'s
+ *  header) and they hydrate through the SAME ipc handler, so every rule below binds both. */
+const HOOKS = [
+  '../src/renderer/src/lib/useModule.ts',
+  '../src/renderer/src/overlay/useOverlayModule.ts'
+] as const
+
+// ── 1. the two channels ────────────────────────────────────────────────────────────────
+
+test('the increment channel and the cursor channel are DISTINCT names', () => {
+  assert.notEqual(IPC.onModuleDelta, IPC.onModuleChanged)
+  assert.equal(IPC.onModuleDelta, 'module:delta')
+  assert.equal(IPC.onModuleChanged, 'module:changed')
+})
+
+test('ONE HOOK, BOTH BUNDLES: both preload bridges expose onModuleChanged, on that channel', () => {
+  for (const bridge of ['../src/preload/index.ts', '../src/preload/overlay.ts']) {
+    const mod = code(bridge)
+    assert.match(mod, /\bonModuleChanged:/, `${bridge} is missing onModuleChanged`)
+    assert.match(
+      mod,
+      /ipcRenderer\.on\(IPC\.onModuleChanged, listener\)/,
+      `${bridge} subscribes onModuleChanged to some other channel`
+    )
+    assert.match(
+      mod,
+      /removeListener\(IPC\.onModuleChanged, listener\)/,
+      `${bridge} hands back a way to stop listening that does not stop this listener`
+    )
+  }
+})
+
+test('the world-change id is one nothing registers, so it can never collide with a module', () => {
+  assert.equal(MODULE_WORLD_CHANGED, '*')
+  // Every module id in this app is a bare identifier (`loot`, `buffTimers`); the wildcard is not.
+  assert.doesNotMatch(MODULE_WORLD_CHANGED, /^[A-Za-z_$][\w$]*$/)
+})
+
+// ── 2. each folder rides exactly one channel, and the SNAPSHOT decides which ────────────
+
+test('BOTH hooks read `served` off the snapshot rather than reading a flag', () => {
+  for (const hook of HOOKS) {
+    const mod = code(hook)
+    assert.match(
+      mod,
+      /served = snap\.served === true/,
+      `${hook} does not take the world from the snapshot it just hydrated`
+    )
+    // The shim decides PER CALL, so an opinion formed anywhere but a hydrate would go stale.
+    assert.doesNotMatch(
+      mod,
+      /EQC_ENGINE|process\.env/,
+      `${hook} reached for a launch flag; the answer is a property of the ANSWER`
+    )
+  }
+})
+
+test('a TS-fold increment is NOT folded into an engine-served snapshot', () => {
+  for (const hook of HOOKS) {
+    const mod = code(hook)
+    const apply = /const applyOne = \(([\s\S]*?)\n {4}\}/.exec(mod)
+    assert.ok(apply, `${hook}: applyOne is gone`)
+    assert.match(
+      apply[0],
+      /if \(served\) return/,
+      `${hook}: applyOne folds main's own increments whatever world it is in`
+    )
+  }
+})
+
+test('and an engine cursor is NOT acted on while holding main’s own snapshot', () => {
+  for (const hook of HOOKS) {
+    const mod = code(hook)
+    assert.match(
+      mod,
+      /if \(!served\) return/,
+      `${hook}: the cursor handler acts on a world it is not folding`
+    )
+    // The dirty bit carries no state by design; the answer to it is the snapshot op.
+    assert.match(mod, /if \(c\.seq <= knownSeq\) return/, `${hook}: a cursor we already hold refetches`)
+  }
+})
+
+test('a world change re-hydrates unconditionally — it is the one frame with no cursor to compare', () => {
+  for (const hook of HOOKS) {
+    const mod = code(hook)
+    assert.match(
+      mod,
+      /if \(c\.moduleId === MODULE_WORLD_CHANGED\) \{\s*hydrate\(\)/,
+      `${hook}: a world change is filtered by moduleId like an ordinary cursor`
+    )
+  }
+})
+
+test('a cursor that raced the hydrate is remembered, not dropped', () => {
+  // No later frame restates a cursor already reported (the protocol sends nothing for a module whose
+  // seq did not move), so dropping one would freeze that module until something else moved it.
+  for (const hook of HOOKS) {
+    const mod = code(hook)
+    assert.match(mod, /if \(c\.seq > pendingSeq\) pendingSeq = c\.seq/, `${hook}: the race is dropped`)
+    assert.match(
+      mod,
+      /if \(served && pendingSeq > knownSeq\) hydrate\(\)/,
+      `${hook}: the remembered cursor is never settled`
+    )
+  }
+})
+
+test('every subscription is unsubscribed — a hook that leaked one would fold a dead module', () => {
+  for (const hook of HOOKS) {
+    const mod = code(hook)
+    assert.match(mod, /const offChanged = window\.eq(Overlay)?\.onModuleChanged\(/, hook)
+    assert.match(mod, /offChanged\(\)/, `${hook}: the cursor subscription is never released`)
+  }
+})
+
+// ── the wire half: who is told, and under what gate ────────────────────────────────────
+
+test('the cursor fan-out reaches the SAME windows the increments do', () => {
+  const mod = code('../src/main/dataServer/serveDeltas.ts')
+  assert.match(mod, /sendToMain\(IPC\.onModuleChanged, frame\)/)
+  // pipeline.ts owns the module-reading overlay list, and a second copy of it is exactly how the
+  // overlays came to be missing from a fan-out once already (JOS-172).
+  assert.match(mod, /sendToModuleOverlays\(IPC\.onModuleChanged, frame\)/)
+  assert.doesNotMatch(mod, /OVERLAY_KINDS/, 'the overlay list was copied instead of reused')
+})
+
+test('nothing is pushed when this launch was not asked to serve', () => {
+  const mod = code('../src/main/dataServer/serveDeltas.ts')
+  assert.match(mod, /const SERVE_ASKED = process\.env\.EQC_ENGINE_SERVE === '1'/)
+  // Both exported pushes are gated, and gated FIRST — a fan-out that allocated a frame before
+  // checking would still be paying for a feature the launch did not ask for.
+  for (const fn of ['pushModuleChanged', 'pushWorldChanged']) {
+    const decl = new RegExp(`export function ${fn}\\([^)]*\\): void \\{\\s*if \\(!SERVE_ASKED\\) return`)
+    assert.match(mod, decl, `${fn} is not gated on the serve flag`)
+  }
+})
+
+test('a cursor from a replaced connection, or from an engine that is not serving reads, is not forwarded', () => {
+  const host = code('../src/main/dataServer/engineClientHost.ts')
+  const listener = /client\.onModuleChanged\(\(changed\) => \{([\s\S]*?)\n {2}\}\)/.exec(host)
+  assert.ok(listener, 'the engine client no longer forwards moduleChanged')
+  // A SUBSCRIPTION IS CONNECTION-SCOPED, NOT TURN-SCOPED, and this pin is the scar: the first draft
+  // guarded with `gen !== mine`, the rule every `await` in that file is followed by. `gen` advances
+  // on every world rebuild, so the listener went permanently silent the moment this process's own
+  // fold landed — a loot line played into the log never reached the ledger and a watched respawn
+  // never drew a clock. Identity, not generation.
+  assert.match(listener[1], /if \(live\?\.client !== client\) return/, 'the listener is turn-scoped again')
+  assert.doesNotMatch(listener[1], /gen !== mine/, 'the generation guard came back — see above')
+  assert.match(
+    listener[1],
+    /if \(!engineServeReadiness\(\)\.ok\) return/,
+    'a cursor is forwarded while the READ path is answering from the app’s own fold'
+  )
+})
+
+test('both edges where the serving world changes hands are announced', () => {
+  const host = code('../src/main/dataServer/engineClientHost.ts')
+  // Going live: the shim starts serving, so windows holding main's own state should take the
+  // engine's. Taken once per turn, off the `first` test, because the health loop can run many times.
+  assert.match(host, /const first = engineLiveOn === null/)
+  assert.match(host, /if \(first\) pushWorldChanged\(\)/)
+  // Going away: a window holding a served snapshot is IGNORING module:delta because it was served,
+  // so without this frame it would sit frozen until the next character rebuild.
+  const edges = host.match(/const wasServing = engineLiveOn !== null/g) ?? []
+  assert.equal(edges.length, 2, 'the loss edge is asked in exactly the two places that let go')
+  assert.equal((host.match(/if \(wasServing\) pushWorldChanged\(\)/g) ?? []).length, 2)
+})
+
+// ── 3. the mark is still ONE instant ───────────────────────────────────────────────────
+
+test('THE ENGINE’S COMMAND CARRIES THE INSTANT MAIN ALREADY STAMPED', () => {
+  const mod = code('../src/main/sessionMarks.ts')
+  // `tests/sessionMarks.test.mts` pins that there is exactly one `Date.now()` in this file; this
+  // pins that the third holder of the boundary got THAT number and not one of its own.
+  assert.match(mod, /serveSessionMark\(at\)/, 'the engine is told some other instant, or none')
+  const command = code('../src/main/dataServer/serveCommands.ts')
+  assert.doesNotMatch(command, /Date\.now\(\)/, 'the command file started stamping its own boundary')
+  assert.match(command, /engineRequest\('sessionMarks\.add', \{ at \}\)/)
+})
+
+test('…and only after BOTH of this process’s halves accepted it', () => {
+  const mod = code('../src/main/sessionMarks.ts')
+  const refusal = mod.indexOf('if (!combat.sessionMark(at)) return marks')
+  const dedupe = mod.indexOf('next[next.length - 1] !== at')
+  const told = mod.indexOf('serveSessionMark(at)')
+  assert.ok(refusal >= 0 && dedupe >= 0 && told >= 0)
+  assert.ok(refusal < told, 'a mark the combat engine refused is announced to the engine anyway')
+  assert.ok(dedupe < told, 'a deduped double press is announced as a second split')
+})
+
+test('the press never waits on the socket, and a refusal is not an error', () => {
+  const command = code('../src/main/dataServer/serveCommands.ts')
+  assert.match(command, /export function serveSessionMark\(at: number\): void/, 'the press became async')
+  assert.match(command, /void engineRequest\(/, 'the round trip is awaited somewhere')
+  // `accepted: false` is the protocol's honest "not now" while the historical fold runs — the same
+  // state this process's own `combat.sessionMark` refuses in. It is a line, never a throw.
+  assert.match(command, /ack\.accepted \?/)
+  assert.doesNotMatch(command, /\bthrow\b/)
+})
+
+test('the command is gated by the SAME answer the read path uses', () => {
+  const command = code('../src/main/dataServer/serveCommands.ts')
+  assert.match(command, /if \(!shimServing\(\)\) return/, 'the command invented its own gate')
+})
+
+// ── 4. the served fact is quoted, never re-derived ─────────────────────────────────────
+
+test('the graft uses the mtime the ENGINE served, and this process never stats the log for it', () => {
+  const shim = code('../src/main/dataServer/serveShim.ts')
+  assert.match(shim, /const mtime = engineLogMtimeMs\(\)/, 'the graft lost its source')
+  // Ruling 21: the app could stat the file in one line, and doing so would prove nothing about who
+  // owns the fact. Quoting the served one is what makes the answer evidence.
+  assert.doesNotMatch(shim, /statSync|node:fs/, 'the shim started deriving the fact it is meant to quote')
+})
+
+test('absent stays absent — a missing mtime never becomes a lastPlayed of 1970', () => {
+  const shim = code('../src/main/dataServer/serveShim.ts')
+  assert.match(shim, /if \(mtime === null\) return state/)
+  const host = code('../src/main/dataServer/engineClientHost.ts')
+  assert.match(host, /engineLogMtime = health\.logMtimeMs \?\? null/, 'the health read stopped recording it')
+  // It dies with the turn, exactly as `engineLiveOn` does: an mtime measured on a world somebody has
+  // since replaced is a fact about a different file.
+  const bump = /function bumpGen\(\): number \{([\s\S]*?)\n\}/.exec(host)
+  assert.ok(bump, 'bumpGen is gone')
+  assert.match(bump[1], /engineLogMtime = null/, 'the served mtime outlives the turn that measured it')
+})
+
+test('ONLY the character module is grafted, and only that one field', () => {
+  const shim = code('../src/main/dataServer/serveShim.ts')
+  assert.match(shim, /const CHARACTER_MODULE = 'character'/)
+  assert.match(shim, /moduleId === CHARACTER_MODULE \? graftLastPlayed\(r\.state\) : r\.state/)
+  const graft = /function graftLastPlayed\(state: unknown\): unknown \{([\s\S]*?)\n\}/.exec(shim)
+  assert.ok(graft, 'graftLastPlayed is gone')
+  // A shim that rewrote any other served field would manufacture agreement, which is the opposite
+  // of what an instrument is for.
+  assert.equal((graft[1].match(/lastPlayed/g) ?? []).length, 1)
+})
+
+test('the harness seam projects what the SHIM would serve, not a second spelling of it', () => {
+  // A spec comparing the two arms has to be comparing the answer the product would have been given,
+  // graft included; two projections would let the e2e pin a code path nothing ships.
+  const shim = code('../src/main/dataServer/serveShim.ts')
+  assert.equal((shim.match(/projectModule\(moduleId, r\)/g) ?? []).length, 2)
+})
+
+test('the served snapshot SAYS it was served, and the app’s own arm never does', () => {
+  const shim = code('../src/main/dataServer/serveShim.ts')
+  assert.match(shim, /return \{ seq: r\.seq, state, served: true \}/)
+  const world = code('../src/main/ipc/world.ts')
+  assert.doesNotMatch(world, /served/, 'the app’s own arm started claiming it was served')
+})

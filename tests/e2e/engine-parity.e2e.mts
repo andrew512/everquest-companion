@@ -60,6 +60,16 @@
  *     served answer and the TS fold stops publishing its app-pushed copy — a later ticket in the
  *     cutover ledger, not this one. Until then the app's fold carries a field the engine's cannot.
  *
+ *     JOS-493 CLOSED THE PRODUCT'S HALF OF IT AND THIS ROW STILL STANDS, which is worth stating
+ *     because the two look like the same claim and are not. The compat shim now GRAFTS the served
+ *     `logMtimeMs` onto the character snapshot it hands the app (`serveShim.ts graftLastPlayed`), so
+ *     a picker running under `EQC_ENGINE_SERVE=1` is no longer handed a ref with the field missing —
+ *     `engine-shim.e2e.mts` claim 5 pins that end to end, through `window.eq`. THIS spec's probe has
+ *     no shim in it: `engineClientHost.askOne` asks the engine directly and compares the RAW fold
+ *     states, which is exactly the surface ruling 18 requires to stay free of a filesystem fact. So
+ *     the row is not stale — it is measuring the thing that must not change, and it closes only when
+ *     the app's own fold stops publishing its copy.
+ *
  *   * `buffs` at `.active.length` — CLOSED by JOS-481 (owner ruling 22), and this spec now asserts
  *     agreement. The engine published 12 actives and the app 3; MEASURED on a bench fold of the same
  *     bytes, the TS fold publishes **12** before any tick and **3** after a single
@@ -270,6 +280,7 @@ async function main(): Promise<void> {
     note('LOG ONLY, by ruling: the probe writes one dev-log line and no product code reads a verdict')
     note('buffs AGREE closes JOS-479\'s wall-clock asymmetry: the engine ticks its own world now (ruling 22)')
     note('the surviving character divergence is the app still publishing its own copy of a fact the engine now SERVES (ruling 21) — it closes at the character-picker cutover')
+    note('…and the PRODUCT no longer sees it: JOS-493 grafts the served mtime onto the shim’s character answer (engine-shim.e2e.mts claim 5); the RAW fold this probe compares must stay free of it')
   }
   reportRun()
 }
