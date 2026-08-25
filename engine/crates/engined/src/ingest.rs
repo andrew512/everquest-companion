@@ -254,12 +254,21 @@ pub trait EventSink {
     /// `module.snapshot` uses for a world with no fold: the request was fine, there is simply
     /// nothing behind it.
     ///
-    /// `&self`, AND THE INSTANT IS THE SINK'S TO CHOOSE. Both halves matter. A snapshot is a read,
-    /// so it can be answered at the same boundaries [`EventSink::snapshot`] is answered at and a
-    /// mid-scan answer is a real prefix state. And the instant is not a parameter because the
-    /// caller — a connection thread — is the one party that cannot know it: whether this fold has
-    /// reached its tail decides whether `now` is a wall clock or the log's own last stamp, and only
-    /// the thread holding the fold knows which.
+    /// `&self`, AND THE INSTANT IS THE SINK'S TO CHOOSE. Both halves matter. It is answered at the
+    /// same boundaries [`EventSink::snapshot`] is answered at — on the ingest thread, between events,
+    /// never inside one — so a mid-scan answer is a real prefix state. And the instant is not a
+    /// parameter because the caller — a connection thread — is the one party that cannot know it:
+    /// whether this fold has reached its tail decides whether `now` is a wall clock or the log's own
+    /// last stamp, and only the thread holding the fold knows which.
+    ///
+    /// **`&self` IS NOT `NOTHING MOVED`, ONCE THE TAIL IS LIVE** (JOS-488). The combat engine's own
+    /// snapshot AGES ITS MODEL at the instant it is taken — the charm sweep, the ally-bind expiry,
+    /// the pet nudge and deferred encounter closure — exactly as `engine.ts` does, so a live answer
+    /// can close a fight that ended while the log was quiet. The engine owns that mutation behind a
+    /// cell of its own rather than pushing `&mut` up through the view layer's `Rows` seam; see
+    /// `fold::combat::CombatEngine`'s `st` field for the argument, and [`answer_asks`] for what it
+    /// means at this door. While the scan is running the sweeps are unreachable, which is what leaves
+    /// the historical path a pure function of its bytes.
     fn combat_snapshot(&self, _opts: &CombatOpts) -> Option<CombatSnapshot> {
         None
     }
@@ -1274,12 +1283,21 @@ fn nap(
 /// must never stall it. A send that fails is an asker that gave up (its deadline passed, or its
 /// connection closed) and is dropped without comment — there is nobody left to tell.
 ///
-/// EVERY ARM IS A READ. A module snapshot, a combat snapshot, a fight search and an own-loot read
-/// all take `&self` on the sink, and a perf snapshot peeks the meter, so nothing this function does
-/// can advance the fold or change what the next frame reports — which is what makes it safe to call
-/// at every boundary, including inside the nap. That is a property of the `Ask` enum rather than of
-/// this loop: a new arm that needed `&mut` would not compile here, and would belong on the define
-/// door instead.
+/// EVERY ARM IS A READ OF THE FOLD. A module snapshot, a combat snapshot, a fight search and an
+/// own-loot read all take `&self` on the sink, and a perf snapshot peeks the meter, so no arm here
+/// folds an event, applies a define or moves the ingest's own counters — which is what makes it safe
+/// to call at every boundary, including inside the nap. That is a property of the `Ask` enum rather
+/// than of this loop: a new arm that needed `&mut` would not compile here, and would belong on the
+/// define door instead.
+///
+/// …WITH ONE STATED EXCEPTION, AND IT IS THE COMBAT ENGINE AGEING ITSELF (JOS-488). `snapshot(now)`
+/// over there is a MUTATING READ once the tail is live: it sweeps the charm and ally binds and the
+/// pet nudge, and it evaluates deferred encounter closure, all at the instant asked for — so a live
+/// combat answer can finalize the open fight, and the next one sees it. That is the ported behaviour
+/// and not a leak: it advances only what TIME advances, it is idempotent in `now`, and every event
+/// the fold has read has already been folded before this function is reached. WHILE THE SCAN IS
+/// RUNNING IT CANNOT HAPPEN AT ALL — the gate is `hydrating`, the scan never leaves it, and that is
+/// what keeps a mid-fold answer a real prefix state (ruling 18 law 1).
 fn answer_asks(answers: &Receiver<Ask>, sink: &dyn EventSink, serving: &Serving) {
     while let Ok(ask) = answers.try_recv() {
         match ask {

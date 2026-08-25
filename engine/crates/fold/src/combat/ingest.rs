@@ -52,6 +52,7 @@ use crate::combat::procrouting::{
 };
 use crate::combat::procwindows::WindowFold;
 use crate::combat::routing::{self, Attribution, HealLine, MissLine, MitigationLine, ResistLine};
+use crate::combat::spellfacts::is_pet_summon_spell;
 use crate::combat::state::EngineState;
 use crate::event::Event;
 use eqlog::names::id_key;
@@ -65,6 +66,11 @@ pub fn ingest_event(st: &mut EngineState, ev: &Event) {
     // The ally binds age out on the same log clock: a charm cannot outlive its own spell, so the
     // hold is a certainty rather than a heuristic and needs no evidence to fire.
     st.sweep_ally(ev.ts());
+    // …and the pet nudge times out on it too, from here and from the snapshot, for the reason the
+    // other two do: whichever observes the deadline first should be the one that acts. UNGATED by
+    // `hydrating`, exactly as the TS leaves it — a model that can only be ARMED live is a model a
+    // historical fold sweeps for nothing, and stating the sweep here keeps the two callers identical.
+    st.pet_nudge.sweep(ev.ts());
     // …and the BLADE COATS are consulted against the class model on the same log clock. Deliberately
     // NOT in the snapshot beside the two above — those are display timers, this one MUTATES the fold,
     // and a fold that advanced because the UI polled would make a replay disagree with the live tail.
@@ -298,6 +304,11 @@ fn bind_pet_claim(st: &mut EngineState, name: &str, ts: i64) {
     st.note_pet(&key);
     // The claim is also the corroboration a provisional charm bind was waiting for.
     st.charm.note_pet_evidence(&key);
+    // …and it is the ANSWER to the JOS-258 nudge, whichever of the three routes produced it. A bound
+    // pet needs no coaching, so the nudge dismisses EARLY here — and one that arrives inside the
+    // grace window means it was never drawn at all. All three routes go through this function, which
+    // is the whole reason there is one place to say this.
+    st.pet_nudge.note_bound();
     // SINGLE-PET SUCCESSION: claiming a NEW summoned pet retires the previous one inside the world
     // model, and the name index has to follow it out or routing would go on admitting the retired
     // pet's swings as yours. The world model decides; the index and the charm model are told.
@@ -749,9 +760,20 @@ fn ingest_cast(st: &mut EngineState, ev: &Event) -> bool {
                 st.recent_casts.note(spell, ev.ts());
                 st.charm.note_cast_begin(spell, ev.ts());
             }
-            // …and the pet-summon NUDGE is the third reader of the same exclusivity — LIVE ONLY, and
-            // a historical fold is never live (state.rs fact 1), so its arm can never be set. That is
-            // why the whole model is absent rather than skipped.
+            // …AND THE THIRD READER OF THE SAME EXCLUSIVITY (JOS-258). A pet SUMMON is knowable from
+            // this line and only from this line — the summon itself prints nothing the log can
+            // attribute — so a summon with no bind behind it is the one moment the meter can honestly
+            // say it is about to miss a pet. LIVE ONLY: a summon from four hours ago is not news, and
+            // the whole point of `hydrating` is that a replayed moment must not be dressed up as the
+            // present. A historical fold therefore never arms it, which is why every golden's
+            // `petNudge` is absent and why the oracle cannot see this line at all.
+            if !st.hydrating {
+                if let Some(spell) = ev.str("spell") {
+                    if is_pet_summon_spell(spell) {
+                        st.pet_nudge.note_summon_cast(ev.ts());
+                    }
+                }
+            }
             true
         }
         "castFizzle" | "castInterrupted" => {
@@ -760,6 +782,12 @@ fn ingest_cast(st: &mut EngineState, ev: &Event) -> bool {
             if let Some(spell) = ev.str("spell") {
                 st.recent_casts.forget(spell);
                 st.charm.note_cast_failed(spell, ev.ts());
+                // The same argument, for the nudge: a summon that never resolved summoned nothing,
+                // and a nudge about a pet that does not exist is the staleness the ruling forbids.
+                // UNGATED, like the TS: an arm can only exist if something armed it live.
+                if is_pet_summon_spell(spell) {
+                    st.pet_nudge.note_cast_failed();
+                }
             }
             true
         }

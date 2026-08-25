@@ -53,6 +53,7 @@ import {
   type ResetMessage,
   type ViewDescriptor
 } from './protocol.generated'
+import { createBroadcasts, deliver, listen, type Broadcasts } from './broadcasts'
 import { TransportError, type Transport } from './transport'
 import { EngineError, RESULT_GUARDS, type ParamsFor, type RequestOp, type ResultFor } from './ops'
 import { LOADING, applyDiff, type ViewState } from './viewWindow'
@@ -180,10 +181,9 @@ interface ClientState {
   readonly subs: Map<RequestId, LiveSubscription>
   readonly stateListeners: Set<(state: ConnectionState) => void>
   readonly progressListeners: Set<(progress: FoldProgress) => void>
-  readonly fireListeners: Set<(fire: FireMessage) => void>
-  readonly conCardListeners: Set<(card: ConCardMessage) => void>
-  readonly moduleChangedListeners: Set<(changed: ModuleChangedMessage) => void>
-  readonly missListeners: Set<(miss: KnowledgeMissMessage) => void>
+  /** The four connection-wide fan-outs, held together because they are one family — see
+   *  `broadcasts.ts` for what makes them one. */
+  readonly broadcasts: Broadcasts
 }
 
 function setConnectionState(s: ClientState, next: ConnectionState): void {
@@ -495,23 +495,12 @@ function receive(s: ClientState, message: EngineMessage): void {
   else if (message.kind === 'error') onErrorReply(s, message)
   else if (message.kind === 'epoch') onEpochMessage(s, message)
   else if (message.kind === 'reset') onReset(s, message)
-  // A FIRE TOUCHES NO WINDOW AND NO EPOCH. It carries neither, deliberately — see `onFire` — so it
-  // is handed straight to the listeners without passing through `noteEpoch`, which is the one place
-  // this client is entitled to drop state.
-  else if (message.kind === 'fire') for (const listener of s.fireListeners) listener(message)
-  // A CON CARD IS A FIRE'S TWIN in everything this function cares about: no id, no epoch, nothing
-  // to reconcile. A MODULE CHANGE is one step different — it names state a client may be holding —
-  // but it is still not WINDOW state, so it does not pass through `noteEpoch` either: what a client
-  // does about it is ask `module.snapshot`, and that answer carries its own generation.
-  else if (message.kind === 'conCard') for (const listener of s.conCardListeners) listener(message)
-  else if (message.kind === 'moduleChanged')
-    for (const listener of s.moduleChangedListeners) listener(message)
-  // …AND NEITHER DOES A KNOWLEDGE MISS, for the same two reasons and one more: it names no window,
-  // it carries no generation, and it is a statement about the process's CORPUS — committed data
-  // plus an overlay that survives an attach — which outlives every epoch this client will see.
-  else if (message.kind === 'knowledgeMiss')
-    for (const listener of s.missListeners) listener(message)
-  else onDiff(s, message)
+  // THE FOUR CONNECTION-WIDE FRAMES, IN ONE BRANCH. None of them carries an id or an epoch, so none
+  // of them passes through `noteEpoch` — the one place this client is entitled to drop state — and
+  // `broadcasts.ts` is where that property became structural rather than repeated four times.
+  else if (deliver(s.broadcasts, message)) {
+    // Handled there. The predicate is what narrows the remaining frame to a diff below.
+  } else onDiff(s, message)
 }
 
 export function createEngineClient(options: EngineClientOptions): EngineClient {
@@ -527,10 +516,7 @@ export function createEngineClient(options: EngineClientOptions): EngineClient {
     subs: new Map(),
     stateListeners: new Set(),
     progressListeners: new Set(),
-    fireListeners: new Set(),
-    conCardListeners: new Set(),
-    moduleChangedListeners: new Set(),
-    missListeners: new Set()
+    broadcasts: createBroadcasts()
   }
   return {
     get state() {
@@ -557,30 +543,13 @@ export function createEngineClient(options: EngineClientOptions): EngineClient {
         s.progressListeners.delete(listener)
       }
     },
-    onFire: (listener): (() => void) => {
-      s.fireListeners.add(listener)
-      return (): void => {
-        s.fireListeners.delete(listener)
-      }
-    },
-    onConCard: (listener): (() => void) => {
-      s.conCardListeners.add(listener)
-      return (): void => {
-        s.conCardListeners.delete(listener)
-      }
-    },
-    onModuleChanged: (listener): (() => void) => {
-      s.moduleChangedListeners.add(listener)
-      return (): void => {
-        s.moduleChangedListeners.delete(listener)
-      }
-    },
-    onKnowledgeMiss: (listener): (() => void) => {
-      s.missListeners.add(listener)
-      return (): void => {
-        s.missListeners.delete(listener)
-      }
-    },
+    // FOUR ONE-LINERS OVER ONE HELPER. What these methods ever had in common was the
+    // add-and-return-a-delete, and four copies of it were four chances to write a listener that
+    // could not be removed.
+    onFire: (listener): (() => void) => listen(s.broadcasts.fire, listener),
+    onConCard: (listener): (() => void) => listen(s.broadcasts.conCard, listener),
+    onModuleChanged: (listener): (() => void) => listen(s.broadcasts.moduleChanged, listener),
+    onKnowledgeMiss: (listener): (() => void) => listen(s.broadcasts.knowledgeMiss, listener),
     close: (): void => {
       if (s.state === 'closed') return
       setConnectionState(s, 'closed')

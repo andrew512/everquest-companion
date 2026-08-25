@@ -368,6 +368,7 @@ light, app connected with the parity probe, packaging signed). Remaining to buil
 3. **The remaining view sources** — every list in the product. ~~`combat.live`~~ **DONE** (JOS-485)
    and it is where update-op coverage arrived: the meter's rows edit rather than append, so the
    diff protocol's third op is proven over a socket at last. The two combat OPS landed with it —
+<<<<<<< HEAD
    `combat.snapshot` (verdict 1) and `combat.searchFights`. ONE NAMED GAP for the meter-cutover
    ticket: `hydrating` is `true` until the snapshot-time sweep block ports (JOS-488, in flight).
    ~~the Knowledge surface~~ **KNOWLEDGE DONE ENGINE-SIDE** (JOS-486): items/mobs/quests/posky
@@ -380,6 +381,19 @@ light, app connected with the parity probe, packaging signed). Remaining to buil
    classes/rank lineage/metrics — boundary verdict 7's client table + joins). Still open:
    encounters/drilldown, the INCOMING meter, buff+timer rows (the overlays), respawn, progression,
    kills (JOS-487, in flight).
+=======
+   `combat.snapshot` (verdict 1) and `combat.searchFights`. ~~ONE NAMED GAP: `hydrating` is `true`
+   in every answer this build gives~~ **CLOSED** (JOS-488): the snapshot-time sweep block — charm
+   sweep, ally expiry, pet nudge, deferred encounter closure — is ported, `set_live()` is wired to
+   the go-live beat, and a live meter now closes a fight the log stopped talking about. The oracle
+   stayed green without special-casing because the parity path has no tail to hand over to and so
+   cannot enter the block. THE SMALLER GAP THAT REPLACES IT: the classification ring is still
+   unported, so `recent` is `[]` in a live answer where the app publishes classified lines — nothing
+   on the meter's rows reads it. Still open: encounters/drilldown, the INCOMING meter,
+   buff+timer rows (the overlays), respawn, progression, kills, and the Knowledge surface
+   (items/spells/mobs/quests move engine-side — deletes ~12 MB from main's heap and the
+   renderer-bundled corpora).
+>>>>>>> worktree-agent-a05653fec2aa35229
 4. **Streams**: `alerts.fires` DONE as a stream (JOS-482; the AUDIO cutover — app plays from the
    frame and the TS evaluator dies — is its own ticket, owning the two named gaps above);
    `world.conCard` fully resolved engine-side still open.
