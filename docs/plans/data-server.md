@@ -147,7 +147,7 @@ re-query** (reconnect-after-crash ≡ character switch); **(4)** rows are render
 // subscribe — every request is {id, op, params}; the reply restates nothing (the op of the
 // request whose id it names decides the result shape)
 → {"id":7,"op":"view.subscribe","params":{"source":"loot.ledger",
-   "sort":[["at","desc"]],"window":{"offset":0,"limit":50}}}
+   "sort":[["at","desc"],["seq","desc"]],"window":{"offset":0,"limit":50}}}
 ← {"kind":"reply","id":7,"ok":true,"result":{"subscription":7,"subscribed":true}}
 ← {"kind":"reset","id":7,"epoch":3,"total":1834,"rows":[{"key":"loot:9412","cells":{...}}, ...]}
 // live diff (a kill drops loot into a newest-first 50-row window). Rows are {key, cells}: the
@@ -266,7 +266,10 @@ From the connect-and-serve wave (JOS-478/479/480):
   renders as prose) — every new source must declare both sets, and the split deserves a schema
   home eventually.
 - **Every sort ends in the source's tiebreak** so order is total — EQ stamps to the second, and a
-  shuffled window is diff churn.
+  shuffled window is diff churn. COROLLARY (JOS-484, caught by the DOM oracle's first run): a
+  descriptor that wants newest-first must say so in BOTH terms — `[["at","desc"],["seq","desc"]]` —
+  because the source tiebreak is ASC and a one-term `at desc` orders each same-second corpse
+  group backwards. The worked example above is corrected.
 - **Live-mode facts the equivalence oracle cannot see**: the app's wall-clock heartbeat and the
   mtime-in-fold (`lastPlayed`) surfaced only when the REAL client compared worlds — the two folds
   agree exactly; the machinery around them differed. Owner sheet items; the probe stays a neutral
