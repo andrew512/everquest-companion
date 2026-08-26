@@ -47,6 +47,8 @@ decision a test can watch being made rather than an absence nobody can observe.
 | `engineClientHost.ts` | **The app as a CLIENT** (JOS-479): connect, attach, re-attach, and subscribe to the four connection-wide streams (fires, con cards, cursors, knowledge misses). It answers `enginePerfSnapshot()` for the performance panel and exposes the main-side request bridge, `engineServeReadiness()` + `engineRequest(op, params)`. The parity probe left with the second world (JOS-499). It still owns no channel, and no client handle escapes it. |
 | `readShim.ts` | **The compat shim's pure half** (JOS-489): which world answers a read, and what happens when the engine cannot. Readiness, a bounded round trip, a projection that says whether a reply was an ANSWER, and the coalesced fallback tally. No app imports, so the whole matrix is a unit test. |
 | `serveShim.ts` | The shim, wired: the channels' projections, the `SnapshotOpts` translation, the `lastPlayed` graft and the served mob-level op. Its gate and its parity seam left with the second world (JOS-499). |
+| `serveLogs.ts` | **Log discovery, served** (JOS-498, ruling 21 / sheet 1a): `logs.list`, on a SECOND shim instance with a weaker readiness — see "Two readinesses" below. Also the list of callers that deliberately keep the local read, each with its reason. |
+| `logsRows.ts` | What makes a `logs.list` reply an ANSWER: the directory echo, the one verdict that falls back, the field-by-field copy onto `CharacterRef`. Types-only imports, so the matrix is a unit test (`readShim.ts`'s split, applied to one channel). |
 | `knowledgeMissFetch.ts` | **The app-side half of a wiki miss** (JOS-499, boundary verdict 5): the engine has no network, so it announces a name it could not answer and this leaf runs `lookupItem`/`lookupMob` on the queue the app has always owned and pushes the record back as `knowledge.define`. Electron-free; its capabilities are injected. |
 | `byteRelay.ts` | **The pump** (JOS-484): chunks between a socket and a MessagePort. Electron-free, so every teardown path is a unit test. |
 | `rendererBroker.ts` | **The brokerage** (JOS-484): the `engine:connect` handler, the port handover, and the live-connection lifecycle. |
@@ -74,6 +76,7 @@ exists. The renderer never speaks to the engine; brokering a client into a windo
            engineClientHost.onEngineReady
              ├─ createEngineClient({ token })      one client per LAUNCH — see below
              ├─ connectToEngine(port) → NDJSON transport → client.attach(transport)
+             ├─ logs.setDir({ dir: eqLogsDir() })  BEFORE attachAndProbe — see below
              └─ session.attach({ logPath })        the log THIS PROCESS IS TAILING
                   │
                   ▼
@@ -89,6 +92,15 @@ An attach is a whole re-fold, so it is sent only when the FILE changes. The flow
 — and a second attach there would make the engine read the log twice for nothing. It is not a
 freshness risk: the engine folded the same file from byte zero and has been tailing it since, which
 is the same lossless seam as the app's own scan→tail handoff.
+
+**Why `logs.setDir` sits above the attach rather than beside the defines** (JOS-498). The five
+`*.define` pushes are made from `attachAndProbe`, which RETURNS EARLY when this app has no character
+attached — "the engine is left idle". That early return is exactly the launch a served character list
+matters most on: a fresh install has nothing to attach to and a picker that has to draw one anyway.
+So the directory is pushed from `openConnection`, before anything can decide there is nothing to do.
+It is also the one push that is not a fold input — the five change what folding a log produces and
+must precede a fold; a directory changes no fold at all, so its placement buys reachability rather
+than correctness.
 
 **Where the log path comes from.** `session.ts` already exports `getActiveCharacter()`, and
 `sendWorldRebuilt` already carries the `CharacterRef`. Those two are the whole hook: *no line of
@@ -342,6 +354,40 @@ cuts both ways**, which is what makes an empty table a claim rather than a silen
 
 The shim never rewrote a served field to reach that state, and it should not: a shim that
 manufactured agreement would hide the gap being tracked.
+
+## Two readinesses, and which question each answers (JOS-498)
+
+`engineServeReadiness()` asks FOUR things — is there a client, is the connection ready, are the two
+processes on the SAME LOG, has that log's fold gone live — because every channel it guards reads a
+FOLD. The last two are questions about a log, and a read that skipped them would draw one character's
+rows under another's name.
+
+`engineConnectedReadiness()` asks only the first two, and the weakness is the point rather than a
+shortcut. `logs.list` NAMES NO LOG: it enumerates the directory the app pushed, it is answerable by a
+world that has attached to nothing whatsoever, and the launch it matters most on is precisely the one
+where nothing is attached — a fresh install has characters to choose between before there is anything
+to fold. Asking the four-part question there would refuse every answer the op exists to give, on
+grounds unrelated to it.
+
+No new `FallbackReason` was invented for this: the set is the same and the second function simply
+stops asking after two, because a reason nobody can act on differently is not worth a member. The two
+shims keep SEPARATE tallies on purpose — "the engine could not answer a fold read" and "the engine
+could not answer a folder question" are different sentences to a developer reading the dev log.
+
+**And the character list has a real degrade arm, unlike every other served read.** Since JOS-499 an
+unserved channel answers with an EMPTY SHAPE, because the app-side fold it used to fall back to is
+deleted. `listCharacters()` was not: launch-time character choice has to work before any engine
+exists, and on a cold launch it always does — `index.ts` calls `startTailing()` before
+`startEngineSupervisor()`, and the supervisor is asynchronous end to end, so the FIRST character
+choice of every launch is answered locally by construction. That is stated at the call site too, so
+nobody reads the first fallback of a launch as a defect. Every later resolution (the picker's rows on
+mount, a re-list after a settings change, the idle rescan that follows `/log on`) is served.
+
+Three callers deliberately keep the local read and `serveLogs.ts` names each with its reason:
+`character:set`'s path→ref lookup (the switch hot path, already guarded by `parseLogName`),
+`switchNudge.ts`'s poll (a question about whether a sibling file is GROWING, not about a picker), and
+the telemetry setup snapshot (a diagnostic inside `safely()` that must not be able to block on a
+socket).
 
 ## The client spell table: NO BULK FRAME, EVER (JOS-496, integrator ruling 2026-08-25)
 
