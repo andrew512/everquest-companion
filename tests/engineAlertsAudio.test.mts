@@ -20,6 +20,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { armVerdict, fireToFiring } from '../src/main/dataServer/alertsAudioRules'
 import type { FireMessage } from '../src/shared/dataServer/protocol.generated'
 import type { AlertDef } from '../src/shared/types'
@@ -134,4 +135,64 @@ test('…and when even the sound cannot separate them, the FIRST is played rathe
 test('MATCHING IS EXACT: a label that differs by case is a different alert', () => {
   const defs = [def({ id: 'charm-break', name: 'Charm break' })]
   assert.equal(fireToFiring(fire({ rule: 'charm break' }), defs), null)
+})
+
+// ---- 3. WHERE the swap is thrown (JOS-496) ----------------------------------------------
+//
+// A THIRD DECISION, added because getting it wrong shipped a silence. The two above ask WHETHER the
+// engine may own the sound and WHAT a fire means; this asks WHEN the handoff happens, and the answer
+// has to be an edge that means "there is an engine" rather than a flag that means "nobody asked for
+// it to be gone".
+//
+// THE DEFECT, for whoever reads this next. `armEngineAlerts()` was called from
+// `startEngineSupervisor()`, before any binary had been probed for. Its two flags are DEFAULT-ON
+// since JOS-495, so a dev checkout that had never run `cargo build` armed — and arming calls
+// `alertsModule.setEngineOwnsAudio(true)`, which makes this process's own `publish` a no-op. No
+// binary, no client, no `fire` frame, ever: the app silenced its own evaluator in favour of an
+// engine that did not exist and played NO ALERTS AT ALL until quit. The same state is reachable in a
+// packaged build whose engine fails to spawn or sits in the crash-loop backoff.
+//
+// Source pins, in `serveDeltaArm.test.mts`' technique (comments stripped first — this repo explains
+// itself in prose that would otherwise satisfy its own greps), because every module on this path
+// reaches Electron. The BEHAVIOURAL half is `dataServerSupervisor.test.mts`: with no binary the
+// READY edge never fires in either direction, so nothing is ever handed over.
+
+const hostCode = (): string =>
+  readFileSync(new URL('../src/main/dataServer/engineHost.ts', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+
+test('THE SWAP HANGS OFF THE READY EDGE, never off process start', () => {
+  const host = hostCode()
+  // Both directions, in the one callback that knows whether an engine exists.
+  assert.match(host, /if \(info === null\) disarmEngineAlerts\(\)\s*\n\s*else armEngineAlerts\(\)/)
+  // …and the call that shipped the silence is gone from where it shipped it. The precise claim is
+  // about the STRAIGHT-LINE body of `startEngineSupervisor` — everything that runs before the
+  // supervisor object even exists, and therefore before any binary has been probed for. An arm
+  // anywhere in that stretch is the same bug wearing a new line number. (The `onReady` callback is
+  // lexically inside the same function and is exactly where the arm is SUPPOSED to be, which is why
+  // this reads the prefix rather than the whole body.)
+  const starter = /export function startEngineSupervisor\(\): void \{([\s\S]*?)supervisor \?\?= createEngineSupervisor\(/.exec(host)
+  assert.ok(starter, 'startEngineSupervisor is gone, or no longer builds the supervisor')
+  assert.doesNotMatch(starter[1], /armEngineAlerts\(\)/)
+  assert.doesNotMatch(starter[1], /disarmEngineAlerts\(\)/)
+})
+
+test('THE SWAP IS STILL NOT LATE: it completes before the client that hears a fire exists', () => {
+  // The original placement's one good reason, and it is preserved rather than traded away: a frame
+  // landing on an app that has not yet decided who owns the sound is one alert played by the wrong
+  // world. `onEngineReady` is what opens the connection carrying `onFire`, so the arm must precede
+  // it in the same callback.
+  const host = hostCode()
+  const arm = host.indexOf('else armEngineAlerts()')
+  const connect = host.indexOf('onEngineReady(info)')
+  assert.ok(arm > 0 && connect > 0)
+  assert.ok(arm < connect, 'the connection is opened before the sound has been handed over')
+})
+
+test('the teardown still gives the sound back, so a quit cannot leave a silenced app', () => {
+  const host = hostCode()
+  const stop = /export function stopEngineSupervisor\(\): void \{([\s\S]*?)\n\}/.exec(host)
+  assert.ok(stop, 'stopEngineSupervisor is gone')
+  assert.match(stop[1], /disarmEngineAlerts\(\)/)
 })

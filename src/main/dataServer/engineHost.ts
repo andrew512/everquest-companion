@@ -302,11 +302,27 @@ function dirOf(path: string): string {
  */
 export function startEngineSupervisor(): void {
   if (!engineEnabled()) return
-  // THE AUDIO CUTOVER'S SWITCH (JOS-491), THROWN BEFORE ANYTHING CAN FIRE. It reads its own second
-  // flag (`EQC_ENGINE_ALERTS=1`) and its own gate, so this call is unconditional and silent on the
-  // launches that want nothing; what it must NOT be is late, because arming after a fire has
-  // arrived would mean one alert played by the wrong world.
-  armEngineAlerts()
+  // THE AUDIO CUTOVER'S SWITCH IS NOT THROWN HERE ANY MORE (JOS-496 fixing JOS-491's placement) —
+  // it is thrown on the supervisor's READY edge below. The bug, measured by reading:
+  //
+  //   `armEngineAlerts()` used to be called on this line, BEFORE any binary had been probed for. It
+  //   gates on `EQC_ENGINE_SERVE` and `EQC_ENGINE_ALERTS`, both DEFAULT-ON since JOS-495, so on a
+  //   dev checkout that has never run `cargo build` it armed — and arming calls
+  //   `alertsModule.setEngineOwnsAudio(true)`, which makes this process's own `publish` a no-op. No
+  //   binary means no client, no client means no `fire` frame, ever. So the app silenced its own
+  //   evaluator in favour of an engine that did not exist and PLAYED NO ALERTS AT ALL until quit,
+  //   with `disarmEngineAlerts()` unreachable before `stopEngineSupervisor()`.
+  //
+  // It contradicted this file's own header, which promises a cargo-less checkout "exactly the app it
+  // got before this ticket — TypeScript fold, TypeScript reads, TypeScript alerts". The same state
+  // is reachable in a packaged build whose engine fails to spawn or enters the crash-loop backoff.
+  //
+  // THE FLAG WAS NEVER THE RIGHT QUESTION. "Did anybody ask for the engine to be gone" is not "is
+  // there an engine", and every publisher handed off on the first answer goes silent when the second
+  // is no. The con card had the identical defect in this same ticket (`conCard.ts
+  // registerConCardIpc`); this is the third instance of the shape and the only one that was already
+  // shipping.
+  //
   // ARMED BEFORE THE SUPERVISOR CAN REACH READY. `installEngineClient` only registers the
   // world-rebuilt observer — it opens no socket — but the TypeScript fold can land at any moment
   // and a rebuild that arrived before the observer existed would be a rebuild the client never
@@ -345,6 +361,32 @@ export function startEngineSupervisor(): void {
     // waits on neither.
     onReady: (info) => {
       noteEngineLaunch(info)
+      // THE SOUND FOLLOWS THE LAUNCH (JOS-496). This is the edge that means "there IS an engine and
+      // a round trip has proven it" — not a process that started, and emphatically not a flag — so
+      // it is the earliest moment the handoff can be made honestly. `null` is the same edge in the
+      // other direction and gives the sound straight back, which is what makes a crash-loop, a
+      // failed spawn and a wedged engine all end in an app that still plays its own alerts.
+      //
+      // STILL BEFORE ANYTHING CAN FIRE, which was the original placement's one good reason: the
+      // client that will hear a `fire` frame is opened by `onEngineReady` on the line below, so the
+      // swap is complete before a frame can exist. That is the whole of what "must not be late"
+      // needed, and it never needed to be this early.
+      //
+      // IT IS STILL A LAUNCH-SHAPED EDGE, and that matters for `alertsAudio.ts`'s own argument that
+      // the verdict is taken ONCE rather than re-asked mid-session ("a gate that re-opened
+      // mid-session would mean the app could start playing from the engine halfway through a
+      // raid"). A respawn IS a launch (contract rule 5), so arming per launch keeps that property;
+      // arming on, say, the engine's fold going live would not.
+      //
+      // THE RESIDUAL, NAMED: between READY and the engine's own fold going live, this process's
+      // evaluator is silent and the engine's has not reached the tail. A live line in that window
+      // fires in neither world — the engine meets it during its historical catch-up, where it is
+      // not live and does not fire. That window is bounded by the fold and is STRICTLY SMALLER than
+      // the one shipping today (which began at process start); closing it entirely means arming on
+      // go-live, which trades this gap for the mid-session re-opening the file argues against. Left
+      // as an owner call rather than decided here.
+      if (info === null) disarmEngineAlerts()
+      else armEngineAlerts()
       onEngineReady(info)
     }
   })

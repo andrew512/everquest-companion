@@ -90,10 +90,20 @@ function note(line: string): void {
 }
 
 /**
- * ARM THE CUTOVER, OR SAY WHY NOT. Called once per launch from `engineHost.ts`, inside its
- * `EQC_ENGINE` guard and before the supervisor can reach READY — so the swap is in place before any
- * fire can arrive, and there is no interval in which a frame lands on an app that has not yet
- * decided who owns the sound.
+ * ARM THE CUTOVER, OR SAY WHY NOT. Called from `engineHost.ts` on the supervisor's READY edge —
+ * once per ENGINE LAUNCH, which since a respawn is a launch (contract rule 5) is the same "once"
+ * this always meant.
+ *
+ * THAT EDGE, AND NOT PROCESS START, AND THE DIFFERENCE WAS A SHIPPED SILENCE (JOS-496). This used
+ * to be called from `startEngineSupervisor()` before any binary had been probed for. Both flags it
+ * reads are default-ON since JOS-495, so on a checkout with no `cargo build` it armed, silenced this
+ * process's evaluator via `setEngineOwnsAudio(true)`, and then waited forever for a fire from an
+ * engine that did not exist — no alerts at all, until quit. READY means a proven round trip to a
+ * real process, which is the only honest answer to "is there an engine to hand the sound to".
+ *
+ * IT IS STILL NOT LATE, which was the original placement's one good reason: `onEngineReady` opens
+ * the connection that hears a `fire` on the line after this call, so the swap is complete before a
+ * frame can exist.
  *
  * IT READS THE STORE, not the module's compiled copy, because the store is what the engine was
  * handed (`appKnowledge.ts readDefine`): a gate asked about a different def set than the engine
@@ -108,8 +118,16 @@ export function armEngineAlerts(): void {
   alertsModule.setEngineOwnsAudio(true)
 }
 
-/** Give the sound back. Called from the supervisor teardown so a stopped engine cannot leave a
- *  silenced app behind — idempotent, and a no-op on a launch that never armed. */
+/**
+ * Give the sound back. Idempotent, and a no-op on a launch that never armed.
+ *
+ * TWO CALLERS, AND THE SECOND IS THE ONE THAT MATTERS (JOS-496). The supervisor TEARDOWN has always
+ * called it, so a deliberate quit cannot leave a silenced app behind. The READY edge now calls it
+ * too, with `null` — which is every way a launch can end that is not a quit: a spawn that threw, a
+ * bad announce, an announce timeout, a failed health probe, a crash entering the backoff. Each of
+ * those leaves the app with no engine for at least the backoff, and before this the evaluator stayed
+ * silenced through all of it.
+ */
 export function disarmEngineAlerts(): void {
   if (!armed) return
   armed = false

@@ -103,6 +103,40 @@ test('NO BINARY: one log line, no error, no child, no retry storm', () => {
   assert.ok(h.logs.some((l) => l.includes('no engine binary')))
 })
 
+test('NO BINARY: the READY edge never fires, which is what keeps the app’s own alerts audible', () => {
+  // THE SHIPPED SILENCE THIS PINS (JOS-496). `armEngineAlerts()` used to be called from
+  // `startEngineSupervisor()` before any binary was probed for. It gates on `EQC_ENGINE_SERVE` and
+  // `EQC_ENGINE_ALERTS`, both DEFAULT-ON since JOS-495, so a checkout with no `cargo build` armed —
+  // and arming makes this process's own `AlertsModule.publish` a no-op. No binary means no client
+  // means no `fire` frame, ever, so the app silenced its own evaluator in favour of an engine that
+  // did not exist and played NO ALERTS AT ALL until quit.
+  //
+  // The handoff now hangs off `onReady`, so what this asserts IS the fix's whole foundation: on a
+  // build with no engine the edge does not fire, in either direction, so nothing is ever handed
+  // over and the TypeScript evaluator keeps the sound it has always had.
+  const h = harness({ binary: null })
+  h.supervisor.start()
+  assert.deepEqual(h.readies, [], 'a build with no engine must never announce a launch to hand off to')
+  // …and it stays that way: absence is not retried, so there is no later edge either. An hour of
+  // clock proves it, because the thing being ruled out is a timer nobody armed.
+  h.clock.advance(3_600_000)
+  assert.deepEqual(h.readies, [])
+})
+
+test('A FAILED LAUNCH ANNOUNCES ITS LOSS, so a silenced app is always given its sound back', () => {
+  // The other half of the same fix. Every way a launch can end short of a quit — a bad announce
+  // here — reaches `onReady(null)`, which is where `disarmEngineAlerts()` now hangs. Before this,
+  // a crash-looping engine left the evaluator silenced through every backoff.
+  const h = harness()
+  h.supervisor.start()
+  const child = h.children[h.children.length - 1]
+  child.stdout.emit('this is not an announce\n')
+  assert.ok(
+    h.readies.includes(null),
+    'the loss edge must fire for a launch that never became ready, or nothing gives the sound back'
+  )
+})
+
 // ---- 2. the token ---------------------------------------------------------------------------
 
 test('THE TOKEN IS THE FIRST LINE ON STDIN, LF-terminated, and nothing else is written', () => {
