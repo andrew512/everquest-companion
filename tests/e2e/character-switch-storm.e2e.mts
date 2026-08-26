@@ -247,6 +247,23 @@ async function switchTo(page: Page, logPath: string): Promise<{ name: string; ms
     (n) => n !== '',
     { timeoutMs: 120_000 }
   )
+  // …AND THEN FOR THE ENGINE TO BE ANSWERING FOR THIS CHARACTER (JOS-499) — the same wait
+  // `character-switch.e2e.mts switchTo` grew, for the same measured reason: `character:set` no
+  // longer folds anything, so it returns in milliseconds while the ENGINE starts its fold, and
+  // every module read answers `null` until that lands. A kill line appended into that window is
+  // folded as HISTORY and correctly celebrates nothing. A non-null `kills` snapshot is exactly what
+  // `useBossKills` needs before it can build a status, so it is the honest readiness to wait on.
+  await settle(
+    () =>
+      page.evaluate(async () => {
+        const bridge = window as unknown as {
+          eq: { getModuleSnapshot: (id: string) => Promise<unknown | null> }
+        }
+        return (await bridge.eq.getModuleSnapshot('kills')) !== null
+      }),
+    (ready) => ready,
+    { timeoutMs: 120_000 }
+  )
   return { name, ms }
 }
 

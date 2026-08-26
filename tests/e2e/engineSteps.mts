@@ -215,13 +215,33 @@ export interface AppOutput {
  * Concatenating them is right for a substring reader and wrong for nothing here: no assertion in
  * this spec is about WHICH stream a line arrived on.
  */
+/**
+ * ONE TAP PER APP, SHARED (JOS-499) — and it is a fix rather than an optimisation.
+ *
+ * THE DEFECT IT CLOSES, measured: `launchOnFixture` now waits for the engine's go-live sentence
+ * before handing a launch back, and it does that by tapping the output. A spec that then called
+ * `tapOutput` itself got a SECOND, EMPTY accumulator — so the sentence it was waiting for had
+ * already gone past and could never be seen. `engine-alert-fires` failed exactly that way: "the app
+ * never reported the engine serving", on a launch that had reported it seconds earlier.
+ *
+ * SHARING IS ALSO THE MORE HONEST SEMANTIC. `said()` means "has this app ever said", and a tap
+ * attached later answering "no" for a line already printed was quietly wrong — the same
+ * attach-race `engine-boots.e2e.mts` documents at length for the READY line. `settleServing(out, n)`
+ * indexes into occurrences, so a shared buffer gives it the true count rather than a suffix.
+ *
+ * A `WeakMap` so a closed app's buffer is collectable, and the listeners are attached once.
+ */
+const TAPS = new WeakMap<ElectronApplication, AppOutput>()
+
 export function tapOutput(app: ElectronApplication): AppOutput {
+  const existing = TAPS.get(app)
+  if (existing) return existing
   const chunks: string[] = []
   const proc = app.process()
   proc.stdout?.on('data', (b: Buffer) => chunks.push(b.toString()))
   proc.stderr?.on('data', (b: Buffer) => chunks.push(b.toString()))
   const text = (): string => chunks.join('')
-  return {
+  const tap: AppOutput = {
     text,
     said: (needle) => text().includes(needle),
     ready: () => {
@@ -241,6 +261,8 @@ export function tapOutput(app: ElectronApplication): AppOutput {
       return out
     }
   }
+  TAPS.set(app, tap)
+  return tap
 }
 
 /**

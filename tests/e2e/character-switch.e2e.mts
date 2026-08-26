@@ -215,8 +215,8 @@ async function switchTo(page: Page, logPath: string): Promise<{ name: string; ms
     logPath
   )
   const ms = Date.now() - t0
-  // `character:set` resolves only after `tailCharacter` has replayed, re-tailed and pushed
-  // `log:character` — so what is left to wait for is the RENDERER catching up.
+  // `character:set` resolves once `tailCharacter` has re-pointed and pushed `log:character` — so
+  // what is left to wait for is the RENDERER catching up.
   const name = await settle(
     () =>
       page.evaluate(async () => {
@@ -227,6 +227,31 @@ async function switchTo(page: Page, logPath: string): Promise<{ name: string; ms
       }),
     (n) => n !== '',
     { timeoutMs: 60_000 }
+  )
+  // …AND THEN FOR THE ENGINE TO BE ANSWERING FOR THIS CHARACTER (JOS-499).
+  //
+  // `character:set` used to resolve only after this process had REPLAYED the new log, so a
+  // returning switch handed back a world that was already complete. It no longer folds anything:
+  // it re-points, forwards `session.attach`, and returns in milliseconds while the ENGINE starts
+  // its own fold. Until that fold goes live every module read answers `null`, which is the honest
+  // loading state — and a spec that appended a kill line into it was writing into a world that had
+  // not arrived, so the kill landed in the re-fold as HISTORY and correctly celebrated nothing.
+  // MEASURED: that is both remaining failures of this spec and four of the storm's.
+  //
+  // A NON-NULL `kills` SNAPSHOT IS THE READINESS, and it is the right question rather than a
+  // convenient one: it is exactly what `useBossKills` needs before it can build a status, so
+  // waiting for it means waiting for the thing the assertions depend on. No output tap is needed —
+  // the app answers it through its own bridge.
+  await settle(
+    () =>
+      page.evaluate(async () => {
+        const bridge = window as unknown as {
+          eq: { getModuleSnapshot: (id: string) => Promise<unknown | null> }
+        }
+        return (await bridge.eq.getModuleSnapshot('kills')) !== null
+      }),
+    (ready) => ready,
+    { timeoutMs: 120_000 }
   )
   return { name, ms }
 }
