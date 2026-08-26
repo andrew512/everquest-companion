@@ -78,6 +78,7 @@ export function useLevelUpToast(): void {
     const baseline = baselineRef.current
     baselineRef.current = newest
     if (baseline === null) return
+    // eslint-disable-next-line eqc/no-domain-munging -- JOS-459 cutover ledger item 3: no served view source answers this yet, so the renderer still derives LevelEvent. Becomes a view descriptor when the source lands.
     for (const ding of state.levels.filter((l) => l.ts > baseline).sort((a, b) => a.ts - b.ts)) {
       void fireLevelUpToast(ding, intervalsRef.current)
     }

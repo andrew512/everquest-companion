@@ -486,6 +486,22 @@ fn measure(log: &Path, patience: std::time::Duration) -> Measured {
 
 // ---- tier (a): CI -------------------------------------------------------------------------------
 
+/// A BUDGET IS A RELEASE MEASUREMENT, so a debug build takes the number and refuses to judge it.
+///
+/// MEASURED, and this is the mechanism working rather than a workaround: the first CI run of this
+/// suite went red in `cargo test --workspace` — which builds DEBUG — at **0.45 MB/s against a
+/// 1 MB/s floor**, and the dedicated release step never ran because the job had already failed.
+/// The floor did exactly what its own doc comment says it is for ("a debug build breaches this
+/// floor"); it simply fired in the wrong job.
+///
+/// So the profile is checked rather than assumed. The numbers are still PRINTED under debug, which
+/// is worth more than skipping silently: `cargo test --workspace` now reports what a debug fold
+/// costs, which is the comparison that makes the release number mean something — and it is the
+/// same ~17× gap that made `bosses-week` un-runnable before JOS-501 built the harness in release.
+fn release_build() -> bool {
+    !cfg!(debug_assertions)
+}
+
 #[test]
 fn the_synthetic_fold_stays_inside_its_ci_budget() {
     let corpus = synthesize(SYNTHETIC_TARGET_BYTES);
@@ -504,14 +520,35 @@ fn the_synthetic_fold_stays_inside_its_ci_budget() {
     );
 
     let staged = Staged::new("ci", &corpus);
-    let m = measure(&staged.log(), PATIENCE);
-    m.report("CI tier — synthetic corpus");
+    // A DEBUG FOLD IS SLOW ENOUGH THAT THE HARNESS'S OWN DEADLINE MATTERS: 8 MB at the measured
+    // 0.45 MB/s is ~18 s, which fits inside `PATIENCE` but leaves little room on a busy runner.
+    let m = measure(
+        &staged.log(),
+        if release_build() {
+            PATIENCE
+        } else {
+            G3_PATIENCE
+        },
+    );
+    m.report(if release_build() {
+        "CI tier — synthetic corpus"
+    } else {
+        "CI tier — synthetic corpus (DEBUG build: measured, not judged)"
+    });
 
     assert!(
         m.events > 100_000,
         "the corpus folded to only {} events; the budget would be measuring parsing failures",
         m.events
     );
+    // …and everything below this line is a RELEASE claim. See `release_build`.
+    if !release_build() {
+        println!(
+            "[budget]   note      a debug fold is ~17x slower than release; the floor below is not \
+             applied. Run `npm run budget:ci` for the real check."
+        );
+        return;
+    }
     assert!(
         m.rate() >= MIN_FOLD_BYTES_PER_SEC,
         "FOLD RATE BUDGET BREACHED: {:.2} MB/s, floor is {:.2} MB/s. This ceiling is set an order \

@@ -22,6 +22,7 @@ export function applyComboDelta(state: ComboSnap, delta: ComboDelta): ComboSnap 
   const byId = new Map(state.intervals.map((i) => [i.id, i]))
   for (const id of delta.removed) byId.delete(id)
   for (const interval of delta.changed) byId.set(interval.id, interval)
+  // eslint-disable-next-line eqc/no-domain-munging -- JOS-459 cutover ledger item 3: no served view source answers this yet, so the renderer still derives ComboInterval. Becomes a view descriptor when the source lands.
   const intervals = [...byId.values()].sort((a, b) => a.startTs - b.startTs)
   return { intervals, current: intervals.length > 0 ? intervals[intervals.length - 1] : null, ready: state.ready }
 }

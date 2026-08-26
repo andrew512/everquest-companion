@@ -548,6 +548,7 @@ export default function LevelingView({
   const stated = useStatedLevel(prog)
 
   const sortedLevels = useMemo(() => sortLevels(levels), [levels])
+  // eslint-disable-next-line eqc/no-domain-munging -- JOS-459 cutover ledger item 3: no served view source answers this yet, so the renderer still derives AAEvent. Becomes a view descriptor when the source lands.
   const sortedAAs = useMemo(() => [...aas].sort((a, b) => a.ts - b.ts), [aas])
 
   // CURRENT level is the level the log last STATED — the later of your last ding and your own
