@@ -95,6 +95,25 @@ parses, aggregates, compresses, and serves; the UI becomes a query/subscribe cli
     renderers subscribe to served views; the app keeps only OS surfaces (audio/speech playback,
     overlay windows, tray, presence, updater) per ruling 9. The app-side alert system reduces to
     "receive fire → make sound/show window".
+23. *(2026-08-25, decision sheet 1a)* **The APP names the log directory.** `logs.list` discovery:
+    the app pushes the directory path to the engine from its own settings (the store stays
+    persistence truth per verdict 3; the engine never reads a settings file, and a fresh install
+    has a list before any attach exists). The engine scans it and serves the list; launch-time
+    character choice becomes a served answer (ruling 21's direction, now concrete).
+24. *(2026-08-25, decision sheet 2a)* **The alert-arming window stays as shipped** — audio hands
+    over on the supervisor's READY edge; the bounded catch-up gap is accepted. Owner verbatim:
+    "we wont-be switching engines mid stride at all. i'm not releasing until this is done and
+    tested." The residual dissolves at the deletion release (no TS evaluator to arm from), and
+    go-live arming's mid-session ownership swap is rejected with it.
+25. *(2026-08-25, decision sheet 3a)* **Render-cell locale is fixed en-US.** Cutover-ledger item 9
+    closes. A pushed OS locale, if ever wanted, is a later additive attach field and a versioned
+    impure input per cache law 4 — not built now.
+26. *(2026-08-25, decision sheet 4a)* **The goldens outlive the TS fold as a one-release safety
+    net.** On the commit before the deletion lands, `oracle:record` re-baselines the six slices'
+    goldens (gitignored, machine-local); the slimmed engine-vs-goldens harness
+    (`oracle:rust-fold`, no TS arm) gates the deletion release and phase-4 stabilization, then
+    retires when CI budgets land. No Rust-side recorder is built unless the net is later made
+    permanent.
 
 ## The shape
 
@@ -408,7 +427,8 @@ light, app connected with the parity probe, packaging signed). Remaining to buil
    CPU/memory row, `perf.snapshot`, serve table, parity summary); `perf.budgets`/`perf.timeline`
    ops, CI budgets, and bug-report attachment still open.
 8. **The no-munging lint** (ruling 4) failing builds on renderer sort/filter over domain data.
-9. Open owner item: the render-cell LOCALE (dates/numbers) as pushed app knowledge vs fixed en-US.
+9. ~~Open owner item: the render-cell LOCALE (dates/numbers) as pushed app knowledge vs fixed
+   en-US~~ **SETTLED** (ruling 25): fixed en-US.
 
 **DELETED IN THE CUTOVER RELEASE** (ruling 12: once proven, move fully — one release):
 `src/main/modules/**` (registry, wiring, all twenty), `src/main/combat/**`, the TS parse path
