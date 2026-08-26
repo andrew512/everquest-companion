@@ -258,15 +258,22 @@ async function armCatchUp(launch: FixtureLaunch, page: Page): Promise<void> {
     wrote += launch.log.append(...new Array<string>(batch).fill(FILLER))
   }
   note(`staged ${String(wrote)} filler lines so the respawn has a real catch-up to show`)
+  // EVERY FUNCTION IN HERE IS AN ANONYMOUS ARGUMENT, and that is a constraint rather than a style.
+  // `page.evaluate` ships the function's SOURCE to the page, and this suite runs through tsx —
+  // esbuild's `keepNames` rewrites a function bound to a `const` into a `__name(fn, "fn")` call
+  // whose helper exists only in the module scope that was left behind. Measured on the first run of
+  // this step: `ReferenceError: __name is not defined`, from the page, with no other clue. A named
+  // helper would have read better and cannot be used; the observer's callback is inlined instead.
   await page.evaluate((sel) => {
     const store = window as unknown as { __eqcFoldBar?: string | null }
-    store.__eqcFoldBar = null
-    const look = (): void => {
+    const first = document.querySelector(sel)
+    store.__eqcFoldBar = first === null ? null : (first as HTMLElement).innerText
+    new MutationObserver(() => {
       const el = document.querySelector(sel)
-      if (el !== null && store.__eqcFoldBar === null) store.__eqcFoldBar = (el as HTMLElement).innerText
-    }
-    look()
-    new MutationObserver(look).observe(document.body, { childList: true, subtree: true })
+      if (el !== null && store.__eqcFoldBar === null) {
+        store.__eqcFoldBar = (el as HTMLElement).innerText
+      }
+    }).observe(document.body, { childList: true, subtree: true })
   }, PROGRESS)
 }
 
