@@ -575,6 +575,23 @@ interface EngineHealthSay {
   readonly logMtimeMs?: number
 }
 
+/**
+ * THE GO-LIVE SENTENCE, built out of line so `waitForFold` keeps its own shape.
+ *
+ * The optional clauses are appended rather than interpolated because both are genuinely absent on a
+ * fresh attach — an engine that has folded nothing has no event count and no byte mark — and an
+ * empty interpolation would print a dangling comma rather than saying nothing.
+ */
+function servingLine(logPath: string | null, health: EngineHealthSay): string {
+  const parts = [`epoch ${String(health.epoch)}`]
+  if (health.events !== undefined) parts.push(`${String(health.events)} events`)
+  if (health.mark?.offset !== undefined) parts.push(`at byte ${String(health.mark.offset)}`)
+  return (
+    `data-server serving: ${logPath ?? '(none)'} — the engine's fold is live and is now ` +
+    `answering this app's reads (${parts.join(', ')})`
+  )
+}
+
 /** Poll `session.health` until the engine's ingest is `live`, or the budget runs out. Null only
  *  when this turn was superseded or the connection failed — both of which mean "say nothing". */
 async function waitForFold(mine: number, l: LiveEngine): Promise<EngineHealthSay | null> {
@@ -611,6 +628,19 @@ async function waitForFold(mine: number, l: LiveEngine): Promise<EngineHealthSay
         // folding and gone quiet will not move again for minutes. A mirror waiting for a cursor that
         // is not coming would fall back on every draw of a card the engine could answer perfectly.
         primeMirrors()
+        // THE GO-LIVE SENTENCE (JOS-499), and it replaces a line rather than adding one.
+        //
+        // The PARITY line used to be printed at exactly this moment — it was the app's own
+        // statement that both folds had landed on the same log and the engine's ingest was live —
+        // and two e2e specs used it as their READINESS PRECONDITION rather than for its verdict.
+        // The verdict is gone with the second world; the readiness it also carried is a real fact
+        // about this launch and is still the one moment worth naming, because it is precisely when
+        // `engineServeReadiness()` starts answering yes and every read in the product changes hands.
+        //
+        // IT REPORTS WHAT IT CAN VOUCH FOR: the log both sides agree on, the engine's own event
+        // count and byte mark. Those come off the health round trip this loop was making anyway, so
+        // the line costs nothing and is evidence rather than an announcement.
+        debug(servingLine(l.attachedTo, health))
       }
     }
     if (health.status === 'live' || Date.now() >= deadline) return health

@@ -274,113 +274,55 @@ export async function settleReady(
   }
 }
 
-// ── the parity probe's one line (JOS-479) ──────────────────────────────────────────────
+// ── the go-live sentence (JOS-499, replacing the parity line) ──────────────────────────
 //
-// Door (2) again, and for the same reason it was the door for READY: the probe has no renderer
-// surface, by ruling — it is an instrument that writes ONE sentence to the dev log and changes
-// nothing. So the app's own stdout is not a convenient way to observe it, it is the only way, and a
-// spec that invented an IPC channel to read a verdict would be testing a product that does not
-// exist. The line's shape is `src/main/dataServer/parityProbe.ts parityLine`, and the head is
-// anchored field by field for `READY_RE`'s reason: a loose `/parity/` would be satisfied by a
-// sentence containing the word, and this line is the whole evidence that two worlds were compared.
+// Door (2) again, and for the same reason it was the door for READY: this has no renderer surface
+// and is not meant to — it is one sentence in the dev log at the one moment the engine starts
+// answering the app.s reads. A spec that invented an IPC channel to observe it would be testing a
+// product that does not exist.
+//
+// IT REPLACED THE PARITY LINE, which two specs used as a readiness PRECONDITION rather than for its
+// verdict. The verdict went with the second world; the readiness is a real fact about this launch
+// and is what those specs actually needed. Anchored field by field for READY_RE.s reason: a loose
+// /serving/ would be satisfied by any sentence containing the word.
 
-const PARITY_RE =
-  /data-server parity: (\d+) agree, (\d+) diverge, (\d+) skipped of (\d+) \[([^\]]*)\] — ([^\n]*)/g
+const SERVING_RE =
+  /data-server serving: (.*?) — the engine's fold is live and is now answering this app's reads \(epoch (\d+)/g
 
-/** What one module's clause said. `null` when the line never mentioned it. */
-export type ModuleVerdict = 'AGREE' | 'DIVERGE' | 'SKIP'
-
-/** One parity run, as the app reported it. */
-export interface ParitySay {
+/** One go-live edge, as the app reported it. */
+export interface ServingSay {
   /** The whole line, for a failure detail that quotes rather than summarizes. */
   readonly line: string
-  readonly agree: number
-  readonly diverge: number
-  readonly skipped: number
-  readonly probed: number
-  /** The bracket: `epoch N, engine <status>, <n> events, mtime <ms>, mark <offset> of <logPath>` —
-   *  the last clause being the ENGINE's own answer about which file it is folding and how far it
-   *  has got, and the one before it the file fact owner ruling 21 made the server's to state. */
-  readonly where: string
-  /** The log the ENGINE said it was folding, off that bracket, or null when it named no mark. */
-  readonly engineLog: string | null
-  /** The log file's mtime AS THE ENGINE SERVED IT, or null when the line said `no mtime`. The app
-   *  can stat the same file itself, which is exactly what makes this checkable. */
-  readonly engineMtimeMs: number | null
-  /** The per-module clauses, joined — `loot AGREE(seq 4211) · kills AGREE(seq 4211) · …`. */
-  readonly modules: string
-  /** What the line said about one module, or null if it did not name it. */
-  verdict(module: string): ModuleVerdict | null
-  /** WHERE a module diverged — the dotted path the probe reported — or null when it did not
-   *  diverge. A spec that pins a KNOWN divergence has to pin the path too, or the pin would be
-   *  satisfied by any new defect in the same module. */
-  divergePath(module: string): string | null
+  /** The log both sides are on. */
+  readonly logPath: string
+  readonly epoch: number
 }
 
-/** One module's clause out of the joined tail — `loot AGREE(seq 4211)`. Anchored on the ` · `
- *  separator rather than on the bare name, because a divergence detail quotes arbitrary state and
- *  can contain a module's name inside it. */
-function clauseFor(modules: string, module: string): string | null {
-  const re = new RegExp(`(?:^|· )${module} (?:AGREE|DIVERGE|SKIP)[^·]*`)
-  const found = re.exec(modules)
-  return found ? found[0].replace(/^· /, '').trimEnd() : null
-}
-
-function readParity(match: RegExpMatchArray): ParitySay {
-  const modules = match[6]
-  const where = match[5]
-  const mark = /, mark \d+ of (.+)$/.exec(where)
-  // ANCHORED ON ITS OWN CLAUSE, not on the bracket's tail: the mark clause ends the sentence
-  // because a log path can contain anything, so everything else is read by name from in front of
-  // it. `no mtime` is the engine having no answer, and it parses to null rather than to NaN.
-  const mtime = /, mtime (\d+),/.exec(where)
-  return {
-    line: match[0],
-    agree: Number(match[1]),
-    diverge: Number(match[2]),
-    skipped: Number(match[3]),
-    probed: Number(match[4]),
-    where,
-    engineLog: mark ? mark[1] : null,
-    engineMtimeMs: mtime ? Number(mtime[1]) : null,
-    modules,
-    verdict: (module) => {
-      const clause = clauseFor(modules, module)
-      if (clause === null) return null
-      const found = /(AGREE|DIVERGE|SKIP)/.exec(clause)
-      return found ? (found[1] as ModuleVerdict) : null
-    },
-    divergePath: (module) => {
-      const clause = clauseFor(modules, module)
-      const found = clause === null ? null : /\) at (.+?): engine /.exec(clause)
-      return found ? found[1] : null
-    }
-  }
-}
-
-/** Every parity line seen so far, oldest first. A run per attach, so a spec that switches
- *  characters can read the second one. */
-export function parityRuns(out: AppOutput): ParitySay[] {
-  PARITY_RE.lastIndex = 0
-  return Array.from(out.text().matchAll(PARITY_RE), readParity)
+/** Every go-live edge seen so far, oldest first. One per attach, so a spec that switches
+ *  characters sees several. */
+export function servingRuns(out: AppOutput): ServingSay[] {
+  return Array.from(out.text().matchAll(SERVING_RE), (m) => ({
+    line: m[0],
+    logPath: m[1],
+    epoch: Number(m[2])
+  }))
 }
 
 /**
- * Wait for the app to report a parity run, or give up.
+ * Wait for the engine to start serving this app.s reads, or give up.
  *
- * GENEROUS BY DEFAULT because the probe waits for BOTH folds — this process's historical scan and
- * the engine's, the latter from a DEBUG cargo build, which the engine's own README measures at
- * roughly ten times the release cost. It is still a condition and never a clock: the wait ends the
- * moment the sentence appears.
+ * GENEROUS BY DEFAULT because it waits for the ENGINE.s whole fold, from a DEBUG cargo build, which
+ * the engine.s own README measures at roughly ten times the release cost. It is still a condition
+ * and never a clock: the wait ends the moment the sentence appears.
  */
-export async function settleParity(
+export async function settleServing(
   out: AppOutput,
   after = 0,
   timeoutMs = 180_000
-): Promise<ParitySay | null> {
+): Promise<ServingSay | null> {
   const t0 = Date.now()
   for (;;) {
-    const runs = parityRuns(out)
+    const runs = servingRuns(out)
     if (runs.length > after) return runs[after]
     if (Date.now() - t0 >= timeoutMs) return null
     await sleep(250)
@@ -467,4 +409,25 @@ export function knockWithWrongToken(port: number, protocolVersion: number): Prom
     })
     socket.on('error', done)
   })
+}
+
+/**
+ * WAIT FOR ONE LAUNCH TO BE ANSWERING FROM THE ENGINE, then let the caller proceed.
+ *
+ * `settleServing` above takes an already-tapped output, because a spec that wants the SENTENCE
+ * wants to keep reading the stream afterwards. This one exists for
+ * `logFixture.launchOnFixture`, which has a launch and no tap, and whose callers mostly do not
+ * care about the line at all — only that the world has arrived before they look at it.
+ *
+ * QUIET ON EXPIRY, deliberately. A launch with no engine binary never prints the sentence and is a
+ * legitimate state (`tests/e2e/engine-absent.e2e.mts`); a wait that failed there would turn the
+ * harness into a second opinion about whether an engine is required.
+ */
+export async function settleEngineServing(
+  app: ElectronApplication,
+  timeoutMs = 90_000
+): Promise<boolean> {
+  const out = tapOutput(app)
+  const said = await settleServing(out, 0, timeoutMs)
+  return said !== null
 }

@@ -65,7 +65,7 @@ const SETTLE_MS = 8_000
 
 async function main(): Promise<void> {
   const before = engineTable().pids
-  const launch = await launchOnFixture(FIXTURE, { cwd: NO_ENGINE_CWD })
+  const launch = await launchOnFixture(FIXTURE, { cwd: NO_ENGINE_CWD, waitForEngine: false })
   const out = tapOutput(launch.app)
   try {
     // CLAIM 1 — it boots.

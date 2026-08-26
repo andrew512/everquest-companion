@@ -264,7 +264,7 @@ async function stepQuit(launch: FixtureLaunch, out: AppOutput, pids: readonly nu
  */
 async function stepAbsence(): Promise<void> {
   const before = engineTable().pids
-  const launch = await launchOnFixture(FIXTURE, { cwd: NO_ENGINE_CWD })
+  const launch = await launchOnFixture(FIXTURE, { cwd: NO_ENGINE_CWD, waitForEngine: false })
   const out = tapOutput(launch.app)
   try {
     await mainWindow(launch.app)
