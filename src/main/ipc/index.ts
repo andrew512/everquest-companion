@@ -54,6 +54,14 @@ import { registerWorldIpc } from './world'
 // launch it hands out (src/main/dataServer/), like the toast and con-card producer channels above,
 // rather than in a file here — everything it does is socket + port lifecycle.
 import { registerRendererBrokerIpc } from '../dataServer/rendererBroker'
+// WHICH WORLD ANSWERS THIS APP'S READS (JOS-496). Read ONCE, here, and handed to the one
+// registration that has to branch on it: under serve the engine resolves the con card and
+// `dataServer/conCardServe.ts` opens the window, so the TypeScript hook that today calls
+// synchronously into Electron from inside the fold is not installed at all. It is PASSED rather
+// than imported by `conCard.ts`, because that file sits downstream of the serve receiver and an
+// import would close a module cycle between a leaf and the composition root — the argument is
+// written out in full at the parameter.
+import { shimServing } from '../dataServer/serveShim'
 
 export function registerIpc(): void {
   registerCharacterIpc()
@@ -77,7 +85,7 @@ export function registerIpc(): void {
   registerWindowIpc()
   registerToastIpc()
   registerAlertBannerIpc()
-  registerConCardIpc()
+  registerConCardIpc(shimServing())
   registerTrayIpc()
   registerClipboardIpc()
   registerFeedbackIpc()
