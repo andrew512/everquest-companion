@@ -210,7 +210,13 @@ test('both edges where the serving world changes hands are announced', () => {
   // Going live: the shim starts serving, so windows holding main's own state should take the
   // engine's. Taken once per turn, off the `first` test, because the health loop can run many times.
   assert.match(host, /const first = engineLiveOn === null/)
-  assert.match(host, /if \(first\) pushWorldChanged\(\)/)
+  assert.match(host, /if \(first\) \{\s*pushWorldChanged\(\)/, 'the announce is still off the `first` test')
+  // …AND MAIN'S OWN SYNCHRONOUS READERS ARE PRIMED ON THE SAME EDGE (JOS-496). It has to be this
+  // one and not the first read: the engine publishes a cursor when a module MOVES, and a module
+  // that has finished folding and gone quiet will not move again for minutes — so a mirror waiting
+  // for a cursor would fall back on every draw of a card the engine could answer perfectly. The two
+  // sit in one block because they are one statement about one moment: the world changed hands.
+  assert.match(host, /if \(first\) \{\s*pushWorldChanged\(\)[\s\S]*?primeMirrors\(\)\s*\}/)
   // Going away: a window holding a served snapshot is IGNORING module:delta because it was served,
   // so without this frame it would sit frozen until the next character rebuild.
   const edges = host.match(/const wasServing = engineLiveOn !== null/g) ?? []

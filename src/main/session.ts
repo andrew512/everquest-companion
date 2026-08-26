@@ -44,16 +44,13 @@ import {
   combat,
   epoch,
   installHeldClickies,
-  killsModule,
-  levelingModule,
-  lootModule,
+  logReplaySummary,
   outputFilesModule,
   registry,
   resistModule,
   rosterModule,
   sendWorldRebuilt,
-  sessionDetector,
-  turnInsModule
+  sessionDetector
 } from './pipeline'
 import {
   getActiveLogPath,
@@ -388,39 +385,6 @@ function noteParsed(count: number): void {
  * something a later edit can move, and this is checked on the app's hottest path only for lines
  * that genuinely arrive live, which on a superseded tailer is approximately none.
  */
-/**
- * ONE LINE AFTER THE REPLAY, SAYING WHAT WAS FOLDED — and, since JOS-496, saying it about a world
- * somebody is actually reading.
- *
- * THE PROBLEM THIS SOLVES IS SMALL AND EXACTLY THE TICKET'S SUBJECT. The line used to take FOUR
- * module snapshots (`loot`, `kills`, `leveling`, `turnIns`) purely to print a sentence. Under serve
- * those four snapshots describe THIS PROCESS'S fold, which under serve is the world nothing in the
- * product reads — so a developer reading the line was being told the size of a world that no longer
- * answers anything, in the one place they would reasonably take it for the app's state. And they are
- * four synchronous fold reads on the boot path, which is the deletion this wave is for.
- *
- * SO UNDER SERVE THE LINE IS NOT PRINTED FROM HERE, AND NOTHING IS LOST: the served world's own
- * summary is the parity line `engineClientHost.ts` writes the moment both folds land on the same
- * log, which states the engine's status, its event count, its byte mark and a module-by-module
- * verdict — strictly more than these five numbers, and about the world that answers. Printing both
- * would be two counts of two folds a reader would have to know not to compare.
- *
- * FLAG-OFF IS UNTOUCHED. `EQC_ENGINE=0`, `EQC_ENGINE_SERVE=0`, or a checkout with no `cargo build`
- * all take the branch below, and the sentence is the one it has always been, from the same four
- * snapshots, at the same moment.
- */
-function logReplaySummary(): void {
-  if (shimServing()) return
-  const lootState = lootModule.snapshot().state
-  const killState = killsModule.snapshot().state
-  const lvlState = levelingModule.snapshot().state
-  logInfo(
-    `[everquest-companion] Loaded ${lootState.length} loot, ${turnInsModule.snapshot().state.length} turn-ins, ${
-      Object.keys(killState.mobs).length
-    } mobs, ${lvlState.levels.length} level-ups, ${lvlState.aaGains.length} AA gains, ${lvlState.aaSpends.length} AA buys.`
-  )
-}
-
 function startTailer(logPath: string, startOffset: number, turn: SwitchTurn): void {
   tailer = new Tailer(logPath, { startOffset })
   tailer.on('line', (raw) => {
@@ -716,7 +680,11 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult | nul
       setReplayGate(false)
     }
   }
-  logReplaySummary()
+  // ONE LINE SAYING WHAT THE REPLAY FOLDED — and, since JOS-496, only when this process's fold is
+  // the one anybody reads. It lives in `pipeline.ts` beside the other boot summaries of the app's
+  // own fold, and it is handed the gate rather than reading it: `serveShim.ts` reaches the pipeline
+  // through the engine client, so an import there would close a cycle.
+  logReplaySummary(shimServing())
 
   startTailer(ref.logPath, scan.endOffset, turn)
   startHeartbeat()

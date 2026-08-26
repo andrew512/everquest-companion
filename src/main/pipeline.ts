@@ -316,6 +316,50 @@ logInfo(
   `[everquest-companion] Mob catalog: ${MOB_CATALOG_SIZE} mobs (scraped drop tables; the live wiki lookup is the fallback).`
 )
 
+/**
+ * ONE LINE AFTER A HISTORICAL REPLAY, SAYING WHAT THIS PROCESS'S FOLD HOLDS.
+ *
+ * IT LIVES HERE, beside the boot summaries above, because it is the same kind of statement: a
+ * sentence about the app's own fold, printed once, from the modules this file constructs. It moved
+ * out of `session.ts` with JOS-496 and that was not only a line-ceiling matter — the four snapshots
+ * it takes ARE the reason it had to grow a gate, and a gated read of this fold belongs where the
+ * fold is assembled rather than where the replay is orchestrated.
+ *
+ * ── WHY IT IS SILENT UNDER SERVE (JOS-496, cutover ledger item 6) ──────────────────────────────
+ *
+ * It takes FOUR module snapshots (`loot`, `kills`, `leveling`, `turnIns`) purely to print a
+ * sentence. Under serve those four describe THIS PROCESS'S fold, which is the world nothing in the
+ * product reads — so a developer reading the line was being told the size of a world that no longer
+ * answers anything, in the one place they would reasonably take it for the app's state. They are
+ * also four synchronous fold reads on the boot path, which is precisely the deletion the wave is
+ * for.
+ *
+ * NOTHING IS LOST BY THE SILENCE. The served world's own summary is the parity line
+ * `dataServer/engineClientHost.ts` writes the moment both folds land on the same log: the engine's
+ * status, its event count, its byte mark and a module-by-module verdict — strictly more than these
+ * five numbers, and about the world that answers. Printing both would be two counts of two folds a
+ * reader would have to know not to compare.
+ *
+ * FLAG-OFF IS UNTOUCHED. `EQC_ENGINE=0`, `EQC_ENGINE_SERVE=0`, or a checkout with no `cargo build`
+ * all print the sentence this function has always printed, from the same four snapshots, at the
+ * same moment.
+ *
+ * `serving` ARRIVES AS AN ARGUMENT because `serveShim.ts` reaches this file through the engine
+ * client (serveShim → engineHost → engineClientHost → pipeline), so importing its gate here would
+ * close a module cycle. `session.ts` reads `shimServing()` once and hands it over.
+ */
+export function logReplaySummary(serving: boolean): void {
+  if (serving) return
+  const lootState = modules.loot.snapshot().state
+  const killState = modules.kills.snapshot().state
+  const lvlState = modules.leveling.snapshot().state
+  logInfo(
+    `[everquest-companion] Loaded ${lootState.length} loot, ${modules.turnIns.snapshot().state.length} turn-ins, ${
+      Object.keys(killState.mobs).length
+    } mobs, ${lvlState.levels.length} level-ups, ${lvlState.aaGains.length} AA gains, ${lvlState.aaSpends.length} AA buys.`
+  )
+}
+
 /** Fold an `alerts` module delta into the event feed (alert id → its display name). */
 function feedAlertDelta(delta: ModuleDelta): void {
   if (delta.moduleId !== 'alerts') return
