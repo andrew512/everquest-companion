@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:e4581985ea600134c9e0f5fa81f7cefacc93cbd9b688ec877f038102d5ec801d
+//! schema-digest: sha256:b8ce460eb8d88f24b6a126ed0c08e05b9db0c28a4b78344746b81d6e659d7283
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -3161,10 +3161,20 @@ impl ::std::convert::TryFrom<::std::string::String> for FireMessageKind {
 ///  "type": "object",
 ///  "required": [
 ///    "events",
+///    "logSize",
+///    "offset",
 ///    "pct"
 ///  ],
 ///  "properties": {
 ///    "events": {
+///      "type": "integer"
+///    },
+///    "logSize": {
+///      "description": "`pct`'s DENOMINATOR - how big the fold currently believes the log to be, which is the larger of the file's size at open and the amount actually read. EverQuest is still appending while the fold runs, so a denominator fixed at open would let a live tail report more than 100%. It can therefore GROW between two frames, which is honest rather than awkward: a client deriving a completion estimate must re-read it every frame instead of caching the first one it saw.",
+///      "type": "integer"
+///    },
+///    "offset": {
+///      "description": "THE MARK: the end of the last complete line this fold has folded, and `pct`'s own numerator. It is the SAME coordinate `HealthMark.offset` reports and the same one cache law 3 names (state is addressed by log identity and byte offset), which is why it carries that field's name rather than a new one - it is a fact about the LOG, not about the wire, and nothing here is a framing concern. It rides the frame because `pct` cannot be turned back into it: a client holding only a percentage can say `62%` and can never say `128 MB of 205 MB`, and the second sentence is the one that tells a person whether to wait or to go and make coffee.",
 ///      "type": "integer"
 ///    },
 ///    "pct": {
@@ -3180,6 +3190,11 @@ impl ::std::convert::TryFrom<::std::string::String> for FireMessageKind {
 #[serde(deny_unknown_fields)]
 pub struct FoldProgress {
     pub events: i64,
+    ///`pct`'s DENOMINATOR - how big the fold currently believes the log to be, which is the larger of the file's size at open and the amount actually read. EverQuest is still appending while the fold runs, so a denominator fixed at open would let a live tail report more than 100%. It can therefore GROW between two frames, which is honest rather than awkward: a client deriving a completion estimate must re-read it every frame instead of caching the first one it saw.
+    #[serde(rename = "logSize")]
+    pub log_size: i64,
+    ///THE MARK: the end of the last complete line this fold has folded, and `pct`'s own numerator. It is the SAME coordinate `HealthMark.offset` reports and the same one cache law 3 names (state is addressed by log identity and byte offset), which is why it carries that field's name rather than a new one - it is a fact about the LOG, not about the wire, and nothing here is a framing concern. It rides the frame because `pct` cannot be turned back into it: a client holding only a percentage can say `62%` and can never say `128 MB of 205 MB`, and the second sentence is the one that tells a person whether to wait or to go and make coffee.
+    pub offset: i64,
     ///How far the fold has got, 0 to 100, FRACTIONAL. The engine emits the number it actually measured and does not pre-round it: rounding is a display decision and belongs to whoever is drawing the bar. That is not in tension with the renderer-never-munges rule - that rule is about DOMAIN data (no client-side filtering, sorting or aggregation of the world), and formatting a progress readout for the pixel it lands on is not domain work. A NOTE FOR WORKED EXAMPLES: Rust serializes an f64 whole value as X.0, so a fixture carrying `62` would come back `62.0` and stop being byte-verbatim across the two languages. Examples therefore use a genuinely fractional value (62.4), which round-trips identically in both.
     pub pct: f64,
 }

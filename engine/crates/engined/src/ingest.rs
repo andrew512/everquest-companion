@@ -1236,6 +1236,9 @@ fn run(
                 checkpoint: tail.checkpoint_offset(),
                 events: seq,
                 pct: pct_of(tail.checkpoint_offset(), live_total),
+                // The LIVE denominator is the tail's own read offset, which is what `pct` is over
+                // here — the file has no fixed size once EverQuest is appending to it.
+                total: live_total,
                 last_ts: sink.report().last_ts,
             };
             announced = seq;
@@ -1587,6 +1590,9 @@ fn mark(core: &TailCore, size: u64, events: i64, sink: &dyn EventSink) -> FoldMa
         checkpoint: core.checkpoint_offset(),
         events,
         pct: pct_of(core.checkpoint_offset(), total),
+        // THE DENOMINATOR RIDES ALONG (JOS-503). It is computed here anyway; carrying it costs a
+        // `u64` and buys the loading bar its human units, which `pct` alone cannot reconstruct.
+        total,
         last_ts: sink.report().last_ts,
     }
 }
