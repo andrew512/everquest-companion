@@ -68,6 +68,9 @@ import type {
 // every fire and prints what it decided. A launch that turned it off (`EQC_ENGINE_ALERTS=0`, or
 // `EQC_ENGINE_SERVE=0` above it) finds `armed` false and pays one boolean read per fire.
 import { playEngineFire } from './alertsAudio'
+// THE CON-CARD CUTOVER (JOS-496). Same shape as the audio one above and behind the serve flag
+// rather than a fourth of its own; this file simply offers every card and prints what was decided.
+import { conCardServeLine, noteConCardServe, openEngineConCard } from './conCardServe'
 import { readDefine } from './appKnowledge'
 import { DEFINE_OPS, setAppKnowledgePusher, type DefineOp } from './definePush'
 import { connectToEngine } from './socketChannel'
@@ -84,6 +87,11 @@ import {
 // the only thing it cannot get for itself — the engine's own `moduleChanged` frames, and the two
 // edges where the world that answers a read changes hands.
 import { pushModuleChanged, pushWorldChanged } from './serveDeltas'
+// THE MIRROR ARM (JOS-496). The census's other fourteen readers are SYNCHRONOUS and have nowhere to
+// put an await, so they read a pushed cache instead of a promise. It hears the same two things the
+// delta arm does — a cursor, and the world changing hands — and it holds no import of this file, so
+// the requester is handed over rather than reached for.
+import { installMirrors, noteMirrorChanged, primeMirrors, resetMirrors } from './serveMirrors'
 import { SERVABLE, type Readiness } from './readShim'
 import type { ReadyEngine } from './supervisor'
 import type { ParamsFor, RequestOp, ResultFor } from '../../shared/dataServer/ops'
@@ -160,6 +168,10 @@ function bumpGen(): number {
   gen += 1
   engineLiveOn = null
   engineLogMtime = null
+  // THE MIRRORS DIE WITH THE TURN, for `engineLiveOn`'s reason exactly: a served `character` state
+  // measured on the world somebody has since replaced is a fact about a different log, and a
+  // synchronous reader holding it would answer with authority about a character the app has left.
+  resetMirrors()
   return gen
 }
 
@@ -257,6 +269,18 @@ async function openConnection(mine: number, info: ReadyEngine, client: EngineCli
   client.onFire((fire) => {
     noteFire(fire)
   })
+  // THE CON CARDS (JOS-496, boundary verdict 2) — `onFire`'s shape exactly, and for its reasons: a
+  // thing that HAPPENED, connection-wide, nothing to reconcile. This file offers the frame and
+  // prints what was decided; `conCardServe.ts` owns the gate and `conCard.ts` owns the window.
+  //
+  // THE IDENTITY GUARD IS THE `moduleChanged` ONE AND NOT THE TURN ONE, for the reason stated
+  // below at length: a subscription is CONNECTION-scoped, and `gen` advances on every world
+  // rebuild — asking `gen !== mine` here would silence the cards one second into every launch,
+  // which is exactly the bug that cost the cursor listener a whole e2e round.
+  client.onConCard((card) => {
+    if (live?.client !== client) return
+    noteConCardServe(conCardServeLine(card, openEngineConCard(card)))
+  })
   // THE CURSORS (JOS-493) — the engine saying a module's published state moved, forwarded to every
   // window that folds one. Two guards, and each answers a different question:
   //
@@ -277,6 +301,10 @@ async function openConnection(mine: number, info: ReadyEngine, client: EngineCli
     if (live?.client !== client) return
     if (!engineServeReadiness().ok) return
     pushModuleChanged(changed.module, changed.seq)
+    // …and main's own synchronous readers, which ride the same cursor for the same reason the
+    // renderers do: a mirror refreshed on anything but the engine's own publication edge would be a
+    // cache with a timer, which is the thing ruling 5 forbids.
+    noteMirrorChanged(changed.module, changed.seq)
   })
   debug(`data-server client: connected to the engine on port ${String(info.port)}`)
   await attachAndProbe(mine)
@@ -528,7 +556,14 @@ async function waitForFold(mine: number, l: LiveEngine): Promise<EngineHealthSay
       // THE SERVED FILE FACT, on the way past (owner ruling 21). Absent means absent — never zero,
       // which would graft a `lastPlayed` of 1970 onto a character card.
       engineLogMtime = health.logMtimeMs ?? null
-      if (first) pushWorldChanged()
+      if (first) {
+        pushWorldChanged()
+        // THE MIRRORS ARE PRIMED ON THE SAME EDGE, and it has to be this one rather than the first
+        // read: the engine publishes a cursor when a module MOVES, and a module that has finished
+        // folding and gone quiet will not move again for minutes. A mirror waiting for a cursor that
+        // is not coming would fall back on every draw of a card the engine could answer perfectly.
+        primeMirrors()
+      }
     }
     if (health.status === 'live' || Date.now() >= deadline) return health
     await delay(FOLD_POLL_MS)
@@ -673,6 +708,17 @@ export function installEngineClient(): void {
     const mine = gen
     void pushDefine(mine, op)
   })
+  // THE MIRROR'S REQUESTER (JOS-496), by the same one-slot rule and for the same reason: the mirror
+  // is a leaf that main's synchronous readers import, and a leaf that imported this file back would
+  // be a cycle between two modules that boot each other. It gets exactly one op and no client
+  // handle, which is the whole of what this file lets anybody do with the socket.
+  installMirrors({
+    request: async (module) => {
+      const r = await engineRequest('module.snapshot', { module })
+      return { module: r.module, seq: r.seq, state: r.state }
+    },
+    note: debug
+  })
 }
 
 /** Let go: no observer, no connection, no pusher. Idempotent, and safe on a process that never
@@ -684,6 +730,9 @@ export function stopEngineClient(): void {
   if (wasServing) pushWorldChanged()
   setWorldRebuiltObserver(null)
   setAppKnowledgePusher(null)
+  // …and the mirrors, which clear themselves on the null (see `installMirrors`): a synchronous
+  // reader must never be left holding a served fact after the connection that served it is gone.
+  installMirrors(null)
   live?.client.close()
   live = null
   lastParity = null

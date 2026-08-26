@@ -29,6 +29,12 @@ import { scanLog } from './log/scanHistory'
 import { formatTailIoSummary, takeTailIoSummary } from './log/tailIoStats'
 import { createSlicer } from './log/replaySlicer'
 import { saveUserOverlay } from './data/overlayPersistence'
+// THE SERVED ARMS (JOS-496). `mirroredModuleState` answers the `/outputfile` baseline seam from the
+// engine when it is the world answering this app's reads; `shimServing` is the same gate
+// `ipc/world.ts` branches on, read here for the post-replay summary line.
+import { mirroredModuleState } from './dataServer/serveMirrors'
+import { shimServing } from './dataServer/serveShim'
+import { baseName } from '../shared/outputs/baseline'
 import { loadInventory } from './inventory/parseInventory'
 import { loadAchievements, watchOutputKind, type OutputKindWatch } from './outputs'
 import {
@@ -382,6 +388,39 @@ function noteParsed(count: number): void {
  * something a later edit can move, and this is checked on the app's hottest path only for lines
  * that genuinely arrive live, which on a superseded tailer is approximately none.
  */
+/**
+ * ONE LINE AFTER THE REPLAY, SAYING WHAT WAS FOLDED — and, since JOS-496, saying it about a world
+ * somebody is actually reading.
+ *
+ * THE PROBLEM THIS SOLVES IS SMALL AND EXACTLY THE TICKET'S SUBJECT. The line used to take FOUR
+ * module snapshots (`loot`, `kills`, `leveling`, `turnIns`) purely to print a sentence. Under serve
+ * those four snapshots describe THIS PROCESS'S fold, which under serve is the world nothing in the
+ * product reads — so a developer reading the line was being told the size of a world that no longer
+ * answers anything, in the one place they would reasonably take it for the app's state. And they are
+ * four synchronous fold reads on the boot path, which is the deletion this wave is for.
+ *
+ * SO UNDER SERVE THE LINE IS NOT PRINTED FROM HERE, AND NOTHING IS LOST: the served world's own
+ * summary is the parity line `engineClientHost.ts` writes the moment both folds land on the same
+ * log, which states the engine's status, its event count, its byte mark and a module-by-module
+ * verdict — strictly more than these five numbers, and about the world that answers. Printing both
+ * would be two counts of two folds a reader would have to know not to compare.
+ *
+ * FLAG-OFF IS UNTOUCHED. `EQC_ENGINE=0`, `EQC_ENGINE_SERVE=0`, or a checkout with no `cargo build`
+ * all take the branch below, and the sentence is the one it has always been, from the same four
+ * snapshots, at the same moment.
+ */
+function logReplaySummary(): void {
+  if (shimServing()) return
+  const lootState = lootModule.snapshot().state
+  const killState = killsModule.snapshot().state
+  const lvlState = levelingModule.snapshot().state
+  logInfo(
+    `[everquest-companion] Loaded ${lootState.length} loot, ${turnInsModule.snapshot().state.length} turn-ins, ${
+      Object.keys(killState.mobs).length
+    } mobs, ${lvlState.levels.length} level-ups, ${lvlState.aaGains.length} AA gains, ${lvlState.aaSpends.length} AA buys.`
+  )
+}
+
 function startTailer(logPath: string, startOffset: number, turn: SwitchTurn): void {
   tailer = new Tailer(logPath, { startOffset })
   tailer.on('line', (raw) => {
@@ -677,14 +716,7 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult | nul
       setReplayGate(false)
     }
   }
-  const lootState = lootModule.snapshot().state
-  const killState = killsModule.snapshot().state
-  const lvlState = levelingModule.snapshot().state
-  logInfo(
-    `[everquest-companion] Loaded ${lootState.length} loot, ${turnInsModule.snapshot().state.length} turn-ins, ${
-      Object.keys(killState.mobs).length
-    } mobs, ${lvlState.levels.length} level-ups, ${lvlState.aaGains.length} AA gains, ${lvlState.aaSpends.length} AA buys.`
-  )
+  logReplaySummary()
 
   startTailer(ref.logPath, scan.endOffset, turn)
   startHeartbeat()
@@ -780,7 +812,27 @@ function startInventoryWatch(ref: CharacterRef): void {
  * one; without this seam it falls back to the file's mtime.
  */
 export function inventoryWrittenAt(file: string): number | null {
+  // THE SERVED ANSWER FIRST (JOS-496). This is a MIRROR read rather than a query for a structural
+  // reason: `loadInventory` takes this function BY REFERENCE and calls it from inside a synchronous
+  // parse (`inventory/parseInventory.ts`), so there is nowhere to put an await without rewriting the
+  // fs/parse layer — which is the layer this seam exists to keep pipeline-free. See
+  // `serveMirrors.ts` for the third shape and what it costs.
+  //
+  // THE KEY IS FOLDED HERE, exactly as the module folds it (`modules/outputFiles.ts fileKey`): EQ
+  // writes dumps into the install root and prints the bare name, so the join is on the last
+  // segment, case-insensitively. The engine's own module folds the identical key
+  // (`fold/src/modules/output_files.rs file_key`), which is what makes a served map answerable with
+  // the same string this process would have used.
+  const mirrored = mirroredModuleState('outputFiles') as Record<string, number> | null
+  if (mirrored !== null) return mirrored[outputFileKey(file)] ?? null
   return outputFilesModule.writtenAt(file)
+}
+
+/** `modules/outputFiles.ts fileKey`, applied to the SERVED map. It is spelled here rather than
+ *  exported from the module because the module's copy is the one the cutover deletes, and a served
+ *  read that imported it would be a live dependency on the thing being retired. */
+function outputFileKey(pathOrName: string): string {
+  return baseName(pathOrName).trim().toLowerCase()
 }
 
 /**
