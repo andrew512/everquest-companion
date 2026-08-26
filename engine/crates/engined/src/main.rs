@@ -42,6 +42,9 @@ mod ingest;
 mod ops;
 mod search;
 mod spawn;
+/// The CLIENT's spell table, read by this process (boundary verdict 7). `fold::spells_us` is the
+/// format; this is the file, the laziness and the once-ness.
+mod spells;
 mod state;
 mod views;
 mod wire;

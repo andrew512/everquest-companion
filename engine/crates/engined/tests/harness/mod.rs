@@ -560,6 +560,19 @@ pub fn resist_levels(id: i64, mobs: &[&str]) -> ClientMessage {
     })
 }
 
+/// One `resist.spell` request (JOS-497 item 3). The name is as the ASKER spells it; the engine
+/// folds the key, so a rank suffix and a case difference are one question.
+#[must_use]
+pub fn resist_spell(id: i64, name: &str) -> ClientMessage {
+    ClientMessage::ResistSpellRequest(protocol::generated::ResistSpellRequest {
+        id: RequestId(id),
+        op: protocol::generated::ResistSpellRequestOp::ResistSpell,
+        params: protocol::generated::KnowledgeNameParams {
+            name: name.to_owned(),
+        },
+    })
+}
+
 /// One `combat.snapshot` request (JOS-485). `opts` absent is the ordinary call — the app's own
 /// `combat.snapshot(Date.now(), opts ?? {})`, with the instant left to the engine.
 #[must_use]

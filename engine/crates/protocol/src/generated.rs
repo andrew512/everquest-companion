@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:1dc83e0c2affd8f42c55dcba15dacd17e7e83674d900182705d341842c0636f4
+//! schema-digest: sha256:6ed6b256345eb1dac02993bf62c6abb498d1b2201d09a6dcf0c146906a21f19d
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -518,6 +518,9 @@ impl ::std::convert::From<::std::collections::BTreeMap<::std::string::String, cr
 ///    },
 ///    {
 ///      "$ref": "#/$defs/ResistLevelsRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/ResistSpellRequest"
 ///    }
 ///  ]
 ///}
@@ -550,6 +553,7 @@ pub enum ClientMessage {
     SessionMarkAddRequest(SessionMarkAddRequest),
     RespawnConfirmSightingRequest(RespawnConfirmSightingRequest),
     ResistLevelsRequest(ResistLevelsRequest),
+    ResistSpellRequest(ResistSpellRequest),
 }
 impl ::std::convert::From<Hello> for ClientMessage {
     fn from(value: Hello) -> Self {
@@ -670,6 +674,285 @@ impl ::std::convert::From<ResistLevelsRequest> for ClientMessage {
     fn from(value: ResistLevelsRequest) -> Self {
         Self::ResistLevelsRequest(value)
     }
+}
+impl ::std::convert::From<ResistSpellRequest> for ClientMessage {
+    fn from(value: ResistSpellRequest) -> Self {
+        Self::ResistSpellRequest(value)
+    }
+}
+///One row of `spells_us.txt` as the app's own `SpellResistInfo` describes it, field for field. THE OPTIONALS ARE ABSENT-MEANS-NOTHING and each absence was measured rather than chosen: a zero recast is the file saying there is no re-use timer, a zero `aeMaxTargets` is what 71,864 of ~74k rows read, and a zero mana is what every bard song says. Storing those zeros would cost a field on most of the table to state what the absence already states.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ClientSpell",
+///  "description": "One row of `spells_us.txt` as the app's own `SpellResistInfo` describes it, field for field. THE OPTIONALS ARE ABSENT-MEANS-NOTHING and each absence was measured rather than chosen: a zero recast is the file saying there is no re-use timer, a zero `aeMaxTargets` is what 71,864 of ~74k rows read, and a zero mana is what every bard song says. Storing those zeros would cost a field on most of the table to state what the absence already states.",
+///  "type": "object",
+///  "required": [
+///    "castMs",
+///    "debuffSlots",
+///    "resistAdj",
+///    "targetType"
+///  ],
+///  "properties": {
+///    "aeMaxTargets": {
+///      "type": "number"
+///    },
+///    "axis": {
+///      "$ref": "#/$defs/ResistAxis"
+///    },
+///    "castMs": {
+///      "type": "number"
+///    },
+///    "damageSlot": {
+///      "$ref": "#/$defs/ClientSpellSlot"
+///    },
+///    "debuffSlots": {
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/ClientSpellDebuff"
+///      }
+///    },
+///    "levelCap": {
+///      "description": "The level the game refuses the spell above, regardless of resist. From the PRIMARY slot only and only for a charm or a mez: a stun rider's cap costs the stun, not the nuke.",
+///      "type": "number"
+///    },
+///    "mana": {
+///      "type": "number"
+///    },
+///    "recastMs": {
+///      "type": "number"
+///    },
+///    "resistAdj": {
+///      "type": "number"
+///    },
+///    "song": {
+///      "description": "Only the bard can cast it. Present only when true - a song is never filed as a cast.",
+///      "type": "boolean"
+///    },
+///    "targetType": {
+///      "type": "number"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ClientSpell {
+    #[serde(
+        rename = "aeMaxTargets",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub ae_max_targets: ::std::option::Option<f64>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub axis: ::std::option::Option<ResistAxis>,
+    #[serde(rename = "castMs")]
+    pub cast_ms: f64,
+    #[serde(
+        rename = "damageSlot",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub damage_slot: ::std::option::Option<ClientSpellSlot>,
+    #[serde(rename = "debuffSlots")]
+    pub debuff_slots: ::std::vec::Vec<ClientSpellDebuff>,
+    ///The level the game refuses the spell above, regardless of resist. From the PRIMARY slot only and only for a charm or a mez: a stun rider's cap costs the stun, not the nuke.
+    #[serde(
+        rename = "levelCap",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub level_cap: ::std::option::Option<f64>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub mana: ::std::option::Option<f64>,
+    #[serde(
+        rename = "recastMs",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub recast_ms: ::std::option::Option<f64>,
+    #[serde(rename = "resistAdj")]
+    pub resist_adj: f64,
+    ///Only the bard can cast it. Present only when true - a song is never filed as a cast.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub song: ::std::option::Option<bool>,
+    #[serde(rename = "targetType")]
+    pub target_type: f64,
+}
+///A resist-DECREASE slot worth at least five points. The floor is not arbitrary: Solon's Bewitching Bravura carries a one-point magic-resist rider and is a CHARM, and opening an eleven-minute debuff window for one point would file every charmed mob's later observations under a condition that never mattered. Five sits comfortably below the weakest real member of the family (Tashani, 23) and above every rider in the file.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ClientSpellDebuff",
+///  "description": "A resist-DECREASE slot worth at least five points. The floor is not arbitrary: Solon's Bewitching Bravura carries a one-point magic-resist rider and is a CHARM, and opening an eleven-minute debuff window for one point would file every charmed mob's later observations under a condition that never mattered. Five sits comfortably below the weakest real member of the family (Tashani, 23) and above every rider in the file.",
+///  "type": "object",
+///  "required": [
+///    "axis",
+///    "base",
+///    "calc",
+///    "max"
+///  ],
+///  "properties": {
+///    "axis": {
+///      "$ref": "#/$defs/ClientSpellDebuffAxis"
+///    },
+///    "base": {
+///      "type": "number"
+///    },
+///    "calc": {
+///      "type": "number"
+///    },
+///    "max": {
+///      "type": "number"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ClientSpellDebuff {
+    pub axis: ClientSpellDebuffAxis,
+    pub base: f64,
+    pub calc: f64,
+    pub max: f64,
+}
+///A debuff SLOT's axis, which is the five plus `all` - the tash and malo family, effect 111. A SPELL's own axis is never `all`, which is why this is a separate set from `ResistAxis` rather than that set with a member added.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ClientSpellDebuffAxis",
+///  "description": "A debuff SLOT's axis, which is the five plus `all` - the tash and malo family, effect 111. A SPELL's own axis is never `all`, which is why this is a separate set from `ResistAxis` rather than that set with a member added.",
+///  "type": "string",
+///  "enum": [
+///    "magic",
+///    "fire",
+///    "cold",
+///    "poison",
+///    "disease",
+///    "all"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ClientSpellDebuffAxis {
+    #[serde(rename = "magic")]
+    Magic,
+    #[serde(rename = "fire")]
+    Fire,
+    #[serde(rename = "cold")]
+    Cold,
+    #[serde(rename = "poison")]
+    Poison,
+    #[serde(rename = "disease")]
+    Disease,
+    #[serde(rename = "all")]
+    All,
+}
+impl ::std::fmt::Display for ClientSpellDebuffAxis {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Magic => f.write_str("magic"),
+            Self::Fire => f.write_str("fire"),
+            Self::Cold => f.write_str("cold"),
+            Self::Poison => f.write_str("poison"),
+            Self::Disease => f.write_str("disease"),
+            Self::All => f.write_str("all"),
+        }
+    }
+}
+impl ::std::str::FromStr for ClientSpellDebuffAxis {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "magic" => Ok(Self::Magic),
+            "fire" => Ok(Self::Fire),
+            "cold" => Ok(Self::Cold),
+            "poison" => Ok(Self::Poison),
+            "disease" => Ok(Self::Disease),
+            "all" => Ok(Self::All),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ClientSpellDebuffAxis {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ClientSpellDebuffAxis {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ClientSpellDebuffAxis {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///The effect-0 hitpoint slot, which is what the resist estimator reads to decide whether a spell's damage is a fixed number. Effect 0 ALONE, deliberately: neither a heal-over-time (effect 100) nor a bard's pulse (334) is a spell the estimator fits a resist from, and widening it would change what the ledger and the con card read for no gain. An effect slot is `slot | effectId | base | limit | CALC | MAX` - measured, and the one correction the original brief needed.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ClientSpellSlot",
+///  "description": "The effect-0 hitpoint slot, which is what the resist estimator reads to decide whether a spell's damage is a fixed number. Effect 0 ALONE, deliberately: neither a heal-over-time (effect 100) nor a bard's pulse (334) is a spell the estimator fits a resist from, and widening it would change what the ledger and the con card read for no gain. An effect slot is `slot | effectId | base | limit | CALC | MAX` - measured, and the one correction the original brief needed.",
+///  "type": "object",
+///  "required": [
+///    "base",
+///    "calc",
+///    "max"
+///  ],
+///  "properties": {
+///    "base": {
+///      "type": "number"
+///    },
+///    "calc": {
+///      "type": "number"
+///    },
+///    "max": {
+///      "type": "number"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ClientSpellSlot {
+    pub base: f64,
+    pub calc: f64,
+    pub max: f64,
 }
 ///`CombatSearchFightsParams`
 ///
@@ -5358,6 +5641,9 @@ impl ::std::convert::TryFrom<::std::string::String> for ReplyKind {
 ///    },
 ///    {
 ///      "$ref": "#/$defs/ResistLevelsResult"
+///    },
+///    {
+///      "$ref": "#/$defs/ResistSpellResult"
 ///    }
 ///  ]
 ///}
@@ -5380,6 +5666,7 @@ pub enum ReplyResult {
     SessionMarkAck(SessionMarkAck),
     RespawnConfirmAck(RespawnConfirmAck),
     ResistLevelsResult(ResistLevelsResult),
+    ResistSpellResult(ResistSpellResult),
 }
 impl ::std::convert::From<EchoResult> for ReplyResult {
     fn from(value: EchoResult) -> Self {
@@ -5449,6 +5736,11 @@ impl ::std::convert::From<RespawnConfirmAck> for ReplyResult {
 impl ::std::convert::From<ResistLevelsResult> for ReplyResult {
     fn from(value: ResistLevelsResult) -> Self {
         Self::ResistLevelsResult(value)
+    }
+}
+impl ::std::convert::From<ResistSpellResult> for ReplyResult {
+    fn from(value: ResistSpellResult) -> Self {
+        Self::ResistSpellResult(value)
     }
 }
 ///Client-chosen correlation id. A reply carries the id of its request; every stream message carries the id of the subscribe request that opened it.
@@ -6295,6 +6587,158 @@ pub struct ResistMobLevel {
     pub lo: i64,
     ///The name as it was asked for, echoed back unchanged - never the folded key.
     pub mob: ::std::string::String,
+}
+///ONE SPELL OUT OF THE CLIENT'S OWN TABLE (boundary verdict 7, JOS-497 item 3). `<eqRoot>/spells_us.txt` is the only source that states how a spell is RESISTED - the wiki-scraped corpus this repo ships knows a spell's messages and neither its resist type nor its resist adjust - and the engine reads the player's own copy, derived from the attach's log path (`<eqRoot>/Logs/<log>` up two). THIS IS A PER-SPELL OP AND THERE WILL NEVER BE A BULK ONE, which is a RULING rather than a phase: the owner's own parsed table is 48,252 entries and 6.13 MiB of JSON against an 8 MiB frame ceiling, on one machine, against a table that grows with every client patch, so a single reply serving the whole table is a design with a date on it (measured 2026-08-25). It is a `resist.*` op rather than an extension of `knowledge.spell` because the two answer about different SOURCES: `knowledge.spell` serves the committed wiki scrape with removals, corrections and derived durations applied, and this serves Daybreak's file. A caller asking `how is this resisted` and a caller asking `what does the wiki say` must be able to tell which one answered, and merging them into one record would make that unanswerable from the value. NOTHING DERIVED FROM THE FILE IS EVER COMMITTED, which is why every test on either side is driven by hand-authored rows.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistSpellRequest",
+///  "description": "ONE SPELL OUT OF THE CLIENT'S OWN TABLE (boundary verdict 7, JOS-497 item 3). `<eqRoot>/spells_us.txt` is the only source that states how a spell is RESISTED - the wiki-scraped corpus this repo ships knows a spell's messages and neither its resist type nor its resist adjust - and the engine reads the player's own copy, derived from the attach's log path (`<eqRoot>/Logs/<log>` up two). THIS IS A PER-SPELL OP AND THERE WILL NEVER BE A BULK ONE, which is a RULING rather than a phase: the owner's own parsed table is 48,252 entries and 6.13 MiB of JSON against an 8 MiB frame ceiling, on one machine, against a table that grows with every client patch, so a single reply serving the whole table is a design with a date on it (measured 2026-08-25). It is a `resist.*` op rather than an extension of `knowledge.spell` because the two answer about different SOURCES: `knowledge.spell` serves the committed wiki scrape with removals, corrections and derived durations applied, and this serves Daybreak's file. A caller asking `how is this resisted` and a caller asking `what does the wiki say` must be able to tell which one answered, and merging them into one record would make that unanswerable from the value. NOTHING DERIVED FROM THE FILE IS EVER COMMITTED, which is why every test on either side is driven by hand-authored rows.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "resist.spell"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/KnowledgeNameParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ResistSpellRequest {
+    pub id: RequestId,
+    pub op: ResistSpellRequestOp,
+    pub params: KnowledgeNameParams,
+}
+///`ResistSpellRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "resist.spell"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ResistSpellRequestOp {
+    #[serde(rename = "resist.spell")]
+    ResistSpell,
+}
+impl ::std::fmt::Display for ResistSpellRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ResistSpell => f.write_str("resist.spell"),
+        }
+    }
+}
+impl ::std::str::FromStr for ResistSpellRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "resist.spell" => Ok(Self::ResistSpell),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ResistSpellRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ResistSpellRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ResistSpellRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///What the client's table says about one spell, or why it says nothing. `table` is ALWAYS present and `spell` is present only on a hit, which is the distinction the card needs: `table: missing` means the player has no EverQuest install behind the folder this app was pointed at, and the surface says exactly that and names the path; `table: ok` with no `spell` means the file was read and has no row under this name, which is a different sentence entirely. A client that branched on `spell` alone would tell a player to go and find a folder they are already in.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistSpellResult",
+///  "description": "What the client's table says about one spell, or why it says nothing. `table` is ALWAYS present and `spell` is present only on a hit, which is the distinction the card needs: `table: missing` means the player has no EverQuest install behind the folder this app was pointed at, and the surface says exactly that and names the path; `table: ok` with no `spell` means the file was read and has no row under this name, which is a different sentence entirely. A client that branched on `spell` alone would tell a player to go and find a folder they are already in.",
+///  "type": "object",
+///  "required": [
+///    "path",
+///    "spellName",
+///    "table"
+///  ],
+///  "properties": {
+///    "path": {
+///      "description": "Where this engine looked. Present always, because the sentence a missing table produces has to name a place.",
+///      "type": "string"
+///    },
+///    "spell": {
+///      "$ref": "#/$defs/ClientSpell"
+///    },
+///    "spellName": {
+///      "description": "The name as it was asked for, echoed back - never the folded key.",
+///      "type": "string"
+///    },
+///    "table": {
+///      "$ref": "#/$defs/SpellTableState"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ResistSpellResult {
+    ///Where this engine looked. Present always, because the sentence a missing table produces has to name a place.
+    pub path: ::std::string::String,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub spell: ::std::option::Option<ClientSpell>,
+    ///The name as it was asked for, echoed back - never the folded key.
+    #[serde(rename = "spellName")]
+    pub spell_name: ::std::string::String,
+    pub table: SpellTableState,
 }
 ///`shared/resistTypes.ts ResistTag` — the scannable word. NO ACRONYMS, EVER (owner ruling): the axis word is the only label this app prints for an axis, and these four are the only bands.
 ///
@@ -7738,6 +8182,85 @@ impl ::std::convert::From<SortTerm> for [::std::string::String; 2usize] {
 impl ::std::convert::From<[::std::string::String; 2usize]> for SortTerm {
     fn from(value: [::std::string::String; 2usize]) -> Self {
         Self(value)
+    }
+}
+///`shared/resistTypes.ts SpellTableState`, minus its `loading` member. The app's own reader has a fourth state because its parse is on a worker thread and a caller can arrive mid-flight; this engine's read BLOCKS the connection thread that asked, so by the time a reply exists the question is settled. `missing` and `unloadable` are two states rather than one because they are two different sentences to a person: no file at that path, versus a file that could not be read.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "SpellTableState",
+///  "description": "`shared/resistTypes.ts SpellTableState`, minus its `loading` member. The app's own reader has a fourth state because its parse is on a worker thread and a caller can arrive mid-flight; this engine's read BLOCKS the connection thread that asked, so by the time a reply exists the question is settled. `missing` and `unloadable` are two states rather than one because they are two different sentences to a person: no file at that path, versus a file that could not be read.",
+///  "type": "string",
+///  "enum": [
+///    "ok",
+///    "missing",
+///    "unloadable"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SpellTableState {
+    #[serde(rename = "ok")]
+    Ok,
+    #[serde(rename = "missing")]
+    Missing,
+    #[serde(rename = "unloadable")]
+    Unloadable,
+}
+impl ::std::fmt::Display for SpellTableState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Ok => f.write_str("ok"),
+            Self::Missing => f.write_str("missing"),
+            Self::Unloadable => f.write_str("unloadable"),
+        }
+    }
+}
+impl ::std::str::FromStr for SpellTableState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "ok" => Ok(Self::Ok),
+            "missing" => Ok(Self::Missing),
+            "unloadable" => Ok(Self::Unloadable),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SpellTableState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for SpellTableState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SpellTableState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
     }
 }
 ///`SubscribeAck`

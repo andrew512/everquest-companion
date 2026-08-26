@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:1dc83e0c2affd8f42c55dcba15dacd17e7e83674d900182705d341842c0636f4
+// schema-digest: sha256:6ed6b256345eb1dac02993bf62c6abb498d1b2201d09a6dcf0c146906a21f19d
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -42,6 +42,7 @@ export type ClientMessage =
   | SessionMarkAddRequest
   | RespawnConfirmSightingRequest
   | ResistLevelsRequest
+  | ResistSpellRequest
 /**
  * The per-launch shared secret. Minted by Electron main at spawn, handed to the engine out of band, presented once at hello. It is never persisted and never reused across launches. Compare it in CONSTANT TIME (src/main/dataServer/token.ts, engine/crates/protocol/src/token.rs) - a byte-at-a-time compare over a loopback socket is a timing oracle. The shape rules are environment-neutral and live in src/shared/dataServer/token.ts.
  */
@@ -101,6 +102,7 @@ export type ReplyResult =
   | SessionMarkAck
   | RespawnConfirmAck
   | ResistLevelsResult
+  | ResistSpellResult
 /**
  * The world's generation. Monotonic within one engine process. A client that sees an epoch it did not expect DROPS ALL STATE and waits for the reset — it never reconciles across a bump.
  */
@@ -113,6 +115,18 @@ export type ModuleState = {} | unknown[] | string | number | boolean | null
  * WHO SAID SO, and the order is the fold's own precedence: a `/con` this session beats the committed catalog beats nothing. It reaches the card as prose (`level 52, from a con`), so it is a closed set rather than free text.
  */
 export type ResistLevelSource = 'con' | 'catalog'
+/**
+ * `shared/resistTypes.ts SpellTableState`, minus its `loading` member. The app's own reader has a fourth state because its parse is on a worker thread and a caller can arrive mid-flight; this engine's read BLOCKS the connection thread that asked, so by the time a reply exists the question is settled. `missing` and `unloadable` are two states rather than one because they are two different sentences to a person: no file at that path, versus a file that could not be read.
+ */
+export type SpellTableState = 'ok' | 'missing' | 'unloadable'
+/**
+ * `shared/resistTypes.ts ResistAxis`. The display order is this list's order and every surface uses all five of it.
+ */
+export type ResistAxis = 'magic' | 'fire' | 'cold' | 'poison' | 'disease'
+/**
+ * A debuff SLOT's axis, which is the five plus `all` - the tash and malo family, effect 111. A SPELL's own axis is never `all`, which is why this is a separate set from `ResistAxis` rather than that set with a member added.
+ */
+export type ClientSpellDebuffAxis = 'magic' | 'fire' | 'cold' | 'poison' | 'disease' | 'all'
 /**
  * A CLOSED set. Both sides generate from this artifact, so adding a member is a schema edit that regenerates both — there is no version of the app that can meet a code it has never heard of.
  */
@@ -130,10 +144,6 @@ export type ErrorCode =
 export type RowKey = string
 export type DiffOp = InsertOp | UpdateOp | DropOp
 export type EpochReason = 'attach' | 'restart' | 'progress'
-/**
- * `shared/resistTypes.ts ResistAxis`. The display order is this list's order and every surface uses all five of it.
- */
-export type ResistAxis = 'magic' | 'fire' | 'cold' | 'poison' | 'disease'
 /**
  * `shared/resistTypes.ts ResistTag` — the scannable word. NO ACRONYMS, EVER (owner ruling): the axis word is the only label this app prints for an axis, and these four are the only bands.
  */
@@ -569,6 +579,14 @@ export interface ResistLevelsParams {
   mobs: [string, ...string[]]
 }
 /**
+ * ONE SPELL OUT OF THE CLIENT'S OWN TABLE (boundary verdict 7, JOS-497 item 3). `<eqRoot>/spells_us.txt` is the only source that states how a spell is RESISTED - the wiki-scraped corpus this repo ships knows a spell's messages and neither its resist type nor its resist adjust - and the engine reads the player's own copy, derived from the attach's log path (`<eqRoot>/Logs/<log>` up two). THIS IS A PER-SPELL OP AND THERE WILL NEVER BE A BULK ONE, which is a RULING rather than a phase: the owner's own parsed table is 48,252 entries and 6.13 MiB of JSON against an 8 MiB frame ceiling, on one machine, against a table that grows with every client patch, so a single reply serving the whole table is a design with a date on it (measured 2026-08-25). It is a `resist.*` op rather than an extension of `knowledge.spell` because the two answer about different SOURCES: `knowledge.spell` serves the committed wiki scrape with removals, corrections and derived durations applied, and this serves Daybreak's file. A caller asking `how is this resisted` and a caller asking `what does the wiki say` must be able to tell which one answered, and merging them into one record would make that unanswerable from the value. NOTHING DERIVED FROM THE FILE IS EVER COMMITTED, which is why every test on either side is driven by hand-authored rows.
+ */
+export interface ResistSpellRequest {
+  id: RequestId
+  op: 'resist.spell'
+  params: KnowledgeNameParams
+}
+/**
  * The handshake answer. `ok: false` is a courtesy sent immediately before the engine closes the connection — a client must treat a closed connection with no reply as the same outcome.
  */
 export interface HelloReply {
@@ -858,6 +876,60 @@ export interface ResistMobLevel {
   lo: number
   hi: number
   from: ResistLevelSource
+}
+/**
+ * What the client's table says about one spell, or why it says nothing. `table` is ALWAYS present and `spell` is present only on a hit, which is the distinction the card needs: `table: missing` means the player has no EverQuest install behind the folder this app was pointed at, and the surface says exactly that and names the path; `table: ok` with no `spell` means the file was read and has no row under this name, which is a different sentence entirely. A client that branched on `spell` alone would tell a player to go and find a folder they are already in.
+ */
+export interface ResistSpellResult {
+  /**
+   * The name as it was asked for, echoed back - never the folded key.
+   */
+  spellName: string
+  table: SpellTableState
+  /**
+   * Where this engine looked. Present always, because the sentence a missing table produces has to name a place.
+   */
+  path: string
+  spell?: ClientSpell
+}
+/**
+ * One row of `spells_us.txt` as the app's own `SpellResistInfo` describes it, field for field. THE OPTIONALS ARE ABSENT-MEANS-NOTHING and each absence was measured rather than chosen: a zero recast is the file saying there is no re-use timer, a zero `aeMaxTargets` is what 71,864 of ~74k rows read, and a zero mana is what every bard song says. Storing those zeros would cost a field on most of the table to state what the absence already states.
+ */
+export interface ClientSpell {
+  axis?: ResistAxis
+  resistAdj: number
+  castMs: number
+  recastMs?: number
+  aeMaxTargets?: number
+  mana?: number
+  targetType: number
+  /**
+   * The level the game refuses the spell above, regardless of resist. From the PRIMARY slot only and only for a charm or a mez: a stun rider's cap costs the stun, not the nuke.
+   */
+  levelCap?: number
+  /**
+   * Only the bard can cast it. Present only when true - a song is never filed as a cast.
+   */
+  song?: boolean
+  damageSlot?: ClientSpellSlot
+  debuffSlots: ClientSpellDebuff[]
+}
+/**
+ * The effect-0 hitpoint slot, which is what the resist estimator reads to decide whether a spell's damage is a fixed number. Effect 0 ALONE, deliberately: neither a heal-over-time (effect 100) nor a bard's pulse (334) is a spell the estimator fits a resist from, and widening it would change what the ledger and the con card read for no gain. An effect slot is `slot | effectId | base | limit | CALC | MAX` - measured, and the one correction the original brief needed.
+ */
+export interface ClientSpellSlot {
+  base: number
+  max: number
+  calc: number
+}
+/**
+ * A resist-DECREASE slot worth at least five points. The floor is not arbitrary: Solon's Bewitching Bravura carries a one-point magic-resist rider and is a CHARM, and opening an eleven-minute debuff window for one point would file every charmed mob's later observations under a condition that never mattered. Five sits comfortably below the weakest real member of the family (Tashani, 23) and above every rider in the file.
+ */
+export interface ClientSpellDebuff {
+  axis: ClientSpellDebuffAxis
+  base: number
+  calc: number
+  max: number
 }
 /**
  * A refused request. An error is always a reply to a request id — a failure with no request behind it closes the connection instead.

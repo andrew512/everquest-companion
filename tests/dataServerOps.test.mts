@@ -58,7 +58,8 @@ const EVERY_OP: RequestOp[] = [
   'knowledge.spell',
   'knowledge.search',
   'knowledge.define',
-  'resist.levels'
+  'resist.levels',
+  'resist.spell'
 ]
 
 test('the registry names every op, and the compile-time pin agrees', () => {
@@ -149,7 +150,16 @@ test('EVERY GUARD IS DISCRIMINATING — no two ops accept each other’s result'
     // wrong shape, and a card that fell back to the app's own fold for it would be main reading a
     // fold this ticket exists to stop reading. Same trap as the refused mark and the un-confirmed
     // sighting above, sprung a third way.
-    'resist.levels': { levels: [] }
+    'resist.levels': { levels: [] },
+    // THE MISSING-FILE ANSWER, which is the shape worth putting in the matrix for the same reason
+    // the refused mark is: an `EQ_INSTALL_DIR` pointed at a folder of logs with no EverQuest behind
+    // it is a SUPPORTED state, it carries no `spell`, and a guard reading `spell` would call the
+    // commonest honest answer a wrong shape.
+    'resist.spell': {
+      spellName: 'Tashani',
+      table: 'missing',
+      path: 'C:/nowhere/EverQuest Legends/spells_us.txt'
+    }
   }
   for (const op of EVERY_OP) {
     assert.equal(RESULT_GUARDS[op](shapes[op]), true, `${op} refused its own result`)

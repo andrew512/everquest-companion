@@ -27,6 +27,10 @@ use protocol::generated::{
     SessionMarkAckStatus, SessionMarkAddRequestOp, SessionProgressRequestOp, SubscribeAck,
     ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
 };
+use protocol::generated::{
+    ClientSpell, ClientSpellDebuff, ClientSpellDebuffAxis, ClientSpellSlot, ResistAxis,
+    ResistSpellRequestOp, ResistSpellResult, SpellTableState,
+};
 
 use crate::ingest::CombatOpts;
 use crate::world::{CombatAnswer, ListenerId, PerfAnswer, SnapshotAnswer, World};
@@ -39,6 +43,66 @@ use crate::world::{CombatAnswer, ListenerId, PerfAnswer, SnapshotAnswer, World};
 /// round trip instead of a dozen, and thirty-two is comfortably above any list a card surface
 /// draws while still being a number this process can answer inside one read boundary.
 const MAX_MOB_LEVEL_ASKS: usize = 32;
+
+/// One parsed `spells_us.txt` row, as the wire describes it (JOS-497 item 3).
+///
+/// THE FOLD'S `f64`s BECOME THE SCHEMA'S NUMBERS UNCHANGED, and that is the right conversion rather
+/// than a lazy one: the app's own parser produces JavaScript numbers, the app's own consumers read
+/// them as such, and rounding to integers here would make this engine's answer differ from the
+/// worker's on any row where the file carries a fraction. The schema says `number` for exactly that
+/// reason.
+///
+/// ABSENT STAYS ABSENT. Every optional is absent-means-nothing at its producer (`fold::spells_us`
+/// states the measurement behind each), so a `0` or a `false` invented here would be this layer
+/// disagreeing with the parser about what the file said. `song` is `Some(true)` or nothing, never
+/// `Some(false)` — the app payload's own shape.
+fn client_spell(info: &fold::spells_us::SpellInfo) -> ClientSpell {
+    use fold::spells_us::Axis;
+    let axis = |a: Axis| match a {
+        Axis::Magic => ClientSpellDebuffAxis::Magic,
+        Axis::Fire => ClientSpellDebuffAxis::Fire,
+        Axis::Cold => ClientSpellDebuffAxis::Cold,
+        Axis::Poison => ClientSpellDebuffAxis::Poison,
+        Axis::Disease => ClientSpellDebuffAxis::Disease,
+        Axis::All => ClientSpellDebuffAxis::All,
+    };
+    ClientSpell {
+        // A SPELL'S OWN AXIS IS NEVER `all` — that is a debuff SLOT's, and the two are different
+        // sets on the wire for exactly this reason. The `All` arm here is unreachable and answers
+        // `None`, which is what `axisFromResistType` answers for everything it refuses.
+        axis: match info.axis {
+            Some(Axis::Magic) => Some(ResistAxis::Magic),
+            Some(Axis::Fire) => Some(ResistAxis::Fire),
+            Some(Axis::Cold) => Some(ResistAxis::Cold),
+            Some(Axis::Poison) => Some(ResistAxis::Poison),
+            Some(Axis::Disease) => Some(ResistAxis::Disease),
+            Some(Axis::All) | None => None,
+        },
+        resist_adj: info.resist_adj,
+        cast_ms: info.cast_ms,
+        recast_ms: info.recast_ms,
+        ae_max_targets: info.ae_max_targets,
+        mana: info.mana,
+        target_type: info.target_type,
+        level_cap: info.level_cap,
+        song: info.song.then_some(true),
+        damage_slot: info.damage_slot.map(|s| ClientSpellSlot {
+            base: s.base,
+            max: s.max,
+            calc: s.calc,
+        }),
+        debuff_slots: info
+            .debuff_slots
+            .iter()
+            .map(|d| ClientSpellDebuff {
+                axis: axis(d.axis),
+                base: d.base,
+                calc: d.calc,
+                max: d.max,
+            })
+            .collect(),
+    }
+}
 
 /// One connection's own state — everything that belongs to this conversation rather than to the
 /// world.
@@ -413,6 +477,54 @@ impl Session {
                                     },
                                 })
                                 .collect(),
+                        }),
+                    ),
+                }
+            }
+
+            // ── RESIST.SPELL (boundary verdict 7, JOS-497 item 3) ──────────────────────────────
+            //
+            // ONE SPELL OUT OF THE CLIENT'S OWN TABLE. It is the only source that states how a
+            // spell is RESISTED — the committed wiki scrape knows a spell's messages and neither
+            // its resist type nor its resist adjust — and this process reads the player's own copy,
+            // beside the install the attach named.
+            //
+            // NO `notFound`, AND THE REASON IS THE WHOLE SHAPE OF THE REPLY. Four situations reach
+            // this op and only one of them is an error: the file was read and has a row (a hit);
+            // the file was read and has no such row; there is no file at that path; there is a file
+            // that could not be read. The middle two are not failures — they are what a card has to
+            // SAY, in different words, and an `ErrorReply` would flatten them into one and put an
+            // ordinary state into every error log this app collects. So `table` and `path` ride
+            // every answer and `spell` rides a hit.
+            //
+            // THE ONE REFUSAL IS HAVING NO INSTALL TO SPEAK OF: nothing has been attached, so there
+            // is no log, so there is no directory to look beside.
+            //
+            // THE READ HAPPENS ON THIS THREAD, deliberately. It is 38 MB and a few hundred
+            // milliseconds, once per install per launch, on a connection thread whose only job is
+            // this request — never on the ingest, which is the thread tailing the log.
+            ClientMessage::ResistSpellRequest(request) => {
+                let name = request.params.name;
+                match world.client_spells() {
+                    None => error(
+                        request.id,
+                        ErrorCode::Unavailable,
+                        "no log is attached, so there is no install to read a spell table beside"
+                            .to_owned(),
+                    ),
+                    Some(spells) => reply(
+                        request.id,
+                        ReplyResult::ResistSpellResult(ResistSpellResult {
+                            spell: spells.spell(&name).map(client_spell),
+                            spell_name: name,
+                            table: match spells.state() {
+                                crate::spells::TableState::Ok => SpellTableState::Ok,
+                                crate::spells::TableState::Missing => SpellTableState::Missing,
+                                crate::spells::TableState::Unloadable => {
+                                    SpellTableState::Unloadable
+                                }
+                            },
+                            path: spells.path().to_string_lossy().into_owned(),
                         }),
                     ),
                 }
@@ -879,6 +991,7 @@ fn is_known_op(op: &str) -> bool {
         KnowledgeSearchRequestOp::KnowledgeSearch.to_string(),
         KnowledgeDefineRequestOp::KnowledgeDefine.to_string(),
         ResistLevelsRequestOp::ResistLevels.to_string(),
+        ResistSpellRequestOp::ResistSpell.to_string(),
     ]
     .iter()
     .any(|known| known == op)
