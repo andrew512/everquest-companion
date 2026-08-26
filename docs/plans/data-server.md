@@ -297,6 +297,24 @@ From the connect-and-serve wave (JOS-478/479/480):
   read as compute (ruling 19 discipline, first light: 29 µs fold-to-frame for a 3-row window off
   a 139,864-event fold).
 
+From the JOS-497 wave (worker friction, all verified):
+
+- **A relative `CARGO_TARGET_DIR` plus `--manifest-path` multiplies directories.** The combination
+  resolves against the cwd and created an UN-IGNORED `engine/engine/target-verify` — the
+  5,118-artifact hazard again. In a WORKTREE the precaution is unnecessary anyway: the worktree's
+  own `engine/target/` is not the owner's locked directory. Brief law: workers in worktrees use
+  the default target dir; only main-checkout cargo needs `target-verify`, and then as an ABSOLUTE
+  path.
+- **`tests/bench/rustParity.mts` hardcodes `engine/target/release/parity.exe`** and ignores
+  `CARGO_TARGET_DIR`; a redirected build makes the oracle fail as `parity --snapshots exited
+  null` — a spawn failure wearing a divergence's clothes.
+- **The oracle needs BOTH fixture dirs** (`slices/` and `goldens/`), and junctioned fixtures fail
+  on `character.logPath`: the golden encodes the recording checkout's ABSOLUTE log path. Worktree
+  runs pass `--slices=`/`--goldens=` at the real dirs instead. The absolute path inside a golden
+  is a recorded wart — the deletion release's golden work normalizes it or documents it.
+- **Worktrees containing junctions must never be `rm -rf`'d** — unlink with `rmdir` first and
+  verify the targets survived.
+
 ## Boundary verdicts (each resolves a census finding)
 
 1. `combat.snapshot(now, opts)` — the only wall-clock-parameterized read: the now-evaluation
