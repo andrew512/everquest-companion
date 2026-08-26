@@ -48,7 +48,7 @@
 //! also keeps the derived event out of `last_event_ts`, which the primary `sessionStart` it restates
 //! has already recorded.
 
-use crate::event::Event;
+use crate::event::{Event, Key};
 use crate::jsmap::JsMap;
 use crate::modules::buff_anchors::Attribution;
 use crate::modules::buff_landing::stated_duration;
@@ -869,7 +869,7 @@ impl BuffTimersModule {
         match ev.kind() {
             "cc" => {
                 let mob = ev.str("mob").unwrap_or_default().to_string();
-                if ev.get("refresh").and_then(Value::as_bool) == Some(true) {
+                if ev.bool(Key::Refresh) {
                     self.end(&id_key(&mob), ev.ts(), ev.str("spell"));
                 } else {
                     self.apply(&mob, ev.ts(), ev.str("verb"), &cc_candidates(ev));
@@ -957,17 +957,13 @@ impl BuffTimersModule {
 /// `cc.candidates` / `charm.candidates` — `[{ name, durationMs }]`, with NO illusion flag (the CC
 /// broadcast's candidate shape is the narrower of the two).
 fn cc_candidates(ev: &Event) -> Vec<Candidate> {
-    let Some(list) = ev.get("candidates").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    list.iter()
-        .map(|c| Candidate {
-            name: c
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            duration_ms: c.get("durationMs").and_then(Value::as_i64),
+    ev.candidates(Key::Candidates)
+        .into_iter()
+        .map(|(name, duration_ms, _)| Candidate {
+            name,
+            duration_ms,
+            // NOT the event's flag — this shape carries none, and the reader that walked the
+            // `Value` defaulted it here for the same reason.
             illusion: false,
         })
         .collect()

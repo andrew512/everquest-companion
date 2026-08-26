@@ -103,7 +103,7 @@ pub mod ledger_file;
 pub mod songs;
 pub mod world;
 
-use crate::event::Event;
+use crate::event::{Event, Key};
 use crate::modules::consider::mob_key;
 use crate::EqModule;
 use cast_state::{Armed, ArmedCasts, CastState};
@@ -277,7 +277,7 @@ impl ResistFold {
                 }
                 // The ONE line in the game that states the loadout, and therefore the only thing
                 // that can answer "how many non-hybrid caster classes" for the overchannel adjust.
-                self.cast.note_classes(&str_array(ev, "classes"));
+                self.cast.note_classes(&str_array(ev, Key::Classes));
                 true
             }
             "invocationChange" => {
@@ -359,7 +359,7 @@ impl ResistFold {
             }
             "cc" | "charm" => {
                 let mob = ev.str("mob").unwrap_or_default().to_string();
-                let names = ev.get("candidates").map(|_| candidate_names(ev));
+                let names = ev.has(Key::Candidates).then(|| candidate_names(ev));
                 self.on_emote(&mob, ev.ts(), names.as_deref(), bucket);
             }
             _ => {}
@@ -711,10 +711,7 @@ impl ResistFold {
             }
         } else {
             let crit = ev.bool("crit");
-            let modifiers = ev
-                .get("modifiers")
-                .and_then(|v| v.as_array())
-                .map_or(0, Vec::len);
+            let modifiers = ev.arr_len(Key::Modifiers);
             let amount = ev.int("amount").unwrap_or(0);
             let row = self.row_for(bucket, &obs);
             // A CRITICAL is counted as a landing and kept OUT of the histogram: its number is not
@@ -843,28 +840,14 @@ impl ResistFold {
 }
 
 /// `ev.classes` — the `/who` row's class codes.
-fn str_array(ev: &Event, key: &str) -> Vec<String> {
-    ev.get(key)
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
+fn str_array(ev: &Event, key: Key) -> Vec<String> {
+    ev.arr_str(key).into_iter().map(str::to_string).collect()
 }
 
 /// `ev.candidates.map((c) => c.name)` — the candidate SPELL NAMES the parser handed over. EQ prints
 /// one sentence per spell FAMILY, so the parser never claims which one it was (world-model law 3).
 fn candidate_names(ev: &Event) -> Vec<String> {
-    ev.get("candidates")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|c| c.get("name").and_then(|n| n.as_str()).map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
+    ev.candidate_names(Key::Candidates)
 }
 
 /// The EqModule wrapper.

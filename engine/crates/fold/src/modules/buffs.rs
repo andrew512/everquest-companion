@@ -59,7 +59,7 @@
 //! runs the EXISTING law-4 censor, which is what leaves charmed pets and hostiles behind on a login
 //! exactly as on any other zone.
 
-use crate::event::Event;
+use crate::event::{Event, Key};
 use crate::jsmap::JsMap;
 use crate::modules::buff_anchors::CastAnchors;
 use crate::modules::buff_landing::{admit_landing, Candidate};
@@ -123,7 +123,7 @@ pub struct BuffsModule {
     facts: SpellFacts,
     /// The `buffExpired` events synthesized while folding the current PRIMARY event, in emission
     /// order, waiting for the registry to take them.
-    derived: Vec<Event>,
+    derived: Vec<Event<'static>>,
     /// `curSeq`/`curTs` — THE LAST PRIMARY EVENT'S IDENTITY, which is what an expiry is stamped
     /// with (`emitBuffExpired`). It has to be a FIELD rather than a parameter because a wall-clock
     /// tick synthesizes expiries too and has no event of its own to name: over there `onTick` runs
@@ -257,7 +257,7 @@ impl BuffsModule {
     /// and every tick→fade span was minted as a duration sample — a 5 s median for a 41 s spell.
     /// Only the DIRECT heal line opens anything here.
     fn on_heal(&mut self, ev: &Event, core: &mut BuffsCore) {
-        if ev.get("overTime").and_then(Value::as_bool) == Some(true) {
+        if ev.bool(Key::OverTime) {
             return;
         }
         let Some(spell) = ev.str("spell").filter(|s| !s.is_empty()) else {
@@ -539,36 +539,22 @@ impl BuffsModule {
 
 /// `buffApply.candidates` — `[{ name, durationMs, illusion }]`.
 fn candidates_of(ev: &Event) -> Vec<Candidate> {
-    let Some(list) = ev.get("candidates").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    list.iter()
-        .map(|c| Candidate {
-            name: c
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            duration_ms: c.get("durationMs").and_then(Value::as_i64),
-            illusion: c
-                .get("illusion")
-                .and_then(Value::as_bool)
-                .unwrap_or_default(),
+    ev.candidates(Key::Candidates)
+        .into_iter()
+        .map(|(name, duration_ms, illusion)| Candidate {
+            name,
+            duration_ms,
+            illusion,
         })
         .collect()
 }
 
 /// `buffWearOff.candidates` — a plain `string[]`.
 fn wear_off_candidates(ev: &Event) -> Vec<String> {
-    ev.get("candidates")
-        .and_then(Value::as_array)
-        .map(|l| {
-            l.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+    ev.arr_str(Key::Candidates)
+        .into_iter()
+        .map(str::to_string)
+        .collect()
 }
 
 impl EqModule for BuffsModule {
@@ -746,7 +732,7 @@ impl EqModule for BuffsModule {
         json!({ "seq": self.seq, "state": self.build_state(&core.stats) })
     }
 
-    fn take_derived(&mut self) -> Vec<Event> {
+    fn take_derived(&mut self) -> Vec<Event<'static>> {
         std::mem::take(&mut self.derived)
     }
 

@@ -108,7 +108,7 @@ fn main() -> ExitCode {
         None => {
             let stdout = std::io::stdout();
             let mut out = BufWriter::with_capacity(1 << 20, stdout.lock());
-            let n = eqlog::scan::scan_bytes(&parser, &bytes, |line| {
+            let n = eqlog::scan::scan_bytes(&parser, &bytes, |line, _payload| {
                 let _ = out.write_all(line.as_bytes());
                 let _ = out.write_all(b"\n");
             });
@@ -578,7 +578,7 @@ fn diff(
     let mut first: Option<(u64, String, String)> = None;
     let mut at: u64 = 0;
     let started = std::time::Instant::now();
-    let n = eqlog::scan::scan_bytes(parser, bytes, |got| {
+    let n = eqlog::scan::scan_bytes(parser, bytes, |got, _payload| {
         if first.is_some() {
             return;
         }
