@@ -21,6 +21,7 @@ import type {
   HealthResult,
   KnowledgeResult,
   KnowledgeSearchResult,
+  LogsListResult,
   ModuleSnapshotResult,
   PerfSnapshotResult,
   ResistLevelsResult,
@@ -88,6 +89,14 @@ interface ResultRegistry {
   // would make that unanswerable from the value — the same argument that keeps the five `*.define`
   // ops five entries.
   'resist.spell': ResistSpellResult
+  // LOG DISCOVERY (owner ruling 21, decision sheet 1a — JOS-498). A COMMAND AND A QUERY, and the
+  // command answers with the ack six ops already share: `logs.setDir` pushes one directory, which is
+  // not a list, so there is nothing per-family to report back and `DefineAck` is exactly right. It
+  // is written down as its own entry for the reason every shared shape here is — five ops that agree
+  // today are still five entries, because the point of this file is that a NEW op cannot compile
+  // until somebody says what it answers with.
+  'logs.setDir': DefineAck
+  'logs.list': LogsListResult
 }
 
 /** Every client message that carries a request id — i.e. everything except the handshake. */
@@ -192,7 +201,19 @@ export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> 
   // and the one `spell` does not have: a miss and a missing file both carry no `spell`, and both
   // are real answers rather than wrong shapes. Same lesson as `knowledge.item`'s `record` over its
   // `found`, reached from the other direction.
-  'resist.spell': (r) => 'table' in r
+  'resist.spell': (r) => 'table' in r,
+  // `applied` — the push joins the ack family, and the guard says so rather than pretending
+  // otherwise. `logs.setDir` carries ONE DIRECTORY and therefore no `count`, which is the same
+  // answer `buffTrust.define` and `respawn.define` give, so no field could separate it from the six
+  // and a guard that claimed to would be a guard that lies (`knowledge.define`'s reasoning exactly).
+  'logs.setDir': (r) => 'applied' in r,
+  // `characters` — this shape's own word, chosen the way `confirmed` and `levels` were rather than
+  // found to be free. `dir` would have been the tempting pick and is the weaker one for the reason
+  // the matrix has now caught twice (`hits`, `status`): it is named after a GENERIC role that a
+  // later result shape is likely to want too. `characters` is what the op is FOR, no other arm
+  // carries it, and the schema requires it even when it is empty — which matters here, because "this
+  // install has no character logs" is a real answer and must not read as a wrong shape.
+  'logs.list': (r) => 'characters' in r
 }
 
 /**

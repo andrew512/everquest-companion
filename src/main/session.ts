@@ -26,6 +26,13 @@ import {
 // engine when it is the world answering this app's reads, and `null` — no engine, not yet live, a
 // world just replaced — is every caller's cue to ask this process's own fold instead.
 import { mirroredModuleState } from './dataServer/serveMirrors'
+// LOG DISCOVERY, SERVED (JOS-498, owner ruling 21 / decision sheet 1a). The engine scans the
+// directory this app named and answers "who could you be playing"; `listCharacters` /
+// `resolveActiveCharacter` are the arm that answers when it cannot. `pushLogDir` is the slot that
+// lets this file say "the directory moved" without importing the engine client — which imports this
+// file, and would be a cycle.
+import { serveCharacterList } from './dataServer/serveLogs'
+import { pushLogDir } from './dataServer/definePush'
 import { baseName } from '../shared/outputs/baseline'
 import { loadInventory } from './inventory/parseInventory'
 import { loadAchievements, watchOutputKind, type OutputKindWatch } from './outputs'
@@ -85,14 +92,44 @@ export function activeCharId(): string {
 // engine's `moduleChanged` cursors are the same evidence arriving from the world that now folds
 // them, so the nudge lives where they land.
 
-/** Resolve which character to track on launch: last selected, else most recent. */
-function resolveInitialCharacter(): CharacterRef | null {
+/**
+ * WHO WAS PLAYED LAST, AS A SERVED ANSWER (JOS-498, owner ruling 21).
+ *
+ * The engine scans the directory this app pushed and returns the characters most-recently-written
+ * first, so its first row IS "the log with the newest mtime" — which is exactly what
+ * `resolveActiveCharacter` computes with its own readdir. `serveCharacterList` falls back to
+ * `listCharacters()` for every reason an engine can fail to answer, so the two arms are the same
+ * answer computed in two processes and this function does not have to know which one spoke.
+ *
+ * THE ENV OVERRIDE IS ASKED FIRST AND STAYS APP-SIDE. `EQ_LOG_PATH` names ONE FILE and outranks any
+ * list — it is how the e2e harness and a developer point this process at a log, and it is a fact
+ * about how THIS process was started rather than about what is in a folder. Asking the engine to
+ * enumerate a directory in order to honour it would be asking a question that is already answered,
+ * and could answer it differently. `resolveActiveCharacter` already implements the override
+ * (including the `Unknown` ref it builds for a path that does not parse), so the whole arm is that
+ * one call.
+ */
+async function resolveMostRecentCharacter(): Promise<CharacterRef | null> {
+  if (process.env.EQ_LOG_PATH) return resolveActiveCharacter()
+  const listed = await serveCharacterList(() => listCharacters())
+  return listed[0] ?? null
+}
+
+/**
+ * Resolve which character to track on launch: last selected, else most recent.
+ *
+ * THE SAVED PATH IS STILL FIRST AND IS STILL A STORE READ. It is not a fact about the log directory
+ * at all — it is what this person chose last time — so ruling 21 does not touch it, and on every
+ * launch after the first it means the engine is never asked. What became served is the OTHER arm:
+ * the fresh install, and the launch whose saved log has been deleted.
+ */
+async function resolveInitialCharacter(): Promise<CharacterRef | null> {
   const savedPath = getActiveLogPath()
   if (savedPath) {
     const ref = parseLogName(savedPath)
     if (ref) return ref
   }
-  return resolveActiveCharacter()
+  return resolveMostRecentCharacter()
 }
 
 /** Build the EqConfig payload the Settings UI reads (effective dir + how it resolved). */
@@ -127,15 +164,19 @@ export async function applyEqDirChange(): Promise<EqConfig> {
   // an override must be able to re-probe the machine, not serve the root we found an hour ago.
   invalidateEqDiscovery()
   const config = buildEqConfig()
-  // Refresh the character selector everywhere.
-  const chars = listCharacters()
+  // THE ENGINE IS TOLD, AND IT IS TOLD HERE (JOS-498). This is the one moment a person can say where
+  // EverQuest lives, and it is AFTER `invalidateEqDiscovery` + `buildEqConfig` on purpose: the push
+  // reads `eqLogsDir()` for itself, so it must not run until this process has resolved the new
+  // setting. Everything downstream of this line — including the served list below — is then asking
+  // about the folder the user just picked.
+  pushLogDir()
   sendToMain(IPC.onEqConfigChanged, config)
 
   if (tailSurvivesRootChange(character?.logPath, config.logsDir, existsSync)) return config
 
   // The dir moved out from under the tail (or we had none): pick the best character
   // under the new dir and re-tail, or gracefully idle if the dir has no logs.
-  const next = resolveActiveCharacter() ?? chars[0] ?? null
+  const next = await resolveMostRecentCharacter()
   if (next) {
     await tailCharacter(next)
   } else {
@@ -202,6 +243,11 @@ function watchForFirstLog(): void {
     // A log that appears where auto-discovery could have found it (no override, non-default
     // install) also un-sticks the memoized "found nothing" — fs probes only, see config.ts.
     refreshEqDiscoveryCheaply()
+    // DELIBERATELY THE LOCAL READ (JOS-498; serveLogs.ts's header lists the exceptions and why). The
+    // tick's whole subject is whether a file has appeared where THIS process's own discovery can see
+    // one — the line above re-probes the machine — so the question and the answer belong to the same
+    // process. A round trip per two seconds would also make an idle app talk to the engine forever
+    // about a folder neither of them has any news about.
     const next = resolveActiveCharacter()
     if (!next) return
     stopWatchingForFirstLog()
@@ -549,7 +595,14 @@ function startAchievementsWatch(ref: CharacterRef): void {
  *  JOS-457, also null when the user picked a different character before the startup fold finished,
  *  which is the same statement about the same number: this launch's replay was not the one kept. */
 export async function startTailing(): Promise<boolean> {
-  const ref = resolveInitialCharacter()
+  // AND ON THIS CALL THE SERVED ARM DEGRADES BY CONSTRUCTION, which is worth saying here rather than
+  // leaving to be discovered in a fallback tally. `index.ts` calls this BEFORE
+  // `startEngineSupervisor()`, and the supervisor is asynchronous end to end — so at the first
+  // character choice of a launch there is no engine to ask and this process reads the folder itself.
+  // That is precisely the arm `listCharacters` survived the deletion release for; every LATER
+  // resolution (the picker's rows, a settings change, the idle rescan) happens with the engine
+  // connected and is served.
+  const ref = await resolveInitialCharacter()
   if (!ref) {
     logWarn('[everquest-companion] No EQ log found; watching for one to appear.')
     // Same trap as a dir change that finds nothing: the app launched before the player ever

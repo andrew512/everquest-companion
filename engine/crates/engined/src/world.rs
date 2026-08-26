@@ -211,6 +211,19 @@ struct State {
     /// ingest's own `report_*` calls. The handle is cloned out under the lock and the parse happens
     /// with the lock released — the same discipline [`World::module_snapshot`] states for the wait.
     client_spells: Option<std::sync::Arc<crate::spells::ClientSpells>>,
+    /// WHERE THE CHARACTER LOGS LIVE, as the APP named it (owner ruling 21, decision sheet 1a —
+    /// JOS-498). `None` until a `logs.setDir` arrives, which is what makes `logs.list` refusable
+    /// rather than emptily wrong.
+    ///
+    /// IT IS APP KNOWLEDGE AND IT SURVIVES AN ATTACH, exactly as `defines` does and for the
+    /// identical reason: a character switch is not the app withdrawing where its logs live. It is
+    /// NOT a `*.define` family, though, and the difference is worth the field rather than a sixth
+    /// entry in that map — the five defines are FOLD inputs, held so the next attach can apply them
+    /// at construction (`held_defines`) and part of ruling 18's cache key. This changes no fold: a
+    /// world that has never heard it folds byte-identically to one that has, so putting it in
+    /// `defines` would have made a directory look like a parse input to everything downstream that
+    /// reads that map.
+    log_dir: crate::logs::LogDir,
 }
 
 /// What the world's fold has consumed. A COORDINATE PAIR plus what was counted along the way.
@@ -386,6 +399,7 @@ impl World {
                     defines: std::collections::BTreeMap::new(),
                     write_to: None,
                     client_spells: None,
+                    log_dir: crate::logs::LogDir::default(),
                 }),
             }),
         }
@@ -929,6 +943,48 @@ impl World {
             .iter()
             .map(|(family, payload)| (family.clone(), payload.clone()))
             .collect()
+    }
+
+    /// WHERE THE CHARACTER LOGS LIVE, as the app just said (owner ruling 21, decision sheet 1a).
+    ///
+    /// AN IDEMPOTENT FULL-SET REPLACE OF ONE VALUE, which for a single path means the latest push is
+    /// the whole of what the app has said — the same command law the five defines are under, and the
+    /// reason a crash-respawn needs nothing but a replay of the latest push.
+    ///
+    /// NOTHING IS HANDED TO A FOLD, and that is the whole difference from [`World::define`] one
+    /// method up. A define changes what folding a log produces and therefore has to reach the
+    /// running ingest and be re-applied at the next attach's construction; a directory changes
+    /// nothing about any fold, so the write ends here. It also means this call cannot block on the
+    /// ingest thread, which is why it takes the lock and drops it in one statement.
+    pub fn set_log_dir(&self, dir: &str) {
+        self.lock().log_dir.set(dir);
+    }
+
+    /// THE CHARACTER LOGS IN THE DIRECTORY THE APP NAMED, or `Err` when it has named none.
+    ///
+    /// THE SCAN HAPPENS WITH THE LOCK RELEASED, exactly as [`World::module_snapshot`]'s wait does
+    /// and for the same reason: it is a readdir plus one stat per file, which is fast on a warm
+    /// directory and unbounded on a disconnected network share — and this mutex is taken by the
+    /// ingest thread in every `report_*` it makes. Holding it across a filesystem call would let one
+    /// slow share stall the fold.
+    ///
+    /// THE PATH IS COPIED OUT AND ECHOED BACK by the caller, so the answer names the directory it is
+    /// about. See `LogsListResult` in the schema: that echo is the client's own staleness test.
+    ///
+    /// IT NEEDS NO FOLD AND NO ATTACH. A world that has folded nothing answers this perfectly, which
+    /// is the launch the op exists for — a fresh install has characters to choose between before
+    /// there is anything to attach to.
+    pub fn list_logs(&self) -> Result<(String, crate::logs::LogScan), String> {
+        let dir = self.lock().log_dir.get().map(std::path::Path::to_path_buf);
+        let Some(dir) = dir else {
+            return Err(
+                "no log directory has been pushed, so there is nothing to enumerate; the app names \
+                 it with logs.setDir"
+                    .to_owned(),
+            );
+        };
+        let scan = crate::logs::scan(&dir);
+        Ok((dir.to_string_lossy().into_owned(), scan))
     }
 
     /// THE INGEST OFFERS TO TAKE WRITES: install this turn's push channel.

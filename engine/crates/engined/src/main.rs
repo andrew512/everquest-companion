@@ -39,6 +39,9 @@ mod concard;
 mod conn;
 mod foldsink;
 mod ingest;
+/// WHICH CHARACTERS THIS INSTALL HAS (owner ruling 21). The app pushes the directory; this is the
+/// scan of it, and the one piece of this process that reads a log file's NAME rather than its bytes.
+mod logs;
 mod ops;
 mod search;
 mod spawn;

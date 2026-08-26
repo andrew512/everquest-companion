@@ -22,7 +22,9 @@ import assert from 'node:assert/strict'
 import {
   DEFINE_OPS,
   pushAppKnowledge,
+  pushLogDir,
   setAppKnowledgePusher,
+  setLogDirPusher,
   type DefineOp
 } from '../src/main/dataServer/definePush'
 import {
@@ -231,4 +233,40 @@ test('a family announced twice is announced twice — the coalescing is the ENGI
   pushAppKnowledge('respawn.define')
   setAppKnowledgePusher(null)
   assert.deepEqual(announced, ['respawn.define', 'respawn.define'])
+})
+
+test('THE LOG-DIRECTORY SLOT IS ITS OWN SLOT, and it is not a sixth define (JOS-498)', () => {
+  // Owner ruling 21 / decision sheet 1a: the app names the directory and pushes it. It gets the same
+  // mechanism as the five families — a registration, so `session.ts` can say "the EQ dir moved"
+  // without importing the engine client that imports it back — and deliberately not the same LIST.
+  // The five are FOLD inputs, re-applied at every attach's construction and part of ruling 18's
+  // cache key; a directory changes no fold, and putting it in `DEFINE_OPS` would have made
+  // `pushAllDefines` state it before every attach as though it did.
+  assert.equal(
+    (DEFINE_OPS as readonly string[]).includes('logs.setDir'),
+    false,
+    'logs.setDir is not a member of the define family'
+  )
+
+  // SILENT WITH NO ENGINE, exactly as `pushAppKnowledge` is: a launch that armed no client pays one
+  // null check per settings change.
+  setLogDirPusher(null)
+  pushLogDir()
+
+  let announced = 0
+  setLogDirPusher(() => {
+    announced += 1
+  })
+  pushLogDir()
+  pushLogDir()
+  // TWO PUSHES ARE TWO PUSHES. The command is an idempotent full-set replace of one value, so the
+  // second leaves what the first left — which is the ENGINE's business, and a seam that deduped here
+  // would be deciding that a write it cannot see the contents of did not matter.
+  assert.equal(announced, 2)
+
+  // …and letting go is complete: `stopEngineClient` clears it, and a settings change between a
+  // teardown and the next connection must reach nobody rather than a client that is gone.
+  setLogDirPusher(null)
+  pushLogDir()
+  assert.equal(announced, 2)
 })

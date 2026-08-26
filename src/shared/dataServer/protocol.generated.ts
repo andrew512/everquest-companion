@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:5e83fae233a66bc3cfc49258144129f079e3bc4036764b80aec0ca42beb6c9a3
+// schema-digest: sha256:1db2731131510b321a7d095cf65a67bafcf851ae8483019822152c0e57164777
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -43,6 +43,8 @@ export type ClientMessage =
   | RespawnConfirmSightingRequest
   | ResistLevelsRequest
   | ResistSpellRequest
+  | LogsSetDirRequest
+  | LogsListRequest
 /**
  * The per-launch shared secret. Minted by Electron main at spawn, handed to the engine out of band, presented once at hello. It is never persisted and never reused across launches. Compare it in CONSTANT TIME (src/main/dataServer/token.ts, engine/crates/protocol/src/token.rs) - a byte-at-a-time compare over a loopback socket is a timing oracle. The shape rules are environment-neutral and live in src/shared/dataServer/token.ts.
  */
@@ -103,6 +105,7 @@ export type ReplyResult =
   | RespawnConfirmAck
   | ResistLevelsResult
   | ResistSpellResult
+  | LogsListResult
 /**
  * The world's generation. Monotonic within one engine process. A client that sees an epoch it did not expect DROPS ALL STATE and waits for the reset — it never reconciles across a bump.
  */
@@ -127,6 +130,10 @@ export type ResistAxis = 'magic' | 'fire' | 'cold' | 'poison' | 'disease'
  * A debuff SLOT's axis, which is the five plus `all` - the tash and malo family, effect 111. A SPELL's own axis is never `all`, which is why this is a separate set from `ResistAxis` rather than that set with a member added.
  */
 export type ClientSpellDebuffAxis = 'magic' | 'fire' | 'cold' | 'poison' | 'disease' | 'all'
+/**
+ * HOW READING THE DIRECTORY WENT - `ResolvedEqDir.readable` in `main/log/config.ts`, member for member, so the served answer and the app's own read describe the same three situations in the same words. A FAILED READ IS NOT `no logs` (JOS-82): `missing` is a path with nothing at it, which is the ordinary state of a machine where EverQuest is installed somewhere else, and `unreadable` is a directory that exists and refused - a permission, a disconnected network share, a share violation - which is a different sentence to a person and a different decision to the caller.
+ */
+export type LogsDirReadable = 'ok' | 'missing' | 'unreadable'
 /**
  * A CLOSED set. Both sides generate from this artifact, so adding a member is a schema edit that regenerates both — there is no version of the app that can meet a code it has never heard of.
  */
@@ -587,6 +594,28 @@ export interface ResistSpellRequest {
   params: KnowledgeNameParams
 }
 /**
+ * WHERE THE CHARACTER LOGS LIVE, PUSHED (owner ruling 21, decision sheet 1a). Log DISCOVERY migrates server-side and launch-time character choice becomes a served answer - but THE APP NAMES THE DIRECTORY, which is boundary verdict 3 applied to a path instead of to a preference: the store is persistence truth, the engine never reads a settings file, and the directory is the product of an override plus an auto-discovery sweep plus a registry read that this engine has no business doing. So the app resolves it (`main/log/config.ts eqLogsDir`) and states it here, on connect and whenever the setting moves. IT IS AN IDEMPOTENT FULL-SET REPLACE like the five `*.define` commands, which for a single value means the last push is the whole of what the app has said; the ack is therefore `DefineAck` with no `count`, exactly as `buffTrust.define` and `respawn.define` answer for a payload that is one object rather than a list. IT IS NOT A `*.define` BY NAME, deliberately: those five are FOLD inputs and part of ruling 18's cache key - a rule set that changes what folding a log produces - and this changes nothing about any fold. It names a directory nobody folds, answers one query, and a world that never hears it folds byte-identically to one that does. THE DIRECTORY IS NOT THE ATTACH. `session.attach` names one FILE to fold and this names the folder to enumerate; a fresh install has the second and not the first, which is the whole reason this command exists rather than the list being derived from the attached log's parent.
+ */
+export interface LogsSetDirRequest {
+  id: RequestId
+  op: 'logs.setDir'
+  params: LogsSetDirParams
+}
+export interface LogsSetDirParams {
+  /**
+   * The folder holding `eqlog_<Character>_<server>.txt`, absolute, as the app resolved it. A directory that does not exist is a perfectly good push and is not refused: the app resolves a path on a machine with no EverQuest on it too, and what that produces is a `logs.list` saying `missing` rather than a command that failed.
+   */
+  dir: string
+}
+/**
+ * WHICH CHARACTERS THIS INSTALL HAS, as the engine sees the folder the app named. The served half of ruling 21: the app has always read this directory itself (`listCharacters` in `main/log/config.ts` - a readdir, a filename parse and a `statSync` per file) and the ruling moves the reading to the process that owns log files. IT TAKES NO PARAMS BECAUSE THE DIRECTORY IS PUSHED, and that is the point of the split rather than an economy: a request carrying the folder would make the answer a function of whatever the caller happened to send, and two callers could then disagree about which install this app is looking at. It IS ANSWERABLE BY A WORLD WITH NO FOLD, like `knowledge.*` and `perf.snapshot` and unlike `module.snapshot`: a fresh install has characters to choose between before there is anything to attach to, which is precisely the moment this op exists for. THE ONE REFUSAL IS NEVER HAVING BEEN TOLD - an engine that has heard no `logs.setDir` has no directory to enumerate, which is `unavailable` rather than an empty list, because a caller cannot tell an install with no characters from a question nobody armed.
+ */
+export interface LogsListRequest {
+  id: RequestId
+  op: 'logs.list'
+  params: NoParams
+}
+/**
  * The handshake answer. `ok: false` is a courtesy sent immediately before the engine closes the connection — a client must treat a closed connection with no reply as the same outcome.
  */
 export interface HelloReply {
@@ -930,6 +959,41 @@ export interface ClientSpellDebuff {
   base: number
   calc: number
   max: number
+}
+/**
+ * THE CHARACTERS, AND WHERE THEY WERE LOOKED FOR. `dir` and `readable` ride every answer and the rows are whatever was found, which is `ResistSpellResult`'s shape and its argument: an empty list means three different things to a person - no such folder, a folder that could not be read, a folder with no character logs in it - and a reply that carried only the rows would flatten them into one silence. `dir` IS ALSO THE ECHO TEST. The app compares it against the directory it currently resolves, and a mismatch means this engine is answering about a folder the app has since been pointed away from - a `logs.setDir` still in flight - so the app reads the folder itself rather than drawing a picker for the wrong install. It is the same test `module.snapshot`'s echoed `module` gets, for the same reason: a bookkeeping failure between two processes must not reach a surface wearing the right answer's clothes.
+ */
+export interface LogsListResult {
+  /**
+   * The directory this answer is about, echoed back exactly as it was pushed - never normalized, never re-cased, so a caller can compare it against what it sent.
+   */
+  dir: string
+  readable: LogsDirReadable
+  /**
+   * One row per `eqlog_<Character>_<server>.txt`, most recently written first. Empty whenever `readable` is not `ok`, and legitimately empty when it is.
+   */
+  characters: LogCharacter[]
+}
+/**
+ * One character log, as `src/shared/types.ts CharacterRef` describes it - field for field, because this reply IS what the app's picker has always been handed and a served shape that differed by a name would make the engine-absent arm a second contract. THE NAME AND SERVER ARE READ OFF THE FILENAME and nothing else: `eqlog_<Character>_<server>.txt`, split at the FIRST underscore after the prefix, which is the app's own `parseLogName` regex stated as a rule - a character whose name contains an underscore is not a thing EverQuest allows, and a SERVER containing one is, so the split must be leftmost and the remainder must be the server.
+ */
+export interface LogCharacter {
+  /**
+   * The character, as the filename spells it - the game's own capitalisation, never folded.
+   */
+  name: string
+  /**
+   * The server, as the filename spells it.
+   */
+  server: string
+  /**
+   * The absolute path of the log file, which is what `session.attach` takes and therefore what a picked row is worth.
+   */
+  logPath: string
+  /**
+   * The file's last-modified time in epoch milliseconds, TRUNCATED to an integer, which is the sort key the picker orders by. ABSENT MEANS THE ENGINE COULD NOT STATE IT - a file that vanished between the readdir and the stat, or a filesystem with no modification time - and never zero, which would draw a real date in 1970 beside a real character name. It is the same fact and the same rule `HealthResult.logMtimeMs` carries for the attached log, and it stays a served PROCESS fact rather than fold state (ruling 18): no module holds it, and no replay can produce it.
+   */
+  lastPlayed?: number
 }
 /**
  * A refused request. An error is always a reply to a request id — a failure with no request behind it closes the connection instead.
