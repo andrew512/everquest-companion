@@ -415,6 +415,16 @@ From the JOS-502 wave (surface 8's completion — all verified in the doing):
   the comment; JOS-502 was the next field and followed it (8 KB → 9 KB, ceiling 8,430). The part
   worth generalizing is the margin: a cap with a hundred bytes of slack is one the next honest
   addition trips for no reason anybody can act on, which teaches the next author to raise it by feel.
+- **A CEILING IS A CLAIM ABOUT WHAT A FIELD MEASURES, so a group of same-typed fields must not
+  inherit one by default.** Every duration on the bug report's engine block took the block's
+  existing one-hour bound, and for the COSTS (a scan, a catalog build) an hour is absurdly generous
+  on purpose. `behindMs` is not a cost — it is the distance from now to the last line the log has —
+  so a user who last played on Tuesday has a real reading of several days, and this repo's OWN e2e
+  fixture reports 23.4 days. Under the inherited bound every one of those readings was silently
+  dropped (the helper omits rather than clamps, which is right), and "the engine is three days
+  behind the log" is one of the strongest sentences a stalled-app report can carry. **Found by
+  reading the e2e's verbatim output rather than by a test**, which is the transferable part: the
+  panel printed the number the block was throwing away, on the same screen, in the same run.
 - **A VALIDATOR THAT RECONSTRUCTS IS ALSO A VALIDATOR THAT SILENTLY DROPS.** Everything on this
   feedback wire is rebuilt field by field rather than copied, so an unknown key cannot ride into a
   stored report — which also means a NEW field is discarded without complaint until somebody adds its

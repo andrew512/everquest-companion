@@ -168,6 +168,36 @@ test('a scan still running has no scan figures, and untimed frames have no laten
   assert.ok(!('worstServeUs' in block), '…and reports no latency rather than zero')
 })
 
+test('a fold DAYS behind the log still reports the lag, because a lag is not a cost', () => {
+  // FOUND BY READING THE E2E'S OWN OUTPUT: the committed fixture makes the panel say "23.4 days
+  // behind", and under an hour's ceiling — the bound every other duration on this block uses —
+  // `whole` would have dropped that reading entirely rather than clamp it. Correct behaviour from
+  // the helper, wrong bound for the field. "The engine is three days behind the log" is one of the
+  // strongest sentences a stalled-app report can carry, so it gets the uptime ceiling instead.
+  // Twenty-three whole days. Written as a product of integers rather than as `23.4 * …`, because
+  // 23.4 has no exact binary form and the fold ROUNDS — the assertion would then be comparing a
+  // rounded reading against an unrounded expectation and failing for a reason that has nothing to
+  // do with the ceiling under test.
+  const days = 23 * 24 * 60 * 60 * 1000
+  const block = foldPerfEngine(
+    live({
+      snapshot: {
+        status: 'live',
+        uptimeMs: 5_000,
+        events: 941,
+        lastEventTs: NOW - days,
+        ingest: {},
+        serve: []
+      }
+    })
+  )
+  assert.ok(block !== null)
+  assert.equal(block.behindMs, days, 'reported, not dropped and not clamped')
+  // …and it survives the validator, which is the half that would have turned it into a 400.
+  const res = validatePerfEngine(JSON.parse(JSON.stringify(block)) as unknown)
+  assert.equal(res.ok, true)
+})
+
 // ---- 3. the closed sets are closed -------------------------------------------------------------
 
 test('a budget this build has never heard of is dropped rather than passed through', () => {

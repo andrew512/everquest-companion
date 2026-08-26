@@ -264,7 +264,9 @@ function ceilingBlock(): FeedbackPerf {
       state: 'attaching' as const,
       upMs: 31_536_000_000,
       events: 999_999,
-      behindMs: 3_599_999,
+      // `behindMs` takes the UPTIME ceiling, not the one-hour duration ceiling — a freshness lag
+      // is a distance from now, not a cost, and a log untouched for a fortnight has a real one.
+      behindMs: 31_536_000_000,
       spellDbMs: 3_599_999,
       scanMs: 3_599_999,
       scanKb: 999_999_999,

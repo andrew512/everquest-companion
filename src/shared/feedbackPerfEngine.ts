@@ -92,7 +92,18 @@ export interface FeedbackPerfEngine {
   upMs: number
   /** Events folded in this generation. A COUNT of events, never any of their content. */
   events?: number
-  /** How far the fold was behind the LOG's own clock — a lag, not a timestamp (see the header). */
+  /**
+   * How far the fold was behind the LOG's own clock — a lag, not a timestamp (see the header).
+   *
+   * IT IS BOUNDED BY `MAX_ENGINE_UP_MS` AND NOT BY `MAX_ENGINE_MS`, and that is a correction rather
+   * than a preference. The rest of this block's durations are costs — a scan, a catalog build — and
+   * an hour is an absurd bound for those on purpose. A FRESHNESS LAG IS NOT A COST: it is the
+   * distance between now and the last line the log has, so a user who has not played since Tuesday
+   * honestly has one of several days, and this repo's own e2e fixture reports 23.4 days. Under an
+   * hour's ceiling every one of those readings would be silently OMITTED (the `whole` helper drops
+   * rather than clamps, correctly) — and "the engine is three days behind the log" is one of the
+   * strongest things a stalled-app report can say.
+   */
   behindMs?: number
   /** What the parser's spell catalog cost this attach. */
   spellDbMs?: number
@@ -222,7 +233,7 @@ export function foldPerfEngine(input: EngineFoldInput): FeedbackPerfEngine | nul
     state,
     upMs: whole(snap.uptimeMs, MAX_ENGINE_UP_MS) ?? 0,
     ...optional('events', whole(snap.events, MAX_ENGINE_COUNT)),
-    ...optional('behindMs', whole(behind, MAX_ENGINE_MS)),
+    ...optional('behindMs', whole(behind, MAX_ENGINE_UP_MS)),
     ...optional('spellDbMs', whole(snap.ingest.spellDbMs, MAX_ENGINE_MS)),
     ...optional('scanMs', whole(snap.ingest.scanMs, MAX_ENGINE_MS)),
     ...optional(
@@ -303,7 +314,8 @@ function maybe(raw: unknown, field: string, max: number): Validated<number | und
 
 const OPTIONAL_FIELDS = [
   ['events', MAX_ENGINE_COUNT],
-  ['behindMs', MAX_ENGINE_MS],
+  // A LAG, NOT A COST — see the field's own doc for why an hour is the wrong bound for it.
+  ['behindMs', MAX_ENGINE_UP_MS],
   ['spellDbMs', MAX_ENGINE_MS],
   ['scanMs', MAX_ENGINE_MS],
   ['scanKb', MAX_ENGINE_KB],

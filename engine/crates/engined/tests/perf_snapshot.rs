@@ -507,7 +507,10 @@ fn the_three_perf_ops_answer_on_one_connection_and_none_disturbs_the_others() {
     let timeline = ask_timeline(&mut client, 3);
     let second = ask_perf(&mut client, 4);
 
-    assert_eq!(*first.epoch, *budgets.epoch, "one generation, three answers");
+    assert_eq!(
+        *first.epoch, *budgets.epoch,
+        "one generation, three answers"
+    );
     assert_eq!(*first.epoch, *timeline.epoch);
     assert_eq!(second.status, first.status);
     assert!(
