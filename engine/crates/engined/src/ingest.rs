@@ -733,6 +733,13 @@ pub struct SinkInputs<'a> {
     /// world is built when the attach happens, so that is the instant. It is not fold-derived
     /// state and no module may read a clock after this (`fold`'s "two rules that are not style").
     pub attached_at_ms: i64,
+    /// THE APP'S `userData` (JOS-496 item 3), or `None` when the attach did not carry one.
+    ///
+    /// APP KNOWLEDGE, in exactly the sense boundary verdict 3 gives the phrase: the engine cannot
+    /// derive it and must not guess it. `None` is the honest state for every caller but the app,
+    /// and it means NO PERSISTENCE AT ALL — no read, no write, and a fold that is the file-free one
+    /// the equivalence oracle records. See [`crate::state`].
+    pub state_dir: Option<&'a Path>,
 }
 
 /// Builds the sink one attach folds into. THE CONSTRUCTION SEAM — see [`EventSink`].
@@ -749,12 +756,18 @@ pub fn counting_sinks() -> SinkFactory {
 /// The world holds one of these rather than a sink factory so that WHAT AN ATTACH STARTS is a
 /// single injected decision. Production hands it [`starter`]; `world.rs`'s own unit tests hand it a
 /// no-op, which is how the epoch and subscription laws are proven without a fold in the room.
-pub type Starter = Arc<dyn Fn(&World, u64, PathBuf) + Send + Sync>;
+///
+/// THE FOURTH ARGUMENT IS THE APP'S `stateDir` (JOS-496 item 3), `None` for every caller that did
+/// not push one — which is every caller but the app. See [`crate::state`] for what it buys and for
+/// why absent means no persistence at all rather than a default location.
+pub type Starter = Arc<dyn Fn(&World, u64, PathBuf, Option<PathBuf>) + Send + Sync>;
 
 /// The starter a real engine uses: one ingest thread per attach, folding into `sinks`.
 #[must_use]
 pub fn starter(sinks: SinkFactory) -> Starter {
-    Arc::new(move |world, generation, log| start(world, generation, log, Arc::clone(&sinks)))
+    Arc::new(move |world, generation, log, state_dir| {
+        start(world, generation, log, state_dir, Arc::clone(&sinks));
+    })
 }
 
 /// The starter [`World::new`](crate::world::World::new) uses — counting sinks, nothing folded.
@@ -845,7 +858,13 @@ enum Ended {
 ///
 /// A FAILURE TO SPAWN IS NOT A DEAD ENGINE. The epoch has already been bumped and announced; all
 /// that is left is to say the world holds no fold, which is what `idle` means.
-pub fn start(world: &World, generation: u64, log: PathBuf, sinks: SinkFactory) {
+pub fn start(
+    world: &World,
+    generation: u64,
+    log: PathBuf,
+    state_dir: Option<PathBuf>,
+    sinks: SinkFactory,
+) {
     let owner = world.clone();
     let spawned = thread::Builder::new()
         .name("engined-ingest".to_owned())
@@ -855,7 +874,9 @@ pub fn start(world: &World, generation: u64, log: PathBuf, sinks: SinkFactory) {
             // `World::lock` makes for a poisoned mutex, and the same one that put the fold in
             // another process to begin with. The epoch is untouched: a fold that died did not
             // create a new generation, and the client's state is still the one it was told about.
-            let ending = catch_unwind(AssertUnwindSafe(|| run(&owner, generation, &log, &sinks)));
+            let ending = catch_unwind(AssertUnwindSafe(|| {
+                run(&owner, generation, &log, state_dir.as_deref(), &sinks)
+            }));
             match ending {
                 Ok(Ok(Ended::Preempted)) => {}
                 Ok(Err(e)) => {
@@ -882,7 +903,13 @@ pub fn start(world: &World, generation: u64, log: PathBuf, sinks: SinkFactory) {
 }
 
 /// Open the log, fold its history, then follow it. Returns when this turn no longer owns the world.
-fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::Result<Ended> {
+fn run(
+    world: &World,
+    generation: u64,
+    log: &Path,
+    state_dir: Option<&Path>,
+    sinks: &SinkFactory,
+) -> io::Result<Ended> {
     // ATTACHING is exactly "opening the file and building what a fold depends on" — the spell DB
     // and the character, because a parse is a pure function of (bytes, spell DB, character), and
     // since JOS-478 the REGISTRY as well, because a fold that has no modules has not begun either.
@@ -935,6 +962,7 @@ fn run(world: &World, generation: u64, log: &Path, sinks: &SinkFactory) -> io::R
         db: Some(&db),
         clock: parser.clock(),
         attached_at_ms: wall_clock_ms(),
+        state_dir,
     });
 
     // ── APP KNOWLEDGE, APPLIED BEFORE THE FIRST BYTE (JOS-482, boundary verdict 3) ───────────────
@@ -1914,7 +1942,7 @@ mod tests {
         let ledger = Arc::new(Ledger::default());
         let world = recording_world(&ledger, None);
 
-        world.attach(&log.to_string_lossy());
+        world.attach(&log.to_string_lossy(), None);
         settle("the fold to land", || {
             matches!(world.health().status, HealthResultStatus::Live)
         });
@@ -1969,14 +1997,14 @@ mod tests {
         );
 
         // The first fold reaches its first event and stops there, holding the world.
-        let first = world.attach(&log.to_string_lossy());
+        let first = world.attach(&log.to_string_lossy(), None);
         assert_eq!(*first.epoch, 2);
         settle("the first fold to reach its first event", || {
             !ledger.of(0).is_empty()
         });
 
         // THE PREEMPTION. Last pick wins, and the pick that lost is still standing at the gate.
-        let second = world.attach(&log.to_string_lossy());
+        let second = world.attach(&log.to_string_lossy(), None);
         assert_eq!(*second.epoch, 3, "the generation strictly increases");
         assert!(second.accepted);
         gate.release();
@@ -2035,7 +2063,7 @@ mod tests {
         let observed_starting = Arc::new(Mutex::new(false));
         let seen = Arc::clone(&observed_starting);
         let held = Arc::clone(&gate);
-        let world = World::with_ingest(Arc::new(move |world, generation, path| {
+        let world = World::with_ingest(Arc::new(move |world, generation, path, state_dir| {
             *seen
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) =
@@ -2046,6 +2074,7 @@ mod tests {
                 world,
                 generation,
                 path,
+                state_dir,
                 Arc::new(move |_inputs| {
                     Box::new(RecordingSink {
                         id: 0,
@@ -2057,7 +2086,7 @@ mod tests {
             );
         }));
 
-        world.attach(&log.to_string_lossy());
+        world.attach(&log.to_string_lossy(), None);
         assert!(
             *observed_starting
                 .lock()
@@ -2098,7 +2127,7 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let world = recording_world(&ledger, Some(Arc::clone(&gate)));
 
-        world.attach(&log.to_string_lossy());
+        world.attach(&log.to_string_lossy(), None);
         settle("the scan to reach its first event", || {
             !ledger.of(0).is_empty()
         });
@@ -2128,7 +2157,7 @@ mod tests {
         let ledger = Arc::new(Ledger::default());
         let world = recording_world(&ledger, None);
 
-        world.attach(&log.to_string_lossy());
+        world.attach(&log.to_string_lossy(), None);
         settle("the fold to land", || {
             matches!(world.health().status, HealthResultStatus::Live)
         });
@@ -2167,7 +2196,7 @@ mod tests {
         let ledger = Arc::new(Ledger::default());
         let world = recording_world(&ledger, None);
 
-        world.attach(&log.to_string_lossy());
+        world.attach(&log.to_string_lossy(), None);
         settle("the fold to land", || {
             matches!(world.health().status, HealthResultStatus::Live)
         });
@@ -2195,7 +2224,7 @@ mod tests {
         let ledger = Arc::new(Ledger::default());
         let world = recording_world(&ledger, None);
 
-        world.attach(&log.to_string_lossy());
+        world.attach(&log.to_string_lossy(), None);
         settle("the fold to land", || {
             matches!(world.health().status, HealthResultStatus::Live)
         });
@@ -2238,7 +2267,7 @@ mod tests {
         let ledger = Arc::new(Ledger::default());
         let world = recording_world(&ledger, None);
 
-        world.attach(&log.to_string_lossy());
+        world.attach(&log.to_string_lossy(), None);
         settle("the fold to land", || {
             matches!(world.health().status, HealthResultStatus::Live)
         });
@@ -2268,7 +2297,7 @@ mod tests {
         let ledger = Arc::new(Ledger::default());
         let world = recording_world(&ledger, None);
 
-        let result = world.attach(&missing.to_string_lossy());
+        let result = world.attach(&missing.to_string_lossy(), None);
         assert!(
             result.accepted,
             "an attach is accepted at the moment it wins, not when the file proves readable"

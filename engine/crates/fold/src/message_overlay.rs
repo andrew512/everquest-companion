@@ -59,7 +59,7 @@
 use crate::jsmap::JsMap;
 use crate::spell_facts::{message_matches_other_suffix, SpellFacts};
 use eqlog::names::db_canon_key;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// Overlay schema version — bump to invalidate a stale on-disk snapshot.
@@ -155,6 +155,54 @@ struct PublishedSpell {
 struct WikiConflict {
     spell: String,
     wiki_text: String,
+}
+
+// ── THE PERSISTENCE VIEW (JOS-496 item 3) ──────────────────────────────────────────────────────
+//
+// `register()` and the three shapes it answers in. It is the OTHER view of this miner and the two
+// are deliberately different animals: `build()` publishes the SERVED overlay — every bucket summed,
+// every verdict derived, no source key anywhere — and `register()` publishes the RAW COUNTS, filed
+// under the source that produced them, with no verdict at all. Which bucket a count came from is
+// unobservable in a snapshot and load-bearing in a register, because the key is the only thing that
+// lets `begin_source` replace a bucket instead of adding to it (JOS-231).
+//
+// A stored verdict would be a second opinion waiting to disagree with the derived one, and every one
+// of them would have to be recomputed when the catalog moved. So the register carries counts, the
+// file carries the register, and `build()` derives.
+
+/// One message's raw counts, as the register files them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverlayMessageCounts {
+    pub text: String,
+    /// `'landing' | 'wearsOff'`. A `String` rather than the `&'static str` the miner holds because
+    /// this shape is also a READER of the app's file, and a borrowed lifetime cannot come off one.
+    pub role: String,
+    pub spells: Vec<OverlaySpellCount>,
+}
+
+/// One spell's count under a message. The DISPLAY name, never the canon key: the key is derivable
+/// from the name and the name is not derivable from the key, so the file keeps the one that carries
+/// more (`add_counts` re-canonicalizes on the way back in).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverlaySpellCount {
+    pub spell: String,
+    pub count: i64,
+}
+
+/// One source's bucket — `OverlaySourceCounts`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverlaySourceCounts {
+    /// Which origin produced these counts: a character id, or the committed baseline's key.
+    pub key: String,
+    pub messages: Vec<OverlayMessageCounts>,
+}
+
+/// The whole register: every bucket, plus the log instant the miner has observed through.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlayRegister {
+    pub updated_at: String,
+    pub sources: Vec<OverlaySourceCounts>,
 }
 
 /// The mining accumulator + verdict derivation. Dependency-free and pure over its inputs, so it
@@ -292,6 +340,50 @@ impl MessageOverlayMiner {
         }
         self.recent_casts
             .retain(|c| now - c.ts <= ASSOCIATION_WINDOW_MS);
+    }
+
+    /// EVERY BUCKET'S COUNTS, SORTED — `register()`, what persistence writes and re-seeds from.
+    ///
+    /// Three ordering claims, and they are not the same claim (`overlay_file.rs`'s header carries
+    /// the argument): `sources` in INSERTION order and deliberately unsorted, `messages` by
+    /// codepoint on `text`, `spells` by codepoint on `spell`. Rust's natural `&str` `Ord` is UTF-8
+    /// bytewise, which is exactly codepoint order, so the comparator is the language's — see this
+    /// module's header for why the TypeScript was moved off `localeCompare` to meet it.
+    ///
+    /// `updatedAt` IS THE LOG'S CLOCK. See [`MessageOverlayMiner::last_observed_ts`].
+    #[must_use]
+    pub fn register(&self) -> OverlayRegister {
+        let mut sources = Vec::with_capacity(self.sources.len());
+        for (key, bucket) in self.sources.iter() {
+            let mut messages: Vec<OverlayMessageCounts> = bucket
+                .values()
+                .map(|rec| {
+                    let mut spells: Vec<OverlaySpellCount> = rec
+                        .by_spell
+                        .values()
+                        .map(|s| OverlaySpellCount {
+                            spell: s.display.clone(),
+                            count: s.count,
+                        })
+                        .collect();
+                    spells.sort_by(|a, b| a.spell.as_str().cmp(b.spell.as_str()));
+                    OverlayMessageCounts {
+                        text: rec.text.clone(),
+                        role: rec.role.to_owned(),
+                        spells,
+                    }
+                })
+                .collect();
+            messages.sort_by(|a, b| a.text.as_str().cmp(b.text.as_str()));
+            sources.push(OverlaySourceCounts {
+                key: key.to_owned(),
+                messages,
+            });
+        }
+        OverlayRegister {
+            updated_at: iso_utc(self.last_observed_ts),
+            sources,
+        }
     }
 
     /// All buckets summed into one accumulator — the view every verdict is derived from.
@@ -529,7 +621,10 @@ pub fn baseline_counts() -> Vec<SeedMessage> {
 
 /// The role vocabulary is closed at two values; anything else in the file would be a shape the
 /// serializer could not round-trip, so it is named rather than passed through.
-fn role_of(role: &str) -> &'static str {
+///
+/// `pub(crate)` since JOS-496: the USER register is read through it too, and a second mapping of
+/// two strings is a second place for the two to disagree about what an unknown role means.
+pub(crate) fn role_of(role: &str) -> &'static str {
     match role {
         "wearsOff" => "wearsOff",
         _ => "landing",

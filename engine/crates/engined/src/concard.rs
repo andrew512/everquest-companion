@@ -37,8 +37,30 @@
 //! **So the con-card CUTOVER is blocked on the spell table, and this frame is not.** The shape is
 //! final, the header is real, and the day the table lands engine-side the chips fill in with no
 //! protocol change — which is the whole reason the chip type is on the wire in full rather than
-//! left open. Until then the app's own card is still the one on screen: nothing in this ticket
-//! moves the overlay.
+//! left open.
+//!
+//! ── WHAT MOVED IN JOS-496, AND THE RULING THAT SHAPES WHAT IS LEFT ─────────────────────────────
+//!
+//! THE OVERLAY NOW OPENS ON THIS FRAME. The sentence above used to end "nothing in this ticket moves
+//! the overlay"; JOS-496 moved it. Under serve the app does not install its own con-card hook at all
+//! — so the census finding verdict 2 names (the fold calling synchronously into Electron, on the
+//! thread parsing the log) is ended — and `main/dataServer/conCardServe.ts` opens the window on what
+//! this file resolves.
+//!
+//! THE CHIPS ARE STILL NOT OURS, and the app joins its own rather than carrying these five across.
+//! That is not the app ignoring the engine: five empty chips reaching a real overlay would make
+//! every card under serve read "nothing seen yet" forever, while the app holds a ledger that can
+//! answer. `main/conCard.ts noteEngineConCard` states the trade at the join and loses the join
+//! rather than growing one when the chips become real here.
+//!
+//! AND THE ROUTE TO THAT DAY IS RULED (integrator, 2026-08-25). The tempting reading of verdict 8 —
+//! the engine parses the table and SERVES it to the app, whose worker retires — is closed. MEASURED:
+//! the owner's own parsed table is 48,252 entries and 6.13 MiB of JSON, against an 8 MiB frame
+//! ceiling, on one machine, against a table that grows with every client patch. A single reply at
+//! 77% of a hard limit is a design with a date on it. So: **this process parses `spells_us.txt`
+//! INTERNALLY, for its own joins — these chips first — and app consumers move to per-spell
+//! `knowledge.spell` queries. No bulk frame, ever.** The path derives from the attach log's install
+//! directory (`…/Logs/..`), so nothing on the wire has to change for it.
 //!
 //! ── TWO OF THE APP'S THREE REFUSALS STAY WHERE THEY ARE, AND BOTH ABSENCES ARE ARGUED ──────────
 //!

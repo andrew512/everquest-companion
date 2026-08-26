@@ -42,6 +42,7 @@ mod ingest;
 mod ops;
 mod search;
 mod spawn;
+mod state;
 mod views;
 mod wire;
 mod world;

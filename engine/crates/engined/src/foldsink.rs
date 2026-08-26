@@ -151,6 +151,10 @@ pub struct FoldSink {
     /// once at go-live and ~1×/sec after, and the historical scan has no path to it. So a fold that
     /// is still scanning cannot have this set, and a fold that has gone live cannot have it clear.
     live: bool,
+    /// THE APP'S `userData`, and this generation's memory of what it last wrote there (JOS-496
+    /// item 3). `None` when the attach carried no `stateDir`, which is every attach but the app's —
+    /// and which means this fold neither read a file nor will write one. See [`crate::state`].
+    state: Option<crate::state::StateDir>,
     /// HOW MANY BEATS THIS WORLD HAS TAKEN — half of `combat.live`'s revision signal.
     ///
     /// The meter's rows are a function of the events folded AND of the instant they are read at: a
@@ -166,13 +170,33 @@ impl FoldSink {
     #[must_use]
     pub fn new(inputs: &SinkInputs<'_>) -> Self {
         let launch_ms = fold::epoch::launch_ms(inputs.clock);
+        let mut fold = fold::Fold::new(registry_for(inputs, launch_ms), launch_ms)
+            .with_combat(combat_for(inputs));
+        // ── THE APP'S PERSISTED KNOWLEDGE, PUT BACK BEFORE THE FIRST BYTE (JOS-496 item 3) ─────
+        //
+        // Read, seed, then name this fold's own bucket — [`fold::Registry::seed_persisted`] does
+        // the last two as one call because their ORDER is the whole of JOS-231 and splitting them
+        // would let a caller get it wrong. It happens HERE, after `Fold::new`, because `new`
+        // resets every module and `ResistModule::reset` discards its own source's bucket; a seed
+        // that ran before it would be thrown away by it.
+        //
+        // NONE OF THIS RUNS WITHOUT A `stateDir`. The whole block is inside the `Option`, so a fold
+        // with no state directory is byte-for-byte the fold this file built before the ticket — no
+        // read, no source rename, no write — which is what keeps the equivalence oracle's world
+        // reachable structurally rather than by care.
+        let state = inputs.state_dir.map(|dir| {
+            let store = crate::state::StateDir::new(dir);
+            fold.registry
+                .seed_persisted(&source_key(inputs), &store.read());
+            store
+        });
         Self {
-            fold: fold::Fold::new(registry_for(inputs, launch_ms), launch_ms)
-                .with_combat(combat_for(inputs)),
+            fold,
             clock: eqlog::Clock::new(inputs.clock.tz()),
             live: false,
             beats: 0,
             knowledge: corpus(),
+            state,
         }
     }
 
@@ -282,6 +306,27 @@ fn cluster_deps(inputs: &SinkInputs<'_>, launch_ms: i64) -> fold::ClusterDeps {
     }
 }
 
+/// WHICH BUCKET THIS FOLD'S OBSERVATIONS ARE FILED UNDER — `log/config.ts characterId(ref)`, which
+/// is `` `${c.name}_${c.server}`.toLowerCase() `` and nothing else (JOS-496 item 3).
+///
+/// IT MUST BE THE APP'S SPELLING, CHARACTER FOR CHARACTER. The key is what a re-fold matches on to
+/// REPLACE a bucket rather than add to it, so an engine that filed the same character's counts
+/// under `Primitive@freeport` while the app filed them under `primitive_freeport` would leave two
+/// buckets in one register, each holding a full copy of the same log's observations — the JOS-231
+/// doubling, arriving through a second door. The app-side reader would then sum both.
+///
+/// A log whose file name states no character falls back to the module's own constructed default,
+/// `log`. That is the bench's key and the goldens' key, and it is the honest one here: a fold that
+/// cannot say whose log it is cannot file its counts under a character either. It also cannot be
+/// reached from a real attach — `ingest::run` already prints a diagnostic for a nameless log.
+fn source_key(inputs: &SinkInputs<'_>) -> String {
+    let Some(name) = inputs.character else {
+        return "log".to_owned();
+    };
+    let server = server_of(inputs.log).unwrap_or_default();
+    format!("{name}_{server}").to_lowercase()
+}
+
 /// The SERVER out of a log's file name — the second half of what `character_of` reads.
 ///
 /// TWO SHAPES, the same two `ingest::character_of` accepts: the product's `eqlog_<Name>_<server>
@@ -357,6 +402,21 @@ impl EventSink for FoldSink {
         self.live = true;
         self.beats = self.beats.saturating_add(1);
         self.fold.tick(now_ms);
+        // ── …AND EVERY SIXTIETH BEAT, THE DISK (JOS-496 item 3) ────────────────────────────────
+        //
+        // `resist/module.ts onTick`'s "every sixtieth tick, a ledger persist" and `session.ts`'s
+        // 60-second overlay save, which at a 1 Hz heartbeat are the same minute stated twice.
+        //
+        // IT IS IN `tick` AND NOWHERE ELSE, which is what makes "nothing during a replay" a fact
+        // about the call graph rather than a guard somebody has to remember: the historical scan
+        // cannot reach this method (see the module header's `live` argument), and a replay is
+        // re-deriving what is already on disk anyway. The write is coalesced on a fingerprint and
+        // can never take the engine down — `state::StateDir::put` carries both arguments.
+        if self.beats.is_multiple_of(crate::state::WRITE_EVERY_BEATS) {
+            if let Some(state) = self.state.as_mut() {
+                state.write(&self.fold.registry);
+            }
+        }
     }
 
     /// What the fold can say about itself. `last_ts` is `max(ev.ts)` — the LOG's own clock,
@@ -657,9 +717,9 @@ fn test_clock() -> eqlog::Clock {
 
 #[cfg(test)]
 mod tests {
-    use super::{folding_sinks, server_of, FoldSink};
+    use super::{folding_sinks, server_of, source_key, FoldSink};
     use crate::ingest::{Event, EventSink, SinkInputs};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     /// One event the `kills` module counts: a death you landed. Written as the parser writes it —
     /// `death` is the kind, `bySelf` is the counted filter, `name` is what the map is keyed by.
@@ -681,7 +741,83 @@ mod tests {
             db: None,
             clock,
             attached_at_ms: 1_787_181_707_000,
+            // NO STATE DIRECTORY, which is what makes these unit tests describe the same fold the
+            // equivalence oracle describes: nothing is read, nothing is seeded, nothing is written.
+            // `tests/state.rs` is where the persisting sink is driven.
+            state_dir: None,
         }
+    }
+
+    /// The same inputs, carrying a state directory — the attach the APP makes.
+    fn inputs_with_state<'a>(
+        log: &'a Path,
+        clock: &'a eqlog::Clock,
+        state_dir: &'a Path,
+    ) -> SinkInputs<'a> {
+        SinkInputs {
+            state_dir: Some(state_dir),
+            ..inputs(log, clock)
+        }
+    }
+
+    /// A scratch profile directory of this test's own.
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("engined-foldsink-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch profile");
+        dir
+    }
+
+    /// ONE ROW, in the app's exact spelling, for a named mob under a named bucket.
+    fn ledger_of(buckets: &[(&str, &str)]) -> String {
+        let sources: Vec<String> = buckets
+            .iter()
+            .map(|(key, mob)| {
+                format!(
+                    r#"{{"key":"{key}","rows":[{{"mobKey":"{mob}","spellKey":"malosi","family":"cast","casterKind":"self","casterLevel":51,"mobLevel":20,"debuffs":"","rank":0,"overchannel":false,"week":"2026-W34","resist":4,"land":7,"dmg":{{"9":2}},"firstTs":1000,"lastTs":2000}}]}}"#
+                )
+            })
+            .collect();
+        format!(r#"{{"version":3,"sources":[{}]}}"#, sources.join(","))
+    }
+
+    fn overlay_of(buckets: &[&str]) -> String {
+        let sources: Vec<String> = buckets
+            .iter()
+            .map(|key| {
+                format!(
+                    r#"{{"key":"{key}","messages":[{{"text":"You feel much faster.","role":"landing","spells":[{{"spell":"Alacrity","count":3}}]}}]}}"#
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"version":2,"updatedAt":"2026-08-19T16:21:54.000Z","sources":[{}]}}"#,
+            sources.join(",")
+        )
+    }
+
+    /// How many pooled rows the resist module says it holds — its whole published surface.
+    fn resist_rows(sink: &FoldSink) -> i64 {
+        sink.snapshot("resist").expect("the resist module").state["rows"]
+            .as_i64()
+            .expect("a row count")
+    }
+
+    #[test]
+    fn the_source_key_is_the_apps_own_character_id() {
+        // `log/config.ts characterId(ref)` — `${name}_${server}`, LOWERCASED. A different spelling
+        // would file the same character's counts in a second bucket and the app would sum both.
+        let clock = super::test_clock();
+        let log = Path::new("C:/EQ/Logs/eqlog_Primitive_freeport.txt");
+        assert_eq!(source_key(&inputs(log, &clock)), "primitive_freeport");
+        // A log whose name states no character falls back to the module's constructed default,
+        // which is the bench's key and every golden's key.
+        let nameless = SinkInputs {
+            character: None,
+            ..inputs(Path::new("C:/EQ/Logs/notalog.txt"), &clock)
+        };
+        assert_eq!(source_key(&nameless), "log");
     }
 
     #[test]
@@ -792,5 +928,160 @@ mod tests {
         assert_eq!(second.report().events, 0);
         assert_eq!(counted(&*first), 1);
         assert_eq!(counted(&*second), 0);
+    }
+
+    // ── THE APP'S PERSISTED KNOWLEDGE, END TO END (JOS-496 item 3) ─────────────────────────────
+
+    #[test]
+    fn an_attach_with_a_state_dir_seeds_both_artifacts_and_discards_its_own_bucket() {
+        let dir = scratch("seed");
+        // TWO BUCKETS ON DISK: this character's, and somebody else's. The whole design turns on
+        // their being treated differently — one is about to be re-derived from the log, the other
+        // is knowledge nothing can re-derive.
+        std::fs::write(
+            dir.join("resist-ledger.json"),
+            ledger_of(&[
+                ("primitive_freeport", "a rat"),
+                ("other_bertox", "a bat"),
+                // …and the shipped baseline's, which must be refused on read: it is re-seeded from
+                // the bundle on every launch and counting it here would count it twice.
+                ("baseline", "a gnoll"),
+            ]),
+        )
+        .expect("the ledger is written");
+        std::fs::write(
+            dir.join("message-overlay.json"),
+            overlay_of(&["primitive_freeport", "other_bertox"]),
+        )
+        .expect("the register is written");
+
+        let clock = super::test_clock();
+        let log = Path::new("C:/nowhere/eqlog_Primitive_freeport.txt");
+        let sink = FoldSink::new(&inputs_with_state(log, &clock, &dir));
+
+        // ONE ROW, not three: `other_bertox` survived, `primitive_freeport` was DISCARDED by
+        // `begin_source` because its log is about to state its whole content again (JOS-231), and
+        // `baseline` was never read at all.
+        assert_eq!(resist_rows(&sink), 1);
+
+        // The overlay is the same story through a different door. `other_bertox`'s bucket is still
+        // in the register; this character's is empty and waiting for the fold.
+        let register = sink
+            .fold
+            .registry
+            .buffs()
+            .expect("buffs is registered")
+            .overlay_register();
+        let mine = register
+            .sources
+            .iter()
+            .find(|s| s.key == "primitive_freeport")
+            .expect("this character's bucket exists, discarded");
+        assert!(mine.messages.is_empty(), "discarded, not seeded");
+        let theirs = register
+            .sources
+            .iter()
+            .find(|s| s.key == "other_bertox")
+            .expect("the other character's bucket survived");
+        assert_eq!(theirs.messages.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_sixtieth_live_beat_writes_both_files_and_the_scan_writes_neither() {
+        let dir = scratch("write");
+        std::fs::write(
+            dir.join("resist-ledger.json"),
+            ledger_of(&[("other_bertox", "a bat")]),
+        )
+        .expect("the ledger is written");
+        std::fs::write(
+            dir.join("message-overlay.json"),
+            overlay_of(&["other_bertox"]),
+        )
+        .expect("the register is written");
+
+        let clock = super::test_clock();
+        let log = Path::new("C:/nowhere/eqlog_Primitive_freeport.txt");
+        let mut sink = FoldSink::new(&inputs_with_state(log, &clock, &dir));
+
+        // A HISTORICAL SCAN WRITES NOTHING, and it cannot: the scan folds events and never ticks,
+        // and the write lives in `tick` alone. Overwrite both files with junk and prove the scan
+        // leaves the junk where it is.
+        std::fs::write(dir.join("resist-ledger.json"), "scan must not touch this")
+            .expect("junk is written");
+        for seq in 0..3 {
+            kill(&mut sink, seq);
+        }
+        assert_eq!(
+            std::fs::read_to_string(dir.join("resist-ledger.json")).expect("readable"),
+            "scan must not touch this"
+        );
+
+        // …and the sixtieth beat writes. Fifty-nine do not — the cadence is the app's
+        // "every sixtieth tick" at 1 Hz, which is its minute.
+        for _ in 0..(crate::state::WRITE_EVERY_BEATS - 1) {
+            sink.tick(1_787_181_707_000);
+        }
+        assert_eq!(
+            std::fs::read_to_string(dir.join("resist-ledger.json")).expect("readable"),
+            "scan must not touch this",
+            "fifty-nine beats is not a minute"
+        );
+        sink.tick(1_787_181_707_000);
+
+        // What landed is the app's own format, and it carries the bucket nothing could re-derive.
+        let text = std::fs::read_to_string(dir.join("resist-ledger.json")).expect("readable");
+        assert!(
+            text.starts_with(r#"{"version":3,"sources":[{"key":"other_bertox""#),
+            "{text}"
+        );
+        assert!(text.contains(r#""mobKey":"a bat""#), "{text}");
+        // …and it is readable by the app's own reader, proven through the shared parse.
+        let back = fold::modules::resist::ledger_file::read_ledger(&text);
+        assert_eq!(back.sources.len(), 1);
+        assert_eq!(back.sources[0].rows.len(), 1);
+
+        let overlay = std::fs::read_to_string(dir.join("message-overlay.json")).expect("readable");
+        assert!(
+            overlay.starts_with(r#"{"version":2,"updatedAt":"#),
+            "{overlay}"
+        );
+        assert!(overlay.contains(r#""key":"other_bertox""#), "{overlay}");
+        // THE BASELINE IS NOT IN THE FILE. It is compiled into the binary and merged at
+        // construction; a copy of it in userData would be 400 kB of staler duplicate.
+        assert!(!overlay.contains(r#""key":"baseline""#), "{overlay}");
+        // NO SCRATCH FILE LEFT BEHIND by either write.
+        assert!(!dir.join("resist-ledger.json.tmp").exists());
+        assert!(!dir.join("message-overlay.json.tmp").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn without_a_state_dir_nothing_is_read_and_nothing_is_written() {
+        // THE ORACLE'S WORLD, and the flag-off world: an attach that names no profile directory
+        // neither reads a file nor writes one, so the fold is a pure function of its bytes. The
+        // directory here holds a file the sink would certainly have read had it been told to.
+        let dir = scratch("none");
+        std::fs::write(
+            dir.join("resist-ledger.json"),
+            ledger_of(&[("other_bertox", "a bat")]),
+        )
+        .expect("the ledger is written");
+
+        let clock = super::test_clock();
+        let log = Path::new("C:/nowhere/eqlog_Primitive_freeport.txt");
+        let mut sink = FoldSink::new(&inputs(log, &clock));
+        assert_eq!(resist_rows(&sink), 0, "nothing was seeded");
+        for _ in 0..(crate::state::WRITE_EVERY_BEATS * 2) {
+            sink.tick(1_787_181_707_000);
+        }
+        // Untouched — byte for byte the file this test wrote.
+        assert_eq!(
+            std::fs::read_to_string(dir.join("resist-ledger.json")).expect("readable"),
+            ledger_of(&[("other_bertox", "a bat")])
+        );
+        assert!(!dir.join("message-overlay.json").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

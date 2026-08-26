@@ -263,6 +263,34 @@ impl ResistBucket {
         self.by_key.values()
     }
 
+    /// THE SERIALIZATION ORDER — `ResistBucket.rows()` over there, which sorts by the pooling key
+    /// before it hands the array out, and says why: *"sorted for a byte-stable serialization: a
+    /// re-run on unchanged input must diff to nothing."*
+    ///
+    /// It is a SECOND reader rather than a change to [`ResistBucket::rows`] because the two orders
+    /// answer different questions and both are load-bearing. `rows()` is insertion order, which is
+    /// what the fold and the counts walk; this is key order, which is what goes on disk and what
+    /// the write's coalescing fingerprint is taken over. Sorting the live map would have made every
+    /// insert O(n log n) to buy a property only the writer needs.
+    #[must_use]
+    pub fn rows_in_key_order(&self) -> Vec<&ResistRow> {
+        let mut out: Vec<(&str, &ResistRow)> = self.by_key.iter().collect();
+        out.sort_by(|a, b| a.0.cmp(b.0));
+        out.into_iter().map(|(_, row)| row).collect()
+    }
+
+    /// SEED ONE PERSISTED ROW — `ResistBucket.seed`, one row at a time.
+    ///
+    /// Filed under its OWN pooling key, which is what makes a seed idempotent with a fold: a row
+    /// the log is about to re-derive lands on the same key and is replaced rather than added to.
+    /// The newest week moves with it, exactly as `seed` over there moves it, because the read side
+    /// measures every row's age against that maximum and a seeded bucket that under-reported it
+    /// would age its own rows from the wrong instant.
+    pub fn seed_row(&mut self, row: ResistRow) {
+        self.newest = later_week(self.newest.as_deref(), row.spec.week.as_deref());
+        self.by_key.insert(row_key(&row.spec), row);
+    }
+
     /// `ResistBucket.row` — get or mint the row this spec pools into, widening its span.
     ///
     /// A MINTED ROW IS A ROW EVEN IF NOTHING IS THEN COUNTED ON IT, and that is not a quirk to tidy:
@@ -342,6 +370,24 @@ impl ResistLedgerStore {
     /// Discard a source's bucket before its log is folded again. THE idempotence seam.
     pub fn begin_source(&mut self, key: &str) {
         self.buckets.insert(key.to_string(), ResistBucket::new());
+    }
+
+    /// EVERY SOURCE KEY, SORTED ASCENDING — `ResistLedgerStore.keys()`, which sorts for the same
+    /// reason `rows()` does: this is the order the file's `sources` array is written in, and a
+    /// stable order is what lets an unchanged ledger fingerprint to the same bytes twice.
+    #[must_use]
+    pub fn source_keys(&self) -> Vec<&str> {
+        let mut keys: Vec<&str> = self.buckets.keys().collect();
+        keys.sort_unstable();
+        keys
+    }
+
+    /// One bucket, read-only. `None` for a source this store has never held — which is the honest
+    /// answer rather than an empty bucket, because minting one on a READ would make the store grow
+    /// every time somebody asked about a character it has never seen.
+    #[must_use]
+    pub fn bucket(&self, key: &str) -> Option<&ResistBucket> {
+        self.buckets.get(key)
     }
 
     pub fn bucket_mut(&mut self, key: &str) -> &mut ResistBucket {
