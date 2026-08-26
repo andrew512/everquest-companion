@@ -33,6 +33,7 @@ struct Args {
     golden: Option<String>,
     tz: Option<String>,
     snapshots: bool,
+    stages: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -40,21 +41,26 @@ fn parse_args() -> Result<Args, String> {
     let mut golden: Option<String> = None;
     let mut tz: Option<String> = None;
     let mut snapshots = false;
+    let mut stages = false;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--golden" => golden = Some(it.next().ok_or("--golden needs a path")?),
             "--tz" => tz = Some(it.next().ok_or("--tz needs an IANA zone name")?),
             "--snapshots" => snapshots = true,
+            "--stages" => stages = true,
             other if other.starts_with("--") => return Err(format!("unknown flag {other}")),
             other => log = Some(other.to_string()),
         }
     }
     Ok(Args {
-        log: log.ok_or("usage: parity <logfile> [--golden <path>] [--snapshots] [--tz <zone>]")?,
+        log: log.ok_or(
+            "usage: parity <logfile> [--golden <path>] [--snapshots] [--stages] [--tz <zone>]",
+        )?,
         golden,
         tz,
         snapshots,
+        stages,
     })
 }
 
@@ -92,6 +98,9 @@ fn main() -> ExitCode {
     }
 
     let parser = eqlog::parser_for(&character, tz);
+    if args.stages {
+        return stages(&parser, &bytes, tz, &character, &file_name, &args.log);
+    }
     if args.snapshots {
         return snapshots(&parser, &bytes, tz, &character, &file_name, &args.log);
     }
@@ -226,6 +235,183 @@ fn snapshots(
         eprintln!("parity: could not write the snapshot envelope");
         return ExitCode::FAILURE;
     }
+    ExitCode::SUCCESS
+}
+
+/// THE STAGE BASELINE (JOS-504, owner ask 2026-08-26): where does a full-speed historical fold
+/// actually spend its time? Five passes over the same in-memory bytes, each adding ONE stage of
+/// the production pipeline, so each stage's cost is the DELTA between neighbours:
+///
+///   lines      — split on `\n`, trim `\r`, materialize the `&str` (`from_utf8_lossy`)
+///   parse      — + `parser.parse_event` (events recognized, nothing built)
+///   serialize  — + `ev.finish()` (the NDJSON string the production seam emits)
+///   reparse    — + `fold::event::Event::from_json` (the `serde_json::Value` the modules walk)
+///   fold       — the whole thing: `Fold::fold_bytes`, 20 modules + combat, exactly what
+///                `--snapshots` runs minus the final envelope serialization
+///
+/// The construction mirrors `snapshots()` field for field so the `fold` row is the production
+/// fold and not a lighter cousin. Each pass reports MB/s over the SAME byte count, so the rows
+/// are directly comparable; wall times are one run each — run it three times and read the middle
+/// if the machine is busy. PRINTS, NEVER ASSERTS (the G3 rule: a wall clock is a claim about a
+/// machine, and this binary does not know which one it is on).
+fn stages(
+    parser: &eqlog::Parser,
+    bytes: &[u8],
+    tz: eqlog::Tz,
+    character: &str,
+    file_name: &str,
+    log_path: &str,
+) -> ExitCode {
+    let mb = bytes.len() as f64 / 1_000_000.0;
+    let rate = |ms: u128| -> f64 {
+        if ms == 0 {
+            f64::INFINITY
+        } else {
+            mb / (ms as f64 / 1000.0)
+        }
+    };
+    fn split(bytes: &[u8], per_line: &mut dyn FnMut(&str)) {
+        let mut start = 0usize;
+        while let Some(off) = bytes[start..].iter().position(|&b| b == b'\n') {
+            let nl = start + off;
+            let mut end = nl;
+            if end > start && bytes[end - 1] == b'\r' {
+                end -= 1;
+            }
+            if end > start {
+                let line = String::from_utf8_lossy(&bytes[start..end]);
+                per_line(&line);
+            }
+            start = nl + 1;
+        }
+    }
+
+    let t = std::time::Instant::now();
+    let mut lines = 0u64;
+    split(bytes, &mut |_line| lines += 1);
+    let lines_ms = t.elapsed().as_millis();
+
+    let t = std::time::Instant::now();
+    let mut parsed = 0u64;
+    {
+        let mut ev = eqlog::event::Ev::new();
+        let mut seq: i64 = 0;
+        split(bytes, &mut |line| {
+            if parser.parse_event(line, seq, &mut ev) {
+                seq += 1;
+                parsed += 1;
+            }
+        });
+    }
+    let parse_ms = t.elapsed().as_millis();
+
+    let t = std::time::Instant::now();
+    let mut ser_bytes = 0u64;
+    {
+        let mut ev = eqlog::event::Ev::new();
+        let mut seq: i64 = 0;
+        split(bytes, &mut |line| {
+            if parser.parse_event(line, seq, &mut ev) {
+                seq += 1;
+                ser_bytes += ev.finish().len() as u64;
+            }
+        });
+    }
+    let ser_ms = t.elapsed().as_millis();
+
+    let t = std::time::Instant::now();
+    let mut reparsed = 0u64;
+    {
+        let mut ev = eqlog::event::Ev::new();
+        let mut seq: i64 = 0;
+        split(bytes, &mut |line| {
+            if parser.parse_event(line, seq, &mut ev) {
+                seq += 1;
+                if fold::event::Event::from_json(ev.finish()).is_some() {
+                    reparsed += 1;
+                }
+            }
+        });
+    }
+    let reparse_ms = t.elapsed().as_millis();
+
+    // The full fold, constructed exactly as `snapshots()` constructs it.
+    let known: HashSet<String> = parser
+        .spell_db()
+        .map(|db| db.keys().map(str::to_string).collect())
+        .unwrap_or_default();
+    let spell_classes = parser
+        .spell_db()
+        .map(fold::modules::combo::evidence::spell_class_index)
+        .unwrap_or_default();
+    let clock = eqlog::Clock::new(tz);
+    let launch_ms = fold::epoch::launch_ms(&clock);
+    let Some(construction_now_ms) = last_timestamp_of(&clock, bytes) else {
+        eprintln!("parity: no timestamped line in the last 64 KiB of {log_path}");
+        return ExitCode::from(2);
+    };
+    let deps = fold::ClusterDeps {
+        known_spell: known,
+        spell_classes,
+        launch_ms,
+        construction_now_ms,
+        character: Some(serde_json::json!({
+            "name": character,
+            "server": eqlog::server_of(file_name).unwrap_or_default(),
+            "logPath": log_path,
+        })),
+        self_name: None,
+        respawn_prefs: fold::modules::respawn::RespawnPrefs::default(),
+        facts: parser
+            .spell_db()
+            .map(fold::spell_facts::SpellFacts::project)
+            .unwrap_or_default(),
+    };
+    let t = std::time::Instant::now();
+    let mut engine = fold::combat::CombatEngine::new();
+    engine.reset();
+    engine.set_player_name(character);
+    let mut folder = fold::Fold::new(fold::registered(deps), launch_ms).with_combat(engine);
+    folder.fold_bytes(parser, bytes);
+    let fold_ms = t.elapsed().as_millis();
+
+    println!("stage baseline: {mb:.1} MB, {lines} lines, {parsed} events (tz={tz})");
+    println!("  cumulative                          wall        rate");
+    println!(
+        "  lines (split+materialize)      {lines_ms:>7} ms  {:>7.1} MB/s",
+        rate(lines_ms)
+    );
+    println!(
+        "  + parse                        {parse_ms:>7} ms  {:>7.1} MB/s",
+        rate(parse_ms)
+    );
+    println!(
+        "  + serialize (ev.finish)        {ser_ms:>7} ms  {:>7.1} MB/s",
+        rate(ser_ms)
+    );
+    println!(
+        "  + reparse (Event::from_json)   {reparse_ms:>7} ms  {:>7.1} MB/s",
+        rate(reparse_ms)
+    );
+    println!(
+        "  + fold (20 modules + combat)   {fold_ms:>7} ms  {:>7.1} MB/s",
+        rate(fold_ms)
+    );
+    println!("  per-stage share of the full fold:");
+    let stage = |name: &str, ms: u128| {
+        let pct = if fold_ms == 0 {
+            0.0
+        } else {
+            ms as f64 * 100.0 / fold_ms as f64
+        };
+        println!("    {name:<28} {ms:>7} ms  {pct:>5.1}%");
+    };
+    stage("lines", lines_ms);
+    stage("parse", parse_ms.saturating_sub(lines_ms));
+    stage("serialize", ser_ms.saturating_sub(parse_ms));
+    stage("reparse", reparse_ms.saturating_sub(ser_ms));
+    stage("modules+combat", fold_ms.saturating_sub(reparse_ms));
+    println!("  (reparse produced {reparsed} values; serialized {ser_bytes} bytes of NDJSON)");
     ExitCode::SUCCESS
 }
 
