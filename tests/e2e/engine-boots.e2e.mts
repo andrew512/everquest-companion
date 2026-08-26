@@ -229,7 +229,24 @@ async function stepQuit(launch: FixtureLaunch, out: AppOutput, pids: readonly nu
     out.said('closing stdin (the shutdown signal)'),
     out.said('escalating to kill') ? 'and then ESCALATED TO KILL' : 'no escalation'
   )
-  check('…and the engine takes the hint: exit 0, the contract’s own ending', bowedOut)
+  // THE NARRATION IS STDOUT FROM A PROCESS THAT IS QUITTING, so whether it exists is a race the
+  // app is allowed to win — `stopEngine` deliberately does not wait, and a release-built engine
+  // shifted the odds enough to fail this claim on a healthy machine (JOS-501 integration, twice in
+  // one evening). The durable half replaces it: a NONZERO shutdown exit is an `errors.log` entry
+  // with its own name (`EngineShutdownExit`, supervisor.ts `onExit`), so "no such entry, and the
+  // escalation never armed" states the same contract in evidence that survives the app's death.
+  // The stdout sentence stays as the fast path — when the engine wins the race, no file is read.
+  const cleanEnding =
+    bowedOut ||
+    (!out.said('escalating to kill') &&
+      !(
+        await settleErrorLog(launch.userData, (text) => text.includes('EngineShutdownExit'), 2_000)
+      ).includes('EngineShutdownExit'))
+  check(
+    '…and the engine takes the hint: exit 0, the contract’s own ending',
+    cleanEnding,
+    bowedOut ? 'said out loud' : 'app quit before narrating; errors.log carries no EngineShutdownExit'
+  )
   const left = await settleTable((table) => pids.every((pid) => !table.pids.includes(pid)), 15_000)
   const orphans = pids.filter((pid) => left.pids.includes(pid))
   check(

@@ -181,6 +181,10 @@ export type EngineFailure =
   | 'bad-announce'
   | 'unhealthy'
   | 'exited'
+  /** Exited NONZERO after the app closed its stdin — the shutdown path, gone wrong. Distinct from
+   *  `exited` because nothing about it is a crash of a running engine and it must never fold into
+   *  the restart trail: the app asked the child to leave and the child left badly. */
+  | 'shutdown-exit'
 
 /** Everything known about ONE ended launch, in the order a reader asks for it. */
 export interface EngineExitCause {
@@ -215,7 +219,8 @@ const FAILURE_NAMES: Readonly<Record<EngineFailure, string>> = {
   'announce-timeout': 'EngineAnnounceTimeout',
   'bad-announce': 'EngineBadAnnounce',
   unhealthy: 'EngineUnhealthy',
-  exited: 'EngineExited'
+  exited: 'EngineExited',
+  'shutdown-exit': 'EngineShutdownExit'
 }
 
 /** The sentence each failure opens with. */
@@ -224,7 +229,43 @@ const FAILURE_SENTENCES: Readonly<Record<EngineFailure, string>> = {
   'announce-timeout': 'the data-server engine never announced its port',
   'bad-announce': 'the data-server engine printed something other than its announce line',
   unhealthy: 'the data-server engine stopped answering session.health',
-  exited: 'the data-server engine exited unexpectedly'
+  exited: 'the data-server engine exited unexpectedly',
+  'shutdown-exit': 'the data-server engine exited nonzero after the shutdown signal'
+}
+
+/**
+ * A SHUTDOWN THAT ENDED BADLY, MADE DURABLE (JOS-501 integration).
+ *
+ * The deliberate-stop arm of `onExit` narrates the child's exit code to the dev log and nothing
+ * else — which is right for the exit-0 case (we asked, it left) and was silently wrong for every
+ * other one: the app is QUITTING when this fires, its stdout dies with it, and a child that
+ * exited 3 or crashed on teardown left no evidence anywhere. The e2e spec that asserts the clean
+ * ending could only read the stdout narration, so on any launch where the app won the race the
+ * claim was unprovable — green or red by timing, never by truth.
+ *
+ * So the nonzero case gets an `errors.log` entry with its own name. It deliberately does NOT go
+ * through `engineExitStep`: that machinery exists to fold RESTART decisions (quick-exit streaks,
+ * collapse), and a shutdown exit must never count toward a restart trail — the launch is over
+ * because we ended it. `attempt` is 0 for the same reason: this is not a retry of anything.
+ */
+export function engineShutdownExitLog(
+  code: number | null,
+  signal: string | null,
+  lifetimeMs: number
+): EngineExitLog {
+  return {
+    failure: 'shutdown-exit',
+    exitCode: code,
+    signal,
+    lifetimeMs,
+    attempt: 0,
+    detail: null,
+    ...(code === null ? {} : { code }),
+    name: FAILURE_NAMES['shutdown-exit'],
+    message:
+      `the data-server engine exited ${code === null ? `by signal ${signal ?? 'unknown'}` : String(code)} ` +
+      `after the shutdown signal — the polite path ended badly`
+  }
 }
 
 /**
