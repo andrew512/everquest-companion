@@ -53,6 +53,7 @@
 // and, in particular, WRITES NO LINE — a parity verdict from a world somebody has since replaced
 // would be a measurement of nothing, printed with authority.
 
+import { app } from 'electron'
 import { logInfo } from '../errorLog'
 import { registry, setWorldRebuiltObserver } from '../pipeline'
 import { getActiveCharacter } from '../session'
@@ -92,6 +93,8 @@ import { pushModuleChanged, pushWorldChanged } from './serveDeltas'
 // delta arm does — a cursor, and the world changing hands — and it holds no import of this file, so
 // the requester is handed over rather than reached for.
 import { installMirrors, noteMirrorChanged, primeMirrors, resetMirrors } from './serveMirrors'
+import { attachStateDir, takeArtifactsBack } from './artifactOwner'
+import { shimServing } from './serveShim'
 import { SERVABLE, type Readiness } from './readShim'
 import type { ReadyEngine } from './supervisor'
 import type { ParamsFor, RequestOp, ResultFor } from '../../shared/dataServer/ops'
@@ -236,6 +239,23 @@ export function onEngineReady(info: ReadyEngine | null): void {
   // has proven nothing yet; leaving the counts standing would let the panel report "5 agree" about
   // a process that no longer exists.
   lastParity = null
+  // THE PERSISTED ARTIFACTS COME BACK (JOS-497 item 2, boundary verdict 4), and on BOTH arms rather
+  // than only on the gone one. A dead process is not an owner, and the resist ledger's whole value
+  // is that it accretes — an engine that died at minute two of a six-hour session must not leave
+  // both files unwritten for the rest of it.
+  //
+  // THE RESPAWN ARM IS THE ONE WORTH READING TWICE. Ownership is taken by `sendAttach` and by
+  // nothing else, and a fresh connection does not always reach one — an app with no character
+  // attached leaves the engine idle by design. Handing back HERE rather than only on the null makes
+  // "the engine owns these files" mean "THIS engine was told where they are", so a launch that
+  // never attached cannot inherit the last one's claim and leave nobody writing. The new engine
+  // takes them at its own attach, so ownership alternates in strict sequence and is never shared.
+  //
+  // NOT IN `bumpGen`, deliberately, even though that is where everything else that must die with
+  // the turn lives: a WORLD REBUILD bumps the turn and does NOT re-attach when the log is unchanged
+  // (`attachAndProbe`), so a hand-back there would fire one second into every launch and never be
+  // undone. This is the connection edge, which is the edge that actually replaces an owner.
+  takeArtifactsBack(debug)
   if (info === null) {
     debug('data-server client: the engine is gone; the connection is closed')
     return
@@ -423,10 +443,32 @@ async function attachAndProbe(mine: number): Promise<void> {
   await runParityProbe(mine, l, target)
 }
 
-/** `session.attach`, and what it answered. Null when it was refused or superseded. */
+/**
+ * `session.attach`, and what it answered. Null when it was refused or superseded.
+ *
+ * THE ARTIFACT HANDOVER RIDES THIS CALL (JOS-497 item 2, boundary verdict 4), and it does so
+ * BEFORE the request object exists rather than beside it. `attachStateDir` stops this process
+ * persisting the resist ledger and the message-overlay register and only THEN produces the
+ * directory to send — so there is no arrangement of these lines in which the engine learns where
+ * the files are while this process is still writing them. `artifactOwner.ts` carries the argument
+ * for why the ordering is enforced by that function's body instead of by this call site's care.
+ *
+ * `undefined` IS THE ORDINARY ANSWER when the engine is not in this app's read path
+ * (`EQC_ENGINE_SERVE=0`), and the schema defines an absent `stateDir` as no engine-side persistence
+ * at all — so a flag-off launch sends the byte-identical attach it always has and keeps writing its
+ * own files.
+ */
 async function sendAttach(mine: number, l: LiveEngine, logPath: string): Promise<number | null> {
+  const stateDir = attachStateDir({
+    serving: shimServing(),
+    userData: () => app.getPath('userData'),
+    note: debug
+  })
   try {
-    const result = await l.client.request('session.attach', { logPath })
+    const result = await l.client.request(
+      'session.attach',
+      stateDir === undefined ? { logPath } : { logPath, stateDir }
+    )
     if (gen !== mine) return null
     l.attachedTo = logPath
     debug(
@@ -733,6 +775,15 @@ export function stopEngineClient(): void {
   // …and the mirrors, which clear themselves on the null (see `installMirrors`): a synchronous
   // reader must never be left holding a served fact after the connection that served it is gone.
   installMirrors(null)
+  // THE PERSISTED ARTIFACTS ARE DELIBERATELY NOT HANDED BACK HERE (JOS-497 item 2), and the
+  // asymmetry with `onEngineReady` is the point. This is the TEARDOWN path and its only caller is
+  // `stopEngineSupervisor`, which both quit events reach: what follows it is `main:saveOverlay`,
+  // the app's synchronous quit-final. Resuming ownership on the way out would let this process
+  // publish its own register over the one the engine has been maintaining, at the one moment
+  // nothing is left to correct it — the app getting the LAST word about a file it does not own.
+  // What that costs instead is the residual JOS-496 already named and priced: at most sixty
+  // seconds of the folding character's accretion, whose bucket the next attach re-derives from the
+  // log anyway.
   live?.client.close()
   live = null
   lastParity = null
