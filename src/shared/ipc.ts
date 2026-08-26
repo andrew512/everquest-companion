@@ -4,21 +4,18 @@ export const IPC = {
   // ---- module transport (the one pattern for loot/turnins/kills/leveling/character) ----
   // renderer -> main
   getModuleSnapshot: 'module:getSnapshot',
-  // main -> renderer
-  onModuleDelta: 'module:delta',
-  // main -> renderer: THE OTHER WORLD'S CURSOR MOVED (JOS-493).
+  // main -> renderer: A MODULE'S CURSOR MOVED (JOS-493).
   //
   // Not an increment and never a payload — `{ moduleId, seq }`, the dirty bit the data-server
   // protocol already defines (`ModuleChangedMessage`), forwarded to every window that folds a
-  // module. It exists because `module:delta` above is numbered in the TYPESCRIPT fold's space and,
-  // with `EQC_ENGINE_SERVE=1`, the snapshot a window is holding came out of the ENGINE's. Mixing
-  // the two is the JOS-490 defect verbatim: the hook hydrates `knownSeq` from the engine's
-  // revision counter and then drops the app's deltas as dupes.
+  // module. The answer to it is `module:getSnapshot` above.
   //
-  // So each folder rides exactly ONE of the two channels, and which one is stated by the snapshot
-  // it is holding (`ModuleSnapshot.served`): an engine-served snapshot re-fetches on this channel
-  // and ignores `module:delta`; an app-served snapshot does the opposite. One world, one numbering
-  // space — src/renderer/src/lib/useModule.ts.
+  // `onModuleDelta: 'module:delta'` STOOD HERE AND IS GONE (JOS-499). It carried INCREMENTS out
+  // of this process's own TypeScript fold, numbered in that fold's sequence space, and the
+  // whole reason this channel exists is that the two spaces were unrelated: a window holding an
+  // ENGINE snapshot dropped every app delta as a dupe (the JOS-490 defect). The fold is deleted,
+  // so there is one producer, one numbering space, and one channel — which is what that ticket
+  // was working towards rather than around.
   onModuleChanged: 'module:changed',
 
   // ---- progress / inventory (per-character persisted state) ----

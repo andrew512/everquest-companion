@@ -175,23 +175,28 @@ function toastsSeen(page: Page): Promise<number> {
 }
 
 /**
- * Count every `module:delta` that reaches the main window, from the moment this is installed.
+ * Count every increment that reaches the main window, from the moment this is installed.
  *
- * THE SUBJECT OF THE WHOLE TICKET, in one number. A replay may not push a single delta (JOS-60), and
- * a STORM of replays may not either — every one of those deltas is another character's history
- * arriving as an INCREMENT against the state the renderer is still holding, which is what the
- * celebration detectors read as news. It rides the app's own preload bridge, so it counts exactly
- * what the product delivers.
+ * THE SUBJECT OF THE WHOLE TICKET, in one number. A replay may not push a single increment
+ * (JOS-60), and a STORM of replays may not either — each one would be another character's history
+ * arriving against the state the renderer is still holding, which is what the celebration
+ * detectors read as news.
+ *
+ * THE INCREMENT IS A CURSOR NOW (JOS-499): `module:delta` carried this process's own fold and is
+ * deleted with it, and `module:changed` is the engine saying a module moved. The COUNT means the
+ * same thing — how many times the renderer was told to go and look again — and the claim is
+ * unchanged, so this watches the channel that exists. It rides the app's own preload bridge, so
+ * it counts exactly what the product delivers.
  */
 function watchDeltas(page: Page): Promise<void> {
   return page.evaluate(() => {
     const w = window as unknown as {
       __eqDeltas?: number
-      eq: { onModuleDelta: (cb: () => void) => () => void }
+      eq: { onModuleChanged: (cb: () => void) => () => void }
     }
     if (typeof w.__eqDeltas === 'number') return
     w.__eqDeltas = 0
-    w.eq.onModuleDelta(() => {
+    w.eq.onModuleChanged(() => {
       w.__eqDeltas = (w.__eqDeltas ?? 0) + 1
     })
   })

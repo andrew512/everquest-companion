@@ -305,6 +305,9 @@ export async function launchOnFixture(
     achievements?: string
     userData?: string
     env?: Record<string, string>
+    /** Forwarded to launchApp: the working directory, and therefore whether an engine BINARY can
+     *  be resolved at all. See that option for why absence is arranged this way (JOS-499). */
+    cwd?: string
     others?: Readonly<Record<string, string>>
   } = {}
 ): Promise<FixtureLaunch> {
@@ -321,7 +324,8 @@ export async function launchOnFixture(
   const launched = await launchApp({
     installDir: log.installDir,
     ...(opts.userData === undefined ? {} : { userData: opts.userData }),
-    ...(opts.env === undefined ? {} : { env: opts.env })
+    ...(opts.env === undefined ? {} : { env: opts.env }),
+    ...(opts.cwd === undefined ? {} : { cwd: opts.cwd })
   })
   return {
     ...launched,

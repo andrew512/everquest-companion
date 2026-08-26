@@ -264,10 +264,10 @@ async function muteEveryWindow(app: ElectronApplication): Promise<void> {
  * what the suite runs is belt and braces across a default flip, and a harness whose engine-on claim
  * rested on somebody else's default would go quietly TS-only the day that default moved again.
  */
-const ENGINE_ON: Readonly<Record<string, string>> = {
-  EQC_ENGINE: '1',
-  EQC_ENGINE_SERVE: '1'
-}
+// `ENGINE_ON` STOOD HERE AND IS GONE (JOS-499). It set `EQC_ENGINE=1` and `EQC_ENGINE_SERVE=1`
+// on every launch so the whole suite ran against the engine. Both flags are deleted from the
+// product — there is no other world to select — so setting them would be the harness naming
+// variables nothing reads, which is worse than naming nothing at all.
 
 /**
  * THE OPT-OUT, NAMED SO IT CAN BE GREPPED. Pass it as `env` to launch the app with no engine at all.
@@ -278,7 +278,12 @@ const ENGINE_ON: Readonly<Record<string, string>> = {
  * keep in step with a rule this repo already keeps in one place — and a launch that carries the
  * serve flag with no engine is itself a small proof that the gate holds.
  */
-export const ENGINE_OFF: Readonly<Record<string, string>> = { EQC_ENGINE: '0' }
+// `ENGINE_OFF` STOOD HERE AND IS GONE WITH IT, and its contract did NOT go with it — it moved to
+// `cwd` below, which is a better instrument for the reason the flag was a good one: it asks the
+// PRODUCT'S own question. `EQC_ENGINE=0` tested a gate; there is no gate. What a user can
+// actually have is a build with no engine BINARY (a checkout that never ran `cargo build`, a
+// package that shipped without it, a file quarantined by AV), and that is what
+// `tests/e2e/engine-absent.e2e.mts` arranges and asserts.
 
 /** A launched app, its userData dir, and the teardown that matches how the dir was obtained. */
 export interface LaunchedApp {
@@ -309,7 +314,22 @@ export interface LaunchedApp {
  * spec can override the harness's own variables deliberately rather than by accident.
  */
 export async function launchApp(
-  opts: { userData?: string; installDir?: string; env?: Record<string, string> } = {}
+  opts: {
+    userData?: string
+    installDir?: string
+    env?: Record<string, string>
+    /**
+     * THE WORKING DIRECTORY, AND THEREFORE WHETHER AN ENGINE BINARY CAN BE FOUND (JOS-499).
+     *
+     * `engineBinaryCandidates` builds its list from `app.getAppPath()` and `process.cwd()`, so a
+     * launch whose cwd is a directory with no `engine/target/**` under it — and whose appPath is
+     * the built `out/main`, which has none either — resolves NO binary. That is the app's own
+     * resolution path answering honestly, rather than a flag telling it to pretend.
+     *
+     * Defaults to ROOT, which is every other spec in the suite.
+     */
+    cwd?: string
+  } = {}
 ): Promise<LaunchedApp> {
   const owned = opts.userData === undefined
   const userData = opts.userData ?? makeUserData()
@@ -318,10 +338,6 @@ export async function launchApp(
     EQ_E2E: '1',
     EQ_E2E_USER_DATA: userData,
     NODE_ENV: 'production',
-    // THE SUITE'S DEFAULT (JOS-490) — see `ENGINE_ON` above. Stated after the ambient environment so
-    // a shell that exports its own answer cannot decide what the suite proves, and before
-    // `opts.env`, which is the one thing that may.
-    ...ENGINE_ON
   }
   if (opts.installDir !== undefined) env.EQ_INSTALL_DIR = opts.installDir
   else delete env.EQ_INSTALL_DIR
@@ -338,7 +354,7 @@ export async function launchApp(
   const app = await electron.launch({
     executablePath: electronBinary(),
     args: [MAIN_ENTRY, ...MUTE_ARGS],
-    cwd: ROOT,
+    cwd: opts.cwd ?? ROOT,
     env,
     timeout: 60_000
   })

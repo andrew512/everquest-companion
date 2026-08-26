@@ -69,8 +69,9 @@ const HOOKS = [
 // ── 1. the two channels ────────────────────────────────────────────────────────────────
 
 test('the increment channel and the cursor channel are DISTINCT names', () => {
-  assert.notEqual(IPC.onModuleDelta, IPC.onModuleChanged)
-  assert.equal(IPC.onModuleDelta, 'module:delta')
+  // THE INCREMENT CHANNEL IS GONE (JOS-499), so the claim inverts: there is no second channel for
+  // a cursor to be confused with, and `IPC` must not carry a name nothing produces.
+  assert.equal((IPC as Record<string, unknown>).onModuleDelta, undefined)
   assert.equal(IPC.onModuleChanged, 'module:changed')
 })
 
