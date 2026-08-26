@@ -114,6 +114,14 @@ parses, aggregates, compresses, and serves; the UI becomes a query/subscribe cli
     (`oracle:rust-fold`, no TS arm) gates the deletion release and phase-4 stabilization, then
     retires when CI budgets land. No Rust-side recorder is built unless the net is later made
     permanent.
+27. *(2026-08-25, decision sheet 5a/6a — the deletion release's two gaps)* **Fire frames reach
+    word parity, and it is RELEASE-GATING.** The `fire` frame is extended so everything the
+    retired TS evaluator could speak rides the frame — captures, the `{target}`, the resolved
+    spell name, `dueAt` — and the app speaks the full words again. Owner verbatim: "we're not
+    releasing without full parity." Dispatched immediately as its own ticket rather than waiting
+    for the deletion to merge. And **mob cards' "seen it drop" is wired in the deletion release
+    itself** (6a): the app-side mob read takes `knowledge.mob`'s `dropsSeen` — the op already
+    served it; only the read was missing.
 
 ## The shape
 
