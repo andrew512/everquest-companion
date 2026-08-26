@@ -433,6 +433,30 @@ impl Registry {
         }
     }
 
+    /// [`Registry::dispatch`] with a stopwatch around each module — THE MEASUREMENT INSTRUMENT
+    /// (JOS-504) and nothing else: `parity --stages` is its one caller, the sink receives
+    /// `(module index, nanoseconds)` per delivery, and the delivery semantics are line-for-line
+    /// `dispatch`'s. Kept as a SECOND function rather than a flag on the first so the production
+    /// dispatch never pays two clock reads per module per event; if `dispatch` changes, this
+    /// changes with it or the attribution is measuring a pipeline that no longer exists.
+    pub fn dispatch_timed(
+        &mut self,
+        ev: &Event,
+        live: bool,
+        derived: &mut Vec<Event>,
+        sink: &mut dyn FnMut(usize, u64),
+    ) {
+        for (i, m) in self.mods.iter_mut().enumerate() {
+            let t = std::time::Instant::now();
+            m.on_event(ev, live);
+            let mut out = m.take_derived();
+            if !out.is_empty() {
+                derived.append(&mut out);
+            }
+            sink(i, u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX));
+        }
+    }
+
     /// THE WALL-CLOCK HEARTBEAT, fanned over every module in WIRING ORDER — `registry.tick`'s own
     /// loop (`src/main/modules/registry.ts`), minus the half that is not this crate's.
     ///
@@ -867,6 +891,77 @@ impl Fold {
             }
         });
     }
+
+    /// [`Fold::fold_bytes`] with per-consumer attribution — THE MEASUREMENT INSTRUMENT (JOS-504),
+    /// `parity --stages`'s second half. Returns nanoseconds per registered module (delivery
+    /// order), for the combat engine, for the two detectors, and for `Event::from_json`. The bus
+    /// semantics are `on_primary`/`observe`'s exactly — primaries then a shift-until-empty drain —
+    /// restated here with stopwatches because a flag on the production path would make every
+    /// ordinary fold pay the clock reads. OBSERVER COST, stated: ~2 clock reads per consumer per
+    /// event (~40-60 ns a pair), inflating each bucket equally by well under a second across a
+    /// 2.5M-event log — shares are trustworthy, absolutes are a shade high.
+    pub fn fold_bytes_attributed(
+        &mut self,
+        parser: &eqlog::Parser,
+        bytes: &[u8],
+    ) -> FoldAttribution {
+        let mut out = FoldAttribution {
+            module_ids: self.registry.ids(),
+            module_ns: vec![0u64; self.registry.ids().len()],
+            combat_ns: 0,
+            detectors_ns: 0,
+            reparse_ns: 0,
+        };
+        eqlog::scan::scan_bytes(parser, bytes, |line| {
+            let t = std::time::Instant::now();
+            let parsed = Event::from_json(line);
+            out.reparse_ns += u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            let Some(ev) = parsed else { return };
+            self.events += 1;
+            self.last_ts = self.last_ts.max(ev.ts());
+            self.observe_attributed(&ev, false, &mut out);
+            let mut i = 0;
+            while i < self.derived.len() {
+                let d = self.derived[i].clone();
+                i += 1;
+                self.observe_attributed(&d, false, &mut out);
+            }
+            self.derived.clear();
+        });
+        out
+    }
+
+    /// `observe`, with the stopwatches — see [`Fold::fold_bytes_attributed`].
+    fn observe_attributed(&mut self, ev: &Event, live: bool, out: &mut FoldAttribution) {
+        self.registry
+            .dispatch_timed(ev, live, &mut self.derived, &mut |i, ns| {
+                out.module_ns[i] += ns;
+            });
+        if let Some(c) = &mut self.combat {
+            let t = std::time::Instant::now();
+            c.on_event(ev, live, self.registry.roster());
+            out.combat_ns += u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        }
+        let t = std::time::Instant::now();
+        if let Some(d) = self.epoch.observe(ev) {
+            self.derived.push(d);
+        }
+        if let Some(d) = self.sessions.observe(ev) {
+            self.derived.push(d);
+        }
+        out.detectors_ns += u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    }
+}
+
+/// Where an attributed fold's time went — [`Fold::fold_bytes_attributed`]'s answer.
+#[derive(Debug)]
+pub struct FoldAttribution {
+    /// Registered module ids, delivery order — index-aligned with `module_ns`.
+    pub module_ids: Vec<&'static str>,
+    pub module_ns: Vec<u64>,
+    pub combat_ns: u64,
+    pub detectors_ns: u64,
+    pub reparse_ns: u64,
 }
 
 /// THE APP'S PERSISTED KNOWLEDGE, ALREADY PARSED — what [`Registry::seed_persisted`] puts back.

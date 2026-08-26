@@ -412,6 +412,117 @@ fn stages(
     stage("reparse", reparse_ms.saturating_sub(ser_ms));
     stage("modules+combat", fold_ms.saturating_sub(reparse_ms));
     println!("  (reparse produced {reparsed} values; serialized {ser_bytes} bytes of NDJSON)");
+
+    // ── the dispatch floor: what 21 consumers pay just to refuse an event ─────────────────────
+    //
+    // Every module's `on_event` begins by reading `kind` out of the `serde_json::Value` (a map
+    // lookup + a string compare) and returning when the event is not its business — which for
+    // sixteen of the twenty is nearly every event. This pass measures exactly that and nothing
+    // else: 21 `kind()` reads + compares per event, no module logic at all. It is the part of the
+    // fold a TYPED event kind (an enum discriminant) reduces to an integer match.
+    let t = std::time::Instant::now();
+    let mut floor_hits = 0u64;
+    {
+        let mut ev = eqlog::event::Ev::new();
+        let mut seq: i64 = 0;
+        const PROBES: [&str; 21] = [
+            "combo",
+            "roster",
+            "loot",
+            "turnIn",
+            "classUnlock",
+            "kill",
+            "respawn",
+            "progress",
+            "level",
+            "character",
+            "outputFile",
+            "spellSet",
+            "itemTier",
+            "spellRank",
+            "alert",
+            "buff",
+            "buffTimer",
+            "consider",
+            "resist",
+            "feed",
+            "combatHit",
+        ];
+        split(bytes, &mut |line| {
+            if parser.parse_event(line, seq, &mut ev) {
+                seq += 1;
+                if let Some(v) = fold::event::Event::from_json(ev.finish()) {
+                    for probe in PROBES {
+                        if v.kind() == probe {
+                            floor_hits += 1;
+                        }
+                    }
+                }
+            }
+        });
+    }
+    let floor_ms = t.elapsed().as_millis().saturating_sub(reparse_ms);
+    println!(
+        "  dispatch floor (21 kind() checks/event, minus the reparse pass): ~{floor_ms} ms ({floor_hits} hits)"
+    );
+
+    // ── the attribution pass: WHERE inside the fold (JOS-504) ─────────────────────────────────
+    //
+    // A second, fresh construction (the first fold consumed its world), folded through
+    // `fold_bytes_attributed` — per-module, combat, detectors and reparse, each under its own
+    // stopwatch. Shares are the trustworthy read; the observer cost note is on the method.
+    let known2: HashSet<String> = parser
+        .spell_db()
+        .map(|db| db.keys().map(str::to_string).collect())
+        .unwrap_or_default();
+    let deps2 = fold::ClusterDeps {
+        known_spell: known2,
+        spell_classes: parser
+            .spell_db()
+            .map(fold::modules::combo::evidence::spell_class_index)
+            .unwrap_or_default(),
+        launch_ms,
+        construction_now_ms,
+        character: Some(serde_json::json!({
+            "name": character,
+            "server": eqlog::server_of(file_name).unwrap_or_default(),
+            "logPath": log_path,
+        })),
+        self_name: None,
+        respawn_prefs: fold::modules::respawn::RespawnPrefs::default(),
+        facts: parser
+            .spell_db()
+            .map(fold::spell_facts::SpellFacts::project)
+            .unwrap_or_default(),
+    };
+    let mut engine2 = fold::combat::CombatEngine::new();
+    engine2.reset();
+    engine2.set_player_name(character);
+    let mut folder2 = fold::Fold::new(fold::registered(deps2), launch_ms).with_combat(engine2);
+    let t = std::time::Instant::now();
+    let attr = folder2.fold_bytes_attributed(parser, bytes);
+    let attr_ms = t.elapsed().as_millis();
+    let total_ns: u64 =
+        attr.module_ns.iter().sum::<u64>() + attr.combat_ns + attr.detectors_ns + attr.reparse_ns;
+    println!("  attribution pass ({attr_ms} ms wall incl. observer cost); consumers by share:");
+    let mut rows: Vec<(&str, u64)> = attr
+        .module_ids
+        .iter()
+        .zip(attr.module_ns.iter())
+        .map(|(id, ns)| (*id, *ns))
+        .collect();
+    rows.push(("combat", attr.combat_ns));
+    rows.push(("detectors", attr.detectors_ns));
+    rows.push(("reparse", attr.reparse_ns));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.1));
+    for (id, ns) in rows {
+        let pct = if total_ns == 0 {
+            0.0
+        } else {
+            ns as f64 * 100.0 / total_ns as f64
+        };
+        println!("    {id:<24} {:>8} ms  {pct:>5.1}%", ns / 1_000_000);
+    }
     ExitCode::SUCCESS
 }
 
