@@ -1,11 +1,21 @@
 # The Rust Data Server ("the engine")
 
-Status: **design ratified by the owner 2026-08-24; ready to build.** This document is the
-handoff for the Fable agent running the build program. The Linear ticket is **JOS-459**; its
-comments carry the ruling history, and the rendered design one-pager (diagram, worked diff
-examples) lives at https://claude.ai/code/artifact/dbb6689f-6d0b-4d5b-ac4f-27ccb6a8dc0c
-(readable via WebFetch). Project memory carries the standing laws; this file is the
-self-contained technical spec.
+Status: **BUILT.** Phases 0–3 are complete and shipped; the TypeScript fold was deleted in the
+JOS-499 release and the engine is unconditional. Phase 4 has begun: both boundary laws landed in
+JOS-501 (the engine's own CI budgets, and the renderer no-munging lint), and what remains of the
+program is the surface-by-surface view cutover — cutover-ledger item 3 below, which is now the
+program's whole backlog.
+
+The design was ratified by the owner 2026-08-24. The Linear ticket is **JOS-459**; its comments
+carry the ruling history, and the rendered design one-pager (diagram, worked diff examples) lives
+at https://claude.ai/code/artifact/dbb6689f-6d0b-4d5b-ac4f-27ccb6a8dc0c (readable via WebFetch).
+Project memory carries the standing laws; this file is the self-contained technical spec.
+
+**HOW TO READ THIS DOCUMENT NOW THAT IT IS BUILT.** The rulings, the shape, the eight surfaces, the
+diff protocol and the cache laws are all CURRENT — they describe the engine that exists. The
+phasing section and the cutover ledger are HISTORY plus a short live backlog, and each is marked.
+Where a sentence was falsified by the deletion release it has been rewritten rather than deleted,
+because the argument usually outlived the fact.
 
 ## Why (one paragraph)
 
@@ -323,6 +333,38 @@ From the JOS-497 wave (worker friction, all verified):
 - **Worktrees containing junctions must never be `rm -rf`'d** — unlink with `rmdir` first and
   verify the targets survived.
 
+From the JOS-500/501 wave (all verified in the doing):
+
+- **A FIELD DESCRIPTION IN THE PROTOCOL SCHEMA IS ONE PARAGRAPH.** A multi-paragraph description
+  breaks the RUST build, because typify renders it into a doc comment and rustdoc then runs the
+  fenced content in it as a DOCTEST. Prose that happens to contain an indented line becomes a
+  compilation unit. Say it in one paragraph, or say the rest in the file that reads the field.
+- **`rustc` REJECTS BiDi CODEPOINTS IN LITERALS** (the `text_direction_codepoint_in_literal` lint,
+  deny-by-default since the Trojan Source disclosure). A sanitizer test whose fixture contains a
+  real U+202E cannot be written as a literal at all: build the data with `format!` and explicit
+  `\u{202e}` escapes. This is the Rust twin of AGENTS.md's no-raw-control-bytes rule, and it is
+  enforced by the compiler rather than by a reviewer.
+- **`cargo` IS NOT ON THE Bash TOOL'S PATH.** It lives in `~/.cargo/bin`, which the Bash tool's
+  environment does not carry; PowerShell needs an explicit prepend
+  (`$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"`). `scripts/build-engine.mts cargoBinary()`
+  is the one resolution the repo shares between the shipping build and the e2e harness — reach for
+  it rather than assuming a PATH.
+- **A GOLDEN RECORDS THE RECORDING CHECKOUT'S ABSOLUTE `logPath`**, so a worktree run must pass
+  `--slices=`/`--goldens=` at the REAL directories or `character.logPath` diverges for a reason that
+  has nothing to do with the fold. Keep that flag discipline documented wherever the oracle is
+  invoked; the absolute path inside a golden is a recorded wart rather than a fact about the world.
+- **`cargo test --workspace` BUILDS DEBUG, and a performance budget must know which profile it is
+  in.** JOS-501's budget went red on its first CI run at 0.45 MB/s against a 1 MB/s floor — the
+  floor working exactly as designed, in the wrong job. Anything asserting a rate belongs behind
+  `cfg!(debug_assertions)`, measuring in both profiles and judging only in release. The ~17× gap it
+  prints is also the most useful single number about this engine.
+- **A FAIL-SAFE FILTER NEEDS A TEST ABOVE IT.** `errorReports.ts wireCrumbs` drops any breadcrumb
+  kind the wire contract does not admit — correct, because dropping a crumb beats failing a crash
+  report — and that is exactly why nobody noticed when JOS-499 changed the producer and every report
+  for a whole release shipped `breadcrumbs: []`. When a component's failure mode is silence by
+  design, the thing that keeps it honest is a test comparing producers against contracts, not a
+  reader.
+
 ## Boundary verdicts (each resolves a census finding)
 
 1. `combat.snapshot(now, opts)` — the only wall-clock-parameterized read: the now-evaluation
@@ -378,25 +420,30 @@ re-derivable: byte-exact line-boundary cuts at first-line-of-day offsets). The b
   language-neutral).
 - Once green across the board: **full cutover; the TS fold is deleted in the same release.**
 
-## Phasing (each independently shippable; TS pipeline stays the oracle until phase 3 completes)
+## Phasing — MARKED BY ACTUAL STATE (2026-08-26)
 
-- **Phase 0 — the seam**: protocol schema as a checked artifact both sides generate from; Rust
-  process skeleton (health + echo); main-process supervisor (spawn/respawn/token); TS client lib
-  with subscribe hook + loading states; e2e harness boots both. No game logic. **The first build
-  ticket is the protocol schema.**
-- **Phase 1 — the parser, proven** (tail + scan + parse; oracle above). Highest fidelity risk,
-  smallest surface, proven standalone.
-- **Phase 2 — the fold, proven in clusters**: (2a) simple appenders — loot, kills, leveling,
-  turnIns, classUnlocks, outputFiles, spellSets, itemTiers, observedSpellRanks; (2b) character,
-  roster, combo, respawn, progression; (2c) the hard five — buffs, buffTimers, consider, resist,
-  alerts + eventFeed; (2d) the combat engine.
-- **Phase 3 — serve layer and cutover**: views/subscriptions/epochs; renderers move to RPC hooks
-  surface-by-surface behind one dev flag; alerts fire from the engine; both laws land (engine
-  budgets + renderer no-munging lint); ends with the TS fold deleted.
-- **Phase 4 — post-cutover**: budgets in CI against the pinned fixture (fold < 20 s at full
-  speed on the 200 MB fixture with main p95 < 50 ms concurrently); JOS-461's burst class
-  dissolves; the GC-wave items (JOS-226 lossless combat compression, JOS-462 item-corpus heap)
-  become engine-internal where they are cheap.
+- **Phase 0 — the seam**: **DONE.** Protocol schema as a checked artifact both sides generate from;
+  Rust process skeleton (health + echo); main-process supervisor (spawn/respawn/token); TS client
+  lib with subscribe hook + loading states; e2e harness boots both.
+- **Phase 1 — the parser, proven**: **DONE** (tail + scan + parse), byte-identical over all six
+  slices.
+- **Phase 2 — the fold, proven in clusters**: **DONE** — all twenty modules plus the combat engine,
+  deep-equal against the TS snapshots on all six slices.
+- **Phase 3 — serve layer and cutover**: **DONE, and it ended as promised**: views, subscriptions
+  and epochs; renderers brokered onto the engine; alerts firing engine-side with word parity
+  (JOS-500); **the TS fold deleted** (JOS-499). The one thing this phase's description promised and
+  did NOT deliver on time was the pair of boundary laws — they landed one release later, in JOS-501.
+- **Phase 4 — post-cutover**: **BEGUN.**
+  - ~~budgets in CI against a pinned fixture~~ **DONE** (JOS-501): `engine/crates/engined/tests/
+    budget.rs`, two tiers — a committed deterministic GENERATOR gating every push, and the G3 check
+    (`npm run budget:g3`) against the owner's 209 MB fixture at the release cut. **The G3 GOAL IS
+    NOT MET**: measured 199.6 MB in 52.5 s (3.8 MB/s) where the goal is under 20 s. The instrument
+    exists precisely so that this is a number somebody can act on rather than an assumption. The
+    "main p95 < 50 ms concurrently" half of the original goal is NOT measured by it — see the open
+    items below.
+  - ~~the renderer no-munging lint~~ **DONE** (JOS-501): `eslint.domainMunging.mjs`.
+  - JOS-461's burst class dissolves; the GC-wave items (JOS-226 lossless combat compression,
+    JOS-462 item-corpus heap) become engine-internal where they are cheap. **Still open.**
 
 ## The cutover ledger — CLOSED (JOS-499 shipped the deletion release)
 
@@ -457,11 +504,49 @@ light, app connected with the parity probe, packaging signed). Remaining to buil
    deliberately left to the surface-cutover ticket, because that is where the app stops asking its
    own lookups anything and the queue has one caller instead of two.
 7. **Ruling 19 surface**: the in-app performance panel section is DONE (JOS-483: engine
-   CPU/memory row, `perf.snapshot`, serve table, parity summary); `perf.budgets`/`perf.timeline`
-   ops, CI budgets, and bug-report attachment still open.
-8. **The no-munging lint** (ruling 4) failing builds on renderer sort/filter over domain data.
+   CPU/memory row, `perf.snapshot`, serve table, parity summary). ~~CI budgets~~ **DONE**
+   (JOS-501, item 2 — see phase 4 above). `perf.budgets`/`perf.timeline` ops and the bug-report
+   attachment are **STILL OPEN — the one item JOS-501 did not close**; successor named at the
+   bottom of this section.
+8. ~~**The no-munging lint** (ruling 4) failing builds on renderer sort/filter over domain data.~~
+   **DONE** (JOS-501, item 1): `eslint.domainMunging.mjs`, scoped to `src/renderer/**`, deciding by
+   the element TYPE's declaration site. It landed with **89 sites across 45 files** exempted inline,
+   every one naming its cutover ticket — which makes this ledger's item 3 measurable for the first
+   time: the exemption count is the size of the remaining cutover, and
+   `tests/domainMunging.test.mts` holds it to only ever shrinking.
 9. ~~Open owner item: the render-cell LOCALE (dates/numbers) as pushed app knowledge vs fixed
    en-US~~ **SETTLED** (ruling 25): fixed en-US.
+
+### THE LEDGER AS IT STANDS AFTER JOS-501 — what is actually left
+
+Everything above is either done or folded into one of these three. This is the program's whole
+remaining backlog:
+
+- **THE VIEW CUTOVER (item 3), and it is now measured.** Encounters/drilldown and the INCOMING
+  meter as dedicated views; the renderer-bundled corpora (mobs/posky/bosses, ~3.7 MB) behind
+  knowledge queries; `knowledge.spell`'s named gap (no effect classes, rank lineage or metrics);
+  the classification ring, so `recent` stops being `[]` in a live answer. **The size of this item is
+  the no-munging lint's exemption count**: 89 sites that re-derive in the renderer because no served
+  source answers them yet. Each one deleted is one exemption removed.
+- **RULING 19'S LAST TWO OPS**, ledger item 7 above: `perf.budgets` / `perf.timeline` per surface 8,
+  and the bug report carrying the engine's numbers the way it carries main/renderer stalls
+  (`src/main/feedback/perf.ts` is the seam; `enginePerfSnapshot()` already answers). JOS-501 built
+  the CI half of ruling 19 and deliberately did not start the schema half — it names a follow-up
+  rather than a half-built op.
+- **THE NAMED GAPS THE DELETION OPENED** (JOS-499), each needing an engine-side command rather than
+  an app-side fix: `alerts:appFired` and `eventFeed:report` (renderer-detected bossDefeat /
+  questComplete / Sky completes lose their history and feed rows — the SOUND is unaffected), and a
+  mid-session inventory dump no longer re-arming clicky classification until the next re-fold.
+
+Two smaller things JOS-501 found and named rather than fixed, so they are not lost:
+
+- **There is no COMPUTE-ONLY serve measurement.** `views/meter.rs` takes one instant, so
+  `foldToFrameUs` is fold-to-outbox and includes the ~10 Hz coalescing beat — measured at 52 ms for
+  a one-row diff, which is a beat and not work. Ruling 19's own discipline is that queue time is
+  named as queue time, and a single number the performance panel labels "latency" is in tension
+  with it. The fix is a second instant taken at frame-build start.
+- **The G3 goal is not met** (52.5 s against a 20 s goal), and now that there is an instrument the
+  question of whether 20 s was ever the right number is an owner call rather than a guess.
 
 ### What actually happened (JOS-499)
 
@@ -490,18 +575,24 @@ THE ORACLE SURVIVED THE DELETION AND WAS GREEN AFTER IT (ruling 26 working as de
 `oracle:rust-fold` — 1,283,963 events over 6 slices, 22 modules each — run against goldens
 recorded at the pre-deletion commit, off a `goldenPaths.mts` leaf that imports no fold.
 
-**THE ORIGINAL DELETION LIST** (ruling 12: once proven, move fully — one release):
-`src/main/modules/**` (registry, wiring, all twenty), `src/main/combat/**`, the TS parse path
-(`parser.ts`, `parse*.ts`, `scanHistory.ts`, `Tailer.ts`, `replaySlicer.ts`, `bus.ts`,
+**WHAT WAS DELETED** (ruling 12: once proven, move fully — one release). All of it went, in
+JOS-499: `src/main/modules/**` (registry, wiring, all twenty), `src/main/combat/**`, the TS parse
+path (`parser.ts`, `parse*.ts`, `scanHistory.ts`, `Tailer.ts`, `replaySlicer.ts`, `bus.ts`,
 `rulesets.ts`, epoch/session detectors), main's spellDb load, `pipeline.ts` fold construction,
 `session.ts` replay orchestration + heartbeat (attach forwarding remains), the replay gate, the
 `module:*`/`combat:*` IPC and per-window snapshot fan-out, the fold-derived IPC families, renderer
-`useModule` + client-side munging paths, renderer-bundled corpora. THE ORACLES RETIRE WITH THE TS
-FOLD — goldenOracle/rustParity exist to compare two implementations and the cutover leaves one;
-their successor is the engine's own budgets in CI against the pinned fixture (phase 4: G3 < 20 s
-for 128 MB, main p95 < 50 ms concurrently), plus the tail/scan invariance suites which are
-self-contained. App-side keeps: store/prefs, speech/sounds playback, overlay/window management,
-presence, tray, updater, planner, maps, feedback/telemetry, triage.
+`useModule`. **The renderer-bundled corpora are the one line of that list that did NOT go** — mob
+search, item drop sources and the entire Sky tab are whole in-memory catalogs with no reachable
+query surface to replace them, so the ~3.7 MB waits for the knowledge-ops cutover with the rest of
+item 3. App-side kept: store/prefs, speech/sounds playback, overlay/window management, presence,
+tray, updater, planner, maps, feedback/telemetry, triage.
+
+**THE ORACLES HAVE RETIRED, AND THEIR SUCCESSOR EXISTS.** goldenOracle/rustParity existed to
+compare two implementations and the cutover left one. Ruling 26 kept `oracle:rust-fold` alive for
+exactly one release as a safety net, gating the deletion release and phase-4 stabilisation; its
+successor — the engine's own budgets in CI — landed in JOS-501 and is described in phase 4 above.
+The tail/scan invariance suites are self-contained and stay. The goldens may now be retired at the
+integrator's discretion; nothing gates on them.
 
 ## Related tickets & instruments
 
