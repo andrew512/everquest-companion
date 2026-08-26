@@ -710,12 +710,17 @@ fn ingest_damage(st: &mut EngineState, ev: &Event) {
     // Read the engine's active-time clock either side of `route()`: the DIFFERENCE is the exact
     // capped-gap delta it accrued for this hit. A fresh encounter (one `route()` opened) contributes
     // 0, which is precisely what the routing path does for a first hit.
+    //
+    // ONE CLONE, AND ONLY THE ONE THAT HAS TO CROSS THE `&mut` (JOS-506). The `before` reading is
+    // owned because `route()` takes the whole state mutably and may replace the encounter under it;
+    // the `after` reading has no such problem and used to clone anyway, which cost a second heap
+    // allocation on EVERY damage line in the log to answer a question that is a string COMPARE.
     let enc_before = st.current.as_ref().map(|e| e.id.clone());
     let active_before = st.current.as_ref().map_or(0, |e| e.active_ms);
     let Some(at) = routing::route(st, laned.as_ref().unwrap_or(&dmg)) else {
         return;
     };
-    let same_encounter = st.current.as_ref().map(|e| e.id.clone()) == enc_before;
+    let same_encounter = st.current.as_ref().map(|e| e.id.as_str()) == enc_before.as_deref();
     let delta = if same_encounter {
         st.current.as_ref().map_or(0, |e| e.active_ms) - active_before
     } else {
