@@ -95,8 +95,8 @@ const overlayWindows = Object.fromEntries(OVERLAY_KINDS.map((k) => [k, null])) a
 // THE STRIP KINDS — the three overlays whose resting state is an EMPTY window (the celebration
 // toast, the alert banner — JOS-378 — and the con card — JOS-383); every other kind is a panel that
 // fills its window. The distinction earns a name because opacity means something different for
-// them (below), because none pays for a mouse-forwarding hook (replayGate.ts
-// `overlayForwardsMouse`), and — since JOS-406 — because a strip's WINDOW scales with its text
+// them (below), because none pays for a mouse-forwarding hook (nothing has since JOS-370), and
+// — since JOS-406 — because a strip's WINDOW scales with its text
 // while a panel's does not. `isStripKind` is imported from overlayLayout.ts, which is where that
 // last one made it a geometry fact rather than a local convenience.
 
@@ -559,7 +559,7 @@ export function createMainWindow(): void {
  * the mouse's path. `forward:` now appears in no `setIgnoreMouseEvents` call in this application,
  * and tests/overlayLockedSelector.test.mts pins that as source.
  *
- * WHAT LEFT WITH IT: the replay gate's mouse half (JOS-62's `overlayMouseForward`). Its whole job
+ * WHAT LEFT WITH IT: the replay gate's mouse half (JOS-62's forwarding decision). Its whole job
  * was to drop the hook for the seconds a historical fold owned the message loop, and there is no
  * hook left to drop. The gate's OVERLAY HIDE/SHOW half is untouched and still the law.
  *
@@ -634,7 +634,7 @@ function applyOpaqueStripVisibility(kind: OverlayKind, idle: boolean): void {
   if (!w || w.isDestroyed()) return
   if (idle && w.isVisible()) w.hide()
   // Idle is done here; and nothing shows while a window may not be shown at all — E2E (the whole
-  // test mode, src/main/e2e.ts), a historical replay in flight (replayGate.ts), or a PARK
+  // test mode, src/main/e2e.ts) or a PARK
   // (JOS-427): an opaque strip is a solid rectangle, and a card arriving while the user is out of
   // the game must not paint one over whatever they switched to. `parkOverlays` re-applies the
   // remembered capture state on the way back, which re-runs this with the same `idle` — so a card
@@ -1033,7 +1033,7 @@ export function parkOverlays(parked: boolean): void {
  *
  * E2E never shows a window (src/main/e2e.ts is the whole test mode), so a re-show is skipped
  * there; hiding stays live, since hiding an already-hidden window is a no-op. A historical replay
- * (replayGate.ts) suppresses the re-show for the same seconds and by the same predicate — and
+ * suppresses the re-show for the same seconds and by the same predicate — and
  * this function is ALSO the restore path afterwards, which is why the re-show re-asserts the
  * locked mode from the persisted config rather than remembering anything of its own.
  */

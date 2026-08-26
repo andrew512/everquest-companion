@@ -259,7 +259,7 @@ function applyRing(state: PresenceState): void {
     // 'parked' — EverQuest still owns the screen, there is just no pointer to ring (mouselook, or
     // any mouse button held in the world view). The window is left VISIBLE and merely emptied:
     // this is the transition that happens on every click, and hiding for it is what put a stale
-    // halo back on screen a frame later (JOS-120, replayGate.ts).
+    // halo back on screen a frame later (JOS-120, presenceProtocol.ts ringDisposition).
     parkRingInPlace()
     return
   }
