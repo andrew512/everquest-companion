@@ -49,6 +49,25 @@
  * WHY IT NEVER TAKES THE SCREEN: `EQ_E2E=1` (src/main/e2e.ts) shows no window, skips the
  * single-instance lock, and points `userData` at a throwaway temp dir per launch.
  *
+ * ── KNOWN FAILURE SINCE JOS-499, AND IT IS INFRASTRUCTURE RATHER THAN THIS SPEC ────────────────
+ *
+ * THE ROSTER IS SERVED NOW. `useBossKills` builds a status per target from the `kills` module
+ * snapshot; a null snapshot yields no statuses and therefore NO CARDS, which is what every
+ * assertion below reads as an empty roster. The snapshot is null until the ENGINE has folded the
+ * log and gone live.
+ *
+ * AND THIS SPEC LAUNCHES ON THE REAL INSTALL — no staged fixture, deliberately, because the
+ * portrait assertions need the game's own UI files. So what the engine must fold before the first
+ * card can be drawn is the OWNER'S WHOLE LOG, in a DEBUG build (`buildEngineIfStale` builds debug;
+ * the engine's own README measures release at roughly a tenth of the cost). That is minutes, and it
+ * outruns the runner's 300 s per-spec cap.
+ *
+ * THE FIX IS NOT IN THIS FILE and was deliberately not attempted here: a wait long enough to matter
+ * would still exceed the cap, and adding one pushed the file past the 400-code-line ceiling, which
+ * is the integrator's to widen and never a worker's. The two real options are a RELEASE engine for
+ * the suite (the same call `run-all.mts SOLO_SPECS` names) or staging a fixture install that also
+ * carries the UI files the portraits need. Both are harness decisions with their own trade.
+ *
  * Run: `npm run test:e2e -- bosses-week` (or node --import tsx this file).
  */
 import type { Page } from 'playwright-core'

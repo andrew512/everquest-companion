@@ -421,11 +421,11 @@ async function padBoth(page: Page, log: FixtureLog, otherPath: string): Promise<
 
   const back = await switchTo(page, log.logPath)
   check("the app is tailing Primitive while Alterna's log is padded", back.name === 'Primitive', back.name)
-  check(
-    "…and folding Primitive's padded log outlives the 1s heartbeat (the window the defect needs)",
-    back.ms >= 1_000,
-    `${String(back.ms)}ms`
-  )
+  // THE DEFECT'S WINDOW IS GONE WITH THE FOLD (JOS-499). This asked whether the switch had
+  // outlived one heartbeat, because JOS-457's defect needed picks to land INSIDE a running
+  // whole-log replay on this thread. There is no replay here: a switch is an attach plus a
+  // re-hydrate, measured at 8-14 ms however large the log, because the folding happens in
+  // another process. Asking for the window would fail every run for the right reason.
   t0 = Date.now()
   note(
     `padded ${OTHER}'s log with ${String(padFile(otherPath, PAD_LINES))} historical swing lines in ${String(Date.now() - t0)}ms`
@@ -451,7 +451,12 @@ async function drive(page: Page, strip: Page, log: FixtureLog, otherPath: string
     (t) => t.fires > base.fires && t.toasts > base.toasts,
     { timeoutMs: 30_000, pollMs: 200 }
   )
-  check(`a LIVE credited kill of ${BOSS} fires exactly one alert`, live1.fires - base.fires === 1, since(base, live1))
+  // COUNTED AS TOASTS (JOS-499). `alertFires` reads the alerts history ring, and this alert is a
+  // bossDefeat APP SIGNAL — renderer-evaluated on both sides by design, so the engine's ring
+  // cannot record it and the app-side recorder went with the deleted alerts module. Nothing the
+  // user sees is lost: the alert fires, plays and shows its card, and the card is what is counted
+  // here. `byId` is still printed in every failure line, so a run that starts recording says so.
+  check(`a LIVE credited kill of ${BOSS} celebrates exactly once`, live1.toasts - base.toasts === 1, since(base, live1))
   check('…and shows exactly one card in the top-centre strip', live1.toasts - base.toasts === 1, since(base, live1))
   await sleep(ALERT_COOLDOWN_MS + 500)
 
@@ -483,19 +488,27 @@ async function drive(page: Page, strip: Page, log: FixtureLog, otherPath: string
     return
   }
 
-  // The window the defect needs is picks landing INSIDE a fold. A run where every pick completed on
-  // its own says so rather than passing for the wrong reason.
+  // ── PREEMPTION MOVED PROCESSES (JOS-499), AND SO DID WHAT CAN BE OBSERVED HERE ─────────────
+  //
+  // WHAT THESE TWO CLAIMED. JOS-457's defect was N quick dropdown picks running N whole-log
+  // folds CONCURRENTLY on this thread, interleaving at every await and resetting a shared world
+  // out from under each other — the reported lock-up, the random encounters and the random
+  // audio. The fix was OWNERSHIP: a pick that lost its turn touched nothing and answered NOT-OK,
+  // so "every pick but the last was dropped" was the fix, observed.
+  //
+  // WHY THEY CANNOT BE OBSERVED FROM HERE ANY MORE. There is no fold on this thread to be inside
+  // of. Every pick now completes in single-digit milliseconds — it sets the character, forwards
+  // an attach and returns — so NOTHING is dropped and `dropped === 0` is the correct reading of a
+  // healthy app. Preemption still happens and is still last-pick-wins, but it happens where the
+  // folding does: `session.attach` PREEMPTS by protocol law (design doc, surface 1), which is
+  // JOS-457's ownership model promoted into the wire contract. Asserting it belongs to the
+  // engine's own suite, against its own attach generations, not to a spec driving a dropdown.
+  //
+  // WHAT THIS SPEC STILL PROVES, and it is the part the owner actually reported: a storm of picks
+  // leaves the app CORRECT — the last pick wins, the world it lands on is that character's, and
+  // nothing celebrates history on the way through. Those claims are below and are untouched.
   const dropped = state.picks.filter((p) => !p.ok).length
-  check(
-    'picks landed inside a running replay — at least one was preempted (otherwise this run proves nothing)',
-    dropped >= 1,
-    `${String(dropped)} of ${String(STORM_PICKS)} dropped`
-  )
-  check(
-    'every pick but the last was DROPPED, never stacked — no pick answered ok twice over',
-    dropped === STORM_PICKS - 1,
-    JSON.stringify(state.picks)
-  )
+  note(`${String(dropped)} of ${String(STORM_PICKS)} picks were dropped app-side (0 is expected since JOS-499)`)
   const last = state.picks[STORM_PICKS - 1]
   check('the LAST pick is the one that won', last.ok && last.name === 'Primitive', JSON.stringify(last))
 
@@ -538,8 +551,8 @@ async function drive(page: Page, strip: Page, log: FixtureLog, otherPath: string
     { timeoutMs: 30_000, pollMs: 200 }
   )
   check(
-    'a live kill AFTER the storm still fires exactly once (suppressed, not broken)',
-    live2.fires - after.fires === 1,
+    'a live kill AFTER the storm still celebrates exactly once (suppressed, not broken)',
+    live2.toasts - after.toasts === 1,
     since(after, live2)
   )
   check('…and still shows exactly one card', live2.toasts - after.toasts === 1, since(after, live2))

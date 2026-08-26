@@ -145,19 +145,23 @@ export function stepProfileFile(userData: string, firstRun: boolean): void {
  * launch — see `main()`.
  */
 function stepColdRead(profile: Profile, firstRun: boolean): void {
-  if (firstRun) {
-    check(
-      'a first run reports NO cold-read delta — there is no previous clean exit to measure from',
-      profile.newBytes === undefined,
-      `newBytes ${String(profile.newBytes)}`
-    )
-  } else {
-    check(
-      'the SECOND launch reports one, because the first one left a mark on its way out',
-      typeof profile.newBytes === 'number' && profile.newBytes >= 0,
-      `newBytes ${String(profile.newBytes)}`
-    )
-  }
+  // ── THE FIFTH FOLD MEASUREMENT, AND IT RETIRES WITH THE OTHER FOUR (JOS-499) ────────────────
+  //
+  // `newBytes` answered "how much of this launch's read was bytes appended since our last clean
+  // exit" — the cold-disk discriminator (JOS-57). It was computed as `newBytesSince(mark, size)`
+  // against THE TAIL MARK this process wrote on its way out, and boundary verdict 4 gave the tail
+  // to the engine: "the log tail mark — the engine owns the tail". `markTailPosition` is deleted,
+  // so nothing app-side writes a mark and nothing can subtract two of them.
+  //
+  // BOTH ARMS GO, not just the second. The first-run arm asserted the ABSENCE, which now holds
+  // trivially and for the wrong reason — it would pass on a launch that had simply stopped
+  // measuring, which is exactly the failure this whole file exists to catch. An assertion that
+  // cannot fail is worse than none.
+  //
+  // THE FIRST-MEGABYTE HINT BELOW SURVIVES as a shape check only, and is left standing for the
+  // same reason `stepProfileFile` keeps its phase assertions: it is a claim about the profile's
+  // internal consistency rather than about a fold.
+  void firstRun
   // The cold-disk hint is only asked of a log at least a megabyte long, so its ABSENCE is correct
   // on a fixture and only its sanity can be pinned here.
   check(
