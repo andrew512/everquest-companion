@@ -26,11 +26,12 @@
 mod harness;
 
 use harness::{
-    attach, health, module_snapshot, respawn_confirm, respawn_define, session_mark, subscribe,
-    Client, Engine, PATIENCE,
+    attach, health, module_snapshot, resist_levels, respawn_confirm, respawn_define, session_mark,
+    subscribe, Client, Engine, PATIENCE,
 };
 use protocol::generated::{
     ConCardMessage, EngineMessage, HealthResultStatus, ModuleChangedMessage, ReplyResult,
+    ResistLevelSource,
 };
 use std::io::Write;
 use std::path::PathBuf;
@@ -288,6 +289,66 @@ fn a_live_con_becomes_a_card_and_a_historical_one_becomes_nothing() {
         assert!(chip.tag.is_none());
         assert_eq!(chip.n, 0);
     }
+}
+
+// ---- how old is this creature (JOS-497 item 1) --------------------------------------------------
+
+#[test]
+fn resist_levels_answers_the_con_over_the_catalog_and_says_nothing_about_a_stranger() {
+    // THE WHOLE PATH, over a socket, for the LAST fact `src/main/ipc/resist.ts` was reading out of
+    // the app's own fold synchronously. `fold::modules::resist::world` owns the SEMANTICS — which
+    // source wins, how a catalog range becomes a midpoint — and this owns the crossing: a question
+    // composed on a connection thread reaches the resist fold on the ingest thread through the read
+    // door, and comes back as the wire's own shape.
+    //
+    // THE CON IS IN THE STAGED HISTORY, deliberately. `/con` is folded by the scan like any other
+    // line — it is the CARD that is live-only, not the level — so a level stated before the tail
+    // ever went live is exactly what a resist card drawn on launch has to be able to read.
+    let staged = Staged::new("levels", A_HISTORICAL_CON);
+    let engine = Engine::start();
+    let mut conn = Conn::new(engine.connected());
+
+    conn.client.send(&attach(1, &staged.path()));
+    conn.wait_for_live(2);
+
+    conn.client.send(&resist_levels(
+        20,
+        // …the conned creature, a creature only the committed catalog knows, and a PLAYER, who is
+        // in neither and about whom nothing may be invented.
+        &["A fire giant warlord", "Innoruuk", "Lasershark"],
+    ));
+    let ReplyResult::ResistLevelsResult(answer) = conn.reply(20) else {
+        panic!("resist.levels answers a ResistLevelsResult");
+    };
+    let by_name = |name: &str| answer.levels.iter().find(|row| row.mob == name).cloned();
+
+    // THE `/con` WINS AND IT IS EXACT. The game stated 52, so the range is a point and the source
+    // says which of the two ladders answered — the card prints that as prose.
+    let conned = by_name("A fire giant warlord").expect("the conned creature has a level");
+    assert_eq!(conned.level, 52);
+    assert_eq!((conned.lo, conned.hi), (52, 52));
+    assert!(matches!(conned.from, ResistLevelSource::Con));
+    // …and THE NAME IS ECHOED AS IT WAS ASKED, never the folded key. The line spelled it `A fire
+    // giant warlord` and the key is `a fire giant warlord`; the app matches on what it sent.
+    assert_eq!(conned.mob, "A fire giant warlord");
+
+    // THE CATALOG ANSWERS FOR A CREATURE NOBODY HAS CONNED, which is the arm that makes a card
+    // useful the first time a player meets something.
+    let catalog = by_name("Innoruuk").expect("a committed catalog row answers");
+    assert!(matches!(catalog.from, ResistLevelSource::Catalog));
+    assert!(catalog.level > 0);
+    assert!(catalog.lo <= catalog.level && catalog.level <= catalog.hi);
+
+    // AND A PERSON GETS NO ROW AT ALL. `Lasershark` is a player — the measured example the con
+    // card's own suite uses — so neither ladder states a level, and the absence IS the answer:
+    // `levelOf` returns null over there, and a row of four zeros here would be this engine
+    // inventing an age for somebody's character.
+    assert!(
+        by_name("Lasershark").is_none(),
+        "a creature nothing states a level for gets no row: {:?}",
+        answer.levels
+    );
+    assert_eq!(answer.levels.len(), 2);
 }
 
 // ---- the session mark --------------------------------------------------------------------------

@@ -299,7 +299,23 @@ async function openConnection(mine: number, info: ReadyEngine, client: EngineCli
   // which is exactly the bug that cost the cursor listener a whole e2e round.
   client.onConCard((card) => {
     if (live?.client !== client) return
-    noteConCardServe(conCardServeLine(card, openEngineConCard(card)))
+    // THE DRAW IS ASYNCHRONOUS SINCE JOS-497 item 1 — the card's chips need the creature's LEVEL,
+    // and that is a served answer now rather than a synchronous read of this process's fold. So
+    // this listener stays synchronous (the client's frame dispatch is), starts the draw, and
+    // narrates when it settles.
+    //
+    // IT IS VOIDED AND IT NEVER THROWS, which is the same rule `noteMirrorChanged` and
+    // `playEngineFire` learned: this runs inside the client's frame dispatch, where a throw
+    // surfaces as a TRANSPORT FAULT — a con card would take the connection down. `openEngineConCard`
+    // already answers `false` for every ordinary refusal, so the catch is for the unexpected, and
+    // what it does with it is print a line.
+    void openEngineConCard(card)
+      .then((drew) => {
+        noteConCardServe(conCardServeLine(card, drew))
+      })
+      .catch((err: unknown) => {
+        debug(`data-server conCard: ${card.name} could not be drawn (${describeErr(err)})`)
+      })
   })
   // THE CURSORS (JOS-493) — the engine saying a module's published state moved, forwarded to every
   // window that folds one. Two guards, and each answers a different question:

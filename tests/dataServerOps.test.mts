@@ -57,7 +57,8 @@ const EVERY_OP: RequestOp[] = [
   'knowledge.mob',
   'knowledge.spell',
   'knowledge.search',
-  'knowledge.define'
+  'knowledge.define',
+  'resist.levels'
 ]
 
 test('the registry names every op, and the compile-time pin agrees', () => {
@@ -141,7 +142,14 @@ test('EVERY GUARD IS DISCRIMINATING — no two ops accept each other’s result'
       hits: [{ domain: 'item', name: "Rune of Al'Kabor", page: "Rune of Al'Kabor" }]
     },
     // …and the push-back is a `DefineAck` with no `count`, because one entry is not a list.
-    'knowledge.define': { applied: true }
+    'knowledge.define': { applied: true },
+    // THE EMPTY ANSWER, DELIBERATELY (JOS-497 item 1). `levels: []` is what "nothing states a
+    // level for any of these creatures" looks like on the wire, and it is the shape an over-eager
+    // guard would get wrong: a truthiness test on an empty array calls a perfectly good answer the
+    // wrong shape, and a card that fell back to the app's own fold for it would be main reading a
+    // fold this ticket exists to stop reading. Same trap as the refused mark and the un-confirmed
+    // sighting above, sprung a third way.
+    'resist.levels': { levels: [] }
   }
   for (const op of EVERY_OP) {
     assert.equal(RESULT_GUARDS[op](shapes[op]), true, `${op} refused its own result`)

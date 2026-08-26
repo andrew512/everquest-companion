@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:00dbda5f549bb3e44a27a401dea3d2fa61c8a4381c83ee38ffcbadf81cad93cd
+//! schema-digest: sha256:1dc83e0c2affd8f42c55dcba15dacd17e7e83674d900182705d341842c0636f4
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -515,6 +515,9 @@ impl ::std::convert::From<::std::collections::BTreeMap<::std::string::String, cr
 ///    },
 ///    {
 ///      "$ref": "#/$defs/RespawnConfirmSightingRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/ResistLevelsRequest"
 ///    }
 ///  ]
 ///}
@@ -546,6 +549,7 @@ pub enum ClientMessage {
     KnowledgeDefineRequest(KnowledgeDefineRequest),
     SessionMarkAddRequest(SessionMarkAddRequest),
     RespawnConfirmSightingRequest(RespawnConfirmSightingRequest),
+    ResistLevelsRequest(ResistLevelsRequest),
 }
 impl ::std::convert::From<Hello> for ClientMessage {
     fn from(value: Hello) -> Self {
@@ -660,6 +664,11 @@ impl ::std::convert::From<SessionMarkAddRequest> for ClientMessage {
 impl ::std::convert::From<RespawnConfirmSightingRequest> for ClientMessage {
     fn from(value: RespawnConfirmSightingRequest) -> Self {
         Self::RespawnConfirmSightingRequest(value)
+    }
+}
+impl ::std::convert::From<ResistLevelsRequest> for ClientMessage {
+    fn from(value: ResistLevelsRequest) -> Self {
+        Self::ResistLevelsRequest(value)
     }
 }
 ///`CombatSearchFightsParams`
@@ -5346,6 +5355,9 @@ impl ::std::convert::TryFrom<::std::string::String> for ReplyKind {
 ///    },
 ///    {
 ///      "$ref": "#/$defs/RespawnConfirmAck"
+///    },
+///    {
+///      "$ref": "#/$defs/ResistLevelsResult"
 ///    }
 ///  ]
 ///}
@@ -5367,6 +5379,7 @@ pub enum ReplyResult {
     KnowledgeSearchResult(KnowledgeSearchResult),
     SessionMarkAck(SessionMarkAck),
     RespawnConfirmAck(RespawnConfirmAck),
+    ResistLevelsResult(ResistLevelsResult),
 }
 impl ::std::convert::From<EchoResult> for ReplyResult {
     fn from(value: EchoResult) -> Self {
@@ -5431,6 +5444,11 @@ impl ::std::convert::From<SessionMarkAck> for ReplyResult {
 impl ::std::convert::From<RespawnConfirmAck> for ReplyResult {
     fn from(value: RespawnConfirmAck) -> Self {
         Self::RespawnConfirmAck(value)
+    }
+}
+impl ::std::convert::From<ResistLevelsResult> for ReplyResult {
+    fn from(value: ResistLevelsResult) -> Self {
+        Self::ResistLevelsResult(value)
     }
 }
 ///Client-chosen correlation id. A reply carries the id of its request; every stream message carries the id of the subscribe request that opened it.
@@ -5987,6 +6005,296 @@ impl ::std::convert::TryFrom<::std::string::String> for ResistGuidance {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///WHO SAID SO, and the order is the fold's own precedence: a `/con` this session beats the committed catalog beats nothing. It reaches the card as prose (`level 52, from a con`), so it is a closed set rather than free text.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistLevelSource",
+///  "description": "WHO SAID SO, and the order is the fold's own precedence: a `/con` this session beats the committed catalog beats nothing. It reaches the card as prose (`level 52, from a con`), so it is a closed set rather than free text.",
+///  "type": "string",
+///  "enum": [
+///    "con",
+///    "catalog"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ResistLevelSource {
+    #[serde(rename = "con")]
+    Con,
+    #[serde(rename = "catalog")]
+    Catalog,
+}
+impl ::std::fmt::Display for ResistLevelSource {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Con => f.write_str("con"),
+            Self::Catalog => f.write_str("catalog"),
+        }
+    }
+}
+impl ::std::str::FromStr for ResistLevelSource {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "con" => Ok(Self::Con),
+            "catalog" => Ok(Self::Catalog),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ResistLevelSource {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ResistLevelSource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ResistLevelSource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///The creatures to answer for, spelled as the log spells them. PLURAL FOR A REASON THAT IS NOT SPECULATION: a resist card asks about one mob, and the con card asks about one mob, but a caller holding several in flight is a round trip per card on a page that draws a list - and the answer is a handful of integers per name, so the batch costs nothing the singular form would have saved. The list is BOUNDED (`maxItems`) and an over-long one is refused by name as `badParams` rather than silently truncated: a caller that believed it asked about forty creatures and was answered about eight has no way to notice.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistLevelsParams",
+///  "description": "The creatures to answer for, spelled as the log spells them. PLURAL FOR A REASON THAT IS NOT SPECULATION: a resist card asks about one mob, and the con card asks about one mob, but a caller holding several in flight is a round trip per card on a page that draws a list - and the answer is a handful of integers per name, so the batch costs nothing the singular form would have saved. The list is BOUNDED (`maxItems`) and an over-long one is refused by name as `badParams` rather than silently truncated: a caller that believed it asked about forty creatures and was answered about eight has no way to notice.",
+///  "type": "object",
+///  "required": [
+///    "mobs"
+///  ],
+///  "properties": {
+///    "mobs": {
+///      "type": "array",
+///      "items": {
+///        "type": "string"
+///      },
+///      "maxItems": 32,
+///      "minItems": 1
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ResistLevelsParams {
+    pub mobs: ::std::vec::Vec<::std::string::String>,
+}
+///HOW OLD IS THIS CREATURE, as the resist fold knows it (JOS-497 item 1, cutover ledger item 6). The LAST synchronous main-side read of the app's own fold, and the reason it needed an op of its own rather than a mirror or a view. IT IS NOT A MIRROR. `serveMirrors.ts` holds a module's WHOLE published state, refreshed on the engine's own cursor; the resist module publishes two integers (`{rows, mobs}`) and this fact is in neither of them. Nor could a mirror carry it: the answer is keyed by creature name, so mirroring it would mean holding an unbounded map of every mob anybody has ever conned. IT IS NOT A VIEW EITHER. A view is filtered, sorted and windowed, and this is a point lookup keyed by a name the asker already has - `knowledge.mob`'s shape, not `kills.recent`'s. So it is an op, and the ledger's own rule about names applies: the caller sends the name as the LOG spells it and this engine folds the key, because a pre-folded key would be a second opinion about a join key (`mobKey`, then the verified alias roster).
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistLevelsRequest",
+///  "description": "HOW OLD IS THIS CREATURE, as the resist fold knows it (JOS-497 item 1, cutover ledger item 6). The LAST synchronous main-side read of the app's own fold, and the reason it needed an op of its own rather than a mirror or a view. IT IS NOT A MIRROR. `serveMirrors.ts` holds a module's WHOLE published state, refreshed on the engine's own cursor; the resist module publishes two integers (`{rows, mobs}`) and this fact is in neither of them. Nor could a mirror carry it: the answer is keyed by creature name, so mirroring it would mean holding an unbounded map of every mob anybody has ever conned. IT IS NOT A VIEW EITHER. A view is filtered, sorted and windowed, and this is a point lookup keyed by a name the asker already has - `knowledge.mob`'s shape, not `kills.recent`'s. So it is an op, and the ledger's own rule about names applies: the caller sends the name as the LOG spells it and this engine folds the key, because a pre-folded key would be a second opinion about a join key (`mobKey`, then the verified alias roster).",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "resist.levels"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/ResistLevelsParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ResistLevelsRequest {
+    pub id: RequestId,
+    pub op: ResistLevelsRequestOp,
+    pub params: ResistLevelsParams,
+}
+///`ResistLevelsRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "resist.levels"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ResistLevelsRequestOp {
+    #[serde(rename = "resist.levels")]
+    ResistLevels,
+}
+impl ::std::fmt::Display for ResistLevelsRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ResistLevels => f.write_str("resist.levels"),
+        }
+    }
+}
+impl ::std::str::FromStr for ResistLevelsRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "resist.levels" => Ok(Self::ResistLevels),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ResistLevelsRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ResistLevelsRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ResistLevelsRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///What the fold can state about each creature asked about. A CREATURE WITH NO LEVEL SIMPLY HAS NO ROW, which is why nothing here is nullable: `resist/world.ts levelOf` answers `null` for a mob nobody has conned and the committed catalog has never heard of, and an entry carrying four absent fields would be that same absence spelled less clearly. The caller maps name to row and reads a miss as the null it already handles. ORDER IS NOT PROMISED and `mob` is echoed on every row for exactly that reason - the same bookkeeping-free rule `KnowledgeResult.name` states.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistLevelsResult",
+///  "description": "What the fold can state about each creature asked about. A CREATURE WITH NO LEVEL SIMPLY HAS NO ROW, which is why nothing here is nullable: `resist/world.ts levelOf` answers `null` for a mob nobody has conned and the committed catalog has never heard of, and an entry carrying four absent fields would be that same absence spelled less clearly. The caller maps name to row and reads a miss as the null it already handles. ORDER IS NOT PROMISED and `mob` is echoed on every row for exactly that reason - the same bookkeeping-free rule `KnowledgeResult.name` states.",
+///  "type": "object",
+///  "required": [
+///    "levels"
+///  ],
+///  "properties": {
+///    "levels": {
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/ResistMobLevel"
+///      }
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ResistLevelsResult {
+    pub levels: ::std::vec::Vec<ResistMobLevel>,
+}
+///`src/main/resist/world.ts MobLevelFact`, plus the name it answers for. `level` is what the estimator uses - the stated level, or a range's MIDPOINT - and `lo`/`hi` are the range it came from, which the resist card prints as `level 39 - 43` rather than as the midpoint it fits against. They are equal for a `/con`, because the game just said the number.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "ResistMobLevel",
+///  "description": "`src/main/resist/world.ts MobLevelFact`, plus the name it answers for. `level` is what the estimator uses - the stated level, or a range's MIDPOINT - and `lo`/`hi` are the range it came from, which the resist card prints as `level 39 - 43` rather than as the midpoint it fits against. They are equal for a `/con`, because the game just said the number.",
+///  "type": "object",
+///  "required": [
+///    "from",
+///    "hi",
+///    "level",
+///    "lo",
+///    "mob"
+///  ],
+///  "properties": {
+///    "from": {
+///      "$ref": "#/$defs/ResistLevelSource"
+///    },
+///    "hi": {
+///      "type": "integer"
+///    },
+///    "level": {
+///      "description": "What the estimator fits against: the stated level, or `Math.round((lo + hi) / 2)` for a catalog range.",
+///      "type": "integer"
+///    },
+///    "lo": {
+///      "type": "integer"
+///    },
+///    "mob": {
+///      "description": "The name as it was asked for, echoed back unchanged - never the folded key.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ResistMobLevel {
+    pub from: ResistLevelSource,
+    pub hi: i64,
+    ///What the estimator fits against: the stated level, or `Math.round((lo + hi) / 2)` for a catalog range.
+    pub level: i64,
+    pub lo: i64,
+    ///The name as it was asked for, echoed back unchanged - never the folded key.
+    pub mob: ::std::string::String,
 }
 ///`shared/resistTypes.ts ResistTag` — the scannable word. NO ACRONYMS, EVER (owner ruling): the axis word is the only label this app prints for an axis, and these four are the only bands.
 ///

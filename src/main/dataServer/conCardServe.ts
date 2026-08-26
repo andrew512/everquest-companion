@@ -66,7 +66,7 @@ let drawn = 0
  * name reads as a person. Only the count is kept for them; the dev log would otherwise narrate every
  * `/con` a player types with the overlay switched off.
  */
-export function openEngineConCard(card: ConCardMessage): boolean {
+export async function openEngineConCard(card: ConCardMessage): Promise<boolean> {
   if (!shimServing()) return false
   heard += 1
   // THE VOCABULARY TRANSLATION, WRITTEN OUT FIELD BY FIELD RATHER THAN SPREAD. The two shapes agree
@@ -83,7 +83,13 @@ export function openEngineConCard(card: ConCardMessage): boolean {
     ...(card.zone === undefined ? {} : { zone: card.zone }),
     ...(card.rare === true ? { rare: true as const } : {})
   }
-  const ok = noteEngineConCard(served)
+  // AWAITED SINCE JOS-497 item 1, and the await is one round trip for the creature's LEVEL. The
+  // card used to read that out of this process's fold synchronously — the census's last such
+  // reader — and now asks whichever world answers this app's reads. Nothing about the ordering
+  // guarantees moves: `conCard.ts` still decides in one place whether the window opens, and the
+  // queue identity is still `mobKey`, so a card that arrives while an older one is on screen
+  // replaces it exactly as before.
+  const ok = await noteEngineConCard(served)
   if (ok) drawn += 1
   return ok
 }

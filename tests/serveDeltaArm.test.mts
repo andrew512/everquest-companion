@@ -394,9 +394,20 @@ test('the engine card takes the engine’s HEADER, and the chips are still joine
   // table) has not landed — so `engined/src/concard.rs` honestly sends the five EMPTY chips.
   // Carrying those through would make every card under serve read "nothing seen yet" forever while
   // the app holds a ledger that can answer: a regression wearing a cutover's clothes.
-  assert.match(card, /const \{ chips, spellData \} = chipsFor\(card\.name\)/)
+  assert.match(card, /const \{ chips, spellData \} = chipsFor\(card\.name, await servedMobLevel\(card\.name\)\)/)
   const serve = code('../src/main/dataServer/conCardServe.ts')
   assert.doesNotMatch(serve, /chips/, 'the engine’s empty chips started being carried across')
+  // …AND THE ONE INPUT THAT DID MOVE (JOS-497 item 1). The chips are still built here, off the
+  // app's own ledger, but the creature's LEVEL is no longer read out of this process's fold inside
+  // the profile builder — it is asked of whichever world answers this app's reads. That is the
+  // census's last synchronous fold reader closing, and it is pinned here because the shape it
+  // replaced (`resistProfileDeps()` with no argument) still compiles and would silently put the
+  // read back.
+  assert.doesNotMatch(
+    code('../src/main/ipc/resist.ts'),
+    /levelOf: \(key, display\) => resistModule\.levelOf\(key, display\),/,
+    'the unconditional synchronous levelOf came back — see JOS-497 item 1'
+  )
 })
 
 test('the suppression and the Preferences switch stay app-side, in ONE place for both worlds', () => {

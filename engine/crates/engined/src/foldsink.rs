@@ -638,6 +638,35 @@ impl EventSink for FoldSink {
             .unwrap_or_default()
     }
 
+    /// HOW OLD THESE CREATURES ARE (JOS-497 item 1) — `resist/module.ts levelOf`, read through the
+    /// module's own pull seam exactly as `own_loot_drops` reads the consider module's.
+    ///
+    /// THE KEY IS FOLDED HERE AND NOT BY THE CALLER, and the schema says why: a pre-folded key on
+    /// the wire would be a second opinion about a join key. `consider::mob_key` is the port of
+    /// `shared/mobKey.ts` and is the one spelling rule this engine has, so the app sends the name
+    /// the log printed and this line turns it into whatever the fold files a `/con` under.
+    ///
+    /// A CREATURE WITH NO LEVEL PRODUCES NO ROW rather than a row full of nulls — the absence IS the
+    /// answer (`levelOf` returns `null`), and the app maps name to row and reads a miss as exactly
+    /// that. It also means a request naming thirty creatures nobody has ever conned costs thirty
+    /// catalog lookups and sends nothing, which is the right shape for a card that will draw
+    /// "no data".
+    fn mob_levels(
+        &self,
+        names: &[String],
+    ) -> Vec<(String, fold::modules::resist::world::MobLevelFact)> {
+        let Some(resist) = self.fold.registry.resist() else {
+            return Vec::new();
+        };
+        names
+            .iter()
+            .filter_map(|name| {
+                let key = fold::modules::consider::mob_key(name);
+                resist.level_of(&key, name).map(|fact| (name.clone(), fact))
+            })
+            .collect()
+    }
+
     /// The names this fold's own probes could not answer — drained at the ingest's boundary and
     /// announced connection-wide, exactly as `take_fires` is.
     ///

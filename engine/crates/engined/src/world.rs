@@ -762,6 +762,26 @@ impl World {
         }
     }
 
+    /// Answer `resist.levels` — how old these creatures are, as the resist fold knows it
+    /// (JOS-497 item 1, cutover ledger item 6).
+    ///
+    /// THE SAME DOOR AND THE SAME DEADLINE, and like `combat.snapshot` it is not a registry op: the
+    /// resist module's PUBLISHED state is two integers, and this fact is in neither of them.
+    ///
+    /// THERE IS NO `NotFound` ARM, and its absence is the answer being right rather than the
+    /// registry being lax. A creature nobody has conned and the committed catalog has never heard of
+    /// is not a request naming something that does not exist — it is a perfectly good question whose
+    /// honest answer is that nothing states a level. So a name with no answer is simply missing from
+    /// the list, and the only refusal here is the one every reader on this door shares: there is
+    /// nobody to ask.
+    pub fn resist_levels(
+        &self,
+        names: &[String],
+    ) -> Result<Vec<(String, fold::modules::resist::world::MobLevelFact)>, String> {
+        let names = names.to_vec();
+        self.ask_fold(|answer| ingest::Ask::MobLevels(ingest::MobLevelAsk { names, answer }))
+    }
+
     /// POST ONE ASK THROUGH THE ONE DOOR AND WAIT FOR IT — the shape `module_snapshot` and
     /// `perf_snapshot` each spell out by hand, written once for the readers JOS-485 added.
     ///

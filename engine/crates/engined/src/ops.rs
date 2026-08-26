@@ -21,7 +21,8 @@ use protocol::generated::{
     KnowledgeMobRequestOp, KnowledgeRecord, KnowledgeResult, KnowledgeSearchRequestOp,
     KnowledgeSearchResult, KnowledgeSpellRequestOp, ModuleSnapshotRequestOp, ModuleSnapshotResult,
     PerfSnapshotRequestOp, ProtocolError, Reply, ReplyKind, ReplyResult, RequestId, ResetMessage,
-    ResetMessageKind, RespawnConfirmAck, RespawnConfirmSightingRequestOp, RespawnDefineRequestOp,
+    ResetMessageKind, ResistLevelSource, ResistLevelsRequestOp, ResistLevelsResult, ResistMobLevel,
+    RespawnConfirmAck, RespawnConfirmSightingRequestOp, RespawnDefineRequestOp,
     RosterDefineRequestOp, SessionAttachRequestOp, SessionHealthRequestOp, SessionMarkAck,
     SessionMarkAckStatus, SessionMarkAddRequestOp, SessionProgressRequestOp, SubscribeAck,
     ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
@@ -29,6 +30,15 @@ use protocol::generated::{
 
 use crate::ingest::CombatOpts;
 use crate::world::{CombatAnswer, ListenerId, PerfAnswer, SnapshotAnswer, World};
+
+/// How many creatures one `resist.levels` may name — the schema's `maxItems`, restated where it is
+/// enforced.
+///
+/// IT IS A BOUND ON A STRANGER'S REQUEST, not a tuned number. Every caller this app has asks about
+/// ONE creature (a resist card, a con card); the plural exists so a page drawing a list costs one
+/// round trip instead of a dozen, and thirty-two is comfortably above any list a card surface
+/// draws while still being a number this process can answer inside one read boundary.
+const MAX_MOB_LEVEL_ASKS: usize = 32;
 
 /// One connection's own state — everything that belongs to this conversation rather than to the
 /// world.
@@ -344,6 +354,69 @@ impl Session {
                     confirmed: world.confirm_sighting(&request.params.row_id),
                 }),
             ),
+
+            // ── RESIST.LEVELS (JOS-497 item 1, cutover ledger item 6) ──────────────────────────
+            //
+            // HOW OLD IS THIS CREATURE, as the resist fold knows it. The last fact
+            // `src/main/ipc/resist.ts` was still reading out of the app's own fold synchronously,
+            // and the one the census's resist mirror had no way to carry: the resist module
+            // publishes two integers and this is in neither of them, and an answer keyed by
+            // creature name cannot be mirrored without holding every name anybody ever cons.
+            //
+            // THE BOUND IS ENFORCED HERE AND REFUSED BY NAME. The schema says at most
+            // `MAX_MOB_LEVEL_ASKS` names, and a longer list is `badParams` rather than a truncation
+            // — JOS-478's law about descriptors, which is the same law: a caller that believed it
+            // asked about forty creatures and was answered about eight has no way to notice. An
+            // EMPTY list is refused for the same reason and not answered with an empty result,
+            // because `minItems` is part of the contract and silently agreeing with a request the
+            // schema forbids is how the two sides drift.
+            //
+            // TWO OUTCOMES, LIKE `combat.snapshot`. There is no `notFound`: a creature nobody has
+            // conned and the catalog has never heard of is a perfectly good question whose honest
+            // answer is that nothing states a level, and it arrives as a MISSING ROW. The single
+            // refusal is having nobody to ask.
+            ClientMessage::ResistLevelsRequest(request) => {
+                let mobs = request.params.mobs;
+                if mobs.is_empty() || mobs.len() > MAX_MOB_LEVEL_ASKS {
+                    return error(
+                        request.id,
+                        ErrorCode::BadParams,
+                        format!(
+                            "resist.levels takes between 1 and {MAX_MOB_LEVEL_ASKS} names; this \
+                             request named {}",
+                            mobs.len()
+                        ),
+                    );
+                }
+                match world.resist_levels(&mobs) {
+                    Err(why) => error(request.id, ErrorCode::Unavailable, why),
+                    Ok(found) => reply(
+                        request.id,
+                        ReplyResult::ResistLevelsResult(ResistLevelsResult {
+                            levels: found
+                                .into_iter()
+                                .map(|(mob, fact)| ResistMobLevel {
+                                    mob,
+                                    level: fact.level,
+                                    lo: fact.lo,
+                                    hi: fact.hi,
+                                    // THE FOLD'S `&'static str` BECOMES THE SCHEMA'S CLOSED SET
+                                    // here rather than in the fold, which is this file's whole job.
+                                    // The `_` arm cannot be reached — `MobLevelFact::from` is
+                                    // written in exactly two places and both are below — and it
+                                    // answers `Catalog` rather than panicking because a wrong
+                                    // PROVENANCE on a right number is a card that reads oddly, and
+                                    // a dead engine is a card that never draws.
+                                    from: match fact.from {
+                                        "con" => ResistLevelSource::Con,
+                                        _ => ResistLevelSource::Catalog,
+                                    },
+                                })
+                                .collect(),
+                        }),
+                    ),
+                }
+            }
 
             // ── THE COMBAT SURFACE (JOS-485) ───────────────────────────────────────────────────
             //
@@ -805,6 +878,7 @@ fn is_known_op(op: &str) -> bool {
         KnowledgeSpellRequestOp::KnowledgeSpell.to_string(),
         KnowledgeSearchRequestOp::KnowledgeSearch.to_string(),
         KnowledgeDefineRequestOp::KnowledgeDefine.to_string(),
+        ResistLevelsRequestOp::ResistLevels.to_string(),
     ]
     .iter()
     .any(|known| known == op)
@@ -812,14 +886,15 @@ fn is_known_op(op: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, refuse, Outcome, Session, Unreadable};
+    use super::{classify, refuse, Outcome, Session, Unreadable, MAX_MOB_LEVEL_ASKS};
     use crate::world::World;
     use protocol::generated::{
-        ClientMessage, EchoParams, EchoRequest, EchoRequestOp, EngineMessage, ErrorCode, Hello,
-        HelloOp, ModuleSnapshotParams, ModuleSnapshotRequest, ModuleSnapshotRequestOp,
-        PerfSnapshotRequest, PerfSnapshotRequestOp, ReplyResult, RequestId, SessionAttachParams,
-        SessionAttachRequest, SessionAttachRequestOp, SessionHealthRequest, SessionHealthRequestOp,
-        Token, ViewDescriptor, ViewSubscribeRequest, ViewSubscribeRequestOp, ViewUnsubscribeParams,
+        ClientMessage, EchoParams, EchoRequest, EchoRequestOp, EngineMessage, ErrorCode,
+        ErrorReply, Hello, HelloOp, ModuleSnapshotParams, ModuleSnapshotRequest,
+        ModuleSnapshotRequestOp, PerfSnapshotRequest, PerfSnapshotRequestOp, ReplyResult,
+        RequestId, ResistLevelsRequestOp, SessionAttachParams, SessionAttachRequest,
+        SessionAttachRequestOp, SessionHealthRequest, SessionHealthRequestOp, Token,
+        ViewDescriptor, ViewSubscribeRequest, ViewSubscribeRequestOp, ViewUnsubscribeParams,
         ViewUnsubscribeRequest, ViewUnsubscribeRequestOp,
     };
 
@@ -1082,6 +1157,78 @@ mod tests {
             panic!("a refusal");
         };
         assert_eq!(*refusal.id, 12);
+        assert!(matches!(refusal.error.code, ErrorCode::Unavailable));
+    }
+
+    // ── resist.levels (JOS-497 item 1) ────────────────────────────────────────────────────────
+
+    /// Build one `resist.levels` naming `count` creatures, all the same name — the CONTENT does not
+    /// matter to any claim below, only how many there are.
+    fn resist_levels(id: i64, count: usize) -> ClientMessage {
+        ClientMessage::ResistLevelsRequest(protocol::generated::ResistLevelsRequest {
+            id: RequestId(id),
+            op: ResistLevelsRequestOp::ResistLevels,
+            params: protocol::generated::ResistLevelsParams {
+                mobs: vec!["a fire giant warlord".to_owned(); count],
+            },
+        })
+    }
+
+    fn refusal_for(message: ClientMessage) -> ErrorReply {
+        let (world, mut session) = table();
+        world.attach(A_LOG, None);
+        let messages = sent(session.dispatch(&world, message));
+        let [EngineMessage::ErrorReply(refusal)] = messages.as_slice() else {
+            panic!("a refusal");
+        };
+        refusal.clone()
+    }
+
+    #[test]
+    fn resist_levels_is_an_op_this_build_knows() {
+        // The same pin the two ops above carry, and for the same failure: an op missing from the
+        // known-op list answers `unknownOp` to a request with a typo'd param, which sends a client
+        // hunting for a feature that is right there.
+        let raw = serde_json::json!({"id": 46, "op": "resist.levels", "params": {"mob": "a lava guardian"}});
+        let Some(EngineMessage::ErrorReply(refusal)) = refuse(&classify(&raw)) else {
+            panic!("a refusal");
+        };
+        assert!(matches!(refusal.error.code, ErrorCode::BadParams));
+    }
+
+    #[test]
+    fn a_resist_levels_naming_more_creatures_than_the_bound_is_refused_by_name() {
+        // NOT TRUNCATED. A caller that believed it asked about thirty-three creatures and was
+        // answered about thirty-two has no way to notice — JOS-478's law about descriptors, which
+        // is the same law. The message names the bound so the refusal is actionable.
+        let refusal = refusal_for(resist_levels(13, MAX_MOB_LEVEL_ASKS + 1));
+        assert_eq!(*refusal.id, 13);
+        assert!(matches!(refusal.error.code, ErrorCode::BadParams));
+        assert!(
+            refusal
+                .error
+                .message
+                .contains(&MAX_MOB_LEVEL_ASKS.to_string()),
+            "the refusal states the bound: {}",
+            refusal.error.message
+        );
+    }
+
+    #[test]
+    fn a_resist_levels_naming_nobody_is_refused_rather_than_answered_emptily() {
+        // `minItems` is part of the contract, and silently agreeing with a request the schema
+        // forbids is how the two sides drift apart while both look green.
+        let refusal = refusal_for(resist_levels(14, 0));
+        assert!(matches!(refusal.error.code, ErrorCode::BadParams));
+    }
+
+    #[test]
+    fn a_resist_levels_with_no_fold_is_unavailable() {
+        // The one refusal this op has that is about the world rather than the request. A world
+        // whose attaches start nothing has no ingest to ask — and note there is no `notFound` arm
+        // to confuse it with: a creature nothing states a level for is a MISSING ROW, not an error.
+        let refusal = refusal_for(resist_levels(15, 1));
+        assert_eq!(*refusal.id, 15);
         assert!(matches!(refusal.error.code, ErrorCode::Unavailable));
     }
 

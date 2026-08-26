@@ -23,6 +23,7 @@ import type {
   KnowledgeSearchResult,
   ModuleSnapshotResult,
   PerfSnapshotResult,
+  ResistLevelsResult,
   RespawnConfirmAck,
   SessionMarkAck,
   SubscribeAck
@@ -72,6 +73,12 @@ interface ResultRegistry {
   // …and the push-back reuses `DefineAck`, because it IS a define: one entry taken, `applied` true,
   // and no `count`, which the schema already says is what a non-list payload answers with.
   'knowledge.define': DefineAck
+  // THE LAST SYNCHRONOUS FOLD READ IN MAIN (JOS-497 item 1, cutover ledger item 6). Its own shape
+  // rather than a `KnowledgeResult`, and the reason is the guard matrix below rather than taste: a
+  // level fact is not a knowledge CARD — it carries no `record`, has no `domain`, and answers for a
+  // list — so borrowing that shape would have made a fourth arm nothing could separate from three
+  // others by value alone.
+  'resist.levels': ResistLevelsResult
 }
 
 /** Every client message that carries a request id — i.e. everything except the handshake. */
@@ -164,7 +171,14 @@ export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> 
   // `query` — same collision, same lesson: `hits` stopped discriminating the moment two searches
   // existed. The query echo is required by the schema and carried by no other shape.
   'knowledge.search': (r) => 'query' in r,
-  'knowledge.define': (r) => 'applied' in r
+  'knowledge.define': (r) => 'applied' in r,
+  // `levels` — this shape's own word, and chosen the way `confirmed` was rather than found to be
+  // free. The two collisions the matrix has already caught (`hits`, `status`) both happened to
+  // fields named after a GENERIC role; `levels` is named after what the op is called, no other arm
+  // carries it, and the schema requires it even when it is empty — which matters, because "nothing
+  // states a level for any of these creatures" is a real answer here and must not read as a wrong
+  // shape.
+  'resist.levels': (r) => 'levels' in r
 }
 
 /**

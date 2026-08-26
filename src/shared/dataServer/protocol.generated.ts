@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:00dbda5f549bb3e44a27a401dea3d2fa61c8a4381c83ee38ffcbadf81cad93cd
+// schema-digest: sha256:1dc83e0c2affd8f42c55dcba15dacd17e7e83674d900182705d341842c0636f4
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -41,6 +41,7 @@ export type ClientMessage =
   | KnowledgeDefineRequest
   | SessionMarkAddRequest
   | RespawnConfirmSightingRequest
+  | ResistLevelsRequest
 /**
  * The per-launch shared secret. Minted by Electron main at spawn, handed to the engine out of band, presented once at hello. It is never persisted and never reused across launches. Compare it in CONSTANT TIME (src/main/dataServer/token.ts, engine/crates/protocol/src/token.rs) - a byte-at-a-time compare over a loopback socket is a timing oracle. The shape rules are environment-neutral and live in src/shared/dataServer/token.ts.
  */
@@ -99,6 +100,7 @@ export type ReplyResult =
   | KnowledgeSearchResult
   | SessionMarkAck
   | RespawnConfirmAck
+  | ResistLevelsResult
 /**
  * The world's generation. Monotonic within one engine process. A client that sees an epoch it did not expect DROPS ALL STATE and waits for the reset — it never reconciles across a bump.
  */
@@ -107,6 +109,10 @@ export type Epoch = number
  * THE MODULE'S PUBLISHED STATE, AND THE PROTOCOL STATES NOTHING ABOUT ITS SHAPE — the same argument Cells makes, one level up: the field set belongs to the thing that publishes it, so a module growing a field is not a protocol change. `type` NAMES EVERY JSON TYPE rather than being omitted, and that is not decoration: an omitted `type` lowers to an INDEX-SIGNATURE object in TypeScript, which would forbid the ARRAY half of the registry — `kills` publishes an object, `loot`, `consider` and `eventFeed` publish arrays of rows, and a schema that named one of those shapes would be a rule the fold already breaks. IT IS THE SECOND HAND-WRITTEN REPLACEMENT ON THE RUST SIDE, for exactly the reason `Cell` is: typify lowers a multi-type schema to an untagged enum whose number arm is `f64`, and a module state is FULL of counts. The replacement is `serde_json::Value`, which is the same claim this definition makes, spelled in Rust.
  */
 export type ModuleState = {} | unknown[] | string | number | boolean | null
+/**
+ * WHO SAID SO, and the order is the fold's own precedence: a `/con` this session beats the committed catalog beats nothing. It reaches the card as prose (`level 52, from a con`), so it is a closed set rather than free text.
+ */
+export type ResistLevelSource = 'con' | 'catalog'
 /**
  * A CLOSED set. Both sides generate from this artifact, so adding a member is a schema edit that regenerates both — there is no version of the app that can meet a code it has never heard of.
  */
@@ -545,6 +551,24 @@ export interface RespawnConfirmSightingParams {
   rowId: string
 }
 /**
+ * HOW OLD IS THIS CREATURE, as the resist fold knows it (JOS-497 item 1, cutover ledger item 6). The LAST synchronous main-side read of the app's own fold, and the reason it needed an op of its own rather than a mirror or a view. IT IS NOT A MIRROR. `serveMirrors.ts` holds a module's WHOLE published state, refreshed on the engine's own cursor; the resist module publishes two integers (`{rows, mobs}`) and this fact is in neither of them. Nor could a mirror carry it: the answer is keyed by creature name, so mirroring it would mean holding an unbounded map of every mob anybody has ever conned. IT IS NOT A VIEW EITHER. A view is filtered, sorted and windowed, and this is a point lookup keyed by a name the asker already has - `knowledge.mob`'s shape, not `kills.recent`'s. So it is an op, and the ledger's own rule about names applies: the caller sends the name as the LOG spells it and this engine folds the key, because a pre-folded key would be a second opinion about a join key (`mobKey`, then the verified alias roster).
+ */
+export interface ResistLevelsRequest {
+  id: RequestId
+  op: 'resist.levels'
+  params: ResistLevelsParams
+}
+/**
+ * The creatures to answer for, spelled as the log spells them. PLURAL FOR A REASON THAT IS NOT SPECULATION: a resist card asks about one mob, and the con card asks about one mob, but a caller holding several in flight is a round trip per card on a page that draws a list - and the answer is a handful of integers per name, so the batch costs nothing the singular form would have saved. The list is BOUNDED (`maxItems`) and an over-long one is refused by name as `badParams` rather than silently truncated: a caller that believed it asked about forty creatures and was answered about eight has no way to notice.
+ */
+export interface ResistLevelsParams {
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  mobs: [string, ...string[]]
+}
+/**
  * The handshake answer. `ok: false` is a courtesy sent immediately before the engine closes the connection — a client must treat a closed connection with no reply as the same outcome.
  */
 export interface HelloReply {
@@ -812,6 +836,28 @@ export interface RespawnConfirmAck {
    * True when the fold re-based that row's clock onto its sighting. False when there was nothing to re-base.
    */
   confirmed: boolean
+}
+/**
+ * What the fold can state about each creature asked about. A CREATURE WITH NO LEVEL SIMPLY HAS NO ROW, which is why nothing here is nullable: `resist/world.ts levelOf` answers `null` for a mob nobody has conned and the committed catalog has never heard of, and an entry carrying four absent fields would be that same absence spelled less clearly. The caller maps name to row and reads a miss as the null it already handles. ORDER IS NOT PROMISED and `mob` is echoed on every row for exactly that reason - the same bookkeeping-free rule `KnowledgeResult.name` states.
+ */
+export interface ResistLevelsResult {
+  levels: ResistMobLevel[]
+}
+/**
+ * `src/main/resist/world.ts MobLevelFact`, plus the name it answers for. `level` is what the estimator uses - the stated level, or a range's MIDPOINT - and `lo`/`hi` are the range it came from, which the resist card prints as `level 39 - 43` rather than as the midpoint it fits against. They are equal for a `/con`, because the game just said the number.
+ */
+export interface ResistMobLevel {
+  /**
+   * The name as it was asked for, echoed back unchanged - never the folded key.
+   */
+  mob: string
+  /**
+   * What the estimator fits against: the stated level, or `Math.round((lo + hi) / 2)` for a catalog range.
+   */
+  level: number
+  lo: number
+  hi: number
+  from: ResistLevelSource
 }
 /**
  * A refused request. An error is always a reply to a request id — a failure with no request behind it closes the connection instead.
