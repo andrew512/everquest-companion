@@ -97,6 +97,7 @@ import {
   onKnowledgeMiss
 } from './knowledgeMissFetch'
 import { lookupItem } from '../itemLookup'
+import { noteEngineEdge } from '../telemetry/breadcrumbs'
 import { lookupMob } from '../mobLookup'
 import { attachStateDir, takeArtifactsBack } from './artifactOwner'
 import { SERVABLE, type Readiness } from './readShim'
@@ -682,6 +683,12 @@ async function waitForFold(mine: number, l: LiveEngine): Promise<EngineHealthSay
         // count and byte mark. Those come off the health round trip this loop was making anyway, so
         // the line costs nothing and is evidence rather than an announcement.
         debug(servingLine(l.attachedTo, health))
+        // …AND A BREADCRUMB FOR THE SAME EDGE (JOS-501). It is the last of the four the ring gets
+        // from the engine's lifecycle, and the most diagnostic of them: it is the moment every
+        // read in the product changes hands, so a crash report whose ring stops at `engine:ready`
+        // says the fold never landed, which is a completely different investigation from one whose
+        // ring shows `engine:live` followed by module cursors.
+        noteEngineEdge('engine:live')
       }
     }
     if (health.status === 'live' || Date.now() >= deadline) return health

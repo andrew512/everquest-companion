@@ -101,6 +101,7 @@ function useTradeskillFilter(feed: FeedEvent[]): FeedEvent[] {
   const asked = useRef<Set<string>>(new Set())
 
   const lootKeys = feed
+    // eslint-disable-next-line eqc/no-domain-munging -- JOS-459 cutover ledger item 3: no served view source answers this yet, so the renderer still derives FeedEvent. Becomes a view descriptor when the source lands.
     .filter((e) => e.kind === 'loot')
     .map((e) => e.title.toLowerCase())
     .join('|')
@@ -130,6 +131,7 @@ function useTradeskillFilter(feed: FeedEvent[]): FeedEvent[] {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lootKeys])
 
+  // eslint-disable-next-line eqc/no-domain-munging -- JOS-459 cutover ledger item 3: no served view source answers this yet, so the renderer still derives FeedEvent. Becomes a view descriptor when the source lands.
   return feed.filter((e) => e.kind !== 'loot' || verdict[e.title.toLowerCase()] === false)
 }
 

@@ -429,10 +429,29 @@ export interface EngineBinaryEnv {
   readonly cwd?: string
   /** The engine binary's file name; injected so a test can point at a fake. */
   readonly binName?: string
+  /**
+   * A binary named OUTRIGHT by whoever launched this process, tried before every guess (JOS-501).
+   *
+   * The e2e harness builds the engine itself and must run the one it built — and the probe order
+   * below prefers DEBUG, so on any machine that has ever run a plain `cargo build` a harness that
+   * built release would have been silently answered with the debug binary beside it. A suite that
+   * pays for one build and then proves things about another is the exact failure the harness's
+   * engine work exists to prevent, so the harness states the path instead of hoping for it.
+   *
+   * It is a PATH, not a gate: it selects which engine runs, never whether one does, and an absent
+   * or misspelled value falls through to the ordinary candidates rather than disabling anything.
+   * `engineHost.ts` reads it only under `EQ_E2E=1`, which is the same standing the staged EQ install
+   * (`EQ_INSTALL_DIR`) already has — the harness owns the artifact and hands it over.
+   */
+  readonly override?: string
 }
 
 /**
  * Every path the engine binary could be at, in the order they should be tried.
+ *
+ * AN OUTRIGHT NAME WINS (JOS-501). `override` is whoever launched this process saying which binary
+ * it means; nothing below can be a better answer than that. It is still only a CANDIDATE — the
+ * caller checks it exists like any other — so a stale value degrades to the ordinary search.
  *
  * DEV FIRST, deliberately. A developer with a fresh `cargo build` in the tree means to run THAT
  * binary; a packaged app has no `engine/target/` at all, so the ordering costs it two `existsSync`
@@ -452,6 +471,7 @@ export function engineBinaryCandidates(env: EngineBinaryEnv): string[] {
   const add = (path: string): void => {
     if (!out.includes(path)) out.push(path)
   }
+  if (env.override !== undefined && env.override !== '') add(env.override.replace(/\\/g, '/'))
   for (const root of [env.appPath, env.cwd ?? '']) {
     if (root === '') continue
     add(`${root}/engine/target/debug/${bin}`)

@@ -99,35 +99,35 @@ function runSpec(spec: string): Promise<Result> {
 }
 
 /**
- * SPECS THAT MUST NOT SHARE THE MACHINE (JOS-499), and the contention is named rather than implied.
+ * SPECS THAT MUST NOT SHARE THE MACHINE — EMPTY, AND THE EMPTINESS WAS EARNED (JOS-501).
  *
- * Every launch now spawns a Rust engine beside the app, and under `npm run test:e2e` that means up
- * to four DEBUG engines folding concurrently — a build whose spell-db parse alone is MEASURED at
- * 4.3 s (release is roughly a tenth of it, per the engine's own README). These two specs assert on
- * timing the fold has to beat: `buffs-overlay` waits for a buff row to appear and then for it to
- * DROP, and `engine-alert-fires` drives one live line to exactly one sound. Both are green run on
- * their own and both fail under a full parallel sweep — measured both ways, repeatedly.
+ * This list existed because every launch spawns a Rust engine beside the app and the harness built
+ * that engine in DEBUG, so a full sweep meant up to four unoptimised engines folding at once. It
+ * carried its own instruction: *"THE REAL FIX IS A RELEASE ENGINE FOR THE SUITE. Delete this list
+ * the day it is made."* JOS-501 made it — `buildEngineIfStale` builds `--release`, and the harness
+ * hands the app that binary outright (`EQ_ENGINE_BIN`) so the resolver's debug-first order cannot
+ * quietly give a spec the other one back.
  *
- * THIS IS NOT A FLAKE ROW, and the distinction matters for AGENTS.md's ledger: a flake is a spec
- * that fails nondeterministically under identical conditions. These fail DETERMINISTICALLY under
- * load and pass deterministically without it, so the honest fix is to stop giving them load rather
- * than to widen a timeout until the failure hides.
+ * THE MEASUREMENT THAT EARNED THE DELETION. `bosses-week` — the only entry, and the worst case,
+ * because it launches TWICE on the owner's REAL INSTALL and each launch waits on a whole-log fold:
  *
- * THEY RUN LAST, ALONE, and after everything else has exited — so they get a quiet machine rather
- * than a smaller share of a busy one. The cost is their own wall clock added to the run, which is
- * about two minutes, and that is the price of the suite meaning what it says.
+ *   debug    the go-live sentence had NOT arrived at 900 s. A timeout, not a duration.
+ *   release  52.5 s per fold; the spec green end to end in 145.5 s, alone on the machine.
  *
- * THE REAL FIX IS A RELEASE ENGINE FOR THE SUITE (`buildEngineIfStale` builds debug). That is a
- * harness change with its own trade — a slower first build for a faster, quieter suite — and it is
- * the integrator's call, not this list's. Delete this list the day it is made.
+ * The list is kept as an empty constant rather than deleted outright because `runAll` partitions on
+ * it and the next spec that genuinely cannot share a machine should land here with its measurement
+ * beside it — not because anything is expected to.
+ *
+ * ── AND THE ENTRY THAT WAS NEVER THE PROBLEM ──────────────────────────────────────────────────
+ *
+ * Removing the quarantine does NOT restore what put `bosses-week` here. Its two roster assertions
+ * were settling on a card count through a 30 s per-step cap, and what they were really waiting for
+ * was a whole-log fold that cap knew nothing about. That is fixed in the spec itself, where it
+ * belongs: it now waits for the app to say it is serving from the engine before it reads a roster —
+ * the condition, never the clock. A release engine made the spec finishable; the missing wait is
+ * what made it pass.
  */
-const SOLO_SPECS = [
-  // `bosses-week` launches TWICE on the REAL INSTALL — deliberately, because its portrait
-  // assertions read the game's own UI files — so before the first boss card can be drawn the engine
-  // must fold the owner's whole log, twice, in a DEBUG build. It gets the machine to itself so that
-  // fold is not also competing, and an extended cap sized to it (`SPEC_TIMEOUT_MS`).
-  'bosses-week.e2e.mts'
-]
+const SOLO_SPECS: string[] = []
 
 // ── A CORRECTION, KEPT BECAUSE THE WRONG DIAGNOSIS IS INSTRUCTIVE (JOS-499) ────────────────────
 //
@@ -151,36 +151,22 @@ const SOLO_SPECS = [
 // worse than the red it silenced.
 
 /**
- * PER-SPEC CAPS, for the specs the 5-minute default cannot honestly hold.
+ * PER-SPEC CAPS, for the specs the 5-minute default cannot honestly hold — NONE, since JOS-501.
  *
- * ── THE MEASUREMENT, AND WHY IT IS NOT "THE FOLD PLUS MARGIN" ─────────────────────────────────
+ * `bosses-week` was the only entry, at 900 s, and that number was explicitly NOT a measured fold
+ * plus margin: a probe with a DEBUG engine had not seen the go-live sentence at 900 s, so the cap
+ * was sized to the configuration in which the spec COULD pass rather than to anything observed. Its
+ * own docblock carried the instruction — *"the day it lands, this entry goes"* — and the release
+ * engine landed in JOS-501.
  *
- * `bosses-week` is the only entry, and the number below is NOT a measured fold plus margin,
- * because the measurement refused to produce one. A throwaway probe launched the app on the REAL
- * INSTALL with a DEBUG engine and waited for the go-live sentence: at **900 s it had not arrived**.
- * That is a timeout, not a duration — the debug engine did not finish folding the owner's full log
- * in fifteen minutes, and this spec would need it done TWICE (two launches against one userData,
- * the second proving the preference survived a restart). There is no honest "measured fold" to
- * size a cap against, so none is invented here.
- *
- * ── WHAT THE NUMBER IS INSTEAD ────────────────────────────────────────────────────────────────
- *
- * It is sized to the configuration in which this spec CAN pass: a RELEASE engine, which the
- * engine's own README measures at roughly a tenth of the debug cost. Two folds at that rate plus
- * the spec's own driving fits comfortably inside this cap. Under the debug engine the suite builds
- * today, `bosses-week` still fails — and it now fails AT this cap with the reason written down,
- * rather than at 300 s looking like an empty roster.
- *
- * ── IT IS A DEV-HARNESS ARTIFACT, NOT A PRODUCT GAP ───────────────────────────────────────────
- *
- * `buildEngineIfStale` builds DEBUG. A user's app ships the release binary and waits nothing like
- * this; the deletion release did not make the product slower, it moved the fold to a process this
- * suite happens to build unoptimised. The fix is one line in the harness's build step and it is the
- * integrator's call, not this file's — the day it lands, this entry goes.
+ * NOW THERE IS A MEASUREMENT, and it is what justifies falling back to the default rather than
+ * picking a smaller special number: `bosses-week` runs GREEN in 145.5 s against the release engine
+ * (52.5 s per whole-log fold, two launches), alone on the machine, which is under half the 300 s
+ * default. It is deliberately no longer in `SOLO_SPECS` either, so the sweep runs it packed and the
+ * default cap is the one that has to hold — re-measure here, do not re-add a cap on a hunch, if a
+ * future sweep ever puts it near the edge.
  */
-const SPEC_TIMEOUT_MS: Record<string, number> = {
-  'bosses-week.e2e.mts': 900_000
-}
+const SPEC_TIMEOUT_MS: Record<string, number> = {}
 
 /** Run at most CONCURRENCY specs at once, in discovery order — then the solo ones, alone. */
 async function runAll(specs: string[]): Promise<Result[]> {
