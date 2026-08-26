@@ -234,6 +234,17 @@ const CATCH_UP_LINES = 60_000
 const FILLER = 'You cannot see your target.'
 
 /**
+ * How many lines go in one `append` call, and it is a LANGUAGE limit rather than an IO one.
+ *
+ * `FixtureLog.append(...messages)` is variadic, so a spread is an ARGUMENT LIST — and 60,000 of them
+ * is `RangeError: Maximum call stack size exceeded` before a single byte is written (measured here,
+ * first run). The write itself is one `writeSync` + one `fsyncSync` per call whatever the batch
+ * size, so chunking costs sixty syscall pairs and nothing else. Anything bulk-staging a fixture has
+ * to do this; the ceiling is the interpreter's, not the harness's.
+ */
+const APPEND_CHUNK = 1_000
+
+/**
  * Make the next fold long enough to watch, and start watching. Called BEFORE the kill.
  *
  * The filler is a line this repo folds into no state at all, on purpose: what the bar measures is
@@ -241,7 +252,11 @@ const FILLER = 'You cannot see your target.'
  * had also changed.
  */
 async function armCatchUp(launch: FixtureLaunch, page: Page): Promise<void> {
-  const wrote = launch.log.append(...new Array<string>(CATCH_UP_LINES).fill(FILLER))
+  let wrote = 0
+  while (wrote < CATCH_UP_LINES) {
+    const batch = Math.min(APPEND_CHUNK, CATCH_UP_LINES - wrote)
+    wrote += launch.log.append(...new Array<string>(batch).fill(FILLER))
+  }
   note(`staged ${String(wrote)} filler lines so the respawn has a real catch-up to show`)
   await page.evaluate((sel) => {
     const store = window as unknown as { __eqcFoldBar?: string | null }
