@@ -760,17 +760,32 @@ fn damage_origin(st: &mut EngineState, ev: &DamageEvent) -> Option<SpellOrigin> 
 ///
 /// `active` is the state timeline's O(1) open set, read at the event's own instant and PASSED (never
 /// re-read) into every accumulator, because the whole point of folding on ingest is that "what was on
-/// when this fired" is knowable only now. It is CLONED once per fold rather than borrowed, because the
-/// set and the two aggregates are three fields of one state object.
+/// when this fired" is knowable only now.
+///
+/// IT IS BORROWED, NOT CLONED (JOS-506). The clone was here because `fresh_encounter` takes `&mut
+/// self` and the set is a third field of the same state object — but `state_timeline`, `zone_agg` and
+/// `current` are DISJOINT FIELDS, and the borrow checker allows exactly that split as long as the
+/// freshness question is asked BEFORE the mutable borrow is taken. `fresh_encounter_id` is that
+/// question, already spelled once in `state.rs` beside `fresh_encounter` itself, so this reads the
+/// rule rather than restating it.
+///
+/// The semantics are untouched and cannot drift: `f` is handed `&mut Agg` and `&HashSet`, so it has
+/// no way to reach the timeline and mutate the set mid-fold — which is the one thing the clone was
+/// protecting against, and the type system was already protecting against it. What the clone
+/// actually cost was a fresh hash table plus one heap allocation PER OPEN SPAN, on every damage
+/// line, every avoided swing and every cast-less heal in the log.
 fn fold_both(
     st: &mut EngineState,
     ts: i64,
     f: impl Fn(&mut crate::combat::aggregate::Agg, &std::collections::HashSet<String>),
 ) {
-    let active = st.state_timeline.active.clone();
-    f(&mut st.zone_agg, &active);
-    if let Some(enc) = st.fresh_encounter(ts) {
-        f(&mut enc.agg, &active);
+    let fresh = st.fresh_encounter_id(ts);
+    f(&mut st.zone_agg, &st.state_timeline.active);
+    if fresh {
+        let active = &st.state_timeline.active;
+        if let Some(enc) = st.current.as_mut() {
+            f(&mut enc.agg, active);
+        }
     }
 }
 
