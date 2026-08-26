@@ -17,7 +17,7 @@
 import { type JSX, useState } from 'react'
 import { Box, Collapse, Stack, Typography } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
-import type { LootDelta, LootSnap } from '@shared/types'
+import type { LootSnap } from '@shared/types'
 import { formatDate } from '../../lib/formatDate'
 // The app's Tooltip, never MUI's — the anchor has to wear the hand (lib/Tooltip.tsx).
 import { Tooltip } from '../../lib/Tooltip'
@@ -240,7 +240,7 @@ export function ItemDrillDown({
   family?: boolean
   onClose: () => void
 }): JSX.Element {
-  const history = useModule<LootSnap, LootDelta>('loot', (s, d) => [...s, ...d.appended])
+  const history = useModule<LootSnap>('loot')
   const key = itemCountKey(item)
   const matches = family
     ? (e: { item: string }): boolean => itemCountKey(e.item) === key

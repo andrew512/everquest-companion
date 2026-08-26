@@ -53,7 +53,6 @@ import { installOverlaySnap } from './overlaySnapDrag'
 // main window opens — are decided in windowPlacement.ts over the pure geometry in displayFit.ts,
 // so the policy is testable and both windows can never drift into two answers.
 import { mainWindowBounds } from './windowPlacement'
-import { windowsMayShow } from './replayGate'
 import { allowedExternalUrl, isInternalPageUrl } from './security'
 // WHAT THE X MEANS (JOS-139). One predicate, asked FIRST by the main window's `close` handler
 // below: it answers whether this close is really a hide to the tray, and does the hiding itself.
@@ -640,7 +639,7 @@ function applyOpaqueStripVisibility(kind: OverlayKind, idle: boolean): void {
   // the game must not paint one over whatever they switched to. `parkOverlays` re-applies the
   // remembered capture state on the way back, which re-runs this with the same `idle` — so a card
   // still alive brings its strip up the moment the game is back.
-  if (idle || !windowsMayShow() || overlaysParkedNow || w.isVisible()) return
+  if (idle || E2E || overlaysParkedNow || w.isVisible()) return
   w.showInactive()
   assertTopmost(w)
   raiseCursorRing()
@@ -754,7 +753,7 @@ export function reconcileOverlayDisplays(): void {
 export function createOverlayWindow(kind: OverlayKind): void {
   const existing = overlayWindows[kind]
   if (existing && !existing.isDestroyed()) {
-    if (windowsMayShow()) existing.show()
+    if (!E2E) existing.show()
     return
   }
   // OPAQUE-OVERLAY COMPATIBILITY MODE (JOS-40; automatic under Wine since JOS-31). Read here, at
@@ -862,7 +861,7 @@ export function createOverlayWindow(kind: OverlayKind): void {
     // A HISTORICAL REPLAY holds the same door shut (JOS-62): an overlay that first painted mid-fold
     // would be showing half-parsed state over the game, and the fold's end shows it properly (with
     // its locked mode re-applied) via `applyOverlayReplayGate` + the presence pass beside it.
-    if (!windowsMayShow()) return
+    if (E2E) return
     // An OPAQUE strip opens HIDDEN and is brought up by its own queue (see
     // applyOpaqueStripVisibility). Showing it here would put a solid rectangle over the game for
     // the moment between first paint and the renderer's first capture signal — the very thing
@@ -1062,7 +1061,7 @@ export function setOverlaysHidden(hidden: boolean): void {
       if (w.isVisible()) w.hide()
       continue
     }
-    if (!windowsMayShow() || w.isVisible()) continue
+    if (E2E || w.isVisible()) continue
     // An OPAQUE strip with nothing queued must not come back as a solid rectangle: its
     // visibility belongs to its queue, and the next card brings it up (JOS-40).
     if (isStripKind(kind) && opaqueStripWindow[kind] === true && opaqueStripIdle[kind] !== false) continue
@@ -1225,7 +1224,7 @@ export function setCursorRingVisible(visible: boolean): void {
     if (w.isVisible()) w.hide()
     return
   }
-  if (!windowsMayShow() || w.isVisible()) return
+  if (E2E || w.isVisible()) return
   w.showInactive()
   // Unconditional: a ring coming back from auto-hide has to land ABOVE the overlays that came
   // back with it, and it can only do that by being the most recent assertion (see below).

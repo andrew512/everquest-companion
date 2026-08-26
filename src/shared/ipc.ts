@@ -85,6 +85,22 @@ export const IPC = {
   // renderer reports an 'app'-triggered fire (e.g. bossDefeat) so the module's
   // history stays the single source of truth (Task #22). Payload {alertId, context}.
   appFired: 'alerts:appFired',
+  /**
+   * main -> renderer(main app): ONE ALERT THAT FIRED, to be played (JOS-499 item 7).
+   *
+   * THE CHANNEL THE AUDIO CUTOVER ALWAYS NEEDED AND DID NOT HAVE. JOS-491 delivered an engine fire
+   * to the player by pushing it THROUGH this process's own alerts module — `playEngineFire` called
+   * `alertsModule.engineFired()` and `registry.flushNow()`, and the renderer heard it as a
+   * `module:delta` like any main-side fire. That was the right call while the TS fold existed (no
+   * second audio path, one lane, the delta everything downstream already read). The deletion
+   * release removes the module in the middle, so the fire needs its own door or every alert in the
+   * product goes silent.
+   *
+   * Payload: `FiredAlert` (shared/alertTypes.ts) — the same record the delta's `fired[]` carried,
+   * so `AlertPlayer` reads exactly what it always read and the `origin: 'app'` echo rule is
+   * unchanged.
+   */
+  onAlertFired: 'alerts:fired',
   getAlertPrefs: 'alertPrefs:get',
   setAlertPrefs: 'alertPrefs:set',
   // sound packs (discovery + audio bytes)

@@ -28,7 +28,7 @@ export function applyComboDelta(state: ComboSnap, delta: ComboDelta): ComboSnap 
 
 /** The live combo snapshot. Never null — an un-hydrated view shows the same empty state. */
 export function useComboSnap(): ComboSnap {
-  return useModule<ComboSnap, ComboDelta>('combo', applyComboDelta) ?? EMPTY_COMBO
+  return useModule<ComboSnap>('combo') ?? EMPTY_COMBO
 }
 
 /** Just the intervals, for the consumers that only ever do a time join. */

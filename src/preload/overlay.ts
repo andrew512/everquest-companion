@@ -7,7 +7,6 @@ import type {
   ItemKnowledge,
   MobKnowledge,
   ModuleChanged,
-  ModuleDelta,
   ModuleSnapshot,
   OverlayConfig,
   OverlayDrill,
@@ -69,11 +68,6 @@ const overlayApi = {
   getModuleSnapshot: <S>(id: string): Promise<ModuleSnapshot<S> | null> =>
     ipcRenderer.invoke(IPC.getModuleSnapshot, id),
   /** Subscribe to `module:delta` pushes (all modules; the caller filters by moduleId). */
-  onModuleDelta: <D>(cb: (d: ModuleDelta<D>) => void): (() => void) => {
-    const listener = (_e: unknown, d: ModuleDelta<D>): void => cb(d)
-    ipcRenderer.on(IPC.onModuleDelta, listener)
-    return () => ipcRenderer.removeListener(IPC.onModuleDelta, listener)
-  },
   /**
    * Subscribe to `module:changed` pushes — the SERVED world's dirty bit (JOS-493); the caller
    * filters by moduleId.

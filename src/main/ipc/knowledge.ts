@@ -9,13 +9,12 @@ import { buildSpellCatalog } from '../data/spellDb'
 import { buildSpellDetail } from '../data/spellDetail'
 import { lookupItem } from '../itemLookup'
 import { lookupMob } from '../mobLookup'
-import { registry } from '../pipeline'
 import { appSpellDb } from '../appSpellDb'
 // THE SERVED ARM (JOS-496). These three reads are the census's `spell catalog stats`,
 // `spellLastCast` and `observed ranks`, and all three are GENUINE QUERIES rather than mirrors —
 // their callers are `ipcMain.handle` bodies that already return promises, so there is somewhere to
 // put an await and nothing has to be cached. See `moduleState` below.
-import { serveModuleSnapshot, shimServing, type ModuleSnap } from '../dataServer/serveShim'
+import { serveModuleSnapshot } from '../dataServer/serveShim'
 import { currentWornFocus } from '../planner/wornFocusCurrent'
 // THE CLIENT'S SPELL TABLE, AWAITED AT THE HANDLER (JOS-396, inverted 2026-08-23). This imported
 // `spellTableNow()` — the already-resolved table or null, so nothing waited on the parse — and the
@@ -53,8 +52,10 @@ import type { BuffsSnap } from '../../shared/types'
  * not carry the module, and an engine that refuses an unknown module falls back to exactly that.
  */
 async function moduleState(moduleId: string): Promise<unknown> {
-  const own = (): ModuleSnap | null => registry.snapshot(moduleId)
-  const snap = shimServing() ? await serveModuleSnapshot(moduleId, own) : own()
+  // ONE ARM (JOS-499). The app-side thunk is deleted with the fold, and an engine that cannot
+  // answer resolves to `null` here — which lands on the same `undefined` state the three call
+  // sites have always handled for a build that does not carry the module.
+  const snap = await serveModuleSnapshot(moduleId)
   return snap?.state
 }
 

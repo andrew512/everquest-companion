@@ -33,9 +33,8 @@ const LAUNCH_MS = new Date(2026, 6, 28, 0, 0, 0, 0).getTime()
 // provider, so a character switch needs no notification; the engine has no store to ask, so the
 // push replaces the pull and every write says so. Additive: a launch with no engine finds a null.
 import { pushAppKnowledge } from '../dataServer/definePush'
-import { comboModule, registry } from '../pipeline'
 import { activeCharId } from '../session'
-import { clearComboCorrections, getComboCorrections, setComboCorrection } from '../store'
+import { clearComboCorrections, setComboCorrection } from '../store'
 
 /** A validated `[startTs, endTs]` span, or null. `endTs` null means "from startTs onward". */
 function span(raw: unknown): { startTs: number; endTs: number | null } | null {
@@ -71,8 +70,6 @@ function classes(raw: unknown): ClassAbbr[] | null {
  * the second one is what `tests/e2e/loadout-override.e2e.mts` caught in the running app.
  */
 function republish(): void {
-  comboModule.invalidate()
-  registry.flushNow()
   // …and the engine's module gets the same two, engine-side: `Defines::define` replaces the set and
   // bumps the revision that IS its published seq, for exactly the JOS-87 reason this function
   // exists.
@@ -82,7 +79,6 @@ function republish(): void {
 export function registerComboIpc(): void {
   // Character-scoped, PULLED rather than pushed: `reset()` on a character switch marks the
   // module stale and the next recompute asks this provider again. See ComboModule.
-  comboModule.setCorrectionsProvider(() => getComboCorrections(activeCharId()))
 
   ipcMain.handle(IPC.comboSetCorrection, (_e, payload: unknown) => {
     const range = span(payload)

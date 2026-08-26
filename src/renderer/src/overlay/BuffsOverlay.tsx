@@ -37,7 +37,7 @@
 // holds; it asks main for nothing.
 
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { BuffsSnap, ModuleDelta } from '@shared/types'
+import { MODULE_WORLD_CHANGED, type BuffsSnap, type ModuleChanged } from '@shared/types'
 import {
   type BuffTimerRow,
   type BuffTimersSnap,
@@ -163,14 +163,19 @@ function useWholeSnapshot<S>(moduleId: string, empty: S): { state: S; hydrations
       })
     }
     hydrate()
-    const off = window.eqOverlay.onModuleDelta<S>((d: ModuleDelta<S>) => {
-      if (d.moduleId !== moduleId) return
-      if (d.seq <= seqRef.current) {
-        if (d.seq < seqRef.current) hydrate()
+    // THE INCREMENT IS A CURSOR NOW (JOS-499 item 7), not a delta. Main's own fold is deleted, so
+    // there is no `module:delta` to ride: `module:changed` carries a name and a revision and no
+    // state at all, and the answer to it is the read above. This module is a WHOLE-SNAPSHOT one, so
+    // the change is smaller than it looks — a delta here was already a replace.
+    const off = window.eqOverlay.onModuleChanged((c: ModuleChanged) => {
+      // The world that answers reads changed hands: nothing held is trustworthy, ask again.
+      if (c.moduleId === MODULE_WORLD_CHANGED) {
+        hydrate()
         return
       }
-      seqRef.current = d.seq
-      setState(d.delta)
+      if (c.moduleId !== moduleId) return
+      if (c.seq <= seqRef.current) return
+      hydrate()
     })
     const offChar = window.eqOverlay.onCharacter(() => {
       hydrate()

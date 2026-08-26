@@ -67,12 +67,9 @@
 // compares the two worlds' answers field by field with `firstDiff`, which is the only honest way to
 // hold a cast like this one accountable.
 
-import { E2E } from '../e2e'
 import { logInfo } from '../errorLog'
-import { engineFlagOn } from '../../shared/dataServer/engineFlags'
-import { engineEnabled } from './engineHost'
 import { engineLogMtimeMs, engineRequest, engineServeReadiness } from './engineClientHost'
-import { createReadShim, type ReadShim, type ServeOutcome } from './readShim'
+import { createReadShim, type ReadShim } from './readShim'
 import type { CombatSnapshot, FightSearchResult, SnapshotOpts } from '../../shared/combat'
 import type { MobLevelFact } from '../resist/world'
 import type {
@@ -95,15 +92,10 @@ export interface ModuleSnap {
   readonly served?: true
 }
 
-/**
- * THE APP'S OWN ARMS, handed in by `world.ts` so the TS fold stays visible at the call site the
- * cutover will one day delete. Nothing here imports `pipeline.ts`.
- */
-export interface TsArms {
-  module: (moduleId: string) => ModuleSnap | null
-  combat: (opts: SnapshotOpts) => CombatSnapshot
-  search: (text: string, limit: number | undefined) => FightSearchResult
-}
+// `TsArms` LIVED HERE AND IS GONE (JOS-499). It was the app's own fold, handed in by `world.ts` so
+// the TS arm stayed visible at the call site "the cutover will one day delete". This is that
+// cutover, and the interface had exactly three readers — the fallback, the parity probe's second
+// arm, and the flag-off answer — all of which were the same fold and all of which are deleted.
 
 /**
  * How long the engine arm may take. A BOUND ON THE PATHOLOGICAL CASE, not a budget — a loopback
@@ -136,12 +128,16 @@ const NOW_SKEW_MS = 60_000
  * TRUE BY DEFAULT since JOS-495, and still the AND of both gates — `EQC_ENGINE=0` closes this one
  * too, because there is nothing to serve from.
  */
-const SERVING = engineEnabled() && engineFlagOn(process.env.EQC_ENGINE_SERVE)
-
-/** The gate `world.ts` branches on. */
-export function shimServing(): boolean {
-  return SERVING
-}
+// `SERVING` AND `shimServing()` ARE GONE (JOS-499 item 9). The flag answered "does the ENGINE
+// answer this app's reads, or does its own fold?" — a question with one arm left. Every call site
+// branched between two worlds and there is one, so the branch is deleted rather than defaulted to
+// true: a gate that can only answer one way is a gate a reader has to prove is dead, and this
+// release is where the proof stops being necessary.
+//
+// `engineEnabled()` IS NOT REPLACED BY ANYTHING EITHER, and that is the same argument one level up.
+// `EQC_ENGINE=0` used to mean "run the app on its own fold"; there is no such app. What used to be
+// a supported configuration is now simply an app that cannot answer, which is the engine-absent
+// state this release makes honest rather than a mode anybody selects.
 
 /** A promise that resolves later without ever being the reason this process stays alive —
  *  `engineClientHost.ts`'s timer rule, restated for the deadline. */
@@ -266,17 +262,18 @@ function projectModule(moduleId: string, r: ModuleSnapshotResult): ModuleSnap | 
   return { seq: r.seq, state, served: true }
 }
 
-/** `module:getSnapshot`, served — see the header for the echo test, `projectModule` for the graft. */
-export function serveModuleSnapshot(
-  moduleId: string,
-  own: () => ModuleSnap | null
-): Promise<ModuleSnap | null> {
-  return readShim().serve(
-    'module.snapshot',
-    { module: moduleId },
-    (r) => projectModule(moduleId, r),
-    own
-  )
+/**
+ * `module:getSnapshot`, served — see the header for the echo test, `projectModule` for the graft.
+ *
+ * `null` IS THE HONEST ANSWER when the engine cannot serve (JOS-499). There is no app-side fold to
+ * fall back to, and the renderer's `useModule` already reads null as "no state yet" — so a view
+ * draws its loading/unavailable state rather than being handed invented emptiness. The REASON is
+ * still counted and narrated by `readShim.ts`, so the silence is legible in the dev log.
+ */
+export function serveModuleSnapshot(moduleId: string): Promise<ModuleSnap | null> {
+  return readShim().serve('module.snapshot', { module: moduleId }, (r) =>
+    projectModule(moduleId, r)
+  , () => null)
 }
 
 /** `combat:snapshot`, served — see the header for the clock test and for the cast. */
@@ -376,86 +373,3 @@ export function serveMobLevel(
 // few counts of a window that was already being printed every five seconds. Wiring it would mean
 // `engineHost.ts` importing this file, which imports `engineHost.ts` for its gate, and a cycle
 // between the composition root and a leaf is not worth a partial line at quit.
-
-// ── the harness seam (EQ_E2E only) ─────────────────────────────────────────────────────────────
-//
-// WHY A SEAM RATHER THAN TWO LAUNCHES. The shim IS a parity instrument, and a parity claim is only
-// worth making AT A MATCHED MARK (parityProbe.ts's header). Flipping the flag per launch would put
-// the two answers in two processes, minutes apart, each having folded its own staged copy — so
-// every field that moves with the clock would differ for a reason that has nothing to do with the
-// two folds agreeing, and the spec would have to weaken until it proved very little. Asking one
-// running app for BOTH arms, back to back, is what the in-app probe already does and for the same
-// reason: the engine's reply lands, and the app's own read happens in that reply's microtask
-// continuation, where the only thing that can have advanced this process's fold is another
-// microtask — never a tailer line, never a heartbeat tick, both of which are macrotasks.
-//
-// AND IT DOES NOT REPLACE THE PRODUCT PATH IN THE SPEC. The e2e still calls `window.eq` for the
-// real answer and checks it against this seam's ENGINE arm; the seam's job is to supply the second
-// arm, which the product deliberately no longer exposes when the flag is on.
-//
-// Nothing in the product reads this object, it exists only under `EQ_E2E=1` AND the serve flag, and
-// it crosses no IPC — `overlayHover.ts`'s probe on the same terms.
-
-/** One question, asked of both worlds. `engine` is null when the engine did not serve, and `why`
- *  says which of the shim's reasons that was. */
-export interface BothArms<T> {
-  readonly engine: T | null
-  readonly why: string | null
-  readonly ts: T
-}
-
-function both<T>(outcome: ServeOutcome<T>, ts: T): BothArms<T> {
-  if (outcome.served) return { engine: outcome.value, why: null, ts }
-  return { engine: null, why: `${outcome.why}: ${outcome.detail}`, ts }
-}
-
-/** What the harness finds on `globalThis`. Every member takes the same arguments its IPC does. */
-export interface ShimProbe {
-  module: (moduleId: string) => Promise<BothArms<ModuleSnap | null>>
-  combat: (opts: SnapshotOpts) => Promise<BothArms<CombatSnapshot>>
-  search: (text: string, limit?: number) => Promise<BothArms<FightSearchResult>>
-}
-
-function buildProbe(arms: TsArms): ShimProbe {
-  const s = readShim()
-  return {
-    module: async (moduleId) =>
-      both(
-        // THE SHIM'S OWN PROJECTION, not a second spelling of it — see `projectModule`. What the
-        // spec compares against the app's fold has to be the answer the product would have been
-        // given, graft included, or the comparison is about a code path nobody ships.
-        await s.ask('module.snapshot', { module: moduleId }, (r) => projectModule(moduleId, r)),
-        arms.module(moduleId)
-      ),
-    combat: async (opts) =>
-      both(
-        await s.ask(
-          'combat.snapshot',
-          { opts: engineOpts(opts) },
-          (r) => r.snapshot as unknown as CombatSnapshot
-        ),
-        arms.combat(opts)
-      ),
-    search: async (text, limit) =>
-      both(
-        await s.ask(
-          'combat.searchFights',
-          limit === undefined ? { query: text } : { query: text, limit },
-          (r) => ({ hits: r.hits, corpus: r.corpus }) as unknown as FightSearchResult
-        ),
-        arms.search(text, limit)
-      )
-  }
-}
-
-/**
- * Install the seam, or do nothing at all.
- *
- * THE CLOCK TEST IS DELIBERATELY NOT APPLIED HERE. The probe's job is to report what the engine
- * ACTUALLY said so a spec can pin the difference; a projection that answered `null` for a stamp the
- * spec is trying to measure would hide the very asymmetry the ticket asks to be documented.
- */
-export function installShimProbe(arms: TsArms): void {
-  if (!E2E || !SERVING) return
-  ;(globalThis as unknown as Record<string, unknown>).__eqcEngineShim = buildProbe(arms)
-}

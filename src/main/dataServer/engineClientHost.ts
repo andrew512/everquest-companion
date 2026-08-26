@@ -55,7 +55,6 @@
 
 import { app } from 'electron'
 import { logInfo } from '../errorLog'
-import { registry } from '../pipeline'
 import { setWorldRebuiltObserver } from '../worldRebuilt'
 import { getActiveCharacter } from '../session'
 import { createEngineClient, EngineError, type EngineClient } from '../../shared/dataServer/client'
@@ -76,15 +75,6 @@ import { conCardServeLine, noteConCardServe, openEngineConCard } from './conCard
 import { readDefine } from './appKnowledge'
 import { DEFINE_OPS, setAppKnowledgePusher, type DefineOp } from './definePush'
 import { connectToEngine } from './socketChannel'
-import {
-  PARITY_PROBE_MODULES,
-  judgeParity,
-  parityLine,
-  tallyParity,
-  type EngineMark,
-  type ParityAsk,
-  type ParityVerdict
-} from './parityProbe'
 // THE DELTA ARM (JOS-493). It owns the serve flag's second half and the fan-out; this file supplies
 // the only thing it cannot get for itself — the engine's own `moduleChanged` frames, and the two
 // edges where the world that answers a read changes hands.
@@ -105,7 +95,6 @@ import {
 import { lookupItem } from '../itemLookup'
 import { lookupMob } from '../mobLookup'
 import { attachStateDir, takeArtifactsBack } from './artifactOwner'
-import { shimServing } from './serveShim'
 import { SERVABLE, type Readiness } from './readShim'
 import type { ReadyEngine } from './supervisor'
 import type { ParamsFor, RequestOp, ResultFor } from '../../shared/dataServer/ops'
@@ -249,7 +238,6 @@ export function onEngineReady(info: ReadyEngine | null): void {
   // THE LAST VERDICT DIES WITH THE ENGINE THAT EARNED IT. A respawn is a launch and a fresh world
   // has proven nothing yet; leaving the counts standing would let the panel report "5 agree" about
   // a process that no longer exists.
-  lastParity = null
   // THE PERSISTED ARTIFACTS COME BACK (JOS-497 item 2, boundary verdict 4), and on BOTH arms rather
   // than only on the gone one. A dead process is not an owner, and the resist ledger's whole value
   // is that it accretes — an engine that died at minute two of a six-hour session must not leave
@@ -483,11 +471,10 @@ async function attachAndProbe(mine: number): Promise<void> {
   // the path and does attach, which is the case the re-attach exists for.
   if (l.attachedTo !== target && (await sendAttach(mine, l, target)) === null) return
   if (gen !== mine) return
-  if (tsWorldPath !== target) {
-    debug('data-server client: the app has not finished folding this log yet — the parity probe waits')
-    return
-  }
-  await runParityProbe(mine, l, target)
+  // THE FOLD IS WAITED FOR, AND NOTHING IS COMPARED (JOS-499). `waitForFold` is what records
+  // `engineLiveOn`, which is what `engineServeReadiness()` reads on every served IPC — so this
+  // call is the arming of the read path, not the preamble to a probe.
+  await waitForFold(mine, l)
 }
 
 /**
@@ -507,7 +494,10 @@ async function attachAndProbe(mine: number): Promise<void> {
  */
 async function sendAttach(mine: number, l: LiveEngine, logPath: string): Promise<number | null> {
   const stateDir = attachStateDir({
-    serving: shimServing(),
+    // ALWAYS (JOS-499 item 9). The `serving` argument used to carry `shimServing()`, so a
+    // flag-off launch kept persisting its own artifacts. There is no such launch: an attach is
+    // sent only by a connected client, and this process folds nothing to persist.
+    serving: true,
     userData: () => app.getPath('userData'),
     note: debug
   })
@@ -560,49 +550,18 @@ function onWorldRebuilt(character: CharacterRef | null): void {
   void attachAndProbe(mine)
 }
 
-// ── the probe ──────────────────────────────────────────────────────────────────────────────────
-
-/**
- * Ask the engine for five modules, ask this process for the same five, and say whether they agree.
- *
- * IT WAITS FOR THE ENGINE'S FOLD FIRST, because a mid-scan answer is a real prefix state (the
- * engine's `SnapshotAsk` design guarantees that) but a prefix of a different length than ours — so
- * probing early would produce five honest DRIFT lines and no information. The wait is bounded and
- * its expiry is not an error: the line reports whatever status the engine was in.
- */
-async function runParityProbe(mine: number, l: LiveEngine, logPath: string): Promise<void> {
-  const health = await waitForFold(mine, l)
-  if (health === null || gen !== mine) return
-  const asks: ParityAsk[] = []
-  for (const module of PARITY_PROBE_MODULES) {
-    const ask = await askOne(l, module)
-    if (gen !== mine) return
-    asks.push(ask)
-  }
-  const verdicts: ParityVerdict[] = judgeParity(asks)
-  // THE COUNTS ARE KEPT, not only printed (JOS-483). The line is still the dev log's own record and
-  // it is unchanged; this is the same verdict tallied once, at the one moment it is authoritative,
-  // so the performance panel can state "5 agree, 0 diverge" without parsing prose out of a log
-  // nobody guaranteed the shape of. It is the LAST run's, deliberately: a probe runs on a rebuild
-  // and a character switch, not on a timer, and the panel wants what was last established rather
-  // than a running total across worlds that have been replaced.
-  lastParity = { at: Date.now(), logPath, ...tallyParity(verdicts) }
-  debug(
-    parityLine({
-      logPath,
-      mark: health.mark ?? null,
-      // THE ENGINE'S ANSWER, NOT THIS PROCESS'S (owner ruling 21). This file could stat the log in
-      // one line — the app does exactly that in `main/log/config.ts` — and printing that number
-      // would prove nothing at all about who owns the fact. Quoting the served one is what makes
-      // the line evidence.
-      logMtimeMs: health.logMtimeMs ?? null,
-      epoch: health.epoch,
-      engineStatus: health.status,
-      engineEvents: health.events ?? null,
-      verdicts
-    })
-  )
-}
+// ── THE PROBE IS GONE (JOS-499) ────────────────────────────────────────────────────────────────
+//
+// `runParityProbe` and `askOne` asked five modules of BOTH worlds and wrote one line saying
+// whether they agreed. There is one world. A parity verdict is not a thing that can be computed,
+// let alone reported, and keeping a probe that compares the engine against itself would be an
+// instrument that can only ever say yes.
+//
+// WHAT IT PROVED IS NOT LOST, it is just finished: the six-slice golden oracle
+// (`npm run oracle:rust-fold`) is what established the equivalence this probe watched for drift
+// against, and owner ruling 26 keeps it running against the RECORDED goldens for one more
+// release. `waitForFold` below survives it, because polling `session.health` until the engine
+// goes live is what arms the serve path — see `engineLiveOn`.
 
 /** What `session.health` last said. Only the fields the line quotes. */
 interface EngineHealthSay {
@@ -610,7 +569,7 @@ interface EngineHealthSay {
   readonly epoch: number
   readonly events?: number
   /** The engine's own (log identity, byte offset). Absent until it has folded something. */
-  readonly mark?: EngineMark
+  readonly mark?: { readonly logPath?: string; readonly offset?: number }
   /** THE LOG FILE'S mtime, as the ENGINE stats it (owner ruling 21). Absent before an attach, and
    *  absent when the stat failed — never zero, which would claim 1970. */
   readonly logMtimeMs?: number
@@ -660,26 +619,6 @@ async function waitForFold(mine: number, l: LiveEngine): Promise<EngineHealthSay
   }
 }
 
-/**
- * One module, from both worlds.
- *
- * THE TWO READS ARE AS CLOSE TOGETHER AS THIS PROCESS PERMITS, and that is the whole reason the
- * app's snapshot is taken HERE rather than collected in a batch before or after the five round
- * trips. `registry.snapshot` runs in the microtask continuation of the reply that just arrived, so
- * the only thing that can advance the app's fold between the two reads is another microtask — never
- * a tailer line, never a heartbeat tick, both of which are macrotasks. Matched marks are what make
- * the comparison sound (parityProbe.ts's header); this is what makes matched marks likely.
- */
-async function askOne(l: LiveEngine, module: string): Promise<ParityAsk> {
-  try {
-    const result = await l.client.request('module.snapshot', { module })
-    const app = registry.snapshot(module)
-    return { module, engine: { seq: result.seq, state: result.state }, app }
-  } catch (err) {
-    return { module, engine: null, app: registry.snapshot(module), refusal: describeErr(err) }
-  }
-}
-
 // ── what the performance panel can ask this file (JOS-483) ─────────────────────────────────────
 //
 // TWO READS AND ONE REQUEST, and every one of them is main-side. The renderer never reaches the
@@ -687,25 +626,10 @@ async function askOne(l: LiveEngine, module: string): Promise<ParityAsk> {
 // every other number in that panel arrives: main measures, main pushes, over the perf channels that
 // already exist.
 
-/** The last parity probe's counts, kept for the panel. `null` until one has run in this launch. */
-export interface ParitySummary {
-  /** When the probe finished, by the host's clock. The panel draws its AGE, because a parity
-   *  verdict from four minutes ago is a different thing to read than one from four seconds ago. */
-  readonly at: number
-  /** The log both worlds were folding. */
-  readonly logPath: string
-  readonly agree: number
-  readonly diverge: number
-  readonly skipped: number
-}
-
-let lastParity: ParitySummary | null = null
-
-/** What the last parity probe found, or `null` when none has run in this launch — which is NOT
- *  "everything agreed": a probe that never ran has established nothing. */
-export function lastParitySummary(): ParitySummary | null {
-  return lastParity
-}
+// `ParitySummary` / `lastParitySummary()` LIVED HERE AND ARE GONE (JOS-499), with the probe that
+// produced them. The performance panel drew "5 agree, 0 diverge"; with one world there is nothing
+// to agree with. `enginePerfWatch.ts` sends `parity: null` and the panel already draws that as
+// "no verdict", which is now permanent rather than "no probe has run yet".
 
 /**
  * Ask the engine what it costs. `null` when there is no connected engine to ask.
@@ -850,5 +774,4 @@ export function stopEngineClient(): void {
   // log anyway.
   live?.client.close()
   live = null
-  lastParity = null
 }
