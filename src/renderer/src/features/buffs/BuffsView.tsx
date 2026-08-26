@@ -18,7 +18,7 @@ import {
 } from '@mui/material'
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh'
 import ScienceOutlinedIcon from '@mui/icons-material/ScienceOutlined'
-import type { ActiveBuff, BuffsDelta, BuffsSnap, MessageOverlay, OverlayVerdict } from '@shared/types'
+import type { ActiveBuff, BuffsSnap, MessageOverlay, OverlayVerdict } from '@shared/types'
 import { useModule } from '../../lib/useModule'
 import { ActiveRow } from './ActiveBuffRow'
 import { groupKey, groupLabel } from './format'
@@ -31,9 +31,6 @@ import { useBuffAllow } from './useBuffAllow'
 // Stable empty reference so hooks don't churn before hydration.
 const EMPTY_BUFFS: BuffsSnap = { active: [], stats: {} }
 
-// The buffs module ships its whole (small) snapshot each flush, so the delta simply
-// replaces state — no incremental merge needed.
-const applyBuffsDelta = (_state: BuffsSnap, delta: BuffsDelta): BuffsSnap => delta
 
 // Verdict → chip color + label for the overlay audit table (Task #36).
 const VERDICT_COLOR: Record<OverlayVerdict, 'success' | 'info' | 'error' | 'default'> = {
@@ -244,7 +241,7 @@ function AllowModeSwitch({ optIn, onChange }: { optIn: boolean; onChange: (v: bo
 }
 
 export default function BuffsView(): JSX.Element {
-  const snap = useModule<BuffsSnap, BuffsDelta>('buffs', applyBuffsDelta) ?? EMPTY_BUFFS
+  const snap = useModule<BuffsSnap>('buffs') ?? EMPTY_BUFFS
   // Tick once a second so active-buff elapsed/remaining stay live between deltas.
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {

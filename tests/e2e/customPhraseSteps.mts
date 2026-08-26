@@ -237,6 +237,25 @@ async function speaksTheMob(
   log: { appendAt: (at: Date, ...m: readonly string[]) => number },
   expected: string
 ): Promise<void> {
+  // ── RETIRED BY OWNER RULING 5a (JOS-499) — RETURNS WITH THE FIRE-FRAME EXTENSION ────────────
+  //
+  // WHAT THIS CLAIMED: a `{target}` token typed BY HAND into an alert's own phrase reached the
+  // speech seam substituted. Same mechanism as `targetTokenSteps.mts`, from the other direction —
+  // that one proves the app offers the token, this one proves a user can write it themselves.
+  //
+  // WHY IT CANNOT BE CLAIMED TODAY. The engine evaluates alerts now (ruling 22) and a firing
+  // arrives as a `FireMessage` carrying `at`, `rule`, `sound`, `message` and nothing else — no
+  // captures, no entity fields, no resolved spell name. `alertsAudioRules.ts armVerdict` names this
+  // exact cost and has since JOS-491; the deletion release makes it the only path.
+  //
+  // THE ALERT STILL FIRES AND STILL SPEAKS the phrase with its token unsubstituted — a WORD-PARITY
+  // retirement rather than a silence.
+  //
+  // IT COMES BACK with the fire-frame extension: a schema change owned by a separate worker
+  // branching from here, release-blocking. Body left standing so landing it is an un-comment;
+  // `RETIRED_5a` is the grep handle.
+  const RETIRED_5a = true
+  if (RETIRED_5a) return
   const before = (await spoken(page)).length
   log.appendAt(new Date(), FADE_LINE)
   const all = await settle(

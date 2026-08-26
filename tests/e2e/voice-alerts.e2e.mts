@@ -493,6 +493,30 @@ async function stepCaptureAlert(page: Page, log: { appendAt: (at: Date, ...m: re
     { timeoutMs: 15_000 }
   )
 
+  // ── RETIRED BY OWNER RULING 5a (JOS-499) — RETURNS WITH THE FIRE-FRAME EXTENSION ──────────
+  //
+  // WHAT THIS CLAIMED, AND WHY IT CANNOT BE CLAIMED TODAY. A capture group declared in an alert def reached the SPEECH seam with the log line's
+  // matched text substituted into it.
+  // The engine is the alert evaluator (owner ruling 22) and a firing reaches this app as a
+  // `FireMessage`, which carries exactly four fields: `at`, `rule`, `sound`, `message`. It has
+  // no room for the JOS-103 capture groups, the JOS-353 `{target}` token, the JOS-84 resolved
+  // spell name or the JOS-378 `dueAt`. `alertsAudioRules.ts armVerdict` has said so since
+  // JOS-491 — "costs a firing some of its WORDS and never its existence" — and the deletion
+  // release makes it the only path, so the words are gone rather than degraded.
+  //
+  // THE ALERT STILL FIRES AND STILL SPEAKS. What it speaks is the phrase with its tokens
+  // unsubstituted, which is why this is a WORD-PARITY retirement and not a silence: the
+  // sound, the speech channel, the cooldown and the banner are all asserted elsewhere in this
+  // suite and all still pass.
+  //
+  // IT COMES BACK, and the ticket is cut and release-blocking: extending the fire frame to
+  // carry the captures and the entity fields is a schema change, deliberately NOT made in this
+  // branch (a separate worker owns it, branching from here). When it lands, this block is what
+  // gets un-commented — which is why the assertion is left standing in the file rather than
+  // deleted, with `RETIRED_5a` naming the reason.
+  const RETIRED_5a = true
+  if (RETIRED_5a) return
+
   // Wait for the utterance THIS step caused, by its text — the ring is app-wide and a step that
   // asserted "the newest entry" would be asserting against whatever spoke last.
   const before = (await spoken(page)).length

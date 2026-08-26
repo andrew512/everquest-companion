@@ -5,27 +5,29 @@ design and the owner's twenty rulings live in `docs/plans/data-server.md`; the e
 `engine/crates/engined/README.md`. Every file here carries its argument in its header — this page is
 the map, plus the one thing no single file can state: **how the pieces connect at run time**.
 
-**Everything in this directory is ON by default (JOS-495, the owner's cutover ruling).** The three
-flags are escape hatches, not opt-ins:
+**THERE ARE NO FLAGS ANY MORE (JOS-499, the deletion release).** `EQC_ENGINE`,
+`EQC_ENGINE_SERVE` and `EQC_ENGINE_ALERTS` are deleted, and so is the world they used to select:
+owner ruling 12 moved the app fully to the engine and the TypeScript fold is gone. A flag that
+can only answer one way is a gate every future reader has to prove is dead, so each was removed
+rather than defaulted to true. `src/shared/dataServer/engineFlags.ts` survives with no reader in
+this directory.
 
-| Set this | and you get |
+What used to be `EQC_ENGINE=0` is not a supported configuration; it is simply **an app that
+cannot answer**, and that state is now honest rather than silently substituted:
+
+| The engine is | and a read gets |
 | --- | --- |
-| *(nothing — every ordinary launch)* | an engine, answering the app's reads, playing its alerts |
-| `EQC_ENGINE=0` | no engine at all: the app is exactly the app it was before any of this existed |
-| `EQC_ENGINE_SERVE=0` | an engine that folds and is compared, but answers no read (and makes no sound) |
-| `EQC_ENGINE_ALERTS=0` | an engine that answers the reads, while this process's evaluator plays alerts |
+| connected, attached to this log, live | the engine's answer |
+| absent / still folding / on another log | `null` for a module snapshot, an empty meter, no search hits |
 
-`EQC_ENGINE` is read in exactly one place (`engineHost.ts engineEnabled`) and the other two are
-SUBORDINATE rather than parallel: `serveShim.ts` gates on `engineEnabled()` rather than on a second
-reading of the environment, and `alertsAudio.ts` is only ever reached from inside that guard — so a
-granular flag alone is off, not half-on. All five readers of these variables (the three above plus
-`serveDeltas.ts` and `src/preload/engine.ts`) share ONE comparison,
-`src/shared/dataServer/engineFlags.ts engineFlagOn`, so an inverted default cannot be inverted in
-four places and left in a fifth. `=1` still means on; it is simply not `'0'`.
+Nothing falls back, because there is nothing to fall back to. Every unserved read is still
+COUNTED AND NAMED in the dev log by `readShim.ts` (`the engine is still folding x12`), so a blank
+surface always has a reason a developer can read. `tests/e2e/engine-absent.e2e.mts` is the
+contract: the app boots, says what it looked for, invents nothing, and does not crash.
 
-**A checkout with no binary is unchanged by all of that.** `cargo build` is what puts an engine on
-disk in a dev tree; without one the supervisor probes, logs what it looked for, and stops, and the
-app runs TypeScript-only exactly as before. A PACKAGED build always has the binary (JOS-473 ships
+**A checkout with no binary is the ordinary dev state and is what that spec arranges.**
+`cargo build` is what puts an engine on disk in a dev tree; without one the supervisor probes,
+logs what it looked for, and stops. A PACKAGED build always has the binary (JOS-473 ships
 `resources/engine/engined.exe`), so default-on there means the engine actually runs. Since
 JOS-484 there is one channel registered in every build — `engine:connect`, beside `registerDevIpc` —
 and it is not an exception to that rule: the handler holds no flag, is never told about a launch
@@ -42,10 +44,10 @@ decision a test can watch being made rather than an absence nobody can observe.
 | `engineHost.ts` | The composition root's half: which binary, which spawn, which socket, which clock, where a line goes. The only file anyone would rewrite to run the engine some other way. |
 | `socketChannel.ts` | The only file in the feature that knows a socket exists. |
 | `engineHealth.ts` | "Is it actually serving?", asked as `hello` + `session.health` over the product's own door. |
-| `engineClientHost.ts` | **The app as a CLIENT** (JOS-479): connect, attach, re-attach, and run the parity probe. Since JOS-483 it also answers two READS for the performance panel — `enginePerfSnapshot()` and `lastParitySummary()` — and since JOS-489 it exposes the main-side request bridge, `engineServeReadiness()` + `engineRequest(op, params)`. It still owns no channel, and no client handle escapes it. |
-| `parityProbe.ts` | The probe's pure half — two snapshots in, one verdict out, one line. |
+| `engineClientHost.ts` | **The app as a CLIENT** (JOS-479): connect, attach, re-attach, and subscribe to the four connection-wide streams (fires, con cards, cursors, knowledge misses). It answers `enginePerfSnapshot()` for the performance panel and exposes the main-side request bridge, `engineServeReadiness()` + `engineRequest(op, params)`. The parity probe left with the second world (JOS-499). It still owns no channel, and no client handle escapes it. |
 | `readShim.ts` | **The compat shim's pure half** (JOS-489): which world answers a read, and what happens when the engine cannot. Readiness, a bounded round trip, a projection that says whether a reply was an ANSWER, and the coalesced fallback tally. No app imports, so the whole matrix is a unit test. |
-| `serveShim.ts` | The shim, wired: the `EQC_ENGINE_SERVE` gate, the three channels' projections, the `SnapshotOpts` translation, and the `EQ_E2E`-only parity seam. |
+| `serveShim.ts` | The shim, wired: the channels' projections, the `SnapshotOpts` translation, the `lastPlayed` graft and the served mob-level op. Its gate and its parity seam left with the second world (JOS-499). |
+| `knowledgeMissFetch.ts` | **The app-side half of a wiki miss** (JOS-499, boundary verdict 5): the engine has no network, so it announces a name it could not answer and this leaf runs `lookupItem`/`lookupMob` on the queue the app has always owned and pushes the record back as `knowledge.define`. Electron-free; its capabilities are injected. |
 | `byteRelay.ts` | **The pump** (JOS-484): chunks between a socket and a MessagePort. Electron-free, so every teardown path is a unit test. |
 | `rendererBroker.ts` | **The brokerage** (JOS-484): the `engine:connect` handler, the port handover, and the live-connection lifecycle. |
 
@@ -59,7 +61,7 @@ exists. The renderer never speaks to the engine; brokering a client into a windo
 ## The connect flow (JOS-479, phase 3)
 
 ```
- startEngineSupervisor()          [engineHost.ts, unless EQC_ENGINE=0]
+ startEngineSupervisor()          [engineHost.ts — unconditional since JOS-499]
    ├─ installEngineClient()       registers the world-rebuilt observer on pipeline.ts
    └─ supervisor.start()
         spawn engined.exe ─── token down stdin ──►  engine
@@ -288,8 +290,9 @@ closes the spec goes red and somebody deletes the exemption. Neither is a fold d
 
 ## The compat shim (JOS-489, phase 1 of the cutover)
 
-Three of the app's own read IPCs are answered by the engine — by DEFAULT since JOS-495, and
-`EQC_ENGINE_SERVE=0` is what hands them back:
+Three of the app's own read IPCs are answered by the engine, and since JOS-499 by NOTHING ELSE —
+there is no arm to hand them back to. What the table calls "hands back" is the served answer;
+the row below it is what a caller gets when the engine cannot be asked:
 
 | IPC channel | op | what the shim hands back |
 | --- | --- | --- |
@@ -410,26 +413,31 @@ deliberately not thrown.** Throwing it is a follow-up whose whole content is the
 and the predicate that guards it — and that predicate has to be a fact about a live engine, not a
 flag.
 
-## `shimServing()` IS NOT "AN ENGINE EXISTS" (JOS-496 — read this before adding a gate)
+## A FLAG IS NOT "AN ENGINE EXISTS" (JOS-496 — read this before adding a gate)
 
-`shimServing()` is `EQC_ENGINE` AND `EQC_ENGINE_SERVE`. Both default **on** since JOS-495. It is
-therefore **true on every checkout that has never run `cargo build`**, where there is no binary, no
-client, and no frame will ever arrive. It answers "did anybody ask for the engine to be gone", which
-is a different question from "is there an engine".
+The flags are gone (JOS-499) and this section stays, because the MISTAKE outlives them and the
+next gate somebody adds can make it again with a different predicate.
 
-For the READ shim this is harmless by construction — `readShim.ts`'s `noClient` outcome answers every
-call from the app's own fold. For anything that **hands a duty over**, it is fatal and silent. Three
-instances have existed:
+`shimServing()` was `EQC_ENGINE` AND `EQC_ENGINE_SERVE`, both default-on. It was therefore
+**true on every checkout that had never run `cargo build`**, where there is no binary, no client,
+and no frame will ever arrive. It answered "did anybody ask for the engine to be gone", which is
+a different question from "is there an engine" — and that gap is what shipped three silences:
 
 | Where | What went silent | Fixed by |
 | --- | --- | --- |
 | `alertsAudio` armed from `startEngineSupervisor()` | **all alert audio**, until quit, on any build with no engine | arming on the supervisor's READY edge (and disarming on its loss edge) |
-| `registerConCardIpc(shimServing())` skipped the TS hook | the con card, permanently | asking `shimServing() && engineServeReadiness().ok` per `/con` |
+| `registerConCardIpc(shimServing())` skipped the TS hook | the con card, permanently | asking `engineServeReadiness().ok` per `/con` |
 | the post-replay boot summary | one dev-log line | the gate withdrawn; the line names its subject instead |
 
 **The rule:** a gate that decides *who does a job* must ask `engineServeReadiness()` (or a
-launch-shaped edge like `onReady`), never a flag. And it should **fail towards the app doing the
-job** — a duplicated card or sound is cosmetic, a missing one is not.
+launch-shaped edge like `onReady`) — a MEASUREMENT that a client exists, its connection is ready,
+both sides are on the same log and the fold has gone live. Never a configuration value.
+
+JOS-499 left exactly one compound gate standing and deleted the weaker half of it:
+`registerConCardIpc()` now asks `engineServeReadiness().ok` alone. Everything else that used to
+be flag-gated is either unconditional (there is one world) or gated on the frame itself — a con
+card exists only because a real connected engine sent one, which is the fact the flag was a poor
+proxy for.
 
 ## Tests
 

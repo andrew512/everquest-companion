@@ -74,7 +74,6 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:f
 import { join } from 'node:path'
 import { app } from 'electron'
 import { logError, logInfo } from '../errorLog'
-import { engineFlagOn } from '../../shared/dataServer/engineFlags'
 import { setEnginePid } from '../processPriority'
 import { mintToken } from './token'
 import { engineBinaryCandidates, isCargoTargetBinary, stagedEngineNames } from './engineProtocol'
@@ -111,8 +110,21 @@ let supervisor: EngineSupervisor | null = null
  * distinguishes the two absences, and the header says why a checkout with no binary is the ordinary
  * state rather than a broken one.
  */
-export function engineEnabled(): boolean {
-  return engineFlagOn(process.env.EQC_ENGINE)
+/**
+ * THE FLAG IS GONE (JOS-499 item 9), and what replaces it is nothing rather than `true`.
+ *
+ * `EQC_ENGINE=0` meant "run the app on its own fold". The fold is deleted, so the configuration
+ * it selected does not exist: a launch without an engine is not a different MODE of the product,
+ * it is the product unable to answer, which this release makes honest everywhere a read lands.
+ * Keeping the variable would ship a switch whose only remaining effect is a blank app.
+ *
+ * WHAT STILL DISTINGUISHES THE ABSENCES is `engineSupervisorStatus()` below, and it is now the
+ * only thing that has to: `'absent'` is a build carrying no binary — the ordinary state of a
+ * checkout that has not run `cargo build` — and every other status is a real engine somewhere in
+ * its life. There is no third case left to report.
+ */
+export function engineWanted(): boolean {
+  return true
 }
 
 /**
@@ -128,7 +140,6 @@ export function engineEnabled(): boolean {
  * Every other status is a real engine at some point in its life, and the panel draws it.
  */
 export function engineSupervisorStatus(): EngineStatus | null {
-  if (!engineEnabled()) return null
   return supervisor?.currentStatus() ?? 'stopped'
 }
 
@@ -301,7 +312,6 @@ function dirOf(path: string): string {
  * running is the supervisor's own no-op.
  */
 export function startEngineSupervisor(): void {
-  if (!engineEnabled()) return
   // THE AUDIO CUTOVER'S SWITCH IS NOT THROWN HERE ANY MORE (JOS-496 fixing JOS-491's placement) —
   // it is thrown on the supervisor's READY edge below. The bug, measured by reading:
   //

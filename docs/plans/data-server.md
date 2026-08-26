@@ -398,7 +398,14 @@ re-derivable: byte-exact line-boundary cuts at first-line-of-day offsets). The b
   dissolves; the GC-wave items (JOS-226 lossless combat compression, JOS-462 item-corpus heap)
   become engine-internal where they are cheap.
 
-## The cutover ledger (2026-08-25 — what remains to build, and what dies in the cutover release)
+## The cutover ledger — CLOSED (JOS-499 shipped the deletion release)
+
+**THE FOLD IS DELETED.** 97 source files and 180 test suites left in JOS-499; the engine is
+unconditional and there are no flags. What follows is the ledger as it stood before that
+release, kept because it records what was built and in what order; the items it lists as
+remaining are the ones that survived into the post-cutover backlog, and they are re-stated
+honestly at the bottom of this section.
+
 
 State at writing: phases 0–2 COMPLETE (ingest, all 20 modules + combat proven, serve layer first
 light, app connected with the parity probe, packaging signed). Remaining to build, in rough order:
@@ -456,7 +463,34 @@ light, app connected with the parity probe, packaging signed). Remaining to buil
 9. ~~Open owner item: the render-cell LOCALE (dates/numbers) as pushed app knowledge vs fixed
    en-US~~ **SETTLED** (ruling 25): fixed en-US.
 
-**DELETED IN THE CUTOVER RELEASE** (ruling 12: once proven, move fully — one release):
+### What actually happened (JOS-499)
+
+Everything on the list below was deleted, plus three things the list did not name and the
+import graph did:
+
+- **The audio cutover routed THROUGH the deleted module.** `playEngineFire` called
+  `alertsModule.engineFired()`, so the renderer heard an engine fire as a `module:delta`.
+  Deleting the module would have silenced every alert in the product. A dedicated
+  `alerts:fired` channel replaces it — one sender, one receiver, the same `FiredAlert`.
+- **The meter nudge and the quiet-switch clock were fed by the tailer's line handler.** Both
+  moved to `serveDeltas.ts`, where the engine's cursors land.
+- **`ringDisposition` had to outlive the replay gate** — it moved to `presenceProtocol.ts`
+  minus its `replayRunning` term, since the engine folds in another process.
+
+NAMED GAPS the deletion opened, each needing an engine-side command rather than a fix here:
+`alerts:appFired` and `eventFeed:report` (renderer-detected bossDefeat / questComplete / Sky
+completes lose their history and feed rows; the SOUND is unaffected), and a mid-session
+inventory dump no longer re-arms clicky classification until the next re-fold. The renderer
+still bundles `mobs.json` / `posky.json` / `bosses.json`: those three consumers are whole
+in-memory catalogs (mob search, item drop sources, the entire Sky tab) and there is no
+reachable query surface to replace them, so the ~3.7 MB bundle reduction waits for the
+knowledge-ops surface cutover with the rest of item 3.
+
+THE ORACLE SURVIVED THE DELETION AND WAS GREEN AFTER IT (ruling 26 working as designed):
+`oracle:rust-fold` — 1,283,963 events over 6 slices, 22 modules each — run against goldens
+recorded at the pre-deletion commit, off a `goldenPaths.mts` leaf that imports no fold.
+
+**THE ORIGINAL DELETION LIST** (ruling 12: once proven, move fully — one release):
 `src/main/modules/**` (registry, wiring, all twenty), `src/main/combat/**`, the TS parse path
 (`parser.ts`, `parse*.ts`, `scanHistory.ts`, `Tailer.ts`, `replaySlicer.ts`, `bus.ts`,
 `rulesets.ts`, epoch/session detectors), main's spellDb load, `pipeline.ts` fold construction,
