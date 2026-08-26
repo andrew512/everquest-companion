@@ -318,6 +318,19 @@ export function spellStepWhen(step: SpellLineStep, combo: readonly ClassAbbr[]):
 }
 
 /**
+ * IS THIS ONE OF THE CLASSES YOU ARE PLAYING?
+ *
+ * A one-line predicate with a widening in it, and the widening is why it is HERE rather than
+ * inline at the chip: `classLevels` types its class as a bare `string` (it predates the closed
+ * `ClassAbbr` union in this record) while `combo` is the union, so a caller comparing them has to
+ * widen ONE of the two. Doing it once, in the file that owns both fields, keeps the cast out of
+ * the renderer and out of any future second reader.
+ */
+export function spellClassIsYours(d: SpellDetail, cls: string): boolean {
+  return (d.combo as readonly string[]).includes(cls)
+}
+
+/**
  * WHOSE LADDER THIS IS, when it is not yours — or null when it is.
  *
  * The page leads with a progression, and a progression drawn from a class you are not playing is

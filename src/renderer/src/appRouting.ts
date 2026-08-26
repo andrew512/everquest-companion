@@ -146,6 +146,20 @@ export interface AppRouting {
    */
   openLeveling: (level?: number) => void
   clearLevelFocus: () => void
+  /** The spell the drilldown should draw, or null. Never bare — a spell page IS its spell. */
+  spellName: string | null
+  spellNonce: number
+  /**
+   * THE SPELL DRILLDOWN (JOS-508). The one opener here that takes a REQUIRED payload, and the
+   * asymmetry is the feature: `openLoot()` and `openLeveling()` bare are real destinations (a
+   * ledger, a tab), while a spell page with no spell is nothing at all — so the type refuses it
+   * rather than the view having to draw an empty state nobody can reach on purpose.
+   *
+   * Always `anchored: true` for the same reason: every arrival here is a drill from a name
+   * somewhere, so the page always shows a Back to wherever that name was.
+   */
+  openSpell: (name: string) => void
+  clearSpellFocus: () => void
 }
 
 export function useAppRouting(view: View, setView: (v: View) => void): AppRouting {
@@ -160,6 +174,8 @@ export function useAppRouting(view: View, setView: (v: View) => void): AppRoutin
   const [questNonce, setQuestNonce] = useState(0)
   const [levelFocus, setLevelFocus] = useState<number | null>(null)
   const [levelNonce, setLevelNonce] = useState(0)
+  const [spellName, setSpellName] = useState<string | null>(null)
+  const [spellNonce, setSpellNonce] = useState(0)
   // The openers are memoized because one of them is a DEPENDENCY of the mount-only effect that
   // installs the cross-window `app:focusView` listener — a fresh identity each render would
   // tear down and re-register that subscription on every render.
@@ -211,9 +227,26 @@ export function useAppRouting(view: View, setView: (v: View) => void): AppRoutin
     },
     [linkTo]
   )
+  // MEMOIZED LIKE THE REST, and here it is load-bearing twice over: this opener is the value
+  // `SpellLinkProvider` publishes to every spell name in the window, so a fresh identity per render
+  // would re-render every list that draws one. It parks the view being left like every other link,
+  // which is what puts a Back on the page — including the spell → spell hop from one rung of a
+  // ladder to the next, where the origin stack is the only thing that remembers where you started.
+  const openSpell = useCallback(
+    (name: string) => {
+      setSpellName(name)
+      setSpellNonce((n) => n + 1)
+      linkTo('spell', true)
+    },
+    [linkTo]
+  )
   return {
     selectView,
     nav,
+    spellName,
+    spellNonce,
+    openSpell,
+    clearSpellFocus: () => setSpellName(null),
     mobTarget,
     mobNonce,
     openMob,

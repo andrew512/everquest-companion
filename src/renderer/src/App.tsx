@@ -56,6 +56,8 @@ import DevTriageView from './devTriage'
 // keep the tree out of packaged bytes. The owner released the tab, so that file is gone and this is
 // an ordinary static import like the eleven views above it.
 import CharacterView from './features/character/CharacterView'
+import { SpellDrill } from './features/spells/SpellPage'
+import { SpellLinkProvider } from './lib/spellLink'
 import { OWNER_TOOLS } from './devFlags'
 import { useFeedbackDialog, type FeedbackPrefill } from './features/feedback/useFeedback'
 // Usage analytics (docs/plans/usage-analytics.md). The notice is mounted unconditionally and
@@ -170,6 +172,10 @@ function PlainView({
           to show it. Keyed like the rest — the sheet and its carry-all ledger are one character's,
           and the remount is how this app says that. */}
       {view === 'character' && <CharacterView key={viewKey} />}
+      {/* THE SPELL DRILLDOWN (JOS-508). Its view check and its payload check live in the feature
+          file, not here: this switch is one branch per view and a branch needing both would have
+          cost `PlainView` two points of the measured complexity ceiling. */}
+      <SpellDrill view={view} viewKey={viewKey} routing={routing} />
     </>
   )
 }
@@ -210,8 +216,15 @@ function ViewContent({
   // a machine with no EverQuest install must still reach it.
   if (OWNER_TOOLS && view === 'triage') return <DevTriageView />
   if (!hasCharacters) return <NoLogsEmptyState onOpenPreferences={onOpenPreferences} />
+  // EVERY SPELL NAME BELOW THIS LINE IS A LINK (JOS-508) — one provider rather than a prop threaded
+  // through AlertsView, BuffsView and LevelingView to the five places a name is drawn.
+  // `lib/spellLink.tsx`'s header carries the argument; the short form is that whether a spell name
+  // links is a property of the APP, not a per-caller decision. It sits HERE rather than at App's
+  // root because this is the exact subtree that draws spell names: Preferences and the owner-only
+  // triage tab return above it and draw none, and the overlay bundle — a different window, mounting
+  // no provider at all — keeps the plain text it has always had.
   return (
-    <>
+    <SpellLinkProvider open={routing.openSpell}>
       <PlainView
         view={view}
         viewKey={viewKey}
@@ -267,7 +280,7 @@ function ViewContent({
           onFocusConsumed={routing.clearCombatFocus}
         />
       )}
-    </>
+    </SpellLinkProvider>
   )
 }
 
