@@ -134,28 +134,20 @@ export async function stepTargetToken(
   page: Page,
   log: { appendAt: (at: Date, ...m: readonly string[]) => number }
 ): Promise<void> {
-  // ── RETIRED BY OWNER RULING 5a (JOS-499) — RETURNS WITH THE FIRE-FRAME EXTENSION ────────────
+  // ── RESTORED BY JOS-500 (owner ruling 27) — THE FRAME CARRIES THE ENTITY FIELDS ─────────────
   //
-  // WHAT THIS CLAIMED: the parser-extracted `{target}` — the mob a spell is affecting — reached the
-  // SPEECH seam substituted, with no regex in the def. JOS-353's acceptance, in the owner's words.
+  // WHAT THIS CLAIMS: the parser-extracted `{target}` — the mob a spell is affecting — reaches the
+  // SPEECH seam substituted, with no regex in the def. JOS-353's acceptance, in the owner's words,
+  // and the assertion below is unchanged from the one JOS-499 gated off.
   //
-  // WHY IT CANNOT BE CLAIMED TODAY. The engine is the alert evaluator (ruling 22) and a firing
-  // reaches this app as a `FireMessage`, which carries exactly four fields: `at`, `rule`, `sound`,
-  // `message`. There is no room in it for the JOS-353 `{target}`, the JOS-103 captures, the JOS-84
-  // resolved spell name or the JOS-378 `dueAt`. `alertsAudioRules.ts armVerdict` has said so since
-  // JOS-491 — "costs a firing some of its WORDS and never its existence" — and the deletion release
-  // makes that path the only path, so the words are gone rather than degraded.
-  //
-  // THE ALERT STILL FIRES AND STILL SPEAKS, with the token unsubstituted. This is a WORD-PARITY
-  // retirement, not a silence: the sound, the speech channel, the cooldown and the banner are
-  // asserted elsewhere in this suite and all still pass.
-  //
-  // IT COMES BACK. Extending the frame to carry the entity fields is a schema change, deliberately
-  // NOT made in this branch — a separate worker owns it, branching from here, and the ticket is
-  // release-blocking. The body below is left standing rather than deleted so that landing it is an
-  // un-comment; `RETIRED_5a` is the grep handle.
-  const RETIRED_5a = true
-  if (RETIRED_5a) return
+  // IT IS THE HARDEST OF THE THREE PARITY CLAIMS and that is why it is a separate step. `{target}`
+  // is the one token filled in WITHOUT a declared capture group, which means nothing in the def
+  // itself says where the value comes from: it is resolved engine-side from a closed table of
+  // parser-extracted entity fields on the very event that matched, merged into the capture map
+  // under the same bound and the same collision rule as a declared group, and gated on the def's
+  // own phrase having written `{target}` at all. Every one of those is an evaluator decision the
+  // app deliberately does not re-make (`alertsAudioRules.ts`), so the ONLY honest proof that the
+  // whole chain agrees is a real def, a real live-tailed line, and the sentence that comes out.
   const saved = await saveDef(page)
   if (!check('a no-regex target alert saves through the app’s own IPC', saved > 0, `${String(saved)} defs stored`)) {
     return

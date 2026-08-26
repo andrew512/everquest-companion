@@ -493,29 +493,25 @@ async function stepCaptureAlert(page: Page, log: { appendAt: (at: Date, ...m: re
     { timeoutMs: 15_000 }
   )
 
-  // ── RETIRED BY OWNER RULING 5a (JOS-499) — RETURNS WITH THE FIRE-FRAME EXTENSION ──────────
+  // ── RESTORED BY JOS-500 (owner ruling 27) — THE FIRE FRAME CARRIES THE WORDS ──────────────
   //
-  // WHAT THIS CLAIMED, AND WHY IT CANNOT BE CLAIMED TODAY. A capture group declared in an alert def reached the SPEECH seam with the log line's
-  // matched text substituted into it.
-  // The engine is the alert evaluator (owner ruling 22) and a firing reaches this app as a
-  // `FireMessage`, which carries exactly four fields: `at`, `rule`, `sound`, `message`. It has
-  // no room for the JOS-103 capture groups, the JOS-353 `{target}` token, the JOS-84 resolved
-  // spell name or the JOS-378 `dueAt`. `alertsAudioRules.ts armVerdict` has said so since
-  // JOS-491 — "costs a firing some of its WORDS and never its existence" — and the deletion
-  // release makes it the only path, so the words are gone rather than degraded.
+  // RETIRED FOR ONE RELEASE AND BACK UNCHANGED. JOS-499 left this assertion standing behind a
+  // `RETIRED_5a` early-return rather than deleting it, because the reason it could not be claimed
+  // was a missing FIELD and not a changed product: a `FireMessage` carried exactly four fields and
+  // had nowhere to put the JOS-103 captures, so the alert still fired and still spoke, but spoke
+  // its phrase with the tokens unsubstituted. `alertsAudioRules.ts` had named that cost since
+  // JOS-491 ("costs a firing some of its WORDS and never its existence"), and the deletion release
+  // made it the only path — which is what the owner ruled release-gating.
   //
-  // THE ALERT STILL FIRES AND STILL SPEAKS. What it speaks is the phrase with its tokens
-  // unsubstituted, which is why this is a WORD-PARITY retirement and not a silence: the
-  // sound, the speech channel, the cooldown and the banner are all asserted elsewhere in this
-  // suite and all still pass.
+  // THE FRAME GREW `captures`, `spell` AND `dueAt`, so the gate is gone and the claim below is the
+  // one this spec always made, word for word. It is the END-TO-END half of the parity: the engine
+  // produces the capture (proven in `fold`'s own suite), `fireToFiring` copies it (proven in
+  // `tests/engineAlertsAudio.test.mts`), and what is asserted HERE is that a real app, driven by a
+  // real live-tailed log line, reaches the speech seam with the substitution actually done.
   //
-  // IT COMES BACK, and the ticket is cut and release-blocking: extending the fire frame to
-  // carry the captures and the entity fields is a schema change, deliberately NOT made in this
-  // branch (a separate worker owns it, branching from here). When it lands, this block is what
-  // gets un-commented — which is why the assertion is left standing in the file rather than
-  // deleted, with `RETIRED_5a` naming the reason.
-  const RETIRED_5a = true
-  if (RETIRED_5a) return
+  // WHY THAT NEEDS AN E2E AND NOT A THIRD UNIT TEST: everything between the engine's match and the
+  // utterance is wiring — the connection, the IPC hop, the renderer's player, the def lookup by id
+  // — and wiring is exactly what a pure test cannot see.
 
   // Wait for the utterance THIS step caused, by its text — the ring is app-wide and a step that
   // asserted "the newest entry" would be asserting against whatever spoke last.

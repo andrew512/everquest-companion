@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:6ed6b256345eb1dac02993bf62c6abb498d1b2201d09a6dcf0c146906a21f19d
+//! schema-digest: sha256:5e83fae233a66bc3cfc49258144129f079e3bc4036764b80aec0ca42beb6c9a3
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -2912,14 +2912,67 @@ impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json:
         Self(value)
     }
 }
-///AN ALERT FIRED (owner ruling 22). The engine evaluates the user's alert definitions against LIVE events — replay must never make a sound, which is the same boundary law the app-side evaluator has always obeyed — and this is what it says when one matches. CONNECTION-WIDE, and therefore carrying NO `id`: a fire belongs to the world rather than to any subscription, which is the `EpochMessage` precedent. It carries no `epoch` either, and that is the difference from an epoch message rather than an oversight: every other stream frame describes WINDOW STATE a client has to reconcile across a generation, while a fire is a thing that happened once — there is nothing to drop and nothing to re-request, so a generation number would be a field with no reader. IT IS FULLY RESOLVED SERVER-SIDE (the conCard principle): everything the app needs in order to make the identical noise is in these four fields, so no client ever has to hold the definition the fire came from.
+/**WHAT THE FIRING MAY SAY OUT LOUD — the named regex captures the rule's own matcher took (JOS-103), PLUS the one auto token (JOS-353). Open by design for `Cells`' reason at full strength: the key set is the DEF'S OWN PATTERN's contract (`(?<player>…)` makes `{player}` sayable), never the protocol's, so a user writing a new group is not a protocol change.
+
+EVERY VALUE IS ALREADY DEFANGED, AND THAT IS THIS TYPE'S WHOLE POINT. The keys come from a pattern the user may have imported from a stranger; the VALUES come out of a log line, which carries other players' chosen names and — for the chat families — text a stranger typed. So each value has crossed `sanitizeCapture`'s two controls ENGINE-SIDE before it reaches this frame: ANSI/VT sequences removed whole, every C0/C1/DEL control and the invisible + BiDi-override class deleted, CR/LF/TAB folded to one space, and the result capped at 48 characters — a NAME's worth of text, not a LINE's. At most 8 entries survive, in the pattern's own declaration order. The full threat model is `src/shared/alertCaptures.ts`; `fold::modules::alerts_captures` is its engine-side half, and the two are pinned equal by test. A CONSUMER STILL MUST NOT TREAT THESE AS TRUSTED TEXT — defanged is not the same as authored by the user.
+
+THE `target` KEY IS THE ONE THE PATTERN DID NOT DECLARE (JOS-353, and it is a closed list of one). It holds the entity the matched event says the spell is affecting, resolved from a CLOSED TABLE of parser-extracted fields on the very event this def matched, with the parser's sentinels rendered as English ('self' → "you", 'pet' → "your pet"). It is present ONLY when the def's own speech phrase writes `{target}`, and a group the pattern declared under that name always wins — so a def that never asks carries no `captures` key at all and its frame is byte-identical to the one it sent before this field existed.
+
+WHY IT IS MERGED HERE RATHER THAN SENT AS A SEPARATE `target` FIELD. The app must not re-derive the merge: which token the phrase wanted, who wins a name collision, and where the 8-entry bound falls are all EVALUATOR decisions, and an app that made them again would be the second evaluator this boundary exists to delete (`alertsAudioRules.ts`'s own refusal). One resolved map is what `FiredAlert.captures` has always been and what `applyCaptures` reads, so the app copies it across and substitutes.*/
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "FireCaptures",
+///  "description": "WHAT THE FIRING MAY SAY OUT LOUD — the named regex captures the rule's own matcher took (JOS-103), PLUS the one auto token (JOS-353). Open by design for `Cells`' reason at full strength: the key set is the DEF'S OWN PATTERN's contract (`(?<player>…)` makes `{player}` sayable), never the protocol's, so a user writing a new group is not a protocol change.\n\nEVERY VALUE IS ALREADY DEFANGED, AND THAT IS THIS TYPE'S WHOLE POINT. The keys come from a pattern the user may have imported from a stranger; the VALUES come out of a log line, which carries other players' chosen names and — for the chat families — text a stranger typed. So each value has crossed `sanitizeCapture`'s two controls ENGINE-SIDE before it reaches this frame: ANSI/VT sequences removed whole, every C0/C1/DEL control and the invisible + BiDi-override class deleted, CR/LF/TAB folded to one space, and the result capped at 48 characters — a NAME's worth of text, not a LINE's. At most 8 entries survive, in the pattern's own declaration order. The full threat model is `src/shared/alertCaptures.ts`; `fold::modules::alerts_captures` is its engine-side half, and the two are pinned equal by test. A CONSUMER STILL MUST NOT TREAT THESE AS TRUSTED TEXT — defanged is not the same as authored by the user.\n\nTHE `target` KEY IS THE ONE THE PATTERN DID NOT DECLARE (JOS-353, and it is a closed list of one). It holds the entity the matched event says the spell is affecting, resolved from a CLOSED TABLE of parser-extracted fields on the very event this def matched, with the parser's sentinels rendered as English ('self' → \"you\", 'pet' → \"your pet\"). It is present ONLY when the def's own speech phrase writes `{target}`, and a group the pattern declared under that name always wins — so a def that never asks carries no `captures` key at all and its frame is byte-identical to the one it sent before this field existed.\n\nWHY IT IS MERGED HERE RATHER THAN SENT AS A SEPARATE `target` FIELD. The app must not re-derive the merge: which token the phrase wanted, who wins a name collision, and where the 8-entry bound falls are all EVALUATOR decisions, and an app that made them again would be the second evaluator this boundary exists to delete (`alertsAudioRules.ts`'s own refusal). One resolved map is what `FiredAlert.captures` has always been and what `applyCaptures` reads, so the app copies it across and substitutes.",
+///  "type": "object",
+///  "additionalProperties": {
+///    "type": "string"
+///  }
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct FireCaptures(
+    pub ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+);
+impl ::std::ops::Deref for FireCaptures {
+    type Target = ::std::collections::BTreeMap<::std::string::String, ::std::string::String>;
+    fn deref(&self) -> &::std::collections::BTreeMap<::std::string::String, ::std::string::String> {
+        &self.0
+    }
+}
+impl ::std::convert::From<FireCaptures>
+    for ::std::collections::BTreeMap<::std::string::String, ::std::string::String>
+{
+    fn from(value: FireCaptures) -> Self {
+        value.0
+    }
+}
+impl
+    ::std::convert::From<::std::collections::BTreeMap<::std::string::String, ::std::string::String>>
+    for FireCaptures
+{
+    fn from(
+        value: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ) -> Self {
+        Self(value)
+    }
+}
+/**AN ALERT FIRED (owner ruling 22). The engine evaluates the user's alert definitions against LIVE events — replay must never make a sound, which is the same boundary law the app-side evaluator has always obeyed — and this is what it says when one matches. CONNECTION-WIDE, and therefore carrying NO `id`: a fire belongs to the world rather than to any subscription, which is the `EpochMessage` precedent. It carries no `epoch` either, and that is the difference from an epoch message rather than an oversight: every other stream frame describes WINDOW STATE a client has to reconcile across a generation, while a fire is a thing that happened once — there is nothing to drop and nothing to re-request, so a generation number would be a field with no reader. IT IS FULLY RESOLVED SERVER-SIDE (the conCard principle): everything the app needs in order to make the identical noise is in this frame, so no client ever has to hold the definition the fire came from.
+
+THE FRAME GREW THREE OPTIONAL FIELDS AND THE REASON IS A REGRESSION THE OWNER MADE RELEASE-GATING (JOS-500, ruling 27: "we're not releasing without full parity"). Until them the frame had exactly four, and `alertsAudioRules.ts` said what that cost in the same breath as claiming it was survivable — "costs a firing some of its WORDS and never its existence". It was survivable only while the app still had an evaluator to fall back to. The deletion release (JOS-499) removed that fallback, which turned a degradation into the product: a `custom` phrase's `{token}`s resolved to nothing, the `spellName` speech modes fell back to the alert's own name, and an early warning's banner had no deadline to count down to. `captures`, `spell` and `dueAt` are those three losses, restored — and they are what a fire SAYS rather than whether it happened, which is why every one of them is optional and why nearly every real firing still sends none of them.
+
+THE ABSENCES ARE THE COMMON CASE, DELIBERATELY. An alert that declares no capture group, whose phrase writes no `{target}`, whose event family names no spell and which carries no early-warning offset sends the identical four fields it always sent. Nothing is null-filled and nothing is synthesized: an absent key is the honest encoding of "this firing has nothing true to say here", and inventing a value would be worse than saying less (world-model law 1).*/
 ///
 /// <details><summary>JSON schema</summary>
 ///
 /// ```json
 ///{
 ///  "title": "FireMessage",
-///  "description": "AN ALERT FIRED (owner ruling 22). The engine evaluates the user's alert definitions against LIVE events — replay must never make a sound, which is the same boundary law the app-side evaluator has always obeyed — and this is what it says when one matches. CONNECTION-WIDE, and therefore carrying NO `id`: a fire belongs to the world rather than to any subscription, which is the `EpochMessage` precedent. It carries no `epoch` either, and that is the difference from an epoch message rather than an oversight: every other stream frame describes WINDOW STATE a client has to reconcile across a generation, while a fire is a thing that happened once — there is nothing to drop and nothing to re-request, so a generation number would be a field with no reader. IT IS FULLY RESOLVED SERVER-SIDE (the conCard principle): everything the app needs in order to make the identical noise is in these four fields, so no client ever has to hold the definition the fire came from.",
+///  "description": "AN ALERT FIRED (owner ruling 22). The engine evaluates the user's alert definitions against LIVE events — replay must never make a sound, which is the same boundary law the app-side evaluator has always obeyed — and this is what it says when one matches. CONNECTION-WIDE, and therefore carrying NO `id`: a fire belongs to the world rather than to any subscription, which is the `EpochMessage` precedent. It carries no `epoch` either, and that is the difference from an epoch message rather than an oversight: every other stream frame describes WINDOW STATE a client has to reconcile across a generation, while a fire is a thing that happened once — there is nothing to drop and nothing to re-request, so a generation number would be a field with no reader. IT IS FULLY RESOLVED SERVER-SIDE (the conCard principle): everything the app needs in order to make the identical noise is in this frame, so no client ever has to hold the definition the fire came from.\n\nTHE FRAME GREW THREE OPTIONAL FIELDS AND THE REASON IS A REGRESSION THE OWNER MADE RELEASE-GATING (JOS-500, ruling 27: \"we're not releasing without full parity\"). Until them the frame had exactly four, and `alertsAudioRules.ts` said what that cost in the same breath as claiming it was survivable — \"costs a firing some of its WORDS and never its existence\". It was survivable only while the app still had an evaluator to fall back to. The deletion release (JOS-499) removed that fallback, which turned a degradation into the product: a `custom` phrase's `{token}`s resolved to nothing, the `spellName` speech modes fell back to the alert's own name, and an early warning's banner had no deadline to count down to. `captures`, `spell` and `dueAt` are those three losses, restored — and they are what a fire SAYS rather than whether it happened, which is why every one of them is optional and why nearly every real firing still sends none of them.\n\nTHE ABSENCES ARE THE COMMON CASE, DELIBERATELY. An alert that declares no capture group, whose phrase writes no `{target}`, whose event family names no spell and which carries no early-warning offset sends the identical four fields it always sent. Nothing is null-filled and nothing is synthesized: an absent key is the honest encoding of \"this firing has nothing true to say here\", and inventing a value would be worse than saying less (world-model law 1).",
 ///  "type": "object",
 ///  "required": [
 ///    "at",
@@ -2931,6 +2984,14 @@ impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json:
 ///  "properties": {
 ///    "at": {
 ///      "description": "When it fired, on THE LOG'S OWN CLOCK — the `ts` of the event that matched, never the host's wall clock. A fire is a statement about the log (ruling 18 law 1).",
+///      "type": "integer"
+///    },
+///    "captures": {
+///      "description": "THE WORDS THIS FIRING MAY SPEAK, or absent when it has none — see `FireCaptures` for what may be in it and what has already been done to it. Absent for the overwhelming majority of alerts, which declare no named group and ask for no `{target}`.",
+///      "$ref": "#/$defs/FireCaptures"
+///    },
+///    "dueAt": {
+///      "description": "WHEN THE THING THIS FIRING WARNS ABOUT IS DUE (ms epoch) — the countdown half of JOS-378, and present ONLY on an EARLY-WARNING firing (`AlertDef.earlyWarnSec`, JOS-216/235). IT IS THE ROW'S STATED END, not the instant the warning spoke: `at` is when the sound was made and this is what it was early FOR, so the difference between them IS the lead time the user configured. A banner counts down to it (`BannerLine.tsx` re-renders against the wall clock, so the number on screen is a render rather than a timer) and holds until the deadline instead of for the configured dwell. IT IS A HOST CLOCK WHERE `at` IS ORDINARILY THE LOG'S, and so is the `at` beside it on this one frame: an early warning has no matching event — its whole subject is a deadline that arrives WHILE THE LOG IS IDLE, which is exactly when a player is watching a mez run down — so it is delivered by the engine's heartbeat and both stamps come from that beat. The retired evaluator made the same choice in the same place, so the app receives the identical number under either. ABSENT ON EVERY ORDINARY FIRE, which is nearly all of them: a fire that IS the thing happening warns about nothing, and a deadline field on it would have no reader.",
 ///      "type": "integer"
 ///    },
 ///    "kind": {
@@ -2950,6 +3011,10 @@ impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json:
 ///    "sound": {
 ///      "description": "THE KEY THE APP WOULD PLAY: `<packId>/<soundId>`, joined from the definition's `sound` reference, which is exactly how the renderer's sound cache is keyed. Resolved here rather than sent as a reference for the conCard reason — an app that had to look the definition back up to know what to play would be holding a second copy of the rule set, which is the coupling this boundary exists to delete.",
 ///      "type": "string"
+///    },
+///    "spell": {
+///      "description": "THE SPELL THIS FIRING IS ABOUT, display form with the rank suffix INTACT (\"Mesmerization III\") — exactly as the log spelled it, and exactly what `FiredAlert.spell` has always carried. Rank-stripping is the SPEAKER's job (`speechTextFor` folds it out through the same rank machinery the matcher uses), not the producer's: a consumer that wants the rank must still be able to see it. IT IS THE NAME THAT ACTUALLY SATISFIED THE ALERT (JOS-84), not the event's best-effort pick — EQ's landing sentences are shared across a whole spell family (`<mob> slows down.` is five different spells), so the parser puts a guess in the event's `spell` and the truth in its `candidates`, and once a Shiftless Deeds alert is allowed to fire on a line whose `spell` field says \"Forlorn Deeds\", speaking \"Forlorn Deeds\" would be a second wrong answer wearing the first one's clothes. The name reported is the candidate the def's OWN matcher accepted, asked with the same rank fold the match used, so the two cannot split apart. ABSENT whenever the matched event names no spell: most event families, every `raw` trigger that matched a spell-less line, and every `app` signal. Never synthesized and never guessed — a spell mode with no spell falls back to the alert's own name, which is a true statement about what fired.",
+///      "type": "string"
 ///    }
 ///  },
 ///  "additionalProperties": false
@@ -2961,6 +3026,16 @@ impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json:
 pub struct FireMessage {
     ///When it fired, on THE LOG'S OWN CLOCK — the `ts` of the event that matched, never the host's wall clock. A fire is a statement about the log (ruling 18 law 1).
     pub at: i64,
+    ///THE WORDS THIS FIRING MAY SPEAK, or absent when it has none — see `FireCaptures` for what may be in it and what has already been done to it. Absent for the overwhelming majority of alerts, which declare no named group and ask for no `{target}`.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub captures: ::std::option::Option<FireCaptures>,
+    ///WHEN THE THING THIS FIRING WARNS ABOUT IS DUE (ms epoch) — the countdown half of JOS-378, and present ONLY on an EARLY-WARNING firing (`AlertDef.earlyWarnSec`, JOS-216/235). IT IS THE ROW'S STATED END, not the instant the warning spoke: `at` is when the sound was made and this is what it was early FOR, so the difference between them IS the lead time the user configured. A banner counts down to it (`BannerLine.tsx` re-renders against the wall clock, so the number on screen is a render rather than a timer) and holds until the deadline instead of for the configured dwell. IT IS A HOST CLOCK WHERE `at` IS ORDINARILY THE LOG'S, and so is the `at` beside it on this one frame: an early warning has no matching event — its whole subject is a deadline that arrives WHILE THE LOG IS IDLE, which is exactly when a player is watching a mez run down — so it is delivered by the engine's heartbeat and both stamps come from that beat. The retired evaluator made the same choice in the same place, so the app receives the identical number under either. ABSENT ON EVERY ORDINARY FIRE, which is nearly all of them: a fire that IS the thing happening warns about nothing, and a deadline field on it would have no reader.
+    #[serde(
+        rename = "dueAt",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub due_at: ::std::option::Option<i64>,
     pub kind: FireMessageKind,
     ///THE TEXT THAT MATCHED — the log line the trigger fired on, which is what `FiredAlert.matchedText` has always carried and what the event log prints beside the alert's name.
     pub message: ::std::string::String,
@@ -2968,6 +3043,9 @@ pub struct FireMessage {
     pub rule: ::std::string::String,
     ///THE KEY THE APP WOULD PLAY: `<packId>/<soundId>`, joined from the definition's `sound` reference, which is exactly how the renderer's sound cache is keyed. Resolved here rather than sent as a reference for the conCard reason — an app that had to look the definition back up to know what to play would be holding a second copy of the rule set, which is the coupling this boundary exists to delete.
     pub sound: ::std::string::String,
+    ///THE SPELL THIS FIRING IS ABOUT, display form with the rank suffix INTACT ("Mesmerization III") — exactly as the log spelled it, and exactly what `FiredAlert.spell` has always carried. Rank-stripping is the SPEAKER's job (`speechTextFor` folds it out through the same rank machinery the matcher uses), not the producer's: a consumer that wants the rank must still be able to see it. IT IS THE NAME THAT ACTUALLY SATISFIED THE ALERT (JOS-84), not the event's best-effort pick — EQ's landing sentences are shared across a whole spell family (`<mob> slows down.` is five different spells), so the parser puts a guess in the event's `spell` and the truth in its `candidates`, and once a Shiftless Deeds alert is allowed to fire on a line whose `spell` field says "Forlorn Deeds", speaking "Forlorn Deeds" would be a second wrong answer wearing the first one's clothes. The name reported is the candidate the def's OWN matcher accepted, asked with the same rank fold the match used, so the two cannot split apart. ABSENT whenever the matched event names no spell: most event families, every `raw` trigger that matched a spell-less line, and every `app` signal. Never synthesized and never guessed — a spell mode with no spell falls back to the alert's own name, which is a true statement about what fired.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub spell: ::std::option::Option<::std::string::String>,
 }
 ///`FireMessageKind`
 ///
