@@ -108,7 +108,7 @@ fn main() -> ExitCode {
         None => {
             let stdout = std::io::stdout();
             let mut out = BufWriter::with_capacity(1 << 20, stdout.lock());
-            let n = eqlog::scan::scan_bytes(&parser, &bytes, |line| {
+            let n = eqlog::scan::scan_bytes(&parser, &bytes, |line, _payload| {
                 let _ = out.write_all(line.as_bytes());
                 let _ = out.write_all(b"\n");
             });
@@ -243,11 +243,18 @@ fn snapshots(
 /// the production pipeline, so each stage's cost is the DELTA between neighbours:
 ///
 ///   lines      — split on `\n`, trim `\r`, materialize the `&str` (`from_utf8_lossy`)
-///   parse      — + `parser.parse_event` (events recognized, nothing built)
-///   serialize  — + `ev.finish()` (the NDJSON string the production seam emits)
-///   reparse    — + `fold::event::Event::from_json` (the `serde_json::Value` the modules walk)
+///   parse      — + `parser.parse_event` (events recognized, both halves built)
+///   serialize  — + `ev.done()` (the NDJSON string the production seam still emits)
 ///   fold       — the whole thing: `Fold::fold_bytes`, 20 modules + combat, exactly what
 ///                `--snapshots` runs minus the final envelope serialization
+///
+/// JOS-505 TOOK A STAGE OUT OF THE PIPELINE, and this table had to stop counting it as one. The
+/// fold used to parse the NDJSON back into a `serde_json::Value` before any module could read a
+/// field; it reads the parser's typed payload now, so `reparse` is no longer a stage and
+/// `modules+combat` is measured against `serialize` rather than against it. The old pass is still
+/// RUN and still printed — under the line, labelled as the cost the deleted round trip would have
+/// had — because a number this table used to carry should not simply vanish from it, and because
+/// it is the honest measure of what the change was worth on this machine.
 ///
 /// The construction mirrors `snapshots()` field for field so the `fold` row is the production
 /// fold and not a lighter cousin. Each pass reports MB/s over the SAME byte count, so the rows
@@ -390,10 +397,6 @@ fn stages(
         rate(ser_ms)
     );
     println!(
-        "  + reparse (Event::from_json)   {reparse_ms:>7} ms  {:>7.1} MB/s",
-        rate(reparse_ms)
-    );
-    println!(
         "  + fold (20 modules + combat)   {fold_ms:>7} ms  {:>7.1} MB/s",
         rate(fold_ms)
     );
@@ -409,68 +412,82 @@ fn stages(
     stage("lines", lines_ms);
     stage("parse", parse_ms.saturating_sub(lines_ms));
     stage("serialize", ser_ms.saturating_sub(parse_ms));
-    stage("reparse", reparse_ms.saturating_sub(ser_ms));
-    stage("modules+combat", fold_ms.saturating_sub(reparse_ms));
-    println!("  (reparse produced {reparsed} values; serialized {ser_bytes} bytes of NDJSON)");
+    stage("modules+combat", fold_ms.saturating_sub(ser_ms));
+    println!("  (serialized {ser_bytes} bytes of NDJSON)");
+    // NOT A STAGE ANY MORE (JOS-505) — printed under the line rather than in it. See this
+    // function's header for why a retired measurement is kept rather than deleted.
+    println!(
+        "  [retired] the deleted round trip (Event::from_json over the same events): {} ms, {reparsed} values",
+        reparse_ms.saturating_sub(ser_ms)
+    );
 
     // ── the dispatch floor: what 21 consumers pay just to refuse an event ─────────────────────
     //
-    // Every module's `on_event` begins by reading `kind` out of the `serde_json::Value` (a map
-    // lookup + a string compare) and returning when the event is not its business — which for
-    // sixteen of the twenty is nearly every event. This pass measures exactly that and nothing
-    // else: 21 `kind()` reads + compares per event, no module logic at all. It is the part of the
-    // fold a TYPED event kind (an enum discriminant) reduces to an integer match.
+    // Every module's `on_event` begins by asking whether the event is its business and returning
+    // when it is not — which for sixteen of the twenty is nearly every event. This pass measures
+    // exactly that and nothing else: 21 kind checks per event, no module logic at all.
+    //
+    // IT ASKS THE QUESTION THE WAY PRODUCTION ASKS IT (JOS-505). It used to re-parse the NDJSON and
+    // compare `kind()` against a string, and it measured ~940 ms of a 2.5M-event fold that way. The
+    // modules match on the discriminant now, so the probes are `Kind`s and the pass wraps the
+    // parser's payload — and the floor it reports is a floor somebody could still act on rather
+    // than a memorial to one nobody pays.
     let t = std::time::Instant::now();
     let mut floor_hits = 0u64;
     {
         let mut ev = eqlog::event::Ev::new();
         let mut seq: i64 = 0;
-        const PROBES: [&str; 21] = [
-            "combo",
-            "roster",
-            "loot",
-            "turnIn",
-            "classUnlock",
-            "kill",
-            "respawn",
-            "progress",
-            "level",
-            "character",
-            "outputFile",
-            "spellSet",
-            "itemTier",
-            "spellRank",
-            "alert",
-            "buff",
-            "buffTimer",
-            "consider",
-            "resist",
-            "feed",
-            "combatHit",
+        use eqlog::event::Kind;
+        const PROBES: [Kind; 21] = [
+            Kind::Damage,
+            Kind::Heal,
+            Kind::Loot,
+            Kind::Trade,
+            Kind::ClassUnlock,
+            Kind::Death,
+            Kind::Consider,
+            Kind::ExpGain,
+            Kind::Level,
+            Kind::SelfWho,
+            Kind::OutputFile,
+            Kind::SpellSet,
+            Kind::ItemReceived,
+            Kind::CastBegin,
+            Kind::BuffApply,
+            Kind::BuffFade,
+            Kind::Cc,
+            Kind::Charm,
+            Kind::Resist,
+            Kind::Zone,
+            Kind::Miss,
         ];
         split(bytes, &mut |line| {
             if parser.parse_event(line, seq, &mut ev) {
                 seq += 1;
-                if let Some(v) = fold::event::Event::from_json(ev.finish()) {
-                    for probe in PROBES {
-                        if v.kind() == probe {
-                            floor_hits += 1;
-                        }
+                let (_json, payload) = ev.done();
+                let v = fold::event::Event::typed(payload);
+                for probe in PROBES {
+                    if v.kind_of() == probe {
+                        floor_hits += 1;
                     }
                 }
             }
         });
     }
-    let floor_ms = t.elapsed().as_millis().saturating_sub(reparse_ms);
+    let floor_ms = t.elapsed().as_millis().saturating_sub(ser_ms);
     println!(
-        "  dispatch floor (21 kind() checks/event, minus the reparse pass): ~{floor_ms} ms ({floor_hits} hits)"
+        "  dispatch floor (21 kind checks/event, minus the serialize pass): ~{floor_ms} ms ({floor_hits} hits)"
     );
 
     // ── the attribution pass: WHERE inside the fold (JOS-504) ─────────────────────────────────
     //
     // A second, fresh construction (the first fold consumed its world), folded through
-    // `fold_bytes_attributed` — per-module, combat, detectors and reparse, each under its own
-    // stopwatch. Shares are the trustworthy read; the observer cost note is on the method.
+    // `fold_bytes_attributed` — per-module, combat, detectors and the event WRAP, each under its
+    // own stopwatch. Shares are the trustworthy read; the observer cost note is on the method.
+    //
+    // The `wrap` row was `reparse` until JOS-505 and is the same bucket, kept under a name that
+    // says what is in it now: a discriminant copy and a reference where a `serde_json` parse used
+    // to be. Keeping the row is what makes this table comparable with JOS-504's.
     let known2: HashSet<String> = parser
         .spell_db()
         .map(|db| db.keys().map(str::to_string).collect())
@@ -513,7 +530,7 @@ fn stages(
         .collect();
     rows.push(("combat", attr.combat_ns));
     rows.push(("detectors", attr.detectors_ns));
-    rows.push(("reparse", attr.reparse_ns));
+    rows.push(("wrap (was reparse)", attr.reparse_ns));
     rows.sort_by_key(|r| std::cmp::Reverse(r.1));
     for (id, ns) in rows {
         let pct = if total_ns == 0 {
@@ -578,7 +595,7 @@ fn diff(
     let mut first: Option<(u64, String, String)> = None;
     let mut at: u64 = 0;
     let started = std::time::Instant::now();
-    let n = eqlog::scan::scan_bytes(parser, bytes, |got| {
+    let n = eqlog::scan::scan_bytes(parser, bytes, |got, _payload| {
         if first.is_some() {
             return;
         }
