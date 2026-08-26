@@ -178,7 +178,15 @@ test('both edges where the serving world changes hands are announced', () => {
   // that has finished folding and gone quiet will not move again for minutes — so a mirror waiting
   // for a cursor would fall back on every draw of a card the engine could answer perfectly. The two
   // sit in one block because they are one statement about one moment: the world changed hands.
-  assert.match(host, /if \(first\) \{\s*pushWorldChanged\(\)[\s\S]*?primeMirrors\(\)\s*\}/)
+  // The `\s*\}` that used to close this pattern is gone (JOS-499): the same block now also writes
+  // the GO-LIVE SENTENCE, which replaced the parity line as the app's statement that the engine has
+  // started answering its reads — and two e2e specs use it as their readiness precondition. The
+  // claim is unchanged and is the one that matters: both announcements sit inside the `first` test,
+  // in one block, because they are one statement about one moment. What may follow them there is
+  // not this assertion's business.
+  assert.match(host, /if \(first\) \{\s*pushWorldChanged\(\)[\s\S]*?primeMirrors\(\)/)
+  // …and the sentence itself is in that block rather than somewhere a re-poll could repeat it.
+  assert.match(host, /if \(first\) \{[\s\S]*?debug\(servingLine\(/)
   // Going away: a window holding a served snapshot is IGNORING module:delta because it was served,
   // so without this frame it would sit frozen until the next character rebuild.
   const edges = host.match(/const wasServing = engineLiveOn !== null/g) ?? []
