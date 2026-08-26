@@ -141,7 +141,8 @@ docs/agents-archive.md.
     settles on stale geometry · 5 sightings (2026-08-10/11/12 full-sweep; 4th
     in the JOS-229 sweep; 5th 2026-08-12 STANDALONE on the JOS-240 merge
     verification — the full-sweep-only pattern is broken, green on immediate
-    rerun) · fix shape diagnosed (wait for bounds to differ before settling);
+    rerun; 6th 2026-08-26 in JOS-501's 62-spec sweep, all three narrow-window
+    rows together) · fix shape diagnosed (wait for bounds to differ before settling);
     ticket JOS-232 filed — now firing standalone, priority raised.
   - `window-bounds.e2e` · close-time bounds write never lands under sweep
     load ("closing the window writes down where it was left — (none)",
@@ -157,6 +158,14 @@ docs/agents-archive.md.
     been closed" · 1 sighting (2026-08-13 sweep, JOS-279; six green serially
     after, none in the next sweep) · a host/load event, not one spec's race —
     a second sighting is a runner-concurrency ticket.
+  - `engine-boots.e2e` · the clean-shutdown claim — "the engine takes the hint:
+    exit 0, the contract's own ending" — failed once in a full sweep · 1
+    sighting (2026-08-26, JOS-501's 62-spec sweep; green STANDALONE three times
+    the same day, including immediately after) · the engine exits on stdin
+    close, and under four concurrent launches the wait for that exit is the
+    thing most likely to lose a race with the runner's own teardown. Report
+    line until a second sighting; if it recurs, the suspect is the wait, not
+    the contract.
   - `presenceWorker.test` first-tick dedup · watches the REAL machine; fails
     while EverQuest runs with a player at the keyboard · 3 sightings
     (2026-08-10 ×2, 2026-08-12 JOS-239 worker mid-session, green on final
