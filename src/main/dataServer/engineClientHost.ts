@@ -73,7 +73,11 @@ import { playEngineFire } from './alertsAudio'
 // rather than a fourth of its own; this file simply offers every card and prints what was decided.
 import { conCardServeLine, noteConCardServe, openEngineConCard } from './conCardServe'
 import { readDefine } from './appKnowledge'
-import { DEFINE_OPS, setAppKnowledgePusher, type DefineOp } from './definePush'
+import { DEFINE_OPS, setAppKnowledgePusher, setLogDirPusher, type DefineOp } from './definePush'
+// WHERE THE CHARACTER LOGS LIVE (JOS-498, decision sheet 1a). THE APP NAMES THE DIRECTORY, so this
+// file reads the app's own resolver and states it to the engine — the store stays persistence truth
+// and the engine never reads a settings file (boundary verdict 3).
+import { eqLogsDir } from '../log/config'
 import { connectToEngine } from './socketChannel'
 // THE DELTA ARM (JOS-493). It owns the serve flag's second half and the fan-out; this file supplies
 // the only thing it cannot get for itself — the engine's own `moduleChanged` frames, and the two
@@ -362,6 +366,11 @@ async function openConnection(mine: number, info: ReadyEngine, client: EngineCli
     onKnowledgeMiss(miss)
   })
   debug(`data-server client: connected to the engine on port ${String(info.port)}`)
+  // WHERE THE LOGS LIVE GOES FIRST, and above all BEFORE `attachAndProbe` — which returns early on
+  // a launch with no character, which is the launch a served character list is most needed on. See
+  // `pushLogDirNow`.
+  await pushLogDirNow(mine)
+  if (gen !== mine) return
   await attachAndProbe(mine)
 }
 
@@ -407,6 +416,38 @@ async function pushAllDefines(mine: number): Promise<void> {
   for (const op of DEFINE_OPS) {
     await pushDefine(mine, op)
     if (gen !== mine) return
+  }
+}
+
+// ── where the logs live, pushed (JOS-498, owner ruling 21 / decision sheet 1a) ──────────────────
+
+/**
+ * TELL THE ENGINE WHERE THE CHARACTER LOGS ARE.
+ *
+ * ON CONNECT, AND NOT WITH THE DEFINES. `pushAllDefines` is called from `attachAndProbe`, which
+ * RETURNS EARLY when this app has no character attached — "the engine is left idle" — and that early
+ * return is exactly the launch this push matters most on: a fresh install has no character to attach
+ * to and a picker that has to draw one anyway. So it is sent from `openConnection`, before anything
+ * can decide there is nothing to do.
+ *
+ * `eqLogsDir()` RATHER THAN A VALUE PASSED IN, for `appKnowledge.ts`'s reason exactly: what the
+ * engine is handed must be what this app has RESOLVED, not what some caller believed at the moment
+ * it noticed a change. The resolver is memoized (`config.ts`) and a settings change invalidates it
+ * before this is ever called, so re-reading here is a field read on the common path.
+ *
+ * IT IS VOIDED AND IT NEVER THROWS, exactly as a define is: a directory the engine refused is a
+ * dev-log line, and the app's own read answers every question in the meantime.
+ */
+async function pushLogDirNow(mine: number): Promise<void> {
+  const l = live
+  if (l === null || gen !== mine) return
+  const dir = eqLogsDir()
+  try {
+    await l.client.request('logs.setDir', { dir })
+    if (gen !== mine) return
+    debug(`data-server logs: the engine was told to enumerate ${dir}`)
+  } catch (err) {
+    debug(`data-server client: logs.setDir was refused (${describeErr(err)})`)
   }
 }
 
@@ -716,6 +757,31 @@ export function engineServeReadiness(): Readiness {
 }
 
 /**
+ * IS THERE AN ENGINE ON THE OTHER END OF THIS SOCKET AT ALL?
+ *
+ * THE WEAKER OF THIS FILE'S TWO READINESS QUESTIONS, and the weakness is the whole point rather than
+ * a shortcut. `engineServeReadiness` above asks four things because it guards reads of a FOLD: two
+ * of its four — are the worlds on the same file, has that file's fold gone live — are questions
+ * about a log, and a caller that skipped them would draw one character's rows under another's name.
+ *
+ * `logs.list` NAMES NO LOG. It enumerates the directory the app pushed, which is a question about a
+ * FOLDER and is answerable by a world that has attached to nothing whatsoever — and the launch it
+ * matters most on is precisely the one where nothing is attached, because a fresh install has
+ * characters to choose between before there is anything to fold. Asking the four-part question there
+ * would refuse every answer this op exists to give, on grounds that have nothing to do with it.
+ *
+ * SO THE SET OF REASONS IS THE SAME AND ONLY THE FIRST TWO ARE ASKED (`readShim.ts FallbackReason`):
+ * is there a client, and is its connection up. No third arm was invented — a fallback reason nobody
+ * can act on differently is a reason not worth a member.
+ */
+export function engineConnectedReadiness(): Readiness {
+  const l = live
+  if (l === null) return { ok: false, why: 'noClient' }
+  if (l.client.state !== 'ready') return { ok: false, why: 'notConnected' }
+  return SERVABLE
+}
+
+/**
  * ONE TYPED REQUEST TO THE ENGINE, for a main-side caller.
  *
  * IT REJECTS RATHER THAN ANSWERING `null`, which is the difference from `enginePerfSnapshot` and is
@@ -750,6 +816,13 @@ export function installEngineClient(): void {
   setAppKnowledgePusher((op) => {
     const mine = gen
     void pushDefine(mine, op)
+  })
+  // THE EQ-DIRECTORY EDGE (JOS-498), by the same one-slot rule and for the same reason: `session.ts`
+  // must be able to say "the directory moved" without importing this file, which imports `session.ts`
+  // — that is a cycle, and the slot is what inverts it.
+  setLogDirPusher(() => {
+    const mine = gen
+    void pushLogDirNow(mine)
   })
   // THE MIRROR'S REQUESTER (JOS-496), by the same one-slot rule and for the same reason: the mirror
   // is a leaf that main's synchronous readers import, and a leaf that imported this file back would
@@ -786,6 +859,7 @@ export function stopEngineClient(): void {
   if (wasServing) pushWorldChanged()
   setWorldRebuiltObserver(null)
   setAppKnowledgePusher(null)
+  setLogDirPusher(null)
   // …and the mirrors, which clear themselves on the null (see `installMirrors`): a synchronous
   // reader must never be left holding a served fact after the connection that served it is gone.
   installMirrors(null)

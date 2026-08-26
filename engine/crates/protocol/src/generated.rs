@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:5e83fae233a66bc3cfc49258144129f079e3bc4036764b80aec0ca42beb6c9a3
+//! schema-digest: sha256:1db2731131510b321a7d095cf65a67bafcf851ae8483019822152c0e57164777
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -521,6 +521,12 @@ impl ::std::convert::From<::std::collections::BTreeMap<::std::string::String, cr
 ///    },
 ///    {
 ///      "$ref": "#/$defs/ResistSpellRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/LogsSetDirRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/LogsListRequest"
 ///    }
 ///  ]
 ///}
@@ -554,6 +560,8 @@ pub enum ClientMessage {
     RespawnConfirmSightingRequest(RespawnConfirmSightingRequest),
     ResistLevelsRequest(ResistLevelsRequest),
     ResistSpellRequest(ResistSpellRequest),
+    LogsSetDirRequest(LogsSetDirRequest),
+    LogsListRequest(LogsListRequest),
 }
 impl ::std::convert::From<Hello> for ClientMessage {
     fn from(value: Hello) -> Self {
@@ -678,6 +686,16 @@ impl ::std::convert::From<ResistLevelsRequest> for ClientMessage {
 impl ::std::convert::From<ResistSpellRequest> for ClientMessage {
     fn from(value: ResistSpellRequest) -> Self {
         Self::ResistSpellRequest(value)
+    }
+}
+impl ::std::convert::From<LogsSetDirRequest> for ClientMessage {
+    fn from(value: LogsSetDirRequest) -> Self {
+        Self::LogsSetDirRequest(value)
+    }
+}
+impl ::std::convert::From<LogsListRequest> for ClientMessage {
+    fn from(value: LogsListRequest) -> Self {
+        Self::LogsListRequest(value)
     }
 }
 ///One row of `spells_us.txt` as the app's own `SpellResistInfo` describes it, field for field. THE OPTIONALS ARE ABSENT-MEANS-NOTHING and each absence was measured rather than chosen: a zero recast is the file saying there is no re-use timer, a zero `aeMaxTargets` is what 71,864 of ~74k rows read, and a zero mana is what every bard song says. Storing those zeros would cost a field on most of the table to state what the absence already states.
@@ -4714,6 +4732,60 @@ impl ::std::convert::TryFrom<::std::string::String> for KnowledgeSpellRequestOp 
         value.parse()
     }
 }
+///One character log, as `src/shared/types.ts CharacterRef` describes it - field for field, because this reply IS what the app's picker has always been handed and a served shape that differed by a name would make the engine-absent arm a second contract. THE NAME AND SERVER ARE READ OFF THE FILENAME and nothing else: `eqlog_<Character>_<server>.txt`, split at the FIRST underscore after the prefix, which is the app's own `parseLogName` regex stated as a rule - a character whose name contains an underscore is not a thing EverQuest allows, and a SERVER containing one is, so the split must be leftmost and the remainder must be the server.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "LogCharacter",
+///  "description": "One character log, as `src/shared/types.ts CharacterRef` describes it - field for field, because this reply IS what the app's picker has always been handed and a served shape that differed by a name would make the engine-absent arm a second contract. THE NAME AND SERVER ARE READ OFF THE FILENAME and nothing else: `eqlog_<Character>_<server>.txt`, split at the FIRST underscore after the prefix, which is the app's own `parseLogName` regex stated as a rule - a character whose name contains an underscore is not a thing EverQuest allows, and a SERVER containing one is, so the split must be leftmost and the remainder must be the server.",
+///  "type": "object",
+///  "required": [
+///    "logPath",
+///    "name",
+///    "server"
+///  ],
+///  "properties": {
+///    "lastPlayed": {
+///      "description": "The file's last-modified time in epoch milliseconds, TRUNCATED to an integer, which is the sort key the picker orders by. ABSENT MEANS THE ENGINE COULD NOT STATE IT - a file that vanished between the readdir and the stat, or a filesystem with no modification time - and never zero, which would draw a real date in 1970 beside a real character name. It is the same fact and the same rule `HealthResult.logMtimeMs` carries for the attached log, and it stays a served PROCESS fact rather than fold state (ruling 18): no module holds it, and no replay can produce it.",
+///      "type": "integer"
+///    },
+///    "logPath": {
+///      "description": "The absolute path of the log file, which is what `session.attach` takes and therefore what a picked row is worth.",
+///      "type": "string"
+///    },
+///    "name": {
+///      "description": "The character, as the filename spells it - the game's own capitalisation, never folded.",
+///      "type": "string"
+///    },
+///    "server": {
+///      "description": "The server, as the filename spells it.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct LogCharacter {
+    ///The file's last-modified time in epoch milliseconds, TRUNCATED to an integer, which is the sort key the picker orders by. ABSENT MEANS THE ENGINE COULD NOT STATE IT - a file that vanished between the readdir and the stat, or a filesystem with no modification time - and never zero, which would draw a real date in 1970 beside a real character name. It is the same fact and the same rule `HealthResult.logMtimeMs` carries for the attached log, and it stays a served PROCESS fact rather than fold state (ruling 18): no module holds it, and no replay can produce it.
+    #[serde(
+        rename = "lastPlayed",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub last_played: ::std::option::Option<i64>,
+    ///The absolute path of the log file, which is what `session.attach` takes and therefore what a picked row is worth.
+    #[serde(rename = "logPath")]
+    pub log_path: ::std::string::String,
+    ///The character, as the filename spells it - the game's own capitalisation, never folded.
+    pub name: ::std::string::String,
+    ///The server, as the filename spells it.
+    pub server: ::std::string::String,
+}
 ///THE ADDRESSABLE COORDINATE (owner ruling 18 law 3): state is addressed by (log identity, byte offset) and by nothing else — never by wall time, never by `current`. `offset` is the end of the last COMPLETE line folded, which is the same definition as the scan's end offset; a half-written line is not an event and the mark waits with it. THIS IS NOT A FRAMING CONCERN: it is a coordinate INSIDE the file the engine reads, and it would mean the same thing over any transport.
 ///
 /// <details><summary>JSON schema</summary>
@@ -4748,6 +4820,367 @@ pub struct LogMark {
     pub log: ::std::string::String,
     ///The end of the last complete line folded, counted from the start of the file.
     pub offset: i64,
+}
+///HOW READING THE DIRECTORY WENT - `ResolvedEqDir.readable` in `main/log/config.ts`, member for member, so the served answer and the app's own read describe the same three situations in the same words. A FAILED READ IS NOT `no logs` (JOS-82): `missing` is a path with nothing at it, which is the ordinary state of a machine where EverQuest is installed somewhere else, and `unreadable` is a directory that exists and refused - a permission, a disconnected network share, a share violation - which is a different sentence to a person and a different decision to the caller.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "LogsDirReadable",
+///  "description": "HOW READING THE DIRECTORY WENT - `ResolvedEqDir.readable` in `main/log/config.ts`, member for member, so the served answer and the app's own read describe the same three situations in the same words. A FAILED READ IS NOT `no logs` (JOS-82): `missing` is a path with nothing at it, which is the ordinary state of a machine where EverQuest is installed somewhere else, and `unreadable` is a directory that exists and refused - a permission, a disconnected network share, a share violation - which is a different sentence to a person and a different decision to the caller.",
+///  "type": "string",
+///  "enum": [
+///    "ok",
+///    "missing",
+///    "unreadable"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum LogsDirReadable {
+    #[serde(rename = "ok")]
+    Ok,
+    #[serde(rename = "missing")]
+    Missing,
+    #[serde(rename = "unreadable")]
+    Unreadable,
+}
+impl ::std::fmt::Display for LogsDirReadable {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Ok => f.write_str("ok"),
+            Self::Missing => f.write_str("missing"),
+            Self::Unreadable => f.write_str("unreadable"),
+        }
+    }
+}
+impl ::std::str::FromStr for LogsDirReadable {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "ok" => Ok(Self::Ok),
+            "missing" => Ok(Self::Missing),
+            "unreadable" => Ok(Self::Unreadable),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for LogsDirReadable {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for LogsDirReadable {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for LogsDirReadable {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///WHICH CHARACTERS THIS INSTALL HAS, as the engine sees the folder the app named. The served half of ruling 21: the app has always read this directory itself (`listCharacters` in `main/log/config.ts` - a readdir, a filename parse and a `statSync` per file) and the ruling moves the reading to the process that owns log files. IT TAKES NO PARAMS BECAUSE THE DIRECTORY IS PUSHED, and that is the point of the split rather than an economy: a request carrying the folder would make the answer a function of whatever the caller happened to send, and two callers could then disagree about which install this app is looking at. It IS ANSWERABLE BY A WORLD WITH NO FOLD, like `knowledge.*` and `perf.snapshot` and unlike `module.snapshot`: a fresh install has characters to choose between before there is anything to attach to, which is precisely the moment this op exists for. THE ONE REFUSAL IS NEVER HAVING BEEN TOLD - an engine that has heard no `logs.setDir` has no directory to enumerate, which is `unavailable` rather than an empty list, because a caller cannot tell an install with no characters from a question nobody armed.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "LogsListRequest",
+///  "description": "WHICH CHARACTERS THIS INSTALL HAS, as the engine sees the folder the app named. The served half of ruling 21: the app has always read this directory itself (`listCharacters` in `main/log/config.ts` - a readdir, a filename parse and a `statSync` per file) and the ruling moves the reading to the process that owns log files. IT TAKES NO PARAMS BECAUSE THE DIRECTORY IS PUSHED, and that is the point of the split rather than an economy: a request carrying the folder would make the answer a function of whatever the caller happened to send, and two callers could then disagree about which install this app is looking at. It IS ANSWERABLE BY A WORLD WITH NO FOLD, like `knowledge.*` and `perf.snapshot` and unlike `module.snapshot`: a fresh install has characters to choose between before there is anything to attach to, which is precisely the moment this op exists for. THE ONE REFUSAL IS NEVER HAVING BEEN TOLD - an engine that has heard no `logs.setDir` has no directory to enumerate, which is `unavailable` rather than an empty list, because a caller cannot tell an install with no characters from a question nobody armed.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "logs.list"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/NoParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct LogsListRequest {
+    pub id: RequestId,
+    pub op: LogsListRequestOp,
+    pub params: NoParams,
+}
+///`LogsListRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "logs.list"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum LogsListRequestOp {
+    #[serde(rename = "logs.list")]
+    LogsList,
+}
+impl ::std::fmt::Display for LogsListRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::LogsList => f.write_str("logs.list"),
+        }
+    }
+}
+impl ::std::str::FromStr for LogsListRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "logs.list" => Ok(Self::LogsList),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for LogsListRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for LogsListRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for LogsListRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///THE CHARACTERS, AND WHERE THEY WERE LOOKED FOR. `dir` and `readable` ride every answer and the rows are whatever was found, which is `ResistSpellResult`'s shape and its argument: an empty list means three different things to a person - no such folder, a folder that could not be read, a folder with no character logs in it - and a reply that carried only the rows would flatten them into one silence. `dir` IS ALSO THE ECHO TEST. The app compares it against the directory it currently resolves, and a mismatch means this engine is answering about a folder the app has since been pointed away from - a `logs.setDir` still in flight - so the app reads the folder itself rather than drawing a picker for the wrong install. It is the same test `module.snapshot`'s echoed `module` gets, for the same reason: a bookkeeping failure between two processes must not reach a surface wearing the right answer's clothes.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "LogsListResult",
+///  "description": "THE CHARACTERS, AND WHERE THEY WERE LOOKED FOR. `dir` and `readable` ride every answer and the rows are whatever was found, which is `ResistSpellResult`'s shape and its argument: an empty list means three different things to a person - no such folder, a folder that could not be read, a folder with no character logs in it - and a reply that carried only the rows would flatten them into one silence. `dir` IS ALSO THE ECHO TEST. The app compares it against the directory it currently resolves, and a mismatch means this engine is answering about a folder the app has since been pointed away from - a `logs.setDir` still in flight - so the app reads the folder itself rather than drawing a picker for the wrong install. It is the same test `module.snapshot`'s echoed `module` gets, for the same reason: a bookkeeping failure between two processes must not reach a surface wearing the right answer's clothes.",
+///  "type": "object",
+///  "required": [
+///    "characters",
+///    "dir",
+///    "readable"
+///  ],
+///  "properties": {
+///    "characters": {
+///      "description": "One row per `eqlog_<Character>_<server>.txt`, most recently written first. Empty whenever `readable` is not `ok`, and legitimately empty when it is.",
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/LogCharacter"
+///      }
+///    },
+///    "dir": {
+///      "description": "The directory this answer is about, echoed back exactly as it was pushed - never normalized, never re-cased, so a caller can compare it against what it sent.",
+///      "type": "string"
+///    },
+///    "readable": {
+///      "$ref": "#/$defs/LogsDirReadable"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct LogsListResult {
+    ///One row per `eqlog_<Character>_<server>.txt`, most recently written first. Empty whenever `readable` is not `ok`, and legitimately empty when it is.
+    pub characters: ::std::vec::Vec<LogCharacter>,
+    ///The directory this answer is about, echoed back exactly as it was pushed - never normalized, never re-cased, so a caller can compare it against what it sent.
+    pub dir: ::std::string::String,
+    pub readable: LogsDirReadable,
+}
+///`LogsSetDirParams`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "LogsSetDirParams",
+///  "type": "object",
+///  "required": [
+///    "dir"
+///  ],
+///  "properties": {
+///    "dir": {
+///      "description": "The folder holding `eqlog_<Character>_<server>.txt`, absolute, as the app resolved it. A directory that does not exist is a perfectly good push and is not refused: the app resolves a path on a machine with no EverQuest on it too, and what that produces is a `logs.list` saying `missing` rather than a command that failed.",
+///      "type": "string"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct LogsSetDirParams {
+    ///The folder holding `eqlog_<Character>_<server>.txt`, absolute, as the app resolved it. A directory that does not exist is a perfectly good push and is not refused: the app resolves a path on a machine with no EverQuest on it too, and what that produces is a `logs.list` saying `missing` rather than a command that failed.
+    pub dir: ::std::string::String,
+}
+///WHERE THE CHARACTER LOGS LIVE, PUSHED (owner ruling 21, decision sheet 1a). Log DISCOVERY migrates server-side and launch-time character choice becomes a served answer - but THE APP NAMES THE DIRECTORY, which is boundary verdict 3 applied to a path instead of to a preference: the store is persistence truth, the engine never reads a settings file, and the directory is the product of an override plus an auto-discovery sweep plus a registry read that this engine has no business doing. So the app resolves it (`main/log/config.ts eqLogsDir`) and states it here, on connect and whenever the setting moves. IT IS AN IDEMPOTENT FULL-SET REPLACE like the five `*.define` commands, which for a single value means the last push is the whole of what the app has said; the ack is therefore `DefineAck` with no `count`, exactly as `buffTrust.define` and `respawn.define` answer for a payload that is one object rather than a list. IT IS NOT A `*.define` BY NAME, deliberately: those five are FOLD inputs and part of ruling 18's cache key - a rule set that changes what folding a log produces - and this changes nothing about any fold. It names a directory nobody folds, answers one query, and a world that never hears it folds byte-identically to one that does. THE DIRECTORY IS NOT THE ATTACH. `session.attach` names one FILE to fold and this names the folder to enumerate; a fresh install has the second and not the first, which is the whole reason this command exists rather than the list being derived from the attached log's parent.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "LogsSetDirRequest",
+///  "description": "WHERE THE CHARACTER LOGS LIVE, PUSHED (owner ruling 21, decision sheet 1a). Log DISCOVERY migrates server-side and launch-time character choice becomes a served answer - but THE APP NAMES THE DIRECTORY, which is boundary verdict 3 applied to a path instead of to a preference: the store is persistence truth, the engine never reads a settings file, and the directory is the product of an override plus an auto-discovery sweep plus a registry read that this engine has no business doing. So the app resolves it (`main/log/config.ts eqLogsDir`) and states it here, on connect and whenever the setting moves. IT IS AN IDEMPOTENT FULL-SET REPLACE like the five `*.define` commands, which for a single value means the last push is the whole of what the app has said; the ack is therefore `DefineAck` with no `count`, exactly as `buffTrust.define` and `respawn.define` answer for a payload that is one object rather than a list. IT IS NOT A `*.define` BY NAME, deliberately: those five are FOLD inputs and part of ruling 18's cache key - a rule set that changes what folding a log produces - and this changes nothing about any fold. It names a directory nobody folds, answers one query, and a world that never hears it folds byte-identically to one that does. THE DIRECTORY IS NOT THE ATTACH. `session.attach` names one FILE to fold and this names the folder to enumerate; a fresh install has the second and not the first, which is the whole reason this command exists rather than the list being derived from the attached log's parent.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "logs.setDir"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/LogsSetDirParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct LogsSetDirRequest {
+    pub id: RequestId,
+    pub op: LogsSetDirRequestOp,
+    pub params: LogsSetDirParams,
+}
+///`LogsSetDirRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "logs.setDir"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum LogsSetDirRequestOp {
+    #[serde(rename = "logs.setDir")]
+    LogsSetDir,
+}
+impl ::std::fmt::Display for LogsSetDirRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::LogsSetDir => f.write_str("logs.setDir"),
+        }
+    }
+}
+impl ::std::str::FromStr for LogsSetDirRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "logs.setDir" => Ok(Self::LogsSetDir),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for LogsSetDirRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for LogsSetDirRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for LogsSetDirRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///A MODULE'S PUBLISHED STATE MOVED — the dirty bit, and nothing more. CONNECTION-WIDE and carrying no `id`, on the `FireMessage` precedent: a module belongs to the world rather than to any subscription. IT CARRIES NO STATE, DELIBERATELY. The whole payload is a name and a cursor, so a client that is not showing that module pays one small frame and ignores it, and a client that is re-fetches through `module.snapshot` — which is the op that already exists and the only place a module's shape is stated. A frame that carried the state would be `module.snapshot` pushed at a cadence nobody asked for, which is the per-window snapshot fan-out this whole boundary exists to delete. IT IS COALESCED TO ONE PER MODULE PER SERVE BEAT (~10 Hz, `views::SERVE_EVERY`), not one per event: a busy tail moves a module's seq many times between two beats and the newest cursor is the whole answer — the same newest-wins rule rule 2 states for diffs. Nothing is sent for a module whose seq did not move, so an idle session pays nothing. IT IS NOT AN EPOCH AND DOES NOT REPLACE ONE: a bump still means drop-everything-and-take-the-reset, and a `moduleChanged` inside one generation means only `there is something newer to fetch`.
 ///
@@ -5722,6 +6155,9 @@ impl ::std::convert::TryFrom<::std::string::String> for ReplyKind {
 ///    },
 ///    {
 ///      "$ref": "#/$defs/ResistSpellResult"
+///    },
+///    {
+///      "$ref": "#/$defs/LogsListResult"
 ///    }
 ///  ]
 ///}
@@ -5745,6 +6181,7 @@ pub enum ReplyResult {
     RespawnConfirmAck(RespawnConfirmAck),
     ResistLevelsResult(ResistLevelsResult),
     ResistSpellResult(ResistSpellResult),
+    LogsListResult(LogsListResult),
 }
 impl ::std::convert::From<EchoResult> for ReplyResult {
     fn from(value: EchoResult) -> Self {
@@ -5819,6 +6256,11 @@ impl ::std::convert::From<ResistLevelsResult> for ReplyResult {
 impl ::std::convert::From<ResistSpellResult> for ReplyResult {
     fn from(value: ResistSpellResult) -> Self {
         Self::ResistSpellResult(value)
+    }
+}
+impl ::std::convert::From<LogsListResult> for ReplyResult {
+    fn from(value: LogsListResult) -> Self {
+        Self::LogsListResult(value)
     }
 }
 ///Client-chosen correlation id. A reply carries the id of its request; every stream message carries the id of the subscribe request that opened it.
