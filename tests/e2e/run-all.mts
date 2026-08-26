@@ -21,7 +21,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { cpus } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { reapOrphanUserData } from './appWindow.mjs'
 import { buildIfStale } from './build.mjs'
@@ -96,14 +96,43 @@ function runSpec(spec: string): Promise<Result> {
   })
 }
 
-/** Run at most CONCURRENCY specs at once, in discovery order. */
+/**
+ * SPECS THAT MUST NOT SHARE THE MACHINE (JOS-499), and the contention is named rather than implied.
+ *
+ * Every launch now spawns a Rust engine beside the app, and under `npm run test:e2e` that means up
+ * to four DEBUG engines folding concurrently — a build whose spell-db parse alone is MEASURED at
+ * 4.3 s (release is roughly a tenth of it, per the engine's own README). These two specs assert on
+ * timing the fold has to beat: `buffs-overlay` waits for a buff row to appear and then for it to
+ * DROP, and `engine-alert-fires` drives one live line to exactly one sound. Both are green run on
+ * their own and both fail under a full parallel sweep — measured both ways, repeatedly.
+ *
+ * THIS IS NOT A FLAKE ROW, and the distinction matters for AGENTS.md's ledger: a flake is a spec
+ * that fails nondeterministically under identical conditions. These fail DETERMINISTICALLY under
+ * load and pass deterministically without it, so the honest fix is to stop giving them load rather
+ * than to widen a timeout until the failure hides.
+ *
+ * THEY RUN LAST, ALONE, and after everything else has exited — so they get a quiet machine rather
+ * than a smaller share of a busy one. The cost is their own wall clock added to the run, which is
+ * about two minutes, and that is the price of the suite meaning what it says.
+ *
+ * THE REAL FIX IS A RELEASE ENGINE FOR THE SUITE (`buildEngineIfStale` builds debug). That is a
+ * harness change with its own trade — a slower first build for a faster, quieter suite — and it is
+ * the integrator's call, not this list's. Delete this list the day it is made.
+ */
+const SOLO_SPECS = ['buffs-overlay.e2e.mts', 'engine-alert-fires.e2e.mts']
+
+/** Run at most CONCURRENCY specs at once, in discovery order — then the solo ones, alone. */
 async function runAll(specs: string[]): Promise<Result[]> {
+  const solo = specs.filter((s) => SOLO_SPECS.includes(basename(s)))
+  const packed = specs.filter((s) => !SOLO_SPECS.includes(basename(s)))
   const results: Result[] = []
   let next = 0
   const worker = async (): Promise<void> => {
-    while (next < specs.length) results.push(await runSpec(specs[next++]))
+    while (next < packed.length) results.push(await runSpec(packed[next++]))
   }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, specs.length) }, worker))
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, packed.length) }, worker))
+  // …and the ones that need the machine to themselves, strictly one at a time.
+  for (const s of solo) results.push(await runSpec(s))
   return results
 }
 

@@ -134,6 +134,28 @@ export async function stepTargetToken(
   page: Page,
   log: { appendAt: (at: Date, ...m: readonly string[]) => number }
 ): Promise<void> {
+  // ── RETIRED BY OWNER RULING 5a (JOS-499) — RETURNS WITH THE FIRE-FRAME EXTENSION ────────────
+  //
+  // WHAT THIS CLAIMED: the parser-extracted `{target}` — the mob a spell is affecting — reached the
+  // SPEECH seam substituted, with no regex in the def. JOS-353's acceptance, in the owner's words.
+  //
+  // WHY IT CANNOT BE CLAIMED TODAY. The engine is the alert evaluator (ruling 22) and a firing
+  // reaches this app as a `FireMessage`, which carries exactly four fields: `at`, `rule`, `sound`,
+  // `message`. There is no room in it for the JOS-353 `{target}`, the JOS-103 captures, the JOS-84
+  // resolved spell name or the JOS-378 `dueAt`. `alertsAudioRules.ts armVerdict` has said so since
+  // JOS-491 — "costs a firing some of its WORDS and never its existence" — and the deletion release
+  // makes that path the only path, so the words are gone rather than degraded.
+  //
+  // THE ALERT STILL FIRES AND STILL SPEAKS, with the token unsubstituted. This is a WORD-PARITY
+  // retirement, not a silence: the sound, the speech channel, the cooldown and the banner are
+  // asserted elsewhere in this suite and all still pass.
+  //
+  // IT COMES BACK. Extending the frame to carry the entity fields is a schema change, deliberately
+  // NOT made in this branch — a separate worker owns it, branching from here, and the ticket is
+  // release-blocking. The body below is left standing rather than deleted so that landing it is an
+  // un-comment; `RETIRED_5a` is the grep handle.
+  const RETIRED_5a = true
+  if (RETIRED_5a) return
   const saved = await saveDef(page)
   if (!check('a no-regex target alert saves through the app’s own IPC', saved > 0, `${String(saved)} defs stored`)) {
     return
