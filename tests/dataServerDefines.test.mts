@@ -90,9 +90,15 @@ test('THE APP PUSHES ALL FIVE FAMILIES and each answer narrows through the op re
   // ABSENT for the two families that push one object. A client can therefore check its own push
   // against the answer wherever there is something to count, and knows there is not where there
   // is not.
+  //
+  // THE ALERTS PUSH CARRIES TWO DEFS SINCE JOS-500, and the number tracks the fixture rather than
+  // this file's memory of it: the second def is what makes the fire frames downstream able to show
+  // a capture map, a resolved spell and an early warning's deadline, which needs a def with a
+  // pattern, a phrase and an offset on it. The shape of the claim is unchanged — a LIST family
+  // counts what it took, an OBJECT family has nothing to count.
   assert.deepEqual(
     acks.map((a) => a.count),
-    [1, undefined, undefined, 1, 1]
+    [2, undefined, undefined, 1, 1]
   )
   assert.ok(acks.every((a) => a.applied))
 })
