@@ -174,15 +174,11 @@ export function noteEngineFault(cause: EngineFaultCause | null): void {
   })
 }
 
-/**
- * Push the current state at a window that has just appeared.
- *
- * A renderer asks for it once on mount (`IPC.engineLaunchState`) rather than being pushed at, so
- * this exists only for the composition root's own convenience and deliberately does not exist as a
- * broadcast-on-window-create hook — a window that is not listening yet is exactly the race the
- * mount-time read removes.
- */
-export function resetEngineLaunchState(): void {
-  say = ENGINE_LAUNCH_STARTING
-  lookedIn = []
-}
+// THERE IS NO RESET, AND THE ABSENCE IS THE DECISION. A `resetEngineLaunchState()` was written here
+// and deleted before it shipped: nothing called it. The app has one engine for one process
+// lifetime, so the only thing that could want this state cleared is a test, and an export whose
+// only reader is a test it does not have is exactly the dead code JOS-502 found rotting in
+// `enginePerfSteps.mts` — documented as live in two places, run by nobody, and stale in content by
+// the time anyone looked. A window that appears late does not need one either: it READS the current
+// state on mount (`IPC.engineLaunchState`), which is the race a broadcast-on-window-create hook
+// would have been trying to lose.

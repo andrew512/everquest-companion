@@ -149,7 +149,7 @@ export const FOLD_RATE_SAMPLES = 12
  * The shortest span a rate may be taken over. Below this the denominator is mostly measurement
  * noise, and a rate computed over 40 ms produces an ETA that swings by minutes between frames.
  */
-export const FOLD_RATE_MIN_SPAN_MS = 600
+const FOLD_RATE_MIN_SPAN_MS = 600
 
 /** Beyond this an estimate is not information, so none is offered. */
 const FOLD_ETA_MAX_MS = 24 * 60 * 60 * 1000
