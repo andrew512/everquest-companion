@@ -93,6 +93,16 @@ import { pushModuleChanged, pushWorldChanged } from './serveDeltas'
 // delta arm does — a cursor, and the world changing hands — and it holds no import of this file, so
 // the requester is handed over rather than reached for.
 import { installMirrors, noteMirrorChanged, primeMirrors, resetMirrors } from './serveMirrors'
+// THE WIKI-MISS FETCH (JOS-499 item 1, boundary verdict 5). The engine has no network stack, so it
+// announces a name it could not answer and this app looks it up on the queue it has always owned.
+// The leaf is electron-free and takes its capabilities here — see its header.
+import {
+  asKnowledgeRecord,
+  installKnowledgeMissFetch,
+  onKnowledgeMiss
+} from './knowledgeMissFetch'
+import { lookupItem } from '../itemLookup'
+import { lookupMob } from '../mobLookup'
 import { attachStateDir, takeArtifactsBack } from './artifactOwner'
 import { shimServing } from './serveShim'
 import { SERVABLE, type Readiness } from './readShim'
@@ -341,6 +351,26 @@ async function openConnection(mine: number, info: ReadyEngine, client: EngineCli
     // renderers do: a mirror refreshed on anything but the engine's own publication edge would be a
     // cache with a timer, which is the thing ruling 5 forbids.
     noteMirrorChanged(changed.module, changed.seq)
+  })
+  // THE WIKI MISSES (JOS-499 item 1, boundary verdict 5) — the engine saying it could not answer a
+  // name, answered by the app's own lookup and pushed back as `knowledge.define`.
+  //
+  // THE GUARD IS THE CONNECTION ONE, NOT THE TURN ONE, and it is the `onConCard`/`onModuleChanged`
+  // reasoning verbatim: a subscription is CONNECTION-scoped while `gen` advances on every world
+  // rebuild, so asking `gen !== mine` here would silence the fetcher one second into every launch —
+  // the exact bug that cost the cursor listener a whole e2e round. It is written out again rather
+  // than cross-referenced because getting it wrong is silent: the corpus would simply stop learning
+  // and nothing would ever say so.
+  //
+  // AND THERE IS NO READINESS GATE HERE, unlike the cursor listener above. `engineServeReadiness()`
+  // asks whether the engine's answers may be THIS APP'S answers — a question about which world a
+  // read is served from. A miss is not a read: it names a page the wiki has and the corpus lacks,
+  // which is true of every world at once and stays true across a character switch. Gating it would
+  // drop exactly the misses raised during a fold, which is when a log full of unfamiliar mobs
+  // raises nearly all of them.
+  client.onKnowledgeMiss((miss) => {
+    if (live?.client !== client) return
+    onKnowledgeMiss(miss)
   })
   debug(`data-server client: connected to the engine on port ${String(info.port)}`)
   await attachAndProbe(mine)
@@ -777,6 +807,19 @@ export function installEngineClient(): void {
     },
     note: debug
   })
+  // THE WIKI-MISS FETCHER'S CAPABILITIES (JOS-499 item 1), by the same one-slot rule. The two
+  // lookups are handed over rather than imported by the leaf because both of them load `electron`
+  // at module scope and the decision the leaf holds is worth pinning under plain node; the record
+  // widening happens HERE, where the concrete `ItemKnowledge`/`MobKnowledge` types are in scope and
+  // the protocol's open-map declaration is being honoured deliberately.
+  installKnowledgeMissFetch({
+    lookupItem: async (name) => asKnowledgeRecord(await lookupItem(name)),
+    lookupMob: async (name) => asKnowledgeRecord(await lookupMob(name)),
+    define: async (params) => {
+      await engineRequest('knowledge.define', params)
+    },
+    note: debug
+  })
 }
 
 /** Let go: no observer, no connection, no pusher. Idempotent, and safe on a process that never
@@ -791,6 +834,10 @@ export function stopEngineClient(): void {
   // …and the mirrors, which clear themselves on the null (see `installMirrors`): a synchronous
   // reader must never be left holding a served fact after the connection that served it is gone.
   installMirrors(null)
+  // …and the wiki-miss fetcher, for the mirrors' reason exactly: a fetch that lands after the
+  // connection it was answering is gone has nowhere to push its record, and a leaf still holding a
+  // requester for a dead client would be pushing into a closed socket.
+  installKnowledgeMissFetch(null)
   // THE PERSISTED ARTIFACTS ARE DELIBERATELY NOT HANDED BACK HERE (JOS-497 item 2), and the
   // asymmetry with `onEngineReady` is the point. This is the TEARDOWN path and its only caller is
   // `stopEngineSupervisor`, which both quit events reach: what follows it is `main:saveOverlay`,
