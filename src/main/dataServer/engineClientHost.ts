@@ -63,7 +63,9 @@ import type {
   ClientMessage,
   EngineMessage,
   FireMessage,
-  PerfSnapshotResult
+  PerfBudgetsResult,
+  PerfSnapshotResult,
+  PerfTimelineResult
 } from '../../shared/dataServer/protocol.generated'
 // THE AUDIO CUTOVER (JOS-491). It owns its own flag and its own gate; this file simply offers it
 // every fire and prints what it decided. A launch that turned it off (`EQC_ENGINE_ALERTS=0`, or
@@ -724,6 +726,38 @@ export async function enginePerfSnapshot(): Promise<PerfSnapshotResult | null> {
     return await l.client.request('perf.snapshot', {})
   } catch (err) {
     debug(`data-server client: perf.snapshot was refused (${describeErr(err)})`)
+    return null
+  }
+}
+
+/**
+ * Ask the engine how it is doing against its own budgets (JOS-502). `null` on the same terms.
+ *
+ * THE SWALLOW-TO-NULL POSTURE IS COPIED DELIBERATELY, not inherited by accident. `engineRequest`
+ * below rejects rather than answering `null`, and the line between them is stated there: a READ
+ * whose answer a user sees owes its caller a reason, while a DIAGNOSTIC that cannot be taken has
+ * nothing to say. These two are diagnostics — the panel draws an absent section rather than an
+ * error, and a bug report omits a block rather than failing to send.
+ */
+export async function enginePerfBudgets(): Promise<PerfBudgetsResult | null> {
+  const l = live
+  if (l === null) return null
+  try {
+    return await l.client.request('perf.budgets', {})
+  } catch (err) {
+    debug(`data-server client: perf.budgets was refused (${describeErr(err)})`)
+    return null
+  }
+}
+
+/** Ask the engine for its bounded recent history (JOS-502). `null` on the same terms. */
+export async function enginePerfTimeline(): Promise<PerfTimelineResult | null> {
+  const l = live
+  if (l === null) return null
+  try {
+    return await l.client.request('perf.timeline', {})
+  } catch (err) {
+    debug(`data-server client: perf.timeline was refused (${describeErr(err)})`)
     return null
   }
 }
