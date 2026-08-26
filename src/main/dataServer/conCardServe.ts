@@ -99,10 +99,10 @@ export function conCardServeLine(card: ConCardMessage, drew: boolean): string {
   )
 }
 
-/** How many engine cards this launch actually drew. For a test and for the panel's vocabulary. */
-export function engineConCardsDrawn(): number {
-  return drawn
-}
+// NO `cardsDrawn()` ACCESSOR, and its absence is deliberate. The two counters exist to make the dev
+// log's sentence self-explaining — a card that did not appear carries a number beside it rather than
+// an absence — and nothing else asks. An exported reader with no caller is a surface somebody would
+// eventually wire a panel to, and a con-card count is not a diagnostic anybody has asked for.
 
 /** The dev log's voice for this file, matching every other `data-server` line. */
 export function noteConCardServe(line: string): void {
