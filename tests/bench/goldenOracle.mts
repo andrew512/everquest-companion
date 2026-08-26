@@ -64,8 +64,6 @@ import {
   writeSync
 } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { join } from 'node:path'
-import { ROOT } from '../e2e/build.mjs'
 import { foldForGoldens } from './foldArm.mjs'
 // THE DEEP-EQUALITY WALK LIVES IN `src/shared` SINCE JOS-479 and is re-exported below, unchanged.
 // The in-app parity probe asks this file's question of the same pair of worlds inside the running
@@ -80,45 +78,21 @@ import type { ModuleRegistry } from '../../src/main/modules/registry'
 // ------------------------------------------------------------------------------- the slice corpus
 
 /** One row of `tests/bench/fixtures/slices/manifest.json`. */
-export interface SliceRef {
-  name: string
-  file: string
-  path: string
-}
-
-export const SLICES_DIR = join(ROOT, 'tests', 'bench', 'fixtures', 'slices')
-export const GOLDENS_DIR = join(ROOT, 'tests', 'bench', 'fixtures', 'goldens')
-
-/** Every slice the manifest declares, in manifest order. Throws if the corpus is absent — the
- *  slices are gitignored by design, so "no goldens" and "no input" must not look alike. */
-export function readSlices(): SliceRef[] {
-  const manifest = join(SLICES_DIR, 'manifest.json')
-  const raw = JSON.parse(readFileSync(manifest, 'utf8')) as {
-    slices: { name: string; file: string }[]
-  }
-  return raw.slices.map((s) => ({ name: s.name, file: s.file, path: join(SLICES_DIR, s.file) }))
-}
-
-/**
- * The character the slice was cut from, DERIVED FROM THE FILENAME —
- * `eqlog_<Name>_<server>.<slice>.txt`. The self-`/who` rule and the pet-leader carve-out both
- * need the same name the app would install, and hardcoding it here would make the corpus and
- * the harness able to drift apart silently.
- */
-export function characterOf(slice: SliceRef): { name: string; server: string; logPath: string } {
-  const m = /^eqlog_(.+?)_([^_]+?)\.[^.]+\.txt$/i.exec(slice.file)
-  if (!m) throw new Error(`goldenOracle: cannot read a character out of "${slice.file}"`)
-  return { name: m[1], server: m[2], logPath: slice.path }
-}
-
-/**
- * The artifact paths. `dir` defaults to the real goldens directory and is overridden by exactly
- * one caller — `tests/goldenOracle.test.mts`, which runs the whole record/check path over a
- * COMMITTED fixture in a temp dir. That test has to run on a machine that has never seen the
- * owner's slices (CI is one), so the corpus location cannot be baked into the harness.
- */
-export const eventsPath = (name: string, dir = GOLDENS_DIR): string => join(dir, `${name}.events.ndjson`)
-export const snapshotsPath = (name: string, dir = GOLDENS_DIR): string => join(dir, `${name}.snapshots.json`)
+// THE ARTIFACT VOCABULARY MOVED OUT (JOS-499 item 5) — `goldenPaths.mts`. Everything that
+// describes WHERE a golden lives and how it is spelled now sits in a leaf that imports no fold, so
+// `rustParity.mts` can reach it without inheriting this file's doomed import graph. Owner ruling
+// 26: the goldens outlive the TS fold by one release, so the artifacts needed a home that does not
+// know how they were made. Re-exported here for this file's own callers; these lines die with it.
+export {
+  GOLDENS_DIR,
+  SLICES_DIR,
+  characterOf,
+  eventsPath,
+  normalizeJson,
+  readSlices,
+  snapshotsPath,
+  type SliceRef
+} from './goldenPaths.mjs'
 
 // --------------------------------------------------------------------------- what a fold produces
 

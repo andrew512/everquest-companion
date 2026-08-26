@@ -9,7 +9,8 @@ import { buildSpellCatalog } from '../data/spellDb'
 import { buildSpellDetail } from '../data/spellDetail'
 import { lookupItem } from '../itemLookup'
 import { lookupMob } from '../mobLookup'
-import { registry, spellDb } from '../pipeline'
+import { registry } from '../pipeline'
+import { appSpellDb } from '../appSpellDb'
 // THE SERVED ARM (JOS-496). These three reads are the census's `spell catalog stats`,
 // `spellLastCast` and `observed ranks`, and all three are GENUINE QUERIES rather than mirrors —
 // their callers are `ipcMain.handle` bodies that already return promises, so there is somewhere to
@@ -90,7 +91,7 @@ export function registerKnowledgeIpc(): void {
         usage.set(key, stat.n)
         if (stat.lastSeenMs != null) lastSeen.set(key, stat.lastSeenMs)
       }
-    return buildSpellCatalog(spellDb, usage, lastSeen)
+    return buildSpellCatalog(appSpellDb(), usage, lastSeen)
   })
 
   // ---- ONE spell, in full (JOS-293: the rich spell card) ----
@@ -119,7 +120,7 @@ export function registerKnowledgeIpc(): void {
     const rankSnap = (await moduleState(OBSERVED_SPELL_RANKS_MODULE_ID)) as
       | ObservedSpellRanksSnap
       | undefined
-    return buildSpellDetail(spellDb, wanted, observed, {
+    return buildSpellDetail(appSpellDb(), wanted, observed, {
       // Awaited for the unlocks handler's reason, one hover earlier: a card opened in the first
       // seconds of a launch would otherwise state clientless facts for that one open.
       client: await spellTable(),

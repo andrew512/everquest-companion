@@ -106,7 +106,11 @@ export function installKnowledgeMissFetch(d: KnowledgeMissDeps | null): void {
 /** Widen a lookup's concrete record to the open map the protocol declares. See the header: the
  *  field set belongs to the scraper, and a typed mirror's only job would be to lose a field. */
 export function asKnowledgeRecord(value: object): KnowledgeRecord {
-  return { ...value } as KnowledgeRecord
+  // A SPREAD RATHER THAN A CAST, and it needs no assertion: the protocol declares the record an
+  // open map, and a fresh object literal satisfies it structurally. The copy is the point — the
+  // record crosses a socket, so handing over the caller's live object would let a later mutation
+  // change what was already sent.
+  return { ...value }
 }
 
 /** What one miss turned into. Returned for the tests and for the dev line; nothing branches on it. */

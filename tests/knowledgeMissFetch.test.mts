@@ -138,7 +138,7 @@ test('two frames for one name do not open two wiki requests', async () => {
     define: async () => {
       await Promise.resolve()
     },
-    note: () => {}
+    note: () => undefined
   })
 
   const first = fetchAndDefine(itemMiss)

@@ -77,7 +77,7 @@
 import { engineFlagOn } from '../../shared/dataServer/engineFlags'
 import { IPC } from '../../shared/ipc'
 import { MODULE_WORLD_CHANGED, type ModuleChanged } from '../../shared/types'
-import { sendToModuleOverlays } from '../pipeline'
+import { sendToModuleOverlays } from '../worldRebuilt'
 import { sendToMain } from '../windows'
 
 /** See the header: the second half of a gate whose first half is structural, and ON by default. */

@@ -55,7 +55,8 @@
 
 import { app } from 'electron'
 import { logInfo } from '../errorLog'
-import { registry, setWorldRebuiltObserver } from '../pipeline'
+import { registry } from '../pipeline'
+import { setWorldRebuiltObserver } from '../worldRebuilt'
 import { getActiveCharacter } from '../session'
 import { createEngineClient, EngineError, type EngineClient } from '../../shared/dataServer/client'
 import { createNdjsonTransport, type ByteChannel } from '../../shared/dataServer/ndjson'

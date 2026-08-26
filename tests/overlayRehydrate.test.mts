@@ -41,7 +41,11 @@ const code = (rel: string): string =>
 // ---- the delivery, end to end through the source ------------------------------------------
 
 test('ONE list answers "which windows fold a module", and the rebuild signal uses it', () => {
-  const pipeline = code('../src/main/pipeline.ts')
+  // THE FAN-OUT MOVED TO ITS OWN LEAF (JOS-499 item 3). It was written in `pipeline.ts` because
+  // that file was the fold's composition root; every reader of it outlives the fold, and the
+  // fan-out never needed one. The CLAIM is unchanged and so are the assertions — only the file
+  // that has to satisfy them moved.
+  const pipeline = code('../src/main/worldRebuilt.ts')
   // Who is on the list (JOS-89/119, JOS-195's XP window, and JOS-194's respawn clocks): the event
   // log, the two timer windows, the progress read, and the respawn window. Every one of them folds
   // a module in its own renderer, which is the whole membership rule — and the XP window folds TWO
@@ -54,8 +58,13 @@ test('ONE list answers "which windows fold a module", and the rebuild signal use
   // …and the delta fan-out now goes through the same function the rebuild signal does, so the two
   // can never drift into disagreeing about who reads modules.
   assert.match(pipeline, /export function sendToModuleOverlays\(/)
-  assert.match(pipeline, /sendToModuleOverlays\(IPC\.onModuleDelta, delta\)/)
   assert.match(pipeline, /for \(const kind of MODULE_READING_OVERLAYS\)/)
+  // …and the INCREMENT fan-out goes through that same function, so the two can never drift into
+  // disagreeing about who reads modules. The increment is the engine's CURSOR now — `module:changed`
+  // out of `dataServer/serveDeltas.ts` — where it used to be this process's own `module:delta`. The
+  // claim survives the change of payload exactly: whoever is told about an increment must be the
+  // same population that is told about a rebuild.
+  assert.match(code('../src/main/dataServer/serveDeltas.ts'), /sendToModuleOverlays\(IPC\.onModuleChanged, frame\)/)
   // The rebuild signal reaches BOTH populations, in one place.
   assert.match(pipeline, /export function sendWorldRebuilt\(/)
   assert.match(pipeline, /sendToMain\(IPC\.onCharacter, character\)/)

@@ -19,9 +19,6 @@
 
 import { IPC } from '../shared/ipc'
 import { logInfo } from './errorLog'
-// A leaf (see its header) — it starts at `replayDone` and is imported here only to bracket the
-// rebuild fan-out below.
-import { timeSeam } from './perfAttribution'
 import { LogBus } from './log/bus'
 import { EpochDetector } from './log/epochDetector'
 import { SessionDetector } from './log/sessionDetector'
@@ -43,8 +40,8 @@ import { heldClickySpells, lookupItem } from './itemLookup'
 import { MOB_CATALOG_SIZE, lookupMob, ownLoot } from './mobLookup'
 import { getAlerts, getBuffTrustPrefs } from './store'
 import { getRespawnPrefs } from './storeRespawn'
-import { getOverlayWindow, sendToMain } from './windows'
-import type { AlertsDelta, CharacterRef, HeldCounts, OverlayKind } from '../shared/types'
+import { sendToMain } from './windows'
+import type { AlertsDelta, HeldCounts } from '../shared/types'
 
 /**
  * Log-derived state for the active character, rebuilt on launch + appended live.
@@ -84,91 +81,13 @@ export const epoch = new EpochDetector()
 // before the Welcome (a measured reconnect preamble makes that read a 13-hour absence as 6s).
 export const sessionDetector = new SessionDetector()
 
-/** The overlay kinds that consume the generic module transport — see the fan-out below. */
-// 'xp' (JOS-195) reads TWO of them — `progression` for the pace and the projection, `loot` for
-// the mote rates — and needs the rebuild signal below at least as much as the timer windows do:
-// its whole subject is a fold over months of log, and a window open at launch hydrates part-way
-// through one.
-const MODULE_READING_OVERLAYS: OverlayKind[] = ['events', 'buffs', 'debuffs', 'xp', 'respawn']
+// THE REBUILD FAN-OUT MOVED OUT (JOS-499 item 3) — `worldRebuilt.ts`. It was written here because
+// this file was the composition root of the fold; its readers (index.ts, session.ts,
+// serveDeltas.ts, engineClientHost.ts) all outlive the fold, and the fan-out itself never needed
+// one. Re-exported here so the doomed files below need no edit; these lines die with this file.
+export { MODULE_READING_OVERLAYS, sendToModuleOverlays, sendWorldRebuilt, setWorldRebuiltObserver } from './worldRebuilt'
+import { sendToModuleOverlays } from './worldRebuilt'
 
-/**
- * Push to every overlay window that reads modules — the fan-out `emitDelta` performs, as a
- * function, because a delta is no longer the only thing an overlay has to be told (JOS-172).
- *
- * An overlay window that reads a module needs BOTH halves of the transport the main window has
- * always had: the increments, and the "throw it all away and ask again" signal. It had only the
- * first, which is invisible until the moment the two disagree — a COLD START with an overlay
- * already open. The window is created while the historical fold is running (index.ts restores
- * overlays in the same `whenReady` turn that kicked off `startTailing`), so it hydrates from a
- * snapshot taken at a random instant part-way through months of log; `endReplay` then DISCARDS
- * what the fold accumulated (registry.ts — deliberately, so a character switch cannot fire the
- * celebration detectors), so no delta ever describes the rest of it. A charm or an Ensnare that
- * genuinely survived the fold was in the model, in the main window, and missing from the overlay
- * until the next live event happened to touch that module.
- *
- * THE DELIVERY IS THE FIX, NOT THE DISCARD. Exempting buffs/buffTimers from `endReplay` would
- * mean shipping one module's whole history as an INCREMENT again — the exact shape JOS-60
- * removed — and would leave the other module-reading overlay (the event log) with the same
- * asymmetry. Re-hydration is what the main window does (`useModule` on `log:character`), so the
- * overlays now get the same signal through the same list.
- */
-export function sendToModuleOverlays(channel: string, ...args: unknown[]): void {
-  for (const kind of MODULE_READING_OVERLAYS) {
-    const w = getOverlayWindow(kind)
-    if (w && !w.isDestroyed()) w.webContents.send(channel, ...args)
-  }
-}
-
-/**
- * "The world for this character was rebuilt — re-hydrate." ONE call, every window that folds a
- * module: the main window and the module-reading overlays.
- *
- * Every `log:character` send in this process goes through here (session.ts's two, index.ts's
- * live-epoch re-send), so "who is told the world was rebuilt" is answered in one place rather
- * than at each call site — which is precisely how the overlays came to be missing from it.
- *
- * A TIMED SEAM (JOS-458), and the one this ticket suspects most. It fires in the minute after a
- * fold — which is exactly the window the two field reports describe — and its cost is a FAN-OUT:
- * one `webContents.send` per open module-reading window, each of which serializes the payload and
- * wakes a renderer that immediately asks for a full snapshot back. The bracket covers OUR half
- * (the sends), never the renderers' work, so a large number here is main's own bill and nobody
- * else's.
- */
-export function sendWorldRebuilt(character: CharacterRef | null): void {
-  timeSeam('worldRebuilt', () => {
-    sendToMain(IPC.onCharacter, character)
-    sendToModuleOverlays(IPC.onCharacter, character)
-  })
-  // …AND ANYTHING IN-PROCESS THAT NEEDS THE SAME NEWS (JOS-479). Null on any launch that did not
-  // ask for an engine — `EQC_ENGINE=0` since JOS-495 — where this is one null check and the
-  // behaviour above is untouched. See `setWorldRebuiltObserver`.
-  worldRebuiltObserver?.(character)
-}
-
-/**
- * ONE IN-PROCESS LISTENER FOR "the world for this character was rebuilt" (JOS-479).
- *
- * `sendWorldRebuilt` is already the ONE answer to "who is told the world was rebuilt" for every
- * WINDOW; the data-server client needs the identical news for a different reason — it is the moment
- * the TypeScript fold has landed and its module snapshots are worth comparing against the engine's,
- * and it is also the character-switch funnel, so it is where a re-attach belongs. Hooking it here
- * rather than adding a second call site in session.ts is the whole point: the reason the overlays
- * were once missing from this fan-out is that there used to be several call sites (JOS-172).
- *
- * A REGISTRATION RATHER THAN AN IMPORT, and that is a dependency decision rather than a style one:
- * the client host reads `registry` out of THIS module, so an import in the other direction would be
- * a cycle at module-evaluation time. The composition of the engine feature (engineHost.ts, unless
- * `EQC_ENGINE=0`) installs this; nothing else ever does.
- *
- * IT RUNS OUTSIDE THE `timeSeam` BRACKET on purpose. That bracket measures OUR half of the
- * rebuild fan-out — the `webContents.send`s — and folding a dev-only probe into the same
- * measurement would put an instrument's cost inside the number the instrument reports.
- */
-let worldRebuiltObserver: ((character: CharacterRef | null) => void) | null = null
-
-export function setWorldRebuiltObserver(fn: ((character: CharacterRef | null) => void) | null): void {
-  worldRebuiltObserver = fn
-}
 
 // The extension framework. Modules own their slice of log-derived state and push
 // deltas to the renderer over the generic `module:delta` channel. Registration
