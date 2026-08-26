@@ -50,10 +50,11 @@ use std::time::Instant;
 
 use protocol::generated::{
     AttachResult, ConCardMessage, DiffMessage, DiffMessageKind, EngineMessage, Epoch, EpochMessage,
-    EpochMessageKind, EpochReason, FireMessage, FireMessageKind, FoldProgress, HealthResult,
-    HealthResultStatus, KnowledgeMissMessage, KnowledgeMissMessageKind, KnowledgePushDomain,
-    LogMark, ModuleChangedMessage, ModuleChangedMessageKind, PerfIngest, PerfServeSource,
-    PerfSnapshotResult, PerfSnapshotResultStatus, RequestId, ResetMessage, ResetMessageKind, Row,
+    EpochMessageKind, EpochReason, FireCaptures, FireMessage, FireMessageKind, FoldProgress,
+    HealthResult, HealthResultStatus, KnowledgeMissMessage, KnowledgeMissMessageKind,
+    KnowledgePushDomain, LogMark, ModuleChangedMessage, ModuleChangedMessageKind, PerfIngest,
+    PerfServeSource, PerfSnapshotResult, PerfSnapshotResultStatus, RequestId, ResetMessage,
+    ResetMessageKind, Row,
 };
 
 use crate::ingest::{self, Starter};
@@ -966,6 +967,13 @@ impl World {
             rule: fire.rule.clone(),
             sound: fire.sound.clone(),
             message: fire.message.clone(),
+            // WHAT IT SAYS (JOS-500, ruling 27), carried verbatim. Nothing is decided here and
+            // nothing is defaulted: an absent field is the fold's own statement that this firing has
+            // nothing true to say there, and null-filling it would turn "no spell in this family"
+            // into a value the app would have to learn to disbelieve.
+            captures: fire.captures.clone().map(FireCaptures),
+            spell: fire.spell.clone(),
+            due_at: fire.due_at,
         });
         broadcast(&mut state, &frame);
         true

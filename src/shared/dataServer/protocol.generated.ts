@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:c57f1bf56a615a51271a4daadb067252d46fa29cb7d0815eba566e96c9031e6e
+// schema-digest: sha256:5e83fae233a66bc3cfc49258144129f079e3bc4036764b80aec0ca42beb6c9a3
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -1053,21 +1053,11 @@ export interface FireMessage {
   message: string
   captures?: FireCaptures
   /**
-   * THE SPELL THIS FIRING IS ABOUT, display form with the rank suffix INTACT ("Mesmerization III") — exactly as the log spelled it, and exactly what `FiredAlert.spell` has always carried. Rank-stripping is the SPEAKER's job (`speechTextFor` folds it out through the same rank machinery the matcher uses), not the producer's: a consumer that wants the rank must still be able to see it.
-   *
-   * IT IS THE NAME THAT ACTUALLY SATISFIED THE ALERT (JOS-84), not the event's best-effort pick. EQ's landing sentences are shared across a whole spell family — `<mob> slows down.` is five different spells — so the parser puts a guess in the event's `spell` and the truth in its `candidates`. Once a Shiftless Deeds alert is allowed to fire on a line whose `spell` field says "Forlorn Deeds", speaking "Forlorn Deeds" would be a second wrong answer wearing the first one's clothes. The name reported is the candidate the def's OWN matcher accepted, asked with the same rank fold the match used, so the two cannot split apart.
-   *
-   * ABSENT whenever the matched event names no spell — most event families, every `raw` trigger that matched a spell-less line, and every `app` signal. Never synthesized, never guessed: a spell mode with no spell falls back to the alert's own name, which is a true statement about what fired.
+   * THE SPELL THIS FIRING IS ABOUT, display form with the rank suffix INTACT ("Mesmerization III") — exactly as the log spelled it, and exactly what `FiredAlert.spell` has always carried. Rank-stripping is the SPEAKER's job (`speechTextFor` folds it out through the same rank machinery the matcher uses), not the producer's: a consumer that wants the rank must still be able to see it. IT IS THE NAME THAT ACTUALLY SATISFIED THE ALERT (JOS-84), not the event's best-effort pick — EQ's landing sentences are shared across a whole spell family (`<mob> slows down.` is five different spells), so the parser puts a guess in the event's `spell` and the truth in its `candidates`, and once a Shiftless Deeds alert is allowed to fire on a line whose `spell` field says "Forlorn Deeds", speaking "Forlorn Deeds" would be a second wrong answer wearing the first one's clothes. The name reported is the candidate the def's OWN matcher accepted, asked with the same rank fold the match used, so the two cannot split apart. ABSENT whenever the matched event names no spell: most event families, every `raw` trigger that matched a spell-less line, and every `app` signal. Never synthesized and never guessed — a spell mode with no spell falls back to the alert's own name, which is a true statement about what fired.
    */
   spell?: string
   /**
-   * WHEN THE THING THIS FIRING WARNS ABOUT IS DUE (ms epoch) — the countdown half of JOS-378, and present ONLY on an EARLY-WARNING firing (`AlertDef.earlyWarnSec`, JOS-216/235).
-   *
-   * IT IS THE ROW'S STATED END, not the instant the warning spoke: `at` is when the sound was made and this is what it was early FOR, so the difference between them IS the lead time the user configured. A banner counts down to it (`BannerLine.tsx` re-renders against the wall clock, so the number on screen is a render rather than a timer) and holds until the deadline instead of for the configured dwell.
-   *
-   * WHY IT IS A HOST CLOCK AND `at` IS ORDINARILY THE LOG'S. An early warning has no matching event — its whole subject is a deadline that arrives WHILE THE LOG IS IDLE, which is exactly when a player is watching a mez run down — so it is delivered by the engine's heartbeat and both stamps come from that beat. The retired evaluator made the same choice in the same place, so the app receives the identical number under either.
-   *
-   * ABSENT ON EVERY ORDINARY FIRE, which is nearly all of them: a fire that IS the thing happening warns about nothing, and a deadline field on it would have no reader.
+   * WHEN THE THING THIS FIRING WARNS ABOUT IS DUE (ms epoch) — the countdown half of JOS-378, and present ONLY on an EARLY-WARNING firing (`AlertDef.earlyWarnSec`, JOS-216/235). IT IS THE ROW'S STATED END, not the instant the warning spoke: `at` is when the sound was made and this is what it was early FOR, so the difference between them IS the lead time the user configured. A banner counts down to it (`BannerLine.tsx` re-renders against the wall clock, so the number on screen is a render rather than a timer) and holds until the deadline instead of for the configured dwell. IT IS A HOST CLOCK WHERE `at` IS ORDINARILY THE LOG'S, and so is the `at` beside it on this one frame: an early warning has no matching event — its whole subject is a deadline that arrives WHILE THE LOG IS IDLE, which is exactly when a player is watching a mez run down — so it is delivered by the engine's heartbeat and both stamps come from that beat. The retired evaluator made the same choice in the same place, so the app receives the identical number under either. ABSENT ON EVERY ORDINARY FIRE, which is nearly all of them: a fire that IS the thing happening warns about nothing, and a deadline field on it would have no reader.
    */
   dueAt?: number
 }

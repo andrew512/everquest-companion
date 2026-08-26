@@ -142,22 +142,28 @@ fn strip_ansi(raw: &str) -> String {
         match next {
             // Arm 1 — CSI: params, then intermediates, then one final byte.
             '[' => {
-                while chars.get(i).is_some_and(|&c| ('\u{30}'..='\u{3F}').contains(&c)) {
+                while chars
+                    .get(i)
+                    .is_some_and(|&c| ('\u{30}'..='\u{3F}').contains(&c))
+                {
                     i += 1;
                 }
-                while chars.get(i).is_some_and(|&c| ('\u{20}'..='\u{2F}').contains(&c)) {
+                while chars
+                    .get(i)
+                    .is_some_and(|&c| ('\u{20}'..='\u{2F}').contains(&c))
+                {
                     i += 1;
                 }
-                if chars.get(i).is_some_and(|&c| ('\u{40}'..='\u{7E}').contains(&c)) {
+                if chars
+                    .get(i)
+                    .is_some_and(|&c| ('\u{40}'..='\u{7E}').contains(&c))
+                {
                     i += 1;
                 }
             }
             // Arm 2 — a string opener: everything up to BEL or ST, both of which go with it.
             ']' | 'P' | '^' | '_' | 'X' => {
-                while chars
-                    .get(i)
-                    .is_some_and(|&c| c != '\u{7}' && c != '\u{1B}')
-                {
+                while chars.get(i).is_some_and(|&c| c != '\u{7}' && c != '\u{1B}') {
                     i += 1;
                 }
                 match chars.get(i) {
@@ -172,10 +178,16 @@ fn strip_ansi(raw: &str) -> String {
             // Arm 3 — nF: one or more intermediates then one final. Falls through to arm 4's shape
             // when no final follows, which is the same "the ESC still goes" answer.
             c if ('\u{20}'..='\u{2F}').contains(&c) => {
-                while chars.get(i).is_some_and(|&c| ('\u{20}'..='\u{2F}').contains(&c)) {
+                while chars
+                    .get(i)
+                    .is_some_and(|&c| ('\u{20}'..='\u{2F}').contains(&c))
+                {
                     i += 1;
                 }
-                if chars.get(i).is_some_and(|&c| ('\u{30}'..='\u{7E}').contains(&c)) {
+                if chars
+                    .get(i)
+                    .is_some_and(|&c| ('\u{30}'..='\u{7E}').contains(&c))
+                {
                     i += 1;
                 }
             }
@@ -295,7 +307,9 @@ pub fn harvest_captures(re: &Regex, caps: &Captures<'_>) -> Option<CaptureMap> {
 /// nothing carries nothing.
 pub fn merge_captures(into: Option<CaptureMap>, from: Option<CaptureMap>) -> Option<CaptureMap> {
     let Some(from) = from else { return into };
-    let Some(mut into) = into else { return Some(from) };
+    let Some(mut into) = into else {
+        return Some(from);
+    };
     for (k, v) in from {
         into.entry(k).or_insert(v);
     }
@@ -593,7 +607,9 @@ mod tests {
             None
         );
         assert_eq!(
-            resolve_target(&ev(json!({ "kind": "consider", "mob": "a fire giant warlord" }))),
+            resolve_target(&ev(
+                json!({ "kind": "consider", "mob": "a fire giant warlord" })
+            )),
             None
         );
         // …and a family with no entity field at all.

@@ -456,6 +456,13 @@ pub struct Fire {
     pub sound: String,
     /// The text that matched.
     pub message: String,
+    /// WHAT THIS FIRING MAY SAY (JOS-500) — the rule's own named captures plus the `{target}` auto
+    /// token, already sanitized and capped by the fold. Absent for nearly every alert.
+    pub captures: Option<std::collections::BTreeMap<String, String>>,
+    /// The spell this firing is about, rank suffix intact. Absent when the family names none.
+    pub spell: Option<String>,
+    /// The deadline an early warning was early for. Absent on every ordinary fire.
+    pub due_at: Option<i64>,
 }
 
 /// ONE PUSH OF APP KNOWLEDGE, and the way back.
