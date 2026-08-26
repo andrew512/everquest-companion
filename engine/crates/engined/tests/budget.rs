@@ -39,12 +39,26 @@
 //! Both constants carry their own MEASUREMENT and the argument for the gap between the measurement
 //! and the bound. Read those before changing either — particularly `MAX_SERVE_LATENCY_US`, whose
 //! number means something different from what its name suggests.
+//!
+//! ── AND SINCE JOS-502 THE ENGINE STATES THE SAME TWO BOUNDS ITSELF ────────────────────────────
+//!
+//! Ruling 19's `perf.budgets` serves these budgets LIVE, off `engined/src/budgets.rs`, so the panel
+//! and a bug report carry the verdict this suite computes. THE CONSTANTS ARE THEREFORE WRITTEN
+//! TWICE — once there and once here — because `engined` is a BINARY crate with no lib target, so an
+//! integration test cannot import from it and the alternative would be adding a library facade to
+//! the shipped process for a test's convenience. The duplication is made self-checking instead:
+//! `the_engine_serves_the_same_two_bounds_this_suite_asserts` asks the running engine what its
+//! budgets are and fails if either number has drifted from the two below. That is the repo's own
+//! pattern for a fact that must live in two places (a generated file pinned by a staleness test),
+//! and it means a hand edit to one copy is a red test rather than a panel quietly disagreeing with
+//! CI about the same build.
 
 mod harness;
 
-use harness::{attach, perf_snapshot, subscribe, Client, Engine, PATIENCE};
+use harness::{attach, perf_budgets, perf_snapshot, subscribe, Client, Engine, PATIENCE};
 use protocol::generated::{
-    EngineMessage, PerfSnapshotResult, PerfSnapshotResultStatus, ReplyResult,
+    EngineMessage, PerfBudgetId, PerfBudgetsResult, PerfSnapshotResult, PerfSnapshotResultStatus,
+    ReplyResult,
 };
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -597,5 +611,68 @@ fn the_owners_full_log_folds_at_full_speed() {
         "[budget]   G3 goal   fold under 20 s; this run took {:.1} s. Not asserted — record it in \
          the release notes.",
         m.scan_ms as f64 / 1000.0
+    );
+}
+
+/// Ask the running engine what its budgets are — `perf.budgets`, ruling 19's surface (JOS-502).
+fn ask_budgets(client: &mut Client, id: i64) -> PerfBudgetsResult {
+    client.send(&perf_budgets(id));
+    loop {
+        match client.recv() {
+            EngineMessage::Reply(reply) if *reply.id == id => {
+                let ReplyResult::PerfBudgetsResult(result) = reply.result else {
+                    panic!("a perf budgets result, got {:?}", reply.result);
+                };
+                return result;
+            }
+            EngineMessage::ErrorReply(refusal) if *refusal.id == id => {
+                panic!("perf.budgets was refused: {:?}", refusal.error);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// THE TWO COPIES OF EACH BOUND AGREE, OR THIS GOES RED (JOS-502).
+///
+/// `engined/src/budgets.rs` states these same two numbers so the panel and a bug report can carry a
+/// live verdict, and it cannot be imported here because `engined` is a binary crate (see the header
+/// for why a lib facade was not added for a test's convenience). So the duplication is checked
+/// rather than trusted: this asks the shipped engine to render its own limits and fails if either
+/// has drifted from the constant this suite asserts against.
+///
+/// IT COMPARES THE NUMBER AND NOT THE PROSE. The served `limit` is a rendered sentence — "at least
+/// 1.0 MB/s" — and pinning the whole string would make every wording change a red test in a file
+/// that has nothing to say about wording. What must not drift is the FIGURE, so that is what is
+/// looked for inside it. Debug or release makes no difference: a definition is not a measurement.
+#[test]
+fn the_engine_serves_the_same_two_bounds_this_suite_asserts() {
+    let engine = Engine::start();
+    let mut client = engine.connected();
+    let answer = ask_budgets(&mut client, 1);
+
+    let find = |id: PerfBudgetId| {
+        answer
+            .budgets
+            .iter()
+            .find(|b| b.id == id)
+            .unwrap_or_else(|| panic!("the engine serves a {id} budget"))
+            .clone()
+    };
+
+    let fold = find(PerfBudgetId::FoldRate);
+    let expected_rate = format!("{:.1} MB/s", MIN_FOLD_BYTES_PER_SEC / 1_000_000.0);
+    assert!(
+        fold.limit.contains(&expected_rate),
+        "the engine's fold-rate floor is {:?}; this suite asserts {expected_rate}",
+        fold.limit
+    );
+
+    let serve = find(PerfBudgetId::ServeLatency);
+    let expected_latency = format!("{:.1} s", MAX_SERVE_LATENCY_US as f64 / 1_000_000.0);
+    assert!(
+        serve.limit.contains(&expected_latency),
+        "the engine's serve-latency ceiling is {:?}; this suite asserts {expected_latency}",
+        serve.limit
     );
 }

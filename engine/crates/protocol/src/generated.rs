@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:1db2731131510b321a7d095cf65a67bafcf851ae8483019822152c0e57164777
+//! schema-digest: sha256:e4581985ea600134c9e0f5fa81f7cefacc93cbd9b688ec877f038102d5ec801d
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -469,6 +469,12 @@ impl ::std::convert::From<::std::collections::BTreeMap<::std::string::String, cr
 ///      "$ref": "#/$defs/PerfSnapshotRequest"
 ///    },
 ///    {
+///      "$ref": "#/$defs/PerfBudgetsRequest"
+///    },
+///    {
+///      "$ref": "#/$defs/PerfTimelineRequest"
+///    },
+///    {
 ///      "$ref": "#/$defs/ViewSubscribeRequest"
 ///    },
 ///    {
@@ -542,6 +548,8 @@ pub enum ClientMessage {
     SessionProgressRequest(SessionProgressRequest),
     ModuleSnapshotRequest(ModuleSnapshotRequest),
     PerfSnapshotRequest(PerfSnapshotRequest),
+    PerfBudgetsRequest(PerfBudgetsRequest),
+    PerfTimelineRequest(PerfTimelineRequest),
     ViewSubscribeRequest(ViewSubscribeRequest),
     ViewUnsubscribeRequest(ViewUnsubscribeRequest),
     AlertsDefineRequest(AlertsDefineRequest),
@@ -596,6 +604,16 @@ impl ::std::convert::From<ModuleSnapshotRequest> for ClientMessage {
 impl ::std::convert::From<PerfSnapshotRequest> for ClientMessage {
     fn from(value: PerfSnapshotRequest) -> Self {
         Self::PerfSnapshotRequest(value)
+    }
+}
+impl ::std::convert::From<PerfBudgetsRequest> for ClientMessage {
+    fn from(value: PerfBudgetsRequest) -> Self {
+        Self::PerfBudgetsRequest(value)
+    }
+}
+impl ::std::convert::From<PerfTimelineRequest> for ClientMessage {
+    fn from(value: PerfTimelineRequest) -> Self {
+        Self::PerfTimelineRequest(value)
     }
 }
 impl ::std::convert::From<ViewSubscribeRequest> for ClientMessage {
@@ -5485,6 +5503,371 @@ impl ::std::default::Default for NoParams {
         Self {}
     }
 }
+///ONE BUDGET: what it is called, what it allows, what it measured, and the verdict - render-ready, which is ruling 4 applied to a diagnostic rather than to a list. `limit` and `measured` are STRINGS the engine formatted, not numbers with a unit the caller has to know, and that is deliberate on three counts: the two budgets in this build are measured in different units (bytes per second, microseconds) so a shared numeric field would need a unit discriminant nobody reads; the comparison that produces `verdict` is arithmetic and ruling 4 puts arithmetic on this side of the wire; and a third budget can ship without one line changing in the renderer. Locale is fixed en-US per ruling 25. A budget carries no name, no path and no log content by construction - it is a rate, a latency and a verdict, which is exactly the set the telemetry bright line admits.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "PerfBudget",
+///  "description": "ONE BUDGET: what it is called, what it allows, what it measured, and the verdict - render-ready, which is ruling 4 applied to a diagnostic rather than to a list. `limit` and `measured` are STRINGS the engine formatted, not numbers with a unit the caller has to know, and that is deliberate on three counts: the two budgets in this build are measured in different units (bytes per second, microseconds) so a shared numeric field would need a unit discriminant nobody reads; the comparison that produces `verdict` is arithmetic and ruling 4 puts arithmetic on this side of the wire; and a third budget can ship without one line changing in the renderer. Locale is fixed en-US per ruling 25. A budget carries no name, no path and no log content by construction - it is a rate, a latency and a verdict, which is exactly the set the telemetry bright line admits.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "label",
+///    "limit",
+///    "note",
+///    "verdict"
+///  ],
+///  "properties": {
+///    "id": {
+///      "description": "The budget's stable key, for a test or a bug report to name it by. Never drawn - `label` is what a person reads - and never re-ordered against, because the server already sent the rows in their drawing order.",
+///      "type": "string",
+///      "enum": [
+///        "foldRate",
+///        "serveLatency"
+///      ]
+///    },
+///    "label": {
+///      "description": "What the budget is called, in the words the panel prints.",
+///      "type": "string"
+///    },
+///    "limit": {
+///      "description": "The ceiling or the floor, rendered with its unit and its direction - `at least 1.0 MB/s`, `at most 2.0 s` - so the row reads as a sentence and a reader never has to guess which way the comparison runs.",
+///      "type": "string"
+///    },
+///    "measured": {
+///      "description": "What this generation actually did, rendered in the same unit as `limit`. ABSENT MEANS NOT YET MEASURED and never zero, the same rule `PerfIngest` keeps: a scan still running has no rate, and a source whose every frame was an owed reset has no latency, and reporting either as `0` would be the one lie an instrument must not tell.",
+///      "type": "string"
+///    },
+///    "note": {
+///      "description": "The one sentence a reader needs so the number is not misread - the caveat travelling with the measurement instead of living in a doc nobody has open. It is where `serveLatency` says that it includes the coalescing beat and is a wedge detector rather than a compute budget, and where `foldRate` says the floor is an eighth of the measured rate on purpose so a debug build is what trips it.",
+///      "type": "string"
+///    },
+///    "verdict": {
+///      "description": "`pass` when the measurement satisfies the limit, `fail` when it does not, `unmeasured` when there is nothing yet to judge - which is a third state rather than an optimistic `pass`, because a budget that reads green before it has measured anything is worse than one that says nothing.",
+///      "type": "string",
+///      "enum": [
+///        "pass",
+///        "fail",
+///        "unmeasured"
+///      ]
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PerfBudget {
+    ///The budget's stable key, for a test or a bug report to name it by. Never drawn - `label` is what a person reads - and never re-ordered against, because the server already sent the rows in their drawing order.
+    pub id: PerfBudgetId,
+    ///What the budget is called, in the words the panel prints.
+    pub label: ::std::string::String,
+    ///The ceiling or the floor, rendered with its unit and its direction - `at least 1.0 MB/s`, `at most 2.0 s` - so the row reads as a sentence and a reader never has to guess which way the comparison runs.
+    pub limit: ::std::string::String,
+    ///What this generation actually did, rendered in the same unit as `limit`. ABSENT MEANS NOT YET MEASURED and never zero, the same rule `PerfIngest` keeps: a scan still running has no rate, and a source whose every frame was an owed reset has no latency, and reporting either as `0` would be the one lie an instrument must not tell.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub measured: ::std::option::Option<::std::string::String>,
+    ///The one sentence a reader needs so the number is not misread - the caveat travelling with the measurement instead of living in a doc nobody has open. It is where `serveLatency` says that it includes the coalescing beat and is a wedge detector rather than a compute budget, and where `foldRate` says the floor is an eighth of the measured rate on purpose so a debug build is what trips it.
+    pub note: ::std::string::String,
+    ///`pass` when the measurement satisfies the limit, `fail` when it does not, `unmeasured` when there is nothing yet to judge - which is a third state rather than an optimistic `pass`, because a budget that reads green before it has measured anything is worse than one that says nothing.
+    pub verdict: PerfBudgetVerdict,
+}
+///The budget's stable key, for a test or a bug report to name it by. Never drawn - `label` is what a person reads - and never re-ordered against, because the server already sent the rows in their drawing order.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "description": "The budget's stable key, for a test or a bug report to name it by. Never drawn - `label` is what a person reads - and never re-ordered against, because the server already sent the rows in their drawing order.",
+///  "type": "string",
+///  "enum": [
+///    "foldRate",
+///    "serveLatency"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum PerfBudgetId {
+    #[serde(rename = "foldRate")]
+    FoldRate,
+    #[serde(rename = "serveLatency")]
+    ServeLatency,
+}
+impl ::std::fmt::Display for PerfBudgetId {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::FoldRate => f.write_str("foldRate"),
+            Self::ServeLatency => f.write_str("serveLatency"),
+        }
+    }
+}
+impl ::std::str::FromStr for PerfBudgetId {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "foldRate" => Ok(Self::FoldRate),
+            "serveLatency" => Ok(Self::ServeLatency),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for PerfBudgetId {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for PerfBudgetId {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for PerfBudgetId {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`pass` when the measurement satisfies the limit, `fail` when it does not, `unmeasured` when there is nothing yet to judge - which is a third state rather than an optimistic `pass`, because a budget that reads green before it has measured anything is worse than one that says nothing.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "description": "`pass` when the measurement satisfies the limit, `fail` when it does not, `unmeasured` when there is nothing yet to judge - which is a third state rather than an optimistic `pass`, because a budget that reads green before it has measured anything is worse than one that says nothing.",
+///  "type": "string",
+///  "enum": [
+///    "pass",
+///    "fail",
+///    "unmeasured"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum PerfBudgetVerdict {
+    #[serde(rename = "pass")]
+    Pass,
+    #[serde(rename = "fail")]
+    Fail,
+    #[serde(rename = "unmeasured")]
+    Unmeasured,
+}
+impl ::std::fmt::Display for PerfBudgetVerdict {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Pass => f.write_str("pass"),
+            Self::Fail => f.write_str("fail"),
+            Self::Unmeasured => f.write_str("unmeasured"),
+        }
+    }
+}
+impl ::std::str::FromStr for PerfBudgetVerdict {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "pass" => Ok(Self::Pass),
+            "fail" => Ok(Self::Fail),
+            "unmeasured" => Ok(Self::Unmeasured),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for PerfBudgetVerdict {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for PerfBudgetVerdict {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for PerfBudgetVerdict {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///THE ENGINE'S OWN BUDGETS, DEFINITIONS AND VERDICT TOGETHER (owner ruling 19 surface, JOS-502). `engine/crates/engined/tests/budget.rs` asserts these same ceilings in CI against a synthetic corpus; this op answers them LIVE, off the generation that is actually running, so the panel and the bug report state what THIS machine did rather than what a runner did. Ruling 3 is the whole reason the op carries the definitions and not just the numbers - performance goals are self-measured and never promised, so a reader must be able to see the ceiling beside the measurement and judge for himself instead of trusting a colour. Same door and same cost as `perf.snapshot` (one ask on the fold's boundary), same standing warning: THE APP MUST NOT POLL THIS IDLY, because a budget surface that costs a round trip a second while nobody is looking is precisely the bug it exists to find.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "PerfBudgetsRequest",
+///  "description": "THE ENGINE'S OWN BUDGETS, DEFINITIONS AND VERDICT TOGETHER (owner ruling 19 surface, JOS-502). `engine/crates/engined/tests/budget.rs` asserts these same ceilings in CI against a synthetic corpus; this op answers them LIVE, off the generation that is actually running, so the panel and the bug report state what THIS machine did rather than what a runner did. Ruling 3 is the whole reason the op carries the definitions and not just the numbers - performance goals are self-measured and never promised, so a reader must be able to see the ceiling beside the measurement and judge for himself instead of trusting a colour. Same door and same cost as `perf.snapshot` (one ask on the fold's boundary), same standing warning: THE APP MUST NOT POLL THIS IDLY, because a budget surface that costs a round trip a second while nobody is looking is precisely the bug it exists to find.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "perf.budgets"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/NoParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PerfBudgetsRequest {
+    pub id: RequestId,
+    pub op: PerfBudgetsRequestOp,
+    pub params: NoParams,
+}
+///`PerfBudgetsRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "perf.budgets"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum PerfBudgetsRequestOp {
+    #[serde(rename = "perf.budgets")]
+    PerfBudgets,
+}
+impl ::std::fmt::Display for PerfBudgetsRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::PerfBudgets => f.write_str("perf.budgets"),
+        }
+    }
+}
+impl ::std::str::FromStr for PerfBudgetsRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "perf.budgets" => Ok(Self::PerfBudgets),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for PerfBudgetsRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for PerfBudgetsRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for PerfBudgetsRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///Every budget this build enforces, judged against the generation named by `epoch`. IT DELIBERATELY RESTATES NEITHER `status` NOR `uptimeMs`, which `PerfSnapshotResult` does restate from `HealthResult`: `session.health`'s guard in `src/shared/dataServer/ops.ts` is `uptimeMs` present and `serve` absent, so a budgets answer carrying an uptime would be a third arm that guard could not refuse - the registry's matrix would go red, and correctly, because a shape two ops both pass is a shape no caller can identify. The epoch is here because a budget verdict is a fact about ONE generation and a reader comparing two answers across an attach must be able to see that they are not comparable.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "PerfBudgetsResult",
+///  "description": "Every budget this build enforces, judged against the generation named by `epoch`. IT DELIBERATELY RESTATES NEITHER `status` NOR `uptimeMs`, which `PerfSnapshotResult` does restate from `HealthResult`: `session.health`'s guard in `src/shared/dataServer/ops.ts` is `uptimeMs` present and `serve` absent, so a budgets answer carrying an uptime would be a third arm that guard could not refuse - the registry's matrix would go red, and correctly, because a shape two ops both pass is a shape no caller can identify. The epoch is here because a budget verdict is a fact about ONE generation and a reader comparing two answers across an attach must be able to see that they are not comparable.",
+///  "type": "object",
+///  "required": [
+///    "budgets",
+///    "epoch"
+///  ],
+///  "properties": {
+///    "budgets": {
+///      "description": "One row per budget, in the order the panel draws them - a fixed order this engine owns, never an order a caller re-derives (ruling 4). The list is never empty: a build with a budget it cannot measure yet says `unmeasured` in the row rather than omitting it, because a budget that vanishes when it is inconvenient is not a budget.",
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/PerfBudget"
+///      }
+///    },
+///    "epoch": {
+///      "$ref": "#/$defs/Epoch"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PerfBudgetsResult {
+    ///One row per budget, in the order the panel draws them - a fixed order this engine owns, never an order a caller re-derives (ruling 4). The list is never empty: a build with a budget it cannot measure yet says `unmeasured` in the row rather than omitting it, because a budget that vanishes when it is inconvenient is not a budget.
+    pub budgets: ::std::vec::Vec<PerfBudget>,
+    pub epoch: Epoch,
+}
 ///WHAT STARTING THIS GENERATION COST. Every field is optional and absent means NOT YET MEASURED rather than zero: `scanMs` is unknown until the scan finishes, and a zero there would say a whole log folded instantly. The engine prints the same two numbers to stderr; this is the same measurement on the wire, so a panel does not have to scrape a log.
 ///
 /// <details><summary>JSON schema</summary>
@@ -5545,6 +5928,69 @@ impl ::std::default::Default for PerfIngest {
             spell_db_ms: Default::default(),
         }
     }
+}
+///ONE SAMPLED WINDOW OF THE SERVE PATH, and every figure in it is an INTERVAL rather than a running total - which is the one design decision in this shape. `perf.snapshot` already answers the cumulative question and answers it better; what a history is for is saying that the minute at 04:12 cost four times what the minute before it did, and a list of ever-growing totals makes a reader do that subtraction himself over numbers whose baseline he cannot see. A quiet window is RECORDED as a quiet window rather than skipped, because a ring that dropped its empty samples would compress a two-minute silence into no space at all and make the busy moments look adjacent. Nothing here can carry game data: it is a count of frames, a weight of bytes and a latency.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "PerfMoment",
+///  "description": "ONE SAMPLED WINDOW OF THE SERVE PATH, and every figure in it is an INTERVAL rather than a running total - which is the one design decision in this shape. `perf.snapshot` already answers the cumulative question and answers it better; what a history is for is saying that the minute at 04:12 cost four times what the minute before it did, and a list of ever-growing totals makes a reader do that subtraction himself over numbers whose baseline he cannot see. A quiet window is RECORDED as a quiet window rather than skipped, because a ring that dropped its empty samples would compress a two-minute silence into no space at all and make the busy moments look adjacent. Nothing here can carry game data: it is a count of frames, a weight of bytes and a latency.",
+///  "type": "object",
+///  "required": [
+///    "atMs",
+///    "frames",
+///    "payloadWeight",
+///    "spanMs"
+///  ],
+///  "properties": {
+///    "atMs": {
+///      "description": "When the window CLOSED, as milliseconds since this process started - the same clock `PerfSnapshotResult.uptimeMs` is on, so a panel holding both can place the moments against the uptime without a second time base. Process-relative on purpose: the engine reads no wall clock to answer a performance question, and a process-relative stamp carries nothing about when or where a person plays.",
+///      "type": "integer"
+///    },
+///    "foldToFrameUsMax": {
+///      "description": "The worst fold-to-frame latency in MICROSECONDS among the frames timed in this window, or ABSENT when no frame in it had a fold behind it. The worst rather than the mean, on `widestPayloadWeight`'s argument: a mean over a ten-second window hides the one frame that stalled somebody's screen, which is the only frame the window was sampled to find.",
+///      "type": "integer"
+///    },
+///    "frames": {
+///      "description": "Frames sent across every source during this window, resets and diffs together. Per-source detail is `perf.snapshot`'s serve table and is deliberately not duplicated here: a ring that held one row per source per sample would grow with the source registry, which is exactly the unbounded growth this shape refuses.",
+///      "type": "integer"
+///    },
+///    "payloadWeight": {
+///      "description": "What those frames weighed, summed over every source, in the same accounting `PerfServeSource.payloadWeight` uses - and the unit is in this sentence rather than in the name for the same reason it is there, because a property name in this schema may not carry a wire unit.",
+///      "type": "integer"
+///    },
+///    "spanMs": {
+///      "description": "How long this window ACTUALLY covered, measured rather than assumed equal to `cadenceMs`. It is what makes the counts below dividable into rates honestly, and a span noticeably longer than the cadence is itself the finding - the sampling thread was busy.",
+///      "type": "integer"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PerfMoment {
+    ///When the window CLOSED, as milliseconds since this process started - the same clock `PerfSnapshotResult.uptimeMs` is on, so a panel holding both can place the moments against the uptime without a second time base. Process-relative on purpose: the engine reads no wall clock to answer a performance question, and a process-relative stamp carries nothing about when or where a person plays.
+    #[serde(rename = "atMs")]
+    pub at_ms: i64,
+    ///The worst fold-to-frame latency in MICROSECONDS among the frames timed in this window, or ABSENT when no frame in it had a fold behind it. The worst rather than the mean, on `widestPayloadWeight`'s argument: a mean over a ten-second window hides the one frame that stalled somebody's screen, which is the only frame the window was sampled to find.
+    #[serde(
+        rename = "foldToFrameUsMax",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub fold_to_frame_us_max: ::std::option::Option<i64>,
+    ///Frames sent across every source during this window, resets and diffs together. Per-source detail is `perf.snapshot`'s serve table and is deliberately not duplicated here: a ring that held one row per source per sample would grow with the source registry, which is exactly the unbounded growth this shape refuses.
+    pub frames: i64,
+    ///What those frames weighed, summed over every source, in the same accounting `PerfServeSource.payloadWeight` uses - and the unit is in this sentence rather than in the name for the same reason it is there, because a property name in this schema may not carry a wire unit.
+    #[serde(rename = "payloadWeight")]
+    pub payload_weight: i64,
+    ///How long this window ACTUALLY covered, measured rather than assumed equal to `cadenceMs`. It is what makes the counts below dividable into rates honestly, and a span noticeably longer than the cadence is itself the finding - the sampling thread was busy.
+    #[serde(rename = "spanMs")]
+    pub span_ms: i64,
 }
 ///ONE SOURCE'S SERVE PATH, cumulative for this generation — the counters `views::meter` keeps, exactly as ruling 19 names them. QUEUE TIME IS NEVER COUNTED AS COMPUTE: `foldToFrameUs*` is measured from the instant the fold produced what the frame reports to the instant the frame reached the connection's outbox, and a frame with no fold behind it (the fresh reset a just-opened subscription is owed) is COUNTED but not TIMED — which is why the two latency fields are optional and their absence means `no frame here had a fold behind it`, never `zero microseconds`.
 ///
@@ -5920,6 +6366,163 @@ impl ::std::convert::TryFrom<::std::string::String> for PerfSnapshotResultStatus
         value.parse()
     }
 }
+///THE RECENT HISTORY BEHIND `perf.snapshot`'s TOTALS (owner ruling 19 surface, JOS-502). A snapshot is cumulative for the generation, so two of them a minute apart cannot say WHEN the serve path was slow - this is the same instrument sampled on a beat and kept in a BOUNDED RING, which is the whole difference between a history and a leak. The ring is fixed-capacity and overwrites its oldest entry, so an engine up for a week costs exactly what one up for a minute costs; `capacity` is on the answer so a reader can see the horizon rather than infer it. Same door and same cost as `perf.snapshot`, and THE APP MUST NOT POLL THIS IDLY for the same reason.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "PerfTimelineRequest",
+///  "description": "THE RECENT HISTORY BEHIND `perf.snapshot`'s TOTALS (owner ruling 19 surface, JOS-502). A snapshot is cumulative for the generation, so two of them a minute apart cannot say WHEN the serve path was slow - this is the same instrument sampled on a beat and kept in a BOUNDED RING, which is the whole difference between a history and a leak. The ring is fixed-capacity and overwrites its oldest entry, so an engine up for a week costs exactly what one up for a minute costs; `capacity` is on the answer so a reader can see the horizon rather than infer it. Same door and same cost as `perf.snapshot`, and THE APP MUST NOT POLL THIS IDLY for the same reason.",
+///  "type": "object",
+///  "required": [
+///    "id",
+///    "op",
+///    "params"
+///  ],
+///  "properties": {
+///    "id": {
+///      "$ref": "#/$defs/RequestId"
+///    },
+///    "op": {
+///      "type": "string",
+///      "enum": [
+///        "perf.timeline"
+///      ]
+///    },
+///    "params": {
+///      "$ref": "#/$defs/NoParams"
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PerfTimelineRequest {
+    pub id: RequestId,
+    pub op: PerfTimelineRequestOp,
+    pub params: NoParams,
+}
+///`PerfTimelineRequestOp`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "string",
+///  "enum": [
+///    "perf.timeline"
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum PerfTimelineRequestOp {
+    #[serde(rename = "perf.timeline")]
+    PerfTimeline,
+}
+impl ::std::fmt::Display for PerfTimelineRequestOp {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::PerfTimeline => f.write_str("perf.timeline"),
+        }
+    }
+}
+impl ::std::str::FromStr for PerfTimelineRequestOp {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "perf.timeline" => Ok(Self::PerfTimeline),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for PerfTimelineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for PerfTimelineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for PerfTimelineRequestOp {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///The ring as it stands, oldest moment first, for the generation named by `epoch`. It restates neither `status` nor `uptimeMs` for the reason `PerfBudgetsResult` gives at length. AN EMPTY TIMELINE IS AN HONEST ANSWER and the commonest one: the ring is filled by the ingest thread's own beat, so an engine with nothing attached has taken no samples, and a panel opened three seconds after launch sees a horizon it will fill rather than a defect.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "title": "PerfTimelineResult",
+///  "description": "The ring as it stands, oldest moment first, for the generation named by `epoch`. It restates neither `status` nor `uptimeMs` for the reason `PerfBudgetsResult` gives at length. AN EMPTY TIMELINE IS AN HONEST ANSWER and the commonest one: the ring is filled by the ingest thread's own beat, so an engine with nothing attached has taken no samples, and a panel opened three seconds after launch sees a horizon it will fill rather than a defect.",
+///  "type": "object",
+///  "required": [
+///    "cadenceMs",
+///    "capacity",
+///    "epoch",
+///    "timeline"
+///  ],
+///  "properties": {
+///    "cadenceMs": {
+///      "description": "The NOMINAL interval between samples. Each moment also carries the span it actually covered, because a thread that was busy takes its sample late and a timeline that reported only the nominal figure would quietly turn a stall into a shorter-looking window.",
+///      "type": "integer"
+///    },
+///    "capacity": {
+///      "description": "How many moments the ring holds before it starts overwriting. The bound, stated rather than implied - a client that wanted to know how far back the history reaches would otherwise have to guess from the length, which is wrong for the whole first period of every generation.",
+///      "type": "integer"
+///    },
+///    "epoch": {
+///      "$ref": "#/$defs/Epoch"
+///    },
+///    "timeline": {
+///      "description": "The moments, OLDEST FIRST, at most `capacity` of them. Order is the server's and a caller re-sorting it would be munging a served view (ruling 4); a panel wanting newest-first draws it backwards rather than sorting it.",
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/$defs/PerfMoment"
+///      }
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PerfTimelineResult {
+    ///The NOMINAL interval between samples. Each moment also carries the span it actually covered, because a thread that was busy takes its sample late and a timeline that reported only the nominal figure would quietly turn a stall into a shorter-looking window.
+    #[serde(rename = "cadenceMs")]
+    pub cadence_ms: i64,
+    ///How many moments the ring holds before it starts overwriting. The bound, stated rather than implied - a client that wanted to know how far back the history reaches would otherwise have to guess from the length, which is wrong for the whole first period of every generation.
+    pub capacity: i64,
+    pub epoch: Epoch,
+    ///The moments, OLDEST FIRST, at most `capacity` of them. Order is the server's and a caller re-sorting it would be munging a served view (ruling 4); a panel wanting newest-first draws it backwards rather than sorting it.
+    pub timeline: ::std::vec::Vec<PerfMoment>,
+}
 ///`ProtocolError`
 ///
 /// <details><summary>JSON schema</summary>
@@ -6130,6 +6733,12 @@ impl ::std::convert::TryFrom<::std::string::String> for ReplyKind {
 ///      "$ref": "#/$defs/PerfSnapshotResult"
 ///    },
 ///    {
+///      "$ref": "#/$defs/PerfBudgetsResult"
+///    },
+///    {
+///      "$ref": "#/$defs/PerfTimelineResult"
+///    },
+///    {
 ///      "$ref": "#/$defs/DefineAck"
 ///    },
 ///    {
@@ -6172,6 +6781,8 @@ pub enum ReplyResult {
     SubscribeAck(SubscribeAck),
     ModuleSnapshotResult(ModuleSnapshotResult),
     PerfSnapshotResult(PerfSnapshotResult),
+    PerfBudgetsResult(PerfBudgetsResult),
+    PerfTimelineResult(PerfTimelineResult),
     DefineAck(DefineAck),
     CombatSnapshotResult(CombatSnapshotResult),
     CombatSearchFightsResult(CombatSearchFightsResult),
@@ -6211,6 +6822,16 @@ impl ::std::convert::From<ModuleSnapshotResult> for ReplyResult {
 impl ::std::convert::From<PerfSnapshotResult> for ReplyResult {
     fn from(value: PerfSnapshotResult) -> Self {
         Self::PerfSnapshotResult(value)
+    }
+}
+impl ::std::convert::From<PerfBudgetsResult> for ReplyResult {
+    fn from(value: PerfBudgetsResult) -> Self {
+        Self::PerfBudgetsResult(value)
+    }
+}
+impl ::std::convert::From<PerfTimelineResult> for ReplyResult {
+    fn from(value: PerfTimelineResult) -> Self {
+        Self::PerfTimelineResult(value)
     }
 }
 impl ::std::convert::From<DefineAck> for ReplyResult {

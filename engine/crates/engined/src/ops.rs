@@ -20,12 +20,13 @@ use protocol::generated::{
     HelloOp, KnowledgeDefineRequestOp, KnowledgeDomain, KnowledgeItemRequestOp,
     KnowledgeMobRequestOp, KnowledgeRecord, KnowledgeResult, KnowledgeSearchRequestOp,
     KnowledgeSearchResult, KnowledgeSpellRequestOp, ModuleSnapshotRequestOp, ModuleSnapshotResult,
-    PerfSnapshotRequestOp, ProtocolError, Reply, ReplyKind, ReplyResult, RequestId, ResetMessage,
-    ResetMessageKind, ResistLevelSource, ResistLevelsRequestOp, ResistLevelsResult, ResistMobLevel,
-    RespawnConfirmAck, RespawnConfirmSightingRequestOp, RespawnDefineRequestOp,
-    RosterDefineRequestOp, SessionAttachRequestOp, SessionHealthRequestOp, SessionMarkAck,
-    SessionMarkAckStatus, SessionMarkAddRequestOp, SessionProgressRequestOp, SubscribeAck,
-    ViewSubscribeRequestOp, ViewUnsubscribeRequestOp,
+    PerfBudgetsRequestOp, PerfSnapshotRequestOp, PerfTimelineRequestOp, ProtocolError, Reply,
+    ReplyKind, ReplyResult, RequestId, ResetMessage, ResetMessageKind, ResistLevelSource,
+    ResistLevelsRequestOp, ResistLevelsResult, ResistMobLevel, RespawnConfirmAck,
+    RespawnConfirmSightingRequestOp, RespawnDefineRequestOp, RosterDefineRequestOp,
+    SessionAttachRequestOp, SessionHealthRequestOp, SessionMarkAck, SessionMarkAckStatus,
+    SessionMarkAddRequestOp, SessionProgressRequestOp, SubscribeAck, ViewSubscribeRequestOp,
+    ViewUnsubscribeRequestOp,
 };
 use protocol::generated::{
     ClientSpell, ClientSpellDebuff, ClientSpellDebuffAxis, ClientSpellSlot, ResistAxis,
@@ -244,6 +245,33 @@ impl Session {
             // panel that is far more useful than drawing it a row of zeros.
             ClientMessage::PerfSnapshotRequest(request) => match world.perf_snapshot() {
                 PerfAnswer::Perf(perf) => reply(request.id, ReplyResult::PerfSnapshotResult(*perf)),
+                PerfAnswer::Unavailable(why) => error(request.id, ErrorCode::Unavailable, why),
+            },
+
+            // PERF.BUDGETS AND PERF.TIMELINE — RULING 19's SURFACE 8, COMPLETED (JOS-502).
+            //
+            // THREE OPS, ONE ASK, ONE SET OF OUTCOMES. Everything the arm above argues holds here
+            // unchanged — no `notFound` is reachable because neither request names anything that
+            // could be absent, an engine with nothing attached is idle rather than unavailable (no
+            // budget has been measured and no moment has been sampled, and both say so), and the
+            // single refusal is a fold with a door that did not answer through it.
+            //
+            // WHY TWO OPS AND NOT ONE. They answer different questions with different lifetimes: a
+            // budget verdict is a judgement about the WHOLE generation and changes rarely, while
+            // the timeline is a window that moves on every beat. A panel wants the first once and
+            // the second on every redraw, and a client that had to refetch the ring to re-read a
+            // verdict would pay the larger payload for the smaller answer.
+            ClientMessage::PerfBudgetsRequest(request) => match world.perf_budgets() {
+                PerfAnswer::Perf(result) => {
+                    reply(request.id, ReplyResult::PerfBudgetsResult(*result))
+                }
+                PerfAnswer::Unavailable(why) => error(request.id, ErrorCode::Unavailable, why),
+            },
+
+            ClientMessage::PerfTimelineRequest(request) => match world.perf_timeline() {
+                PerfAnswer::Perf(result) => {
+                    reply(request.id, ReplyResult::PerfTimelineResult(*result))
+                }
                 PerfAnswer::Unavailable(why) => error(request.id, ErrorCode::Unavailable, why),
             },
 
@@ -1026,6 +1054,8 @@ fn is_known_op(op: &str) -> bool {
         SessionProgressRequestOp::SessionProgress.to_string(),
         ModuleSnapshotRequestOp::ModuleSnapshot.to_string(),
         PerfSnapshotRequestOp::PerfSnapshot.to_string(),
+        PerfBudgetsRequestOp::PerfBudgets.to_string(),
+        PerfTimelineRequestOp::PerfTimeline.to_string(),
         ViewSubscribeRequestOp::ViewSubscribe.to_string(),
         ViewUnsubscribeRequestOp::ViewUnsubscribe.to_string(),
         AlertsDefineRequestOp::AlertsDefine.to_string(),
@@ -1527,6 +1557,25 @@ mod tests {
             panic!("a refusal");
         };
         assert!(matches!(refusal.error.code, ErrorCode::BadParams));
+    }
+
+    #[test]
+    fn surface_eights_other_two_ops_are_ops_this_build_knows() {
+        // The same pin, twice more (JOS-502). It matters more here than for most ops: all three
+        // perf requests take `NoParams`, so a typo'd param is the ONLY way a client can spell one
+        // of them wrong, and the known-op list is the only thing standing between that typo and an
+        // `unknownOp` that says the feature does not exist.
+        for op in ["perf.budgets", "perf.timeline"] {
+            let raw = serde_json::json!({"id": 46, "op": op, "params": {"who": "me"}});
+            let Some(EngineMessage::ErrorReply(refusal)) = refuse(&classify(&raw)) else {
+                panic!("a refusal for {op}");
+            };
+            assert!(
+                matches!(refusal.error.code, ErrorCode::BadParams),
+                "{op} answered {:?}",
+                refusal.error.code
+            );
+        }
     }
 
     #[test]
