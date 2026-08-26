@@ -42,6 +42,8 @@ const EVERY_OP: RequestOp[] = [
   'session.progress',
   'module.snapshot',
   'perf.snapshot',
+  'perf.budgets',
+  'perf.timeline',
   'view.subscribe',
   'view.unsubscribe',
   'alerts.define',
@@ -87,6 +89,24 @@ test('EVERY GUARD IS DISCRIMINATING — no two ops accept each other’s result'
     // is a guard that cannot tell them apart — so `serve` is the discriminator, and this shape
     // carrying `status` is what makes that a real assertion in the matrix below.
     'perf.snapshot': { status: 'live', epoch: 2, uptimeMs: 925, ingest: {}, serve: [] },
+    // THE TRAP SHAPES, per this file's convention: a budget that measured NOTHING (the state a
+    // just-launched engine is in, and the one a guard reading truthiness rather than `in` would
+    // get wrong), and an EMPTY ring (the commonest honest timeline answer). Neither carries
+    // `uptimeMs`, which is the schema decision that keeps `session.health`'s negation one clause
+    // long — if a later hand adds it, this matrix is what says so.
+    'perf.budgets': {
+      epoch: 2,
+      budgets: [
+        {
+          id: 'foldRate',
+          label: 'fold rate',
+          limit: 'at least 1.0 MB/s',
+          verdict: 'unmeasured',
+          note: 'nothing has folded yet'
+        }
+      ]
+    },
+    'perf.timeline': { epoch: 2, capacity: 30, cadenceMs: 10_000, timeline: [] },
     'view.subscribe': { subscription: 7, subscribed: true },
     'view.unsubscribe': { subscription: 7, subscribed: false },
     // The five defines share `DefineAck` the way the three above share `SubscribeAck`, and for the

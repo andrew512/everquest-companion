@@ -519,6 +519,26 @@ pub fn perf_snapshot(id: i64) -> ClientMessage {
     })
 }
 
+/// One `perf.budgets` request — the budgets this build enforces, judged live (JOS-502).
+#[must_use]
+pub fn perf_budgets(id: i64) -> ClientMessage {
+    ClientMessage::PerfBudgetsRequest(protocol::generated::PerfBudgetsRequest {
+        id: RequestId(id),
+        op: protocol::generated::PerfBudgetsRequestOp::PerfBudgets,
+        params: NoParams {},
+    })
+}
+
+/// One `perf.timeline` request — the bounded recent history behind the snapshot (JOS-502).
+#[must_use]
+pub fn perf_timeline(id: i64) -> ClientMessage {
+    ClientMessage::PerfTimelineRequest(protocol::generated::PerfTimelineRequest {
+        id: RequestId(id),
+        op: protocol::generated::PerfTimelineRequestOp::PerfTimeline,
+        params: NoParams {},
+    })
+}
+
 /// One `sessionMarks.add` request, stamped with the instant the caller says the press happened
 /// (JOS-487, boundary verdict 6). The clock is the CALLER's on purpose — see the schema.
 #[must_use]

@@ -35,6 +35,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+/// THE BUDGETS THIS BUILD ENFORCES (owner ruling 19, JOS-502) — the definitions `tests/budget.rs`
+/// asserts in CI, served live off the generation that is running so the panel and a bug report
+/// state what THIS machine did.
+mod budgets;
 mod concard;
 mod conn;
 mod foldsink;

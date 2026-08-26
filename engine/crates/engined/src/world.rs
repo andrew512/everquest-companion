@@ -52,11 +52,12 @@ use protocol::generated::{
     AttachResult, ConCardMessage, DiffMessage, DiffMessageKind, EngineMessage, Epoch, EpochMessage,
     EpochMessageKind, EpochReason, FireCaptures, FireMessage, FireMessageKind, FoldProgress,
     HealthResult, HealthResultStatus, KnowledgeMissMessage, KnowledgeMissMessageKind,
-    KnowledgePushDomain, LogMark, ModuleChangedMessage, ModuleChangedMessageKind, PerfIngest,
-    PerfServeSource, PerfSnapshotResult, PerfSnapshotResultStatus, RequestId, ResetMessage,
-    ResetMessageKind, Row,
+    KnowledgePushDomain, LogMark, ModuleChangedMessage, ModuleChangedMessageKind,
+    PerfBudgetsResult, PerfIngest, PerfMoment, PerfServeSource, PerfSnapshotResult,
+    PerfSnapshotResultStatus, PerfTimelineResult, RequestId, ResetMessage, ResetMessageKind, Row,
 };
 
+use crate::budgets;
 use crate::ingest::{self, Starter};
 use crate::views::{self, FrameKind, Meter, Prepared, SourceDef};
 
@@ -95,7 +96,8 @@ pub enum SnapshotAnswer {
     Unavailable(String),
 }
 
-/// What [`World::perf_snapshot`] found.
+/// What a performance question found — [`World::perf_snapshot`], [`World::perf_budgets`] and
+/// [`World::perf_timeline`] all answer with it.
 ///
 /// TWO OUTCOMES AND NOT THREE, and the missing one is the point: there is no `NotFound`, because a
 /// perf question names nothing that could be absent. An engine with no fold at all is NOT a
@@ -103,10 +105,14 @@ pub enum SnapshotAnswer {
 /// exactly. The only refusal is a fold that HAS a door and did not answer through it, which is a
 /// wedged ingest and the one thing a performance panel most needs to be told about rather than
 /// shown as a row of zeros.
+///
+/// IT IS GENERIC OVER THE RESULT because the three ops share every one of those sentences (JOS-502)
+/// — same door, same deadline, same two outcomes, and the same reason the refusal is singular. Three
+/// enums that differed only in one field's type would be three places for that argument to drift.
 #[derive(Debug)]
-pub enum PerfAnswer {
+pub enum PerfAnswer<T> {
     /// The engine's own numbers.
-    Perf(Box<PerfSnapshotResult>),
+    Perf(Box<T>),
     /// A fold that was there to ask and did not answer in time.
     Unavailable(String),
 }
@@ -692,7 +698,7 @@ impl World {
     /// IT READS THE COUNTERS AND RESETS NOTHING (`Meter::peek`). Two panels open at once must see
     /// the same session, and the stderr report must not lose the interval it was about to print.
     #[must_use]
-    pub fn perf_snapshot(&self) -> PerfAnswer {
+    pub fn perf_snapshot(&self) -> PerfAnswer<PerfSnapshotResult> {
         // ONE CRITICAL SECTION FOR THE WORLD'S WHOLE HALF, and it ends before anything can block.
         //
         // IT COPIES THE STATE RATHER THAN CALLING `health()`, and that is not duplication for its
@@ -743,6 +749,94 @@ impl World {
                 scan_bytes: measured.ingest.scan_bytes.map(clamp_i64),
             },
             serve: serve_rows(&measured.serve, &watched),
+        }))
+    }
+
+    /// How long THIS PROCESS has been up, in milliseconds — the one clock a performance answer is
+    /// allowed to read.
+    ///
+    /// PROCESS-RELATIVE AND NOT A WALL CLOCK. It survives an attach, which the epoch does not, and
+    /// it carries nothing about when or where a person plays — which is why `views::Timeline`
+    /// stamps its moments with it rather than taking a clock of its own. It takes NO LOCK: the
+    /// start instant is set once at construction and never written again, and the ingest thread
+    /// calls this on the serve beat.
+    #[must_use]
+    pub fn uptime_ms(&self) -> u64 {
+        u64::try_from(self.inner.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// Answer `perf.budgets` — every budget this build enforces, judged against this generation.
+    ///
+    /// SAME DOOR, SAME DEADLINE, SAME TWO OUTCOMES as [`World::perf_snapshot`], and the SAME ASK:
+    /// the ingest answers one `PerfAsk` carrying the cost, the serve rows and the ring, and the
+    /// three perf ops are three readings of that one answer. A second door would be a second
+    /// `try_recv` on the hottest boundary this thread has, bought for nothing.
+    ///
+    /// THE WORLD'S HALF IS ONE FIELD, so there is no critical section here at all — no subscriber
+    /// counts to pair with a coordinate, no status to copy. A budget verdict is a fact about the
+    /// generation the measurements came from, so the epoch is read (under the lock, where every
+    /// read of it belongs) and carried, and a reader comparing two answers across an attach can see
+    /// that they are not comparable.
+    ///
+    /// THE ARITHMETIC AND THE PROSE ARE `budgets`'s, not this method's. Ruling 4 puts the
+    /// comparison and the rendering on this side of the wire; this method's whole job is to pull
+    /// three readings out of the answer and hand them over.
+    #[must_use]
+    pub fn perf_budgets(&self) -> PerfAnswer<PerfBudgetsResult> {
+        let (epoch, asks) = {
+            let state = self.lock();
+            (state.epoch, state.asks.clone())
+        };
+        let measured = match asks {
+            None => ingest::EnginePerf::default(),
+            Some(asks) => match self.ask_perf(&asks) {
+                Ok(measured) => measured,
+                Err(why) => return PerfAnswer::Unavailable(why),
+            },
+        };
+        PerfAnswer::Perf(Box::new(PerfBudgetsResult {
+            epoch: Epoch(epoch),
+            budgets: budgets::budgets(&budgets::Readings {
+                scan_ms: measured.ingest.scan_ms,
+                scan_bytes: measured.ingest.scan_bytes,
+                // THE WORST ACROSS EVERY SOURCE, and it is the generation's worst rather than any
+                // window's: a wedge detector that forgot the frame that wedged would be a wedge
+                // detector that clears itself. `filter_map` drops the sources whose frames were all
+                // owed resets — absent, never zero, the rule the whole meter keeps.
+                worst_serve_us: measured
+                    .serve
+                    .iter()
+                    .filter_map(|row| row.latency_max_us)
+                    .max(),
+            }),
+        }))
+    }
+
+    /// Answer `perf.timeline` — the bounded recent history behind the snapshot's totals.
+    ///
+    /// SAME DOOR AND SAME ASK as [`World::perf_budgets`], for the reasons stated there. The ring
+    /// arrives already bounded and already ordered oldest-first (`views::Timeline`), so this method
+    /// maps five fields and states the horizon: `capacity` and `cadenceMs` are on the answer
+    /// because a client that had to infer the horizon from the LENGTH would infer it wrongly for
+    /// the whole first five minutes of every generation.
+    #[must_use]
+    pub fn perf_timeline(&self) -> PerfAnswer<PerfTimelineResult> {
+        let (epoch, asks) = {
+            let state = self.lock();
+            (state.epoch, state.asks.clone())
+        };
+        let measured = match asks {
+            None => ingest::EnginePerf::default(),
+            Some(asks) => match self.ask_perf(&asks) {
+                Ok(measured) => measured,
+                Err(why) => return PerfAnswer::Unavailable(why),
+            },
+        };
+        PerfAnswer::Perf(Box::new(PerfTimelineResult {
+            epoch: Epoch(epoch),
+            capacity: i64::try_from(views::TIMELINE_CAPACITY).unwrap_or(i64::MAX),
+            cadence_ms: i64::try_from(views::TIMELINE_CADENCE.as_millis()).unwrap_or(i64::MAX),
+            timeline: measured.timeline.iter().map(moment_row).collect(),
         }))
     }
 
@@ -1558,6 +1652,21 @@ fn subscriber_counts(state: &State) -> BTreeMap<&'static str, i64> {
 ///
 /// A source in NEITHER set is absent, and that is the panel's own rule arriving from the data: no
 /// rows of zeros for a source this session has never had anything to do with.
+/// ONE RING ENTRY ON THE WIRE (JOS-502) — five field assignments and no arithmetic.
+///
+/// A FREE FUNCTION THAT TOUCHES NO LOCK, like the four beside it. The ring did the subtraction that
+/// makes each figure an interval, and `views::Timeline` did it where the counters live; this is the
+/// mapping onto the generated type, which is the one thing `views/` may not know about.
+fn moment_row(moment: &views::Moment) -> PerfMoment {
+    PerfMoment {
+        at_ms: clamp_i64(moment.at_ms),
+        span_ms: clamp_i64(moment.span_ms),
+        frames: clamp_i64(moment.frames),
+        payload_weight: clamp_i64(moment.bytes),
+        fold_to_frame_us_max: moment.worst_us.map(clamp_i64),
+    }
+}
+
 fn serve_rows(
     served: &[views::SourceMeter],
     watched: &BTreeMap<&'static str, i64>,

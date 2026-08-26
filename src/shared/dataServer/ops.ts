@@ -23,7 +23,9 @@ import type {
   KnowledgeSearchResult,
   LogsListResult,
   ModuleSnapshotResult,
+  PerfBudgetsResult,
   PerfSnapshotResult,
+  PerfTimelineResult,
   ResistLevelsResult,
   ResistSpellResult,
   RespawnConfirmAck,
@@ -38,6 +40,14 @@ interface ResultRegistry {
   'session.progress': SubscribeAck
   'module.snapshot': ModuleSnapshotResult
   'perf.snapshot': PerfSnapshotResult
+  // SURFACE 8's OTHER TWO OPS (ruling 19, JOS-502). Three perf ops and three shapes, and the
+  // reason they are not one op with three sections is lifetime: a budget verdict is a judgement
+  // about the whole generation and changes rarely, the timeline moves on every beat, and the
+  // snapshot's totals are what both of the others are derived from. A panel wants them at three
+  // different rates, and a client that had to refetch a thirty-moment ring to re-read a verdict
+  // would pay the largest payload for the smallest answer.
+  'perf.budgets': PerfBudgetsResult
+  'perf.timeline': PerfTimelineResult
   'view.subscribe': SubscribeAck
   'view.unsubscribe': SubscribeAck
   // THE FIVE `*.define` COMMANDS (JOS-482) SHARE ONE ANSWER, and the registry says so once per op
@@ -152,6 +162,20 @@ export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> 
   // arms of the registry both pass is a guard that cannot tell them apart. `serve` is required by
   // the schema and carried by no other result shape.
   'perf.snapshot': (r) => 'serve' in r,
+  // `budgets` and `timeline` — each op's OWN WORD, picked the way `confirmed`, `levels` and
+  // `characters` were rather than found to be free (JOS-502). The tempting picks were the generic
+  // ones a later shape is most likely to want too — `epoch` (which four arms already carry) and
+  // `capacity` — and the matrix has now caught that mistake twice, on `hits` and on `status`.
+  //
+  // AND THE SCHEMA HAD TO GIVE WAY FOR THESE TO BE ONE-FIELD GUARDS AT ALL. `PerfSnapshotResult`
+  // restates five of `HealthResult`'s facts, which is what forced health's guard down to
+  // `'uptimeMs' in r && !('serve' in r)`; a budgets result that had restated `uptimeMs` in the same
+  // spirit would have been a THIRD arm that guard could not refuse, and the negation would have had
+  // to grow a second clause naming a shape it has nothing to do with. So these two results carry
+  // the epoch (a budget verdict is a fact about ONE generation) and deliberately not the uptime.
+  // The schema says so where it is decided; this is the reader that would have paid for it.
+  'perf.budgets': (r) => 'budgets' in r,
+  'perf.timeline': (r) => 'timeline' in r,
   'view.subscribe': (r) => 'subscribed' in r,
   'view.unsubscribe': (r) => 'subscribed' in r,
   // `applied` is the field no other arm carries — `count` would be a weaker guard, because it is

@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:1db2731131510b321a7d095cf65a67bafcf851ae8483019822152c0e57164777
+// schema-digest: sha256:e4581985ea600134c9e0f5fa81f7cefacc93cbd9b688ec877f038102d5ec801d
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -25,6 +25,8 @@ export type ClientMessage =
   | SessionProgressRequest
   | ModuleSnapshotRequest
   | PerfSnapshotRequest
+  | PerfBudgetsRequest
+  | PerfTimelineRequest
   | ViewSubscribeRequest
   | ViewUnsubscribeRequest
   | AlertsDefineRequest
@@ -96,6 +98,8 @@ export type ReplyResult =
   | SubscribeAck
   | ModuleSnapshotResult
   | PerfSnapshotResult
+  | PerfBudgetsResult
+  | PerfTimelineResult
   | DefineAck
   | CombatSnapshotResult
   | CombatSearchFightsResult
@@ -238,6 +242,22 @@ export interface ModuleSnapshotParams {
 export interface PerfSnapshotRequest {
   id: RequestId
   op: 'perf.snapshot'
+  params: NoParams
+}
+/**
+ * THE ENGINE'S OWN BUDGETS, DEFINITIONS AND VERDICT TOGETHER (owner ruling 19 surface, JOS-502). `engine/crates/engined/tests/budget.rs` asserts these same ceilings in CI against a synthetic corpus; this op answers them LIVE, off the generation that is actually running, so the panel and the bug report state what THIS machine did rather than what a runner did. Ruling 3 is the whole reason the op carries the definitions and not just the numbers - performance goals are self-measured and never promised, so a reader must be able to see the ceiling beside the measurement and judge for himself instead of trusting a colour. Same door and same cost as `perf.snapshot` (one ask on the fold's boundary), same standing warning: THE APP MUST NOT POLL THIS IDLY, because a budget surface that costs a round trip a second while nobody is looking is precisely the bug it exists to find.
+ */
+export interface PerfBudgetsRequest {
+  id: RequestId
+  op: 'perf.budgets'
+  params: NoParams
+}
+/**
+ * THE RECENT HISTORY BEHIND `perf.snapshot`'s TOTALS (owner ruling 19 surface, JOS-502). A snapshot is cumulative for the generation, so two of them a minute apart cannot say WHEN the serve path was slow - this is the same instrument sampled on a beat and kept in a BOUNDED RING, which is the whole difference between a history and a leak. The ring is fixed-capacity and overwrites its oldest entry, so an engine up for a week costs exactly what one up for a minute costs; `capacity` is on the answer so a reader can see the horizon rather than infer it. Same door and same cost as `perf.snapshot`, and THE APP MUST NOT POLL THIS IDLY for the same reason.
+ */
+export interface PerfTimelineRequest {
+  id: RequestId
+  op: 'perf.timeline'
   params: NoParams
 }
 /**
@@ -778,6 +798,88 @@ export interface PerfServeSource {
    * Open subscriptions over this source RIGHT NOW, across every connection — a live count, not a cumulative one, and the world's answer rather than the meter's. It is what makes a row with no recent frames readable: nobody is watching, as against nothing is moving.
    */
   subscribers: number
+}
+/**
+ * Every budget this build enforces, judged against the generation named by `epoch`. IT DELIBERATELY RESTATES NEITHER `status` NOR `uptimeMs`, which `PerfSnapshotResult` does restate from `HealthResult`: `session.health`'s guard in `src/shared/dataServer/ops.ts` is `uptimeMs` present and `serve` absent, so a budgets answer carrying an uptime would be a third arm that guard could not refuse - the registry's matrix would go red, and correctly, because a shape two ops both pass is a shape no caller can identify. The epoch is here because a budget verdict is a fact about ONE generation and a reader comparing two answers across an attach must be able to see that they are not comparable.
+ */
+export interface PerfBudgetsResult {
+  epoch: Epoch
+  /**
+   * One row per budget, in the order the panel draws them - a fixed order this engine owns, never an order a caller re-derives (ruling 4). The list is never empty: a build with a budget it cannot measure yet says `unmeasured` in the row rather than omitting it, because a budget that vanishes when it is inconvenient is not a budget.
+   */
+  budgets: PerfBudget[]
+}
+/**
+ * ONE BUDGET: what it is called, what it allows, what it measured, and the verdict - render-ready, which is ruling 4 applied to a diagnostic rather than to a list. `limit` and `measured` are STRINGS the engine formatted, not numbers with a unit the caller has to know, and that is deliberate on three counts: the two budgets in this build are measured in different units (bytes per second, microseconds) so a shared numeric field would need a unit discriminant nobody reads; the comparison that produces `verdict` is arithmetic and ruling 4 puts arithmetic on this side of the wire; and a third budget can ship without one line changing in the renderer. Locale is fixed en-US per ruling 25. A budget carries no name, no path and no log content by construction - it is a rate, a latency and a verdict, which is exactly the set the telemetry bright line admits.
+ */
+export interface PerfBudget {
+  /**
+   * The budget's stable key, for a test or a bug report to name it by. Never drawn - `label` is what a person reads - and never re-ordered against, because the server already sent the rows in their drawing order.
+   */
+  id: 'foldRate' | 'serveLatency'
+  /**
+   * What the budget is called, in the words the panel prints.
+   */
+  label: string
+  /**
+   * The ceiling or the floor, rendered with its unit and its direction - `at least 1.0 MB/s`, `at most 2.0 s` - so the row reads as a sentence and a reader never has to guess which way the comparison runs.
+   */
+  limit: string
+  /**
+   * What this generation actually did, rendered in the same unit as `limit`. ABSENT MEANS NOT YET MEASURED and never zero, the same rule `PerfIngest` keeps: a scan still running has no rate, and a source whose every frame was an owed reset has no latency, and reporting either as `0` would be the one lie an instrument must not tell.
+   */
+  measured?: string
+  /**
+   * `pass` when the measurement satisfies the limit, `fail` when it does not, `unmeasured` when there is nothing yet to judge - which is a third state rather than an optimistic `pass`, because a budget that reads green before it has measured anything is worse than one that says nothing.
+   */
+  verdict: 'pass' | 'fail' | 'unmeasured'
+  /**
+   * The one sentence a reader needs so the number is not misread - the caveat travelling with the measurement instead of living in a doc nobody has open. It is where `serveLatency` says that it includes the coalescing beat and is a wedge detector rather than a compute budget, and where `foldRate` says the floor is an eighth of the measured rate on purpose so a debug build is what trips it.
+   */
+  note: string
+}
+/**
+ * The ring as it stands, oldest moment first, for the generation named by `epoch`. It restates neither `status` nor `uptimeMs` for the reason `PerfBudgetsResult` gives at length. AN EMPTY TIMELINE IS AN HONEST ANSWER and the commonest one: the ring is filled by the ingest thread's own beat, so an engine with nothing attached has taken no samples, and a panel opened three seconds after launch sees a horizon it will fill rather than a defect.
+ */
+export interface PerfTimelineResult {
+  epoch: Epoch
+  /**
+   * How many moments the ring holds before it starts overwriting. The bound, stated rather than implied - a client that wanted to know how far back the history reaches would otherwise have to guess from the length, which is wrong for the whole first period of every generation.
+   */
+  capacity: number
+  /**
+   * The NOMINAL interval between samples. Each moment also carries the span it actually covered, because a thread that was busy takes its sample late and a timeline that reported only the nominal figure would quietly turn a stall into a shorter-looking window.
+   */
+  cadenceMs: number
+  /**
+   * The moments, OLDEST FIRST, at most `capacity` of them. Order is the server's and a caller re-sorting it would be munging a served view (ruling 4); a panel wanting newest-first draws it backwards rather than sorting it.
+   */
+  timeline: PerfMoment[]
+}
+/**
+ * ONE SAMPLED WINDOW OF THE SERVE PATH, and every figure in it is an INTERVAL rather than a running total - which is the one design decision in this shape. `perf.snapshot` already answers the cumulative question and answers it better; what a history is for is saying that the minute at 04:12 cost four times what the minute before it did, and a list of ever-growing totals makes a reader do that subtraction himself over numbers whose baseline he cannot see. A quiet window is RECORDED as a quiet window rather than skipped, because a ring that dropped its empty samples would compress a two-minute silence into no space at all and make the busy moments look adjacent. Nothing here can carry game data: it is a count of frames, a weight of bytes and a latency.
+ */
+export interface PerfMoment {
+  /**
+   * When the window CLOSED, as milliseconds since this process started - the same clock `PerfSnapshotResult.uptimeMs` is on, so a panel holding both can place the moments against the uptime without a second time base. Process-relative on purpose: the engine reads no wall clock to answer a performance question, and a process-relative stamp carries nothing about when or where a person plays.
+   */
+  atMs: number
+  /**
+   * How long this window ACTUALLY covered, measured rather than assumed equal to `cadenceMs`. It is what makes the counts below dividable into rates honestly, and a span noticeably longer than the cadence is itself the finding - the sampling thread was busy.
+   */
+  spanMs: number
+  /**
+   * Frames sent across every source during this window, resets and diffs together. Per-source detail is `perf.snapshot`'s serve table and is deliberately not duplicated here: a ring that held one row per source per sample would grow with the source registry, which is exactly the unbounded growth this shape refuses.
+   */
+  frames: number
+  /**
+   * What those frames weighed, summed over every source, in the same accounting `PerfServeSource.payloadWeight` uses - and the unit is in this sentence rather than in the name for the same reason it is there, because a property name in this schema may not carry a wire unit.
+   */
+  payloadWeight: number
+  /**
+   * The worst fold-to-frame latency in MICROSECONDS among the frames timed in this window, or ABSENT when no frame in it had a fold behind it. The worst rather than the mean, on `widestPayloadWeight`'s argument: a mean over a ten-second window hides the one frame that stalled somebody's screen, which is the only frame the window was sampled to find.
+   */
+  foldToFrameUsMax?: number
 }
 /**
  * The answer to every `*.define` command, and it is deliberately the SAME shape for all five. A define is an idempotent FULL-SET REPLACE (the cutover ledger's command law: replayable, order-collapsing, hash-friendly for ruling 18's cache key), so there is nothing per-family to report back — the engine either took the set or refused the frame. `count` is how many entries it took, which is the one number a caller can check its own push against; it is absent for a family whose payload is not a list (`buffTrust`, `respawn` push one object each).

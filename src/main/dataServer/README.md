@@ -54,11 +54,27 @@ decision a test can watch being made rather than an absence nobody can observe.
 | `rendererBroker.ts` | **The brokerage** (JOS-484): the `engine:connect` handler, the port handover, and the live-connection lifecycle. |
 
 The engine's row in the app's performance panel is assembled **outside this directory**, in
-`src/main/enginePerfWatch.ts`: it joins `enginePerfSnapshot()` with a native per-pid read
-(`src/main/processSample.ts` — `app.getAppMetrics()` is Chromium's own process list and the engine
-is not in it) and pushes one object over the perf IPC family. **It polls only while the panel is
-open** — see "The polling discipline" in `engine/crates/engined/README.md` for the rule and why it
-exists. The renderer never speaks to the engine; brokering a client into a window is a later ticket.
+`src/main/enginePerfWatch.ts`: it joins `enginePerfSnapshot()` and `enginePerfBudgets()` with a
+native per-pid read (`src/main/processSample.ts` — `app.getAppMetrics()` is Chromium's own process
+list and the engine is not in it) and pushes one object over the perf IPC family. **It polls only
+while the panel is open** — see "The polling discipline" in `engine/crates/engined/README.md` for the
+rule and why it exists. The renderer never speaks to the engine; brokering a client into a window is
+a later ticket.
+
+**Three diagnostic accessors live in `engineClientHost.ts` and all three SWALLOW TO NULL** —
+`enginePerfSnapshot`, `enginePerfBudgets`, `enginePerfTimeline` (JOS-483, JOS-502). That is the
+opposite posture from `engineRequest`, which rejects, and the line between them is stated at the
+call site: a READ whose answer a user sees owes its caller a reason, while a DIAGNOSTIC that cannot
+be taken has nothing to say. None of the three waits for a connection or opens one — a perf panel
+must never be the reason a socket exists.
+
+**A bug report carries the same three answers** (ruling 19's other half). `src/main/feedback/perf.ts`
+asks them at report time rather than reading the panel's last sample: the watch runs only while the
+panel is open, so its newest reading is usually minutes old or absent, and a report is composed at
+exactly the moment a stale one would be worst. `src/shared/feedbackPerfEngine.ts` turns them into
+the block and carries the bright-line argument — every value on that shape is a whole number or a
+closed-enum member, which is how the engine's own absolute log path and the log's clock are kept off
+a report by SHAPE rather than by a scrub.
 
 ## The connect flow (JOS-479, phase 3)
 
@@ -467,7 +483,7 @@ proxy for.
 | `tests/dataServerEngineChild.test.mts` | The real child, pipe and socket against a Node fake engine. |
 | `tests/e2e/engine-boots.e2e.mts` | The real binary under the real app: spawn, ready, respawn, wrong token, quit, absence. |
 | `tests/enginePerf.test.mts` | The performance panel's engine row above the FFI boundary: the per-pid CPU arithmetic over a fake pid, the formatters' absent cases, and `useEnginePerf` run for real (arming, disarming, the null push). |
-| `tests/e2e/perf.e2e.mts` | (`enginePerfSteps.mts`) the ENGINE section of the in-app performance panel, whose verbatim text the run prints. |
+| `tests/e2e/engine-loot-view.e2e.mts` | ALSO hosts `enginePerfSteps.mts` — the ENGINE section of the in-app performance panel, whose verbatim text the run prints, budget verdicts included (JOS-502). It rides that spec because the only expensive thing it needs is an engine that has folded and served, which the ledger comparison has just spent a scan and a subscription reaching. **This row named `perf.e2e.mts` until JOS-502 and was wrong**: the module's own header named a third spec, `engine-parity.e2e.mts`, which went with the parity probe in JOS-499 — so for a whole release nothing imported it, no runner ran it, and it had rotted (it still demanded a parity verdict that stopped being possible the day there stopped being two folds). Dead test code documented in two places as live is worth one sentence here. |
 | `tests/e2e/engine-absent.e2e.mts` | A checkout with no binary: the app boots, says what it looked for, invents nothing, does not crash. |
 | `npm run budget:ci` | **The oracle's successor** (JOS-501): the engine measures its own fold rate and serve latency through `perf.snapshot`, against a committed ceiling, over a deterministic generated corpus. Gates every push. |
 | `npm run budget:g3` | The same instrument on the owner's 209 MB fixture, at the release cut. Prints; never asserts. |

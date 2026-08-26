@@ -365,6 +365,72 @@ From the JOS-500/501 wave (all verified in the doing):
   design, the thing that keeps it honest is a test comparing producers against contracts, not a
   reader.
 
+From the JOS-502 wave (surface 8's completion — all verified in the doing):
+
+- **`engined` IS A BINARY CRATE, so an integration test cannot import a constant from it.** There is
+  no lib target, and adding a library facade to the shipped process for a test's convenience is the
+  wrong trade. When a fact must live both in `src/` and in `tests/`, write it twice and make the
+  duplication SELF-CHECKING — `tests/budget.rs` now asks the running engine to render its own
+  ceilings and fails if either has drifted from the constant it asserts. That is the repo's existing
+  pattern for a two-homed fact (a generated file pinned by a staleness test), reached from a
+  different direction.
+- **A CUMULATIVE MAXIMUM IS NOT INVERTIBLE, and that decides where a windowed extreme is
+  accumulated.** A ring sampling a counter can derive any SUM by subtracting its own last reading, so
+  frames and bytes cost the hot path nothing. A worst-case cannot be recovered that way — a
+  cumulative worst of 56 ms says nothing about which window set it — so exactly one field has to be
+  accumulated beside the counters and drained by the sampler. Worth stating because the instinct is
+  to drain all of them, which would make every reader's numbers depend on who asked last.
+- **A HISTORY IS A LEAK UNLESS THE BOUND IS THE FIRST DECISION.** `views::Timeline` is fixed-capacity
+  with the oldest moment DROPPED rather than folded into a summary, because a summary of aged-out
+  history is a second, subtler accumulator that also grows. And a quiet window is RECORDED as quiet:
+  a ring that skipped its empty samples would compress a two-minute lull into no space at all and
+  make the busy moments either side of it look adjacent.
+- **A PERFORMANCE ANSWER READS A CLOCK IT IS GIVEN, NEVER ONE IT TAKES.** The ring is stamped with
+  process uptime passed in from the caller. Three things fall out at once: no wall clock anywhere
+  near a performance path, nothing on the wire that says when a person was playing, and every ring
+  test is integer arithmetic with nothing sleeping in it.
+- **A RENDER-READY DIAGNOSTIC IS RULING 4 APPLIED ONE SURFACE OVER, AND IT PAYS.** `perf.budgets`
+  serves `limit` and `measured` as strings the ENGINE formatted and `verdict` already decided,
+  because the comparison is arithmetic, the two budgets are in different units, and the caveat that
+  stops each number being misread is prose. The test of whether that was right: a third budget ships
+  without one line changing in the renderer.
+- **A CAVEAT BELONGS ON THE ROW, NOT IN THE PLAN DOCUMENT.** Both known softnesses in these numbers
+  (the serve latency including the coalescing beat; the fold-rate floor sitting an eighth under the
+  measurement while G3 is unmet) now ride as the budget's own `note` and draw as the panel's tooltip.
+  A design doc is not open at the moment somebody reads a number.
+- **A GUARD-MATRIX COLLISION IS CHEAPEST TO AVOID IN THE SCHEMA, NOT IN THE GUARD.** `perf.snapshot`
+  restating `HealthResult`'s facts is what forced health's guard down to `'uptimeMs' in r && !('serve'
+  in r)`. Two more results restating `uptimeMs` in the same spirit would have made that negation grow
+  a clause about shapes it has nothing to do with — so the two new results carry the epoch and
+  deliberately not the uptime, and the schema says so where the decision was taken.
+- **DEAD TEST CODE ROTS, AND IT ROTS SILENTLY IN THE DIRECTION OF PASSING.** `enginePerfSteps.mts`
+  was written for a spec JOS-499 deleted; nothing took its place, two documents named two DIFFERENT
+  live hosts for it, and neither was true. Unrun, it had also gone stale in content — still demanding
+  a parity verdict that stopped being possible the day there stopped being two folds to compare. This
+  is JOS-501's `wireCrumbs` lesson in a second place: when a component's failure mode is silence,
+  what keeps it honest is somebody RUNNING it. A steps module with no importer should be as loud as
+  an unused export.
+- **AN ADDITIVE FIELD ON A SIZE-CAPPED BLOCK MUST RE-PRICE THE CAP, AND BY MORE THAN IT NEEDS.**
+  JOS-458 left `MAX_PERF_BYTES` with 105 bytes of adversarial headroom and wrote the instruction into
+  the comment; JOS-502 was the next field and followed it (8 KB → 9 KB, ceiling 8,430). The part
+  worth generalizing is the margin: a cap with a hundred bytes of slack is one the next honest
+  addition trips for no reason anybody can act on, which teaches the next author to raise it by feel.
+- **A CEILING IS A CLAIM ABOUT WHAT A FIELD MEASURES, so a group of same-typed fields must not
+  inherit one by default.** Every duration on the bug report's engine block took the block's
+  existing one-hour bound, and for the COSTS (a scan, a catalog build) an hour is absurdly generous
+  on purpose. `behindMs` is not a cost — it is the distance from now to the last line the log has —
+  so a user who last played on Tuesday has a real reading of several days, and this repo's OWN e2e
+  fixture reports 23.4 days. Under the inherited bound every one of those readings was silently
+  dropped (the helper omits rather than clamps, which is right), and "the engine is three days
+  behind the log" is one of the strongest sentences a stalled-app report can carry. **Found by
+  reading the e2e's verbatim output rather than by a test**, which is the transferable part: the
+  panel printed the number the block was throwing away, on the same screen, in the same run.
+- **A VALIDATOR THAT RECONSTRUCTS IS ALSO A VALIDATOR THAT SILENTLY DROPS.** Everything on this
+  feedback wire is rebuilt field by field rather than copied, so an unknown key cannot ride into a
+  stored report — which also means a NEW field is discarded without complaint until somebody adds its
+  validator. The additive property and the silent-drop failure are the same mechanism, and the second
+  one is only caught by a round-trip test.
+
 ## Boundary verdicts (each resolves a census finding)
 
 1. `combat.snapshot(now, opts)` — the only wall-clock-parameterized read: the now-evaluation
@@ -528,11 +594,16 @@ remaining backlog:
   the classification ring, so `recent` stops being `[]` in a live answer. **The size of this item is
   the no-munging lint's exemption count**: 89 sites that re-derive in the renderer because no served
   source answers them yet. Each one deleted is one exemption removed.
-- **RULING 19'S LAST TWO OPS**, ledger item 7 above: `perf.budgets` / `perf.timeline` per surface 8,
-  and the bug report carrying the engine's numbers the way it carries main/renderer stalls
-  (`src/main/feedback/perf.ts` is the seam; `enginePerfSnapshot()` already answers). JOS-501 built
-  the CI half of ruling 19 and deliberately did not start the schema half — it names a follow-up
-  rather than a half-built op.
+- ~~**RULING 19'S LAST TWO OPS**~~ — **DONE (JOS-502), and surface 8 is complete.** `perf.budgets`
+  serves the definitions AND the live verdict off `engined/src/budgets.rs` (the same two ceilings
+  `tests/budget.rs` asserts in CI, judged against the running generation); `perf.timeline` serves a
+  fixed-capacity ring of INTERVALS, never running totals, sampled off the serve beat. The panel draws
+  the budget rows and the bug report carries verdicts, rates and latencies —
+  `src/shared/feedbackPerfEngine.ts`, whose whole shape is integers and closed enums so the engine's
+  absolute log path and the log's own clock are kept off a report BY SHAPE rather than by a scrub.
+  **The unmet G3 goal is stated in the fold-rate row itself**, which is where the honesty belongs: a
+  pass sits on a floor an eighth below the measured rate, and a row that let that read as the goal
+  reached would be lying by omission.
 - **THE NAMED GAPS THE DELETION OPENED** (JOS-499), each needing an engine-side command rather than
   an app-side fix: `alerts:appFired` and `eventFeed:report` (renderer-detected bossDefeat /
   questComplete / Sky completes lose their history and feed rows — the SOUND is unaffected), and a
@@ -544,9 +615,16 @@ Two smaller things JOS-501 found and named rather than fixed, so they are not lo
   `foldToFrameUs` is fold-to-outbox and includes the ~10 Hz coalescing beat — measured at 52 ms for
   a one-row diff, which is a beat and not work. Ruling 19's own discipline is that queue time is
   named as queue time, and a single number the performance panel labels "latency" is in tension
-  with it. The fix is a second instant taken at frame-build start.
+  with it. The fix is a second instant taken at frame-build start. **JOS-502 did not fix it and did
+  the next best thing: the caveat now TRAVELS WITH THE NUMBER.** `perf.budgets`'s `serveLatency` row
+  carries a `note` saying in words that the figure includes the beat and that the ceiling is a wedge
+  detector rather than a performance budget, and the panel draws it as that row's tooltip. A caveat
+  in a plan document is one nobody has open at the moment they read the number.
 - **The G3 goal is not met** (52.5 s against a 20 s goal), and now that there is an instrument the
-  question of whether 20 s was ever the right number is an owner call rather than a guess.
+  question of whether 20 s was ever the right number is an owner call rather than a guess. **JOS-502
+  put the admission where a reader meets it**: the `foldRate` budget's own `note` says the G3 goal is
+  NOT met and quotes the 52.5 s, so a passing row can never be misread as the goal reached. The owner
+  call is still open; what is closed is the possibility of the surface hiding it.
 
 ### What actually happened (JOS-499)
 
