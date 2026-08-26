@@ -48,7 +48,7 @@
 //! also keeps the derived event out of `last_event_ts`, which the primary `sessionStart` it restates
 //! has already recorded.
 
-use crate::event::{Event, Key};
+use crate::event::{Event, Key, Kind};
 use crate::jsmap::JsMap;
 use crate::modules::buff_anchors::Attribution;
 use crate::modules::buff_landing::stated_duration;
@@ -866,13 +866,13 @@ impl BuffTimersModule {
     }
 
     fn dispatch(&mut self, ev: &Event) {
-        match ev.kind() {
-            "cc" => {
-                let mob = ev.str("mob").unwrap_or_default().to_string();
+        match ev.kind_of() {
+            Kind::Cc => {
+                let mob = ev.str(Key::Mob).unwrap_or_default().to_string();
                 if ev.bool(Key::Refresh) {
-                    self.end(&id_key(&mob), ev.ts(), ev.str("spell"));
+                    self.end(&id_key(&mob), ev.ts(), ev.str(Key::Spell));
                 } else {
-                    self.apply(&mob, ev.ts(), ev.str("verb"), &cc_candidates(ev));
+                    self.apply(&mob, ev.ts(), ev.str(Key::Verb), &cc_candidates(ev));
                 }
             }
             // CHARM IS A DETRIMENTAL HOLD, IN THE SAME SHAPE AS A MEZ (JOS-140, owner amendment
@@ -882,26 +882,30 @@ impl BuffTimersModule {
             // anchor gate, the same learner. WHAT IT IS NOT is a claim about the entity's
             // DISPOSITION: the charmed mob is your pet and simultaneously carries this detrimental
             // hold, so it legitimately appears in BOTH windows.
-            "charm" => {
-                let mob = ev.str("mob").unwrap_or_default().to_string();
+            Kind::Charm => {
+                let mob = ev.str(Key::Mob).unwrap_or_default().to_string();
                 self.apply(&mob, ev.ts(), None, &cc_candidates(ev));
             }
             // THE BREAK ANNOTATION (JOS-180). It ENDS NOTHING — the wear-off line that precedes it in
             // the same second already did, and closing a second landing here would delete a hold on
             // another mob of that name.
-            "ccWake" => self.censor_wake(&id_key(ev.str("mob").unwrap_or_default()), ev.ts()),
+            Kind::CcWake => {
+                self.censor_wake(&id_key(ev.str(Key::Mob).unwrap_or_default()), ev.ts())
+            }
             // Charm and CC break through the SAME sentence family; a charm break on a mob we were
             // also holding is that hold ending too. The line NAMES the charm spell, so it closes that
             // line's hold and leaves a mez on the same mob alone.
-            "uncharm" => self.end(
-                &id_key(ev.str("mob").unwrap_or_default()),
+            Kind::Uncharm => self.end(
+                &id_key(ev.str(Key::Mob).unwrap_or_default()),
                 ev.ts(),
-                ev.str("spell"),
+                ev.str(Key::Spell),
             ),
             // EVERY death shape, on the name that DIED and never on the killer (JOS-156). The parser
             // already unified the three into one event, so there is nothing to branch on here.
-            "death" => self.on_mob_death(&id_key(ev.str("name").unwrap_or_default()), ev.ts()),
-            "zone" => self.clear_holds(),
+            Kind::Death => {
+                self.on_mob_death(&id_key(ev.str(Key::Name).unwrap_or_default()), ev.ts())
+            }
+            Kind::Zone => self.clear_holds(),
             _ => {}
         }
     }
