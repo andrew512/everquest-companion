@@ -325,38 +325,35 @@ logInfo(
  * it takes ARE the reason it had to grow a gate, and a gated read of this fold belongs where the
  * fold is assembled rather than where the replay is orchestrated.
  *
- * ── WHY IT IS SILENT UNDER SERVE (JOS-496, cutover ledger item 6) ──────────────────────────────
+ * ── IT NAMES ITS SUBJECT RATHER THAN GOING SILENT UNDER SERVE (JOS-496) ────────────────────────
  *
- * It takes FOUR module snapshots (`loot`, `kills`, `leveling`, `turnIns`) purely to print a
- * sentence. Under serve those four describe THIS PROCESS'S fold, which is the world nothing in the
- * product reads — so a developer reading the line was being told the size of a world that no longer
- * answers anything, in the one place they would reasonably take it for the app's state. They are
- * also four synchronous fold reads on the boot path, which is precisely the deletion the wave is
- * for.
+ * The first cut of this wave GATED the line off when the engine was serving, on the argument that
+ * its four snapshots describe a world nothing in the product reads. The argument was sound and the
+ * gate was not, and the reason is worth keeping: `shimServing()` IS NOT "AN ENGINE EXISTS". It is
+ * two default-on environment flags, so it answers true on every dev checkout that has never run
+ * `cargo build` — where these four snapshots are the only fold there is, and the silence would have
+ * deleted a boot line from the one tree that still needs it. (The same misreading is a live hazard
+ * elsewhere in this feature; `conCard.ts registerConCardIpc` has the long version.)
  *
- * NOTHING IS LOST BY THE SILENCE. The served world's own summary is the parity line
- * `dataServer/engineClientHost.ts` writes the moment both folds land on the same log: the engine's
- * status, its event count, its byte mark and a module-by-module verdict — strictly more than these
- * five numbers, and about the world that answers. Printing both would be two counts of two folds a
- * reader would have to know not to compare.
+ * SO IT NAMES WHOSE NUMBERS THEY ARE INSTEAD, which is honest in both worlds and costs a clause.
+ * A reader under serve now has the one fact the gate was trying to give them — that this is not
+ * what the engine folded — plus the pointer to where that is: the parity line
+ * `dataServer/engineClientHost.ts` writes the moment both folds land on the same log, carrying the
+ * engine's status, event count, byte mark and a module-by-module verdict.
  *
- * FLAG-OFF IS UNTOUCHED. `EQC_ENGINE=0`, `EQC_ENGINE_SERVE=0`, or a checkout with no `cargo build`
- * all print the sentence this function has always printed, from the same four snapshots, at the
- * same moment.
- *
- * `serving` ARRIVES AS AN ARGUMENT because `serveShim.ts` reaches this file through the engine
- * client (serveShim → engineHost → engineClientHost → pipeline), so importing its gate here would
- * close a module cycle. `session.ts` reads `shimServing()` once and hands it over.
+ * AND THE FOUR SNAPSHOTS ARE NOT A CUTOVER BLOCKER, which is the other half of the correction. The
+ * census is about reads the PRODUCT makes; this is a diagnostic over a fold that is on the deletion
+ * list itself (`docs/plans/data-server.md`: `pipeline.ts` fold construction), so it dies with the
+ * thing it reads rather than having to be moved off it first.
  */
-export function logReplaySummary(serving: boolean): void {
-  if (serving) return
+export function logReplaySummary(): void {
   const lootState = modules.loot.snapshot().state
   const killState = modules.kills.snapshot().state
   const lvlState = modules.leveling.snapshot().state
   logInfo(
-    `[everquest-companion] Loaded ${lootState.length} loot, ${modules.turnIns.snapshot().state.length} turn-ins, ${
+    `[everquest-companion] This process’s own fold loaded ${lootState.length} loot, ${modules.turnIns.snapshot().state.length} turn-ins, ${
       Object.keys(killState.mobs).length
-    } mobs, ${lvlState.levels.length} level-ups, ${lvlState.aaGains.length} AA gains, ${lvlState.aaSpends.length} AA buys.`
+    } mobs, ${lvlState.levels.length} level-ups, ${lvlState.aaGains.length} AA gains, ${lvlState.aaSpends.length} AA buys. (The engine’s own fold is reported on the parity line.)`
   )
 }
 

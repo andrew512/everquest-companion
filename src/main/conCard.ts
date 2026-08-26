@@ -266,29 +266,42 @@ export function noteConCardClosed(input: unknown, now = Date.now()): void {
  * feature: the consider module is where a `/con` becomes a fact, and this file is where a fact
  * becomes a card. Called from `ipc/index.ts` beside the other producer registrations.
  */
-export function registerConCardIpc(serving: boolean): void {
-  // THE HOOK IS FOR THE FLAG-OFF WORLD NOW (JOS-496, boundary verdict 2). Under serve the engine
-  // resolves the card and `dataServer/conCardServe.ts` opens the window, so installing this too
-  // would draw the same `/con` twice — the single-publisher rule `alertsAudio.ts` states for a
-  // sound, restated for a window. Not installing it is also what actually ENDS the census finding:
-  // the hook IS the fold calling synchronously into Electron, and a hook that is never registered
-  // cannot be called, which is a stronger guarantee than one that returns early.
+export function registerConCardIpc(engineDrawsCards: () => boolean): void {
+  // WHO DRAWS THE CARD, ASKED PER `/con` (JOS-496, boundary verdict 2).
   //
-  // `serving` ARRIVES AS AN ARGUMENT RATHER THAN BEING READ HERE, and that is a structural choice
-  // rather than a style one. `serveShim.ts` reaches this file through the engine client and the
-  // serve receiver (serveShim → engineClientHost → conCardServe → conCard), so importing
-  // `shimServing()` would close a module cycle between a leaf and the composition root — the same
-  // cycle `serveShim.ts` refuses at its own teardown, for the same reason. The composition root
-  // already holds both halves and is where the decision belongs; there is still exactly ONE gate
-  // (`shimServing`), read once, at `ipc/index.ts`.
+  // THE HOOK IS STILL INSTALLED, AND THE FIRST CUT OF THIS DID NOT INSTALL IT. That version read
+  // `shimServing()` once at registration and skipped the hook when it was true — and it was WRONG
+  // in a way worth writing down, because the same shape is a live hazard elsewhere in this feature.
+  // `shimServing()` IS NOT "AN ENGINE EXISTS". It is `EQC_ENGINE` AND `EQC_ENGINE_SERVE`, both
+  // default-on since JOS-495, and it is answered `true` on every dev checkout that has never run
+  // `cargo build` — where there is no binary, no client, and no frame will ever arrive. A hook
+  // skipped on that answer is a con card that silently never appears again, in exactly the tree
+  // `engineHost.ts`'s header promises "exactly the app it got before this ticket". A packaged build
+  // whose engine failed to spawn is the same state with a user on the other end of it.
+  //
+  // SO THE QUESTION IS ASKED AT THE MOMENT IT CAN BE ANSWERED HONESTLY, and the authority is the
+  // one the read path already uses: `engineServeReadiness()` — is there a client, is it connected,
+  // are both worlds on the SAME log, and has the engine's fold gone live. All four hold exactly
+  // when the engine is folding the line this hook just received and will emit a frame for it. One
+  // gate, one authority, and no second opinion about what "serving" means.
+  //
+  // A DOUBLE IS IMPOSSIBLE TO RULE OUT AND HARMLESS BY CONSTRUCTION; A MISS IS NEITHER. If
+  // readiness flips between the frame and the hook, both draw — and they draw the SAME card, under
+  // the same `mobKey` queue identity, so the overlay treats the second as the first getting fuller
+  // (`enrich`'s re-send does exactly this on every launch already). That asymmetry is why the gate
+  // is written to fail towards drawing.
+  //
+  // IT ARRIVES AS A FUNCTION RATHER THAN BEING READ HERE for a structural reason: `serveShim.ts`
+  // and the client reach this file through the serve receiver (serveShim → engineClientHost →
+  // conCardServe → conCard), so importing either would close a module cycle between a leaf and the
+  // composition root. `ipc/index.ts` holds both halves and is where the decision belongs.
   //
   // THE CLOSE CHANNEL IS REGISTERED IN BOTH WORLDS, because the suppression it feeds is app-side in
   // both (see `openCard`) — the engine has no idea what a re-con is and by design never will.
-  if (!serving) {
-    considerModule.setConCardHook((ev, zone) => {
-      noteConsider(ev, zone)
-    })
-  }
+  considerModule.setConCardHook((ev, zone) => {
+    if (engineDrawsCards()) return
+    noteConsider(ev, zone)
+  })
   ipcMain.on(IPC.conCardClosed, (_e, key: unknown) => {
     try {
       noteConCardClosed(key)

@@ -29,11 +29,10 @@ import { scanLog } from './log/scanHistory'
 import { formatTailIoSummary, takeTailIoSummary } from './log/tailIoStats'
 import { createSlicer } from './log/replaySlicer'
 import { saveUserOverlay } from './data/overlayPersistence'
-// THE SERVED ARMS (JOS-496). `mirroredModuleState` answers the `/outputfile` baseline seam from the
-// engine when it is the world answering this app's reads; `shimServing` is the same gate
-// `ipc/world.ts` branches on, read here for the post-replay summary line.
+// THE SERVED ARM (JOS-496): `mirroredModuleState` answers the `/outputfile` baseline seam from the
+// engine when it is the world answering this app's reads, and `null` — no engine, not yet live, a
+// world just replaced — is every caller's cue to ask this process's own fold instead.
 import { mirroredModuleState } from './dataServer/serveMirrors'
-import { shimServing } from './dataServer/serveShim'
 import { baseName } from '../shared/outputs/baseline'
 import { loadInventory } from './inventory/parseInventory'
 import { loadAchievements, watchOutputKind, type OutputKindWatch } from './outputs'
@@ -680,11 +679,10 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult | nul
       setReplayGate(false)
     }
   }
-  // ONE LINE SAYING WHAT THE REPLAY FOLDED — and, since JOS-496, only when this process's fold is
-  // the one anybody reads. It lives in `pipeline.ts` beside the other boot summaries of the app's
-  // own fold, and it is handed the gate rather than reading it: `serveShim.ts` reaches the pipeline
-  // through the engine client, so an import there would close a cycle.
-  logReplaySummary(shimServing())
+  // ONE LINE SAYING WHAT THE REPLAY FOLDED. It lives in `pipeline.ts` beside the other boot
+  // summaries of the app's own fold (JOS-496) — see that function for why it names its subject
+  // rather than standing down under serve.
+  logReplaySummary()
 
   startTailer(ref.logPath, scan.endOffset, turn)
   startHeartbeat()
