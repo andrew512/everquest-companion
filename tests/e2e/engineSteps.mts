@@ -453,3 +453,39 @@ export async function settleEngineServing(
   const said = await settleServing(out, 0, timeoutMs)
   return said !== null
 }
+
+/**
+ * WAIT FOR A REAL-INSTALL LAUNCH TO HAVE FOLDED THE OWNER'S WHOLE LOG, and PRINT how long it took.
+ *
+ * `settleEngineServing` above is for staged fixtures, where the fold is a few megabytes and 90 s is
+ * an absurd amount of headroom. A spec that launches on the REAL INSTALL is waiting on the owner's
+ * entire log — measured at 52.5 s per fold under the release engine (JOS-501) — and a step that
+ * settles on rendered rows without waiting for that first is really settling on a whole-log fold
+ * through whatever short cap it happened to choose. That is precisely how `bosses-week` read an
+ * empty roster on its first release-engine run.
+ *
+ * THE NUMBER IS PRINTED, NEVER ASSERTED. It is the single most useful line in the log when a
+ * real-install spec goes slow, and it is also a wall-clock measurement of somebody else's machine —
+ * exactly the kind of frozen number this repo has learned rots (AGENTS.md). So it narrates and the
+ * only thing that can fail is the CONDITION.
+ *
+ * QUIET ON EXPIRY for `settleEngineServing`'s reason: a launch with no engine binary legitimately
+ * never says the sentence, and a wait that failed there would make the harness a second opinion
+ * about whether an engine is required.
+ */
+export async function settleRealLogFold(
+  app: ElectronApplication,
+  label: string,
+  timeoutMs = 240_000
+): Promise<boolean> {
+  const began = Date.now()
+  const served = await settleEngineServing(app, timeoutMs)
+  const secs = ((Date.now() - began) / 1000).toFixed(1)
+  console.log(
+    served
+      ? `${label}: the engine folded the real log and is serving — ${secs}s`
+      : `${label}: no serving sentence after ${secs}s — served surfaces will read empty`
+  )
+  return served
+}
+

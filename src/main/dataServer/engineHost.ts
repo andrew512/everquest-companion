@@ -74,6 +74,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:f
 import { join } from 'node:path'
 import { app } from 'electron'
 import { logError, logInfo } from '../errorLog'
+import { E2E } from '../e2e'
 import { setEnginePid } from '../processPriority'
 import { mintToken } from './token'
 import { engineBinaryCandidates, isCargoTargetBinary, stagedEngineNames } from './engineProtocol'
@@ -160,7 +161,13 @@ function resolveEngineBinary(): string | null {
   const candidates = engineBinaryCandidates({
     appPath: app.getAppPath(),
     resourcesPath: process.resourcesPath ?? '',
-    cwd: process.cwd()
+    cwd: process.cwd(),
+    // THE HARNESS NAMES ITS OWN BINARY (JOS-501), and only the harness: read under `EQ_E2E=1`
+    // alone, the same standing the staged EQ install has. The e2e suite builds the engine in
+    // RELEASE and the candidate order below prefers debug, so without this a machine holding both
+    // would run the suite against the binary the suite did not build. Not a gate — an absent or
+    // wrong value simply falls through to the ordinary search.
+    override: E2E ? (process.env.EQ_ENGINE_BIN ?? '') : ''
   })
   const found = candidates.find((path) => existsSync(path))
   if (found === undefined) {
