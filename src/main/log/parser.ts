@@ -28,6 +28,7 @@
 import { DEFAULT_PROFILE } from '../../shared/profiles'
 import type { LogEvent } from '../../shared/logEvents'
 import { getParserConfig } from './rulesets'
+import { parseEqTimestamp } from '../../shared/spellKey'
 import type { ClassifyCtx, Classifier } from './parseCommon'
 import { classifyDamage, classifyHeal, classifyMiss, classifyMitigation, classifyResist } from './parseCombat'
 import {
@@ -84,17 +85,10 @@ const LINE_RE = /^\[(.+?)\]\s?(.*)$/
  * Parse an EQ timestamp like "Sat Aug 01 13:00:28 2026" to epoch millis.
  * Reformatted to an ISO-ish string that Date can parse deterministically.
  */
-export function parseEqTimestamp(stamp: string): number {
-  // "Sat Aug 01 13:00:28 2026" -> "Aug 01 2026 13:00:28"
-  const m = /^\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{2}:\d{2}:\d{2})\s+(\d{4})$/.exec(stamp.trim())
-  if (!m) {
-    const t = Date.parse(stamp)
-    return Number.isNaN(t) ? 0 : t
-  }
-  const [, mon, day, time, year] = m
-  const t = Date.parse(`${mon} ${day} ${year} ${time}`)
-  return Number.isNaN(t) ? 0 : t
-}
+// MOVED OUT (JOS-499 item 2) — see `shared/spellKey.ts`. `feedback/slice.ts` survives this release
+// and still needs to read EQ's own timestamp, so the function outlives the parser that hosted it.
+// Imported rather than only re-exported because the cascade below calls it twice.
+export { parseEqTimestamp } from '../../shared/spellKey'
 
 // ----- the single pass -----
 

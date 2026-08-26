@@ -5,7 +5,12 @@ import type { SpellDb } from '../data/spellDb'
 // import is one-way at runtime: spellEffectClass.ts reaches back here for nothing, and its own
 // import of parseCommon.ts is `spellCanonKey`, which imports this file for a TYPE only.
 import { charmRoster } from '../data/spellEffectClass'
-import { spellCanonKey } from './parseCommon'
+import { spellCanonKey } from '../../shared/spellKey'
+// THE TWO ROSTERS ARE COMMITTED DATA NOW (JOS-499 item 2) — `data/spellStems.ts`. They outlive this
+// file (the alert catalog gates two templates on them), and moving them to a leaf both readers
+// import also removed the spellDb.ts↔rulesets.ts cycle rather than reversing it. Imported for the
+// uses below and re-exported for the doomed parse files; both lines die with this file.
+import { CC_STEMS, CHARM_STEMS } from '../data/spellStems'
 
 /**
  * WHAT A ROSTER HAS TO BE ABLE TO DO: answer, for one spell name off a log line, whether it is a
@@ -303,10 +308,11 @@ export interface ParserConfig {
  * <mob>.` lines carry no roman-numeral suffix (the single exception is a `Rune IV`), so a def
  * built from the catalog's display name matches the sentence the game actually prints.
  */
-export const CHARM_STEMS =
-  /\bcharm\b(?! of )|beguile|\ballure\b(?! of death)|alluring whispers|cajol|dictate|besiege|agacerie|beckon|command of druzzil|dominate|thrall of bones|enslave death|befriend animal|call of karana|tunare.s request|solon.s ((bewitching )?bravura|song of the sirens)/i
-export const CC_STEMS =
-  /mesmeriz|enthrall|entranc|dazzle|screaming terror|ensnar|immobiliz|suffocat|kelin.s lucid lullaby|pixie strike|sionachie.s dreams/i
+// MOVED TO COMMITTED DATA (JOS-499 item 2) — `data/spellStems.ts`. Both rosters outlive this file:
+// the alert catalog gates its `breaks`/`charmBreaks` templates on them and the roster oracle
+// re-derives them from spells.json. Re-exported here so the doomed parse files need no edit; this
+// line dies with the file. The argument for every member stays in the header above.
+export { CC_STEMS, CHARM_STEMS }
 
 /**
  * THE HALF-SWAP (JOS-251), and the half that did not move is the interesting one.

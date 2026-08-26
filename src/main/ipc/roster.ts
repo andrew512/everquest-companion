@@ -16,7 +16,7 @@
 
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
-import { idKey } from '../log/parser'
+import { idKey } from '../../shared/spellKey'
 // The engine's copy (JOS-482, boundary verdict 3) — the same pull-becomes-push story combo tells,
 // and additive in the same way: a launch with no engine finds a null.
 import { pushAppKnowledge } from '../dataServer/definePush'

@@ -10,6 +10,13 @@
 import type { LogEvent } from '../../shared/logEvents'
 import type { ParserConfig } from './rulesets'
 
+// THE VOCABULARY MOVED OUT (JOS-499 item 2). `idKey`, `spellCanonKey` and `spellRank` were written
+// here and are not ABOUT parsing — they are how a name folds into a join key — and this file is
+// deleted with the fold while thirteen surviving consumers still need them. They now live in
+// `shared/spellKey.ts` and are re-exported here so the doomed files below need no edit and the tree
+// stays buildable across the prep commits. This line dies with the file.
+export { idKey, spellCanonKey, spellRank } from '../../shared/spellKey'
+
 /**
  * One log line, pre-split, plus the profile's parser config — the argument every
  * classifier takes. `text` is the message with the `[timestamp] ` prefix removed.
@@ -32,91 +39,6 @@ export function norm(name: string): string {
   return n
 }
 
-/**
- * Canonical identity key for an entity name. EQ writes the same mob with
- * different casing (charm lines lowercase the article, damage lines capitalize
- * it); keying state by this lowercased form makes lookups case-stable. 'You'
- * stays special. (Re-exported here so consumers no longer import combat/parse.)
- */
-export function idKey(name: string): string {
-  const n = name.trim().toLowerCase()
-  if (n === 'you' || n === 'yourself' || n === 'your') return 'you'
-  return n
-}
-
-/**
- * Canonical SPELL key (Task #33): lowercase, trimmed, with a trailing rank token
- * stripped. EQ Legends suffixes current-session casts with a Roman-numeral RANK —
- * "You begin casting Swift Like the Wind I." / "Shiftless Deeds IV" / "Allure VI" —
- * but EVERY fade/fizzle/interrupt line DROPS the rank ("Your Swift Like the Wind spell
- * has worn off …", "Your Shiftless Deeds spell fizzles!"). Keying the buffs model by
- * the raw name breaks cast↔fade pairing (2,507/12,442 casts carry a rank tail).
- *
- * The stripped token is a trailing I–X Roman numeral at the END of the name only,
- * word-bounded. VERIFIED SAFE against the real log (2026-08-01): NO fade/fizzle/
- * interrupt line ever ends in a Roman numeral, and every one of the 16 distinct
- * rank-tailed base spells (Swift Like the Wind, Shiftless Deeds, Allure, Clarity,
- * Superior Healing, Lay on Hands, …) is a real spell whose identity does not include a
- * Roman-numeral word — so stripping the tail can never merge two genuinely-different
- * spells. The DISPLAY name keeps its suffix (callers pass the raw spell for display);
- * only the KEY is canonicalized.
- */
-const RANK_TAIL_RE = / (?:I|II|III|IV|V|VI|VII|VIII|IX|X)$/
-
-/**
- * MEMOIZED, and the measurement is why (JOS-59). This is a PURE function of its argument — a
- * trim, a regex, a trim and a lowercase — and it is called from the parser on every cast-shaped
- * line AND from the buffs module's per-event hygiene sweep, once per live buff instance. On the
- * owner's log the sweep alone asks it tens of millions of times, and it was 1.8% of the whole
- * fold's self time.
- *
- * The domain is the set of SPELL AND SKILL NAMES a log prints, which is closed and small (the
- * shipped DB carries ~1.9k). The cap is a guard against a pathological input stream rather than
- * an expectation: past it the cache stops GROWING and every further call simply computes the
- * answer, so behaviour is identical either way and memory cannot run away.
- */
-const CANON_CACHE = new Map<string, string>()
-const CANON_CACHE_MAX = 20_000
-export function spellCanonKey(spell: string): string {
-  const hit = CANON_CACHE.get(spell)
-  if (hit !== undefined) return hit
-  const key = spell.trim().replace(RANK_TAIL_RE, '').trim().toLowerCase()
-  if (CANON_CACHE.size < CANON_CACHE_MAX) CANON_CACHE.set(spell, key)
-  return key
-}
-
-/**
- * THE RANK THE KEY THROWS AWAY (JOS-387): `Scorching Arrow IV` -> 4, `Frost Shard VI` -> 6, a name
- * with no numeral -> 0.
- *
- * It reads the SAME trailing token `spellCanonKey` strips, off the same raw display name, and it is
- * deliberately a second function rather than a change to that one: every consumer of the canonical
- * key — the buffs model's cast/fade pairing, the ledger's pooling, the proc analytics — depends on
- * a rank-IV and a rank-0 cast of a spell being ONE spell, and only the resist model needs to know
- * that they carry different resist adjusts (-15 a rank). So the rank is parsed BEFORE canonising,
- * beside the strip, and the key is untouched.
- *
- * The numerals are the same closed I-X ladder `RANK_TAIL_RE` accepts, which is what EQ Legends
- * prints; anything else answers 0 rather than guessing.
- */
-const RANK_VALUES: Record<string, number> = {
-  I: 1,
-  II: 2,
-  III: 3,
-  IV: 4,
-  V: 5,
-  VI: 6,
-  VII: 7,
-  VIII: 8,
-  IX: 9,
-  X: 10,
-}
-
-export function spellRank(spell: string): number {
-  const m = RANK_TAIL_RE.exec(spell.trim())
-  if (!m) return 0
-  return RANK_VALUES[m[0].trim()] ?? 0
-}
 
 export function cleanMob(s?: string): string | undefined {
   if (!s) return undefined
