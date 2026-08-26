@@ -79,10 +79,11 @@ import { MODULE_WORLD_CHANGED, type ModuleChanged } from '../../shared/types'
 import { sendToModuleOverlays } from '../worldRebuilt'
 import { sendToMain } from '../windows'
 import { noteTailLine } from '../switchNudge'
+import { noteEventKind } from '../telemetry/breadcrumbs'
 
 /**
  * THE GATE IS GONE (JOS-499 item 9). It was the second half of "does the engine answer this
- * app's reads, and the first half was already structural — nothing here is called unless
+ * app's reads?", and the first half was already structural — nothing here is called unless
  * `installEngineClient` armed a listener. With one fold left there is no second world for a
  * cursor to be confused with, so the frame is simply pushed.
  */
@@ -117,6 +118,23 @@ export function pushModuleChanged(moduleId: string, seq: number): void {
   // not move — but it is strictly conservative in the direction that matters: it can only make
   // the app slower to believe the log went quiet, never quicker.
   noteTailLine()
+  // …and the ERROR-REPORT BREADCRUMB RING (JOS-499), which lost its only producer with the parser.
+  //
+  // `noteEventKind` was called from `LogBus.emit` — the choke point every parsed event passed
+  // through — and it answers one question for a crash report: what was happening just before this.
+  // There are no parsed events here. A cursor is the nearest true thing this process still sees, so
+  // the ring records MODULE MOVEMENT instead of event kinds: "loot moved, kills moved, buffs moved"
+  // in the seconds before the throw.
+  //
+  // IT IS A COARSER INSTRUMENT AND THE SHAPE SAYS SO — a module id is not a log-event kind, and the
+  // ring is prefixed so no reader mistakes one for the other. It is still a closed vocabulary (the
+  // engine's own module list) and still carries no content from the log, which is what the
+  // telemetry bright line requires of it.
+  //
+  // THE TIMESTAMP IS THE HOST'S, and that is the one honest difference: an event carried its own
+  // `LogEvent.ts` and a cursor carries none. A breadcrumb answers "just before, or a while before"
+  // (breadcrumbs.ts), which the wall clock answers as well here as a log clock did.
+  noteEventKind(`module:${moduleId}`, Date.now())
 }
 
 /**
