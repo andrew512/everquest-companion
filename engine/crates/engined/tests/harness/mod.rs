@@ -547,6 +547,32 @@ pub fn respawn_confirm(id: i64, row_id: &str) -> ClientMessage {
     )
 }
 
+/// One `resist.levels` request (JOS-497 item 1). The names are as the LOG spells them — the engine
+/// folds the key, which is the schema's rule and the reason this helper takes no key.
+#[must_use]
+pub fn resist_levels(id: i64, mobs: &[&str]) -> ClientMessage {
+    ClientMessage::ResistLevelsRequest(protocol::generated::ResistLevelsRequest {
+        id: RequestId(id),
+        op: protocol::generated::ResistLevelsRequestOp::ResistLevels,
+        params: protocol::generated::ResistLevelsParams {
+            mobs: mobs.iter().map(|m| (*m).to_owned()).collect(),
+        },
+    })
+}
+
+/// One `resist.spell` request (JOS-497 item 3). The name is as the ASKER spells it; the engine
+/// folds the key, so a rank suffix and a case difference are one question.
+#[must_use]
+pub fn resist_spell(id: i64, name: &str) -> ClientMessage {
+    ClientMessage::ResistSpellRequest(protocol::generated::ResistSpellRequest {
+        id: RequestId(id),
+        op: protocol::generated::ResistSpellRequestOp::ResistSpell,
+        params: protocol::generated::KnowledgeNameParams {
+            name: name.to_owned(),
+        },
+    })
+}
+
 /// One `combat.snapshot` request (JOS-485). `opts` absent is the ordinary call — the app's own
 /// `combat.snapshot(Date.now(), opts ?? {})`, with the instant left to the engine.
 #[must_use]

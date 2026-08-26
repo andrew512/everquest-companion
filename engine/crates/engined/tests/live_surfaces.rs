@@ -26,11 +26,12 @@
 mod harness;
 
 use harness::{
-    attach, health, module_snapshot, respawn_confirm, respawn_define, session_mark, subscribe,
-    Client, Engine, PATIENCE,
+    attach, health, module_snapshot, resist_levels, resist_spell, respawn_confirm, respawn_define,
+    session_mark, subscribe, Client, Engine, PATIENCE,
 };
 use protocol::generated::{
-    ConCardMessage, EngineMessage, HealthResultStatus, ModuleChangedMessage, ReplyResult,
+    ClientSpellDebuffAxis, ConCardMessage, EngineMessage, HealthResultStatus, ModuleChangedMessage,
+    ReplyResult, ResistAxis, ResistLevelSource, SpellTableState,
 };
 use std::io::Write;
 use std::path::PathBuf;
@@ -123,17 +124,60 @@ impl Staged {
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(&dir).expect("a scratch dir");
+        // THE LOG GOES UNDER A `Logs` DIRECTORY, the way a real install has it
+        // (`<eqRoot>/Logs/eqlog_<Char>_<server>.txt`). It was flat until JOS-497 item 3, which made
+        // the shape load-bearing: the engine derives the client spell table's path from the log's
+        // GRANDPARENT, so a flat scratch dir would have it looking beside the system temp folder.
+        std::fs::create_dir_all(dir.join("Logs")).expect("a scratch install");
         let staged = Self(dir);
         staged.append(&format!("{ZONE}{body}"));
         staged
     }
 
+    /// The install root — what `<eqRoot>` is for this staged copy.
+    fn root(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn log(&self) -> PathBuf {
+        self.0.join("Logs").join("eqlog_Primitive_freeport.txt")
+    }
+
     fn path(&self) -> String {
-        self.0
-            .join("eqlog_Primitive_freeport.txt")
-            .to_string_lossy()
-            .into_owned()
+        self.log().to_string_lossy().into_owned()
+    }
+
+    /// Put a `spells_us.txt` where a real install has one — in the install ROOT, beside the `Logs`
+    /// directory the log lives in. That is the only thing that makes the derivation checkable: the
+    /// engine is told a log path and nothing else, and if it went up the wrong number of levels
+    /// this file would not be where it looked.
+    ///
+    /// THE ROWS ARE HAND-AUTHORED, and that is a rule rather than a convenience: `spells_us.txt` is
+    /// Daybreak's file and no slice of it may enter this repo. The numbers are the ones the app-side
+    /// suite transcribed from the owner's install and pinned there.
+    fn stage_spell_table(&self) {
+        let row = |id: &str, name: &str, resist: &str, slots: &str| {
+            let mut f = vec!["0".to_string(); 173];
+            for field in f.iter_mut().take(52).skip(36) {
+                *field = "255".to_string();
+            }
+            f[0] = id.to_owned();
+            f[1] = name.to_owned();
+            f[29] = resist.to_owned();
+            // An enchanter level, so the row is one a player can learn.
+            f[49] = "16".to_owned();
+            f[172] = slots.to_owned();
+            f.join("^")
+        };
+        std::fs::write(
+            self.root().join("spells_us.txt"),
+            format!(
+                "{}\n{}\n",
+                row("677", "Tashani", "1", "2|50|-10|0|101|23"),
+                row("350", "Chaos Flux", "1", "1|50|-20|0|101|30")
+            ),
+        )
+        .expect("the staged spell table");
     }
 
     /// Append the way EverQuest appends: an open, a write, a flush.
@@ -141,7 +185,7 @@ impl Staged {
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(self.0.join("eqlog_Primitive_freeport.txt"))
+            .open(self.log())
             .expect("the log takes an append");
         file.write_all(text.as_bytes()).expect("append");
         file.flush().expect("flush");
@@ -288,6 +332,152 @@ fn a_live_con_becomes_a_card_and_a_historical_one_becomes_nothing() {
         assert!(chip.tag.is_none());
         assert_eq!(chip.n, 0);
     }
+}
+
+// ---- how old is this creature (JOS-497 item 1) --------------------------------------------------
+
+#[test]
+fn resist_levels_answers_the_con_over_the_catalog_and_says_nothing_about_a_stranger() {
+    // THE WHOLE PATH, over a socket, for the LAST fact `src/main/ipc/resist.ts` was reading out of
+    // the app's own fold synchronously. `fold::modules::resist::world` owns the SEMANTICS — which
+    // source wins, how a catalog range becomes a midpoint — and this owns the crossing: a question
+    // composed on a connection thread reaches the resist fold on the ingest thread through the read
+    // door, and comes back as the wire's own shape.
+    //
+    // THE CON IS IN THE STAGED HISTORY, deliberately. `/con` is folded by the scan like any other
+    // line — it is the CARD that is live-only, not the level — so a level stated before the tail
+    // ever went live is exactly what a resist card drawn on launch has to be able to read.
+    let staged = Staged::new("levels", A_HISTORICAL_CON);
+    let engine = Engine::start();
+    let mut conn = Conn::new(engine.connected());
+
+    conn.client.send(&attach(1, &staged.path()));
+    conn.wait_for_live(2);
+
+    conn.client.send(&resist_levels(
+        20,
+        // …the conned creature, a creature only the committed catalog knows, and a PLAYER, who is
+        // in neither and about whom nothing may be invented.
+        &["A fire giant warlord", "Innoruuk", "Lasershark"],
+    ));
+    let ReplyResult::ResistLevelsResult(answer) = conn.reply(20) else {
+        panic!("resist.levels answers a ResistLevelsResult");
+    };
+    let by_name = |name: &str| answer.levels.iter().find(|row| row.mob == name).cloned();
+
+    // THE `/con` WINS AND IT IS EXACT. The game stated 52, so the range is a point and the source
+    // says which of the two ladders answered — the card prints that as prose.
+    let conned = by_name("A fire giant warlord").expect("the conned creature has a level");
+    assert_eq!(conned.level, 52);
+    assert_eq!((conned.lo, conned.hi), (52, 52));
+    assert!(matches!(conned.from, ResistLevelSource::Con));
+    // …and THE NAME IS ECHOED AS IT WAS ASKED, never the folded key. The line spelled it `A fire
+    // giant warlord` and the key is `a fire giant warlord`; the app matches on what it sent.
+    assert_eq!(conned.mob, "A fire giant warlord");
+
+    // THE CATALOG ANSWERS FOR A CREATURE NOBODY HAS CONNED, which is the arm that makes a card
+    // useful the first time a player meets something.
+    let catalog = by_name("Innoruuk").expect("a committed catalog row answers");
+    assert!(matches!(catalog.from, ResistLevelSource::Catalog));
+    assert!(catalog.level > 0);
+    assert!(catalog.lo <= catalog.level && catalog.level <= catalog.hi);
+
+    // AND A PERSON GETS NO ROW AT ALL. `Lasershark` is a player — the measured example the con
+    // card's own suite uses — so neither ladder states a level, and the absence IS the answer:
+    // `levelOf` returns null over there, and a row of four zeros here would be this engine
+    // inventing an age for somebody's character.
+    assert!(
+        by_name("Lasershark").is_none(),
+        "a creature nothing states a level for gets no row: {:?}",
+        answer.levels
+    );
+    assert_eq!(answer.levels.len(), 2);
+}
+
+// ---- the client's own spell table (JOS-497 item 3) ----------------------------------------------
+
+#[test]
+fn resist_spell_reads_the_table_beside_the_install_the_attach_named() {
+    // THE PATH DERIVATION IS THE CLAIM, and it is only checkable end to end. Nothing on the wire
+    // says where `spells_us.txt` is: the app pushes a log at `<eqRoot>/Logs/<log>` and this engine
+    // goes up two and reads beside it. `Staged` puts the log exactly where the product puts one, so
+    // writing the table into the staged directory's parent is writing it where a real install has
+    // it — and if the derivation were wrong, every assertion below would report a missing file.
+    let staged = Staged::new("spells", A_HISTORICAL_CON);
+    staged.stage_spell_table();
+    let engine = Engine::start();
+    let mut conn = Conn::new(engine.connected());
+
+    conn.client.send(&attach(1, &staged.path()));
+    conn.wait_for_live(2);
+
+    conn.client.send(&resist_spell(30, "Tashani"));
+    let ReplyResult::ResistSpellResult(hit) = conn.reply(30) else {
+        panic!("resist.spell answers a ResistSpellResult");
+    };
+    assert!(matches!(hit.table, SpellTableState::Ok));
+    assert_eq!(hit.spell_name, "Tashani", "echoed as asked, never the key");
+    assert!(
+        hit.path.ends_with("spells_us.txt"),
+        "the answer names where it looked: {}",
+        hit.path
+    );
+    let spell = hit.spell.expect("a row for a staged spell");
+    // The field map, across a socket: resist type 1 is magic, and `2|50|-10|0|101|23` is a
+    // magic-resist debuff of -10 with a cap of 23 (calc 101, not the other way round).
+    assert!(matches!(spell.axis, Some(ResistAxis::Magic)));
+    assert_eq!(spell.debuff_slots.len(), 1);
+    assert!(matches!(
+        spell.debuff_slots[0].axis,
+        ClientSpellDebuffAxis::Magic
+    ));
+    assert_eq!(spell.debuff_slots[0].base, -10.0);
+    assert_eq!(spell.debuff_slots[0].max, 23.0);
+
+    // THE KEY IS FOLDED ENGINE-SIDE, so a rank suffix and a case difference are one question — the
+    // fold the table was BUILT under, which is why a caller must not pre-fold.
+    conn.client.send(&resist_spell(31, "chaos flux II"));
+    let ReplyResult::ResistSpellResult(ranked) = conn.reply(31) else {
+        panic!("a ResistSpellResult");
+    };
+    assert!(
+        ranked.spell.is_some(),
+        "the rank tail and the case both fold"
+    );
+
+    // A MISS IS NOT AN ERROR AND IT IS NOT A MISSING FILE. `table: ok` with no `spell` is a
+    // different sentence from `table: missing`, and flattening the two would tell a player to go
+    // and find a folder they are already in.
+    conn.client.send(&resist_spell(32, "Not A Real Spell"));
+    let ReplyResult::ResistSpellResult(miss) = conn.reply(32) else {
+        panic!("a ResistSpellResult");
+    };
+    assert!(matches!(miss.table, SpellTableState::Ok));
+    assert!(miss.spell.is_none());
+}
+
+#[test]
+fn an_install_with_no_spell_table_is_a_supported_state_and_says_where_it_looked() {
+    // An `EQ_INSTALL_DIR` override pointed at a folder of logs with no EverQuest behind it is a
+    // real configuration. What it produces is an answer a card can draw a sentence from, never a
+    // refusal — the app's own reader makes exactly this promise (`ipc/resist.ts`).
+    let staged = Staged::new("nospells", A_HISTORICAL_CON);
+    let engine = Engine::start();
+    let mut conn = Conn::new(engine.connected());
+    conn.client.send(&attach(1, &staged.path()));
+    conn.wait_for_live(2);
+
+    conn.client.send(&resist_spell(33, "Tashani"));
+    let ReplyResult::ResistSpellResult(answer) = conn.reply(33) else {
+        panic!("a ResistSpellResult");
+    };
+    assert!(matches!(answer.table, SpellTableState::Missing));
+    assert!(answer.spell.is_none());
+    assert!(
+        answer.path.ends_with("spells_us.txt"),
+        "the sentence a missing table produces has to name a place: {}",
+        answer.path
+    );
 }
 
 // ---- the session mark --------------------------------------------------------------------------

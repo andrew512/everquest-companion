@@ -52,7 +52,7 @@ import {
 import type { ConsiderEvent } from '../shared/logEvents'
 import { localMobEntry } from './mobLookup'
 import { considerModule } from './pipeline'
-import { resistProfileDeps } from './ipc/resist'
+import { resistProfileDeps, servedMobLevel, type ServedMobLevel } from './ipc/resist'
 import { mobResistProfile } from './resist/profile'
 import { spellTable } from './resist/spellTable'
 
@@ -92,9 +92,20 @@ function sendToConCardOverlay(payload: ConCardPayload): void {
   else wc.send(IPC.onConCard, payload)
 }
 
-/** The five chips, off the same profile the mob page's Resists card is drawn from. */
-function chipsFor(display: string): { chips: ConCardPayload['chips']; spellData: boolean } {
-  const profile = mobResistProfile(display, resistProfileDeps())
+/**
+ * The five chips, off the same profile the mob page's Resists card is drawn from.
+ *
+ * THE LEVEL ARRIVES RESOLVED (JOS-497 item 1) rather than being read out of this process's fold
+ * inside the profile builder. Passing nothing is still legal and still means "ask the app's own
+ * fold" — which is what the TS con-card hook does, because that path runs INSIDE the fold's own
+ * delivery and has nowhere to put an await. Under serve the hook is not installed at all and the
+ * engine's card path resolves the level first, which is where the reader actually closes.
+ */
+function chipsFor(
+  display: string,
+  level?: ServedMobLevel
+): { chips: ConCardPayload['chips']; spellData: boolean } {
+  const profile = mobResistProfile(display, resistProfileDeps(level))
   return { chips: conCardChips(profile), spellData: profile.spellDataAvailable }
 }
 
@@ -198,14 +209,20 @@ export interface ServedConCard {
  * verdicts 4 and 8 land. The engine's `chips` and `spellData` fields are deliberately ignored, and
  * the day the table lands engine-side this function loses its join rather than growing one.
  */
-export function noteEngineConCard(card: ServedConCard, now = Date.now()): boolean {
+export async function noteEngineConCard(card: ServedConCard, now = Date.now()): Promise<boolean> {
   if (!card.id) return false
   // THE DOUBLE GATE, kept rather than trusted away. The engine refuses a person's card with exactly
   // this rule against exactly this catalog (`concard.rs con_card_is_player`), so this can only ever
   // agree — which is the point: a card over another player's head is the thing the owner asked never
   // to happen, and neither side may admit what the other refuses. It costs one catalog lookup.
   if (looksLikePlayer(card.name)) return false
-  const { chips, spellData } = chipsFor(card.name)
+  // THE LEVEL IS ASKED OF WHICHEVER WORLD ANSWERS THIS APP'S READS (JOS-497 item 1), and this is
+  // why the function is asynchronous now. It is the same round trip `ipc/resist.ts` makes for the
+  // mob page, and on this path it is free in the way that matters: the card's trigger has ALREADY
+  // crossed a socket to get here, so the await costs one more loopback hop to a process that has
+  // finished folding — microseconds — against a card whose whole promise is the two seconds before
+  // you decide to fight. `conCardServe.ts` narrates the outcome when this settles.
+  const { chips, spellData } = chipsFor(card.name, await servedMobLevel(card.name))
   const payload: ConCardPayload = { id: card.id, ts: card.at, name: card.name, chips, spellData }
   if (card.level !== undefined) payload.level = card.level
   if (card.zone !== undefined) payload.zone = card.zone

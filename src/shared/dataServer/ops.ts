@@ -23,6 +23,8 @@ import type {
   KnowledgeSearchResult,
   ModuleSnapshotResult,
   PerfSnapshotResult,
+  ResistLevelsResult,
+  ResistSpellResult,
   RespawnConfirmAck,
   SessionMarkAck,
   SubscribeAck
@@ -72,6 +74,20 @@ interface ResultRegistry {
   // …and the push-back reuses `DefineAck`, because it IS a define: one entry taken, `applied` true,
   // and no `count`, which the schema already says is what a non-list payload answers with.
   'knowledge.define': DefineAck
+  // THE LAST SYNCHRONOUS FOLD READ IN MAIN (JOS-497 item 1, cutover ledger item 6). Its own shape
+  // rather than a `KnowledgeResult`, and the reason is the guard matrix below rather than taste: a
+  // level fact is not a knowledge CARD — it carries no `record`, has no `domain`, and answers for a
+  // list — so borrowing that shape would have made a fourth arm nothing could separate from three
+  // others by value alone.
+  'resist.levels': ResistLevelsResult
+  // THE CLIENT'S OWN SPELL TABLE, PER SPELL (boundary verdict 7, JOS-497 item 3). A `resist.*` op
+  // rather than an extension of `knowledge.spell` because the two answer about different SOURCES:
+  // that one serves the committed wiki scrape with removals, corrections and derived durations
+  // applied, and this serves Daybreak's `spells_us.txt`. A caller asking "how is this resisted" and
+  // one asking "what does the wiki say" must be able to tell which answered, and one merged record
+  // would make that unanswerable from the value — the same argument that keeps the five `*.define`
+  // ops five entries.
+  'resist.spell': ResistSpellResult
 }
 
 /** Every client message that carries a request id — i.e. everything except the handshake. */
@@ -164,7 +180,19 @@ export const RESULT_GUARDS: Record<RequestOp, (result: ReplyResult) => boolean> 
   // `query` — same collision, same lesson: `hits` stopped discriminating the moment two searches
   // existed. The query echo is required by the schema and carried by no other shape.
   'knowledge.search': (r) => 'query' in r,
-  'knowledge.define': (r) => 'applied' in r
+  'knowledge.define': (r) => 'applied' in r,
+  // `levels` — this shape's own word, and chosen the way `confirmed` was rather than found to be
+  // free. The two collisions the matrix has already caught (`hits`, `status`) both happened to
+  // fields named after a GENERIC role; `levels` is named after what the op is called, no other arm
+  // carries it, and the schema requires it even when it is empty — which matters, because "nothing
+  // states a level for any of these creatures" is a real answer here and must not read as a wrong
+  // shape.
+  'resist.levels': (r) => 'levels' in r,
+  // `table` — the field that is on EVERY answer this op gives, which is the property a guard needs
+  // and the one `spell` does not have: a miss and a missing file both carry no `spell`, and both
+  // are real answers rather than wrong shapes. Same lesson as `knowledge.item`'s `record` over its
+  // `found`, reached from the other direction.
+  'resist.spell': (r) => 'table' in r
 }
 
 /**

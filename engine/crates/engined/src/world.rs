@@ -195,6 +195,21 @@ struct State {
     /// preemption drops it — `attach` clears the field under the same lock that bumps the epoch —
     /// so a reader can never be answered by a fold the world has already disowned.
     asks: Option<Sender<ingest::Ask>>,
+    /// THE CLIENT'S SPELL TABLE FOR THE INSTALL THIS WORLD IS ATTACHED TO (boundary verdict 7,
+    /// JOS-497 item 3). `None` before the first attach, and replaced by every attach.
+    ///
+    /// IT IS NOT FOLD STATE AND IT IS NOT APP KNOWLEDGE, which is why it is a third kind of field
+    /// here. It is not folded from the log, so it does not belong to a generation the way `fold`
+    /// does; and it is not something the app TOLD this process, so it does not survive an attach
+    /// the way `defines` does. It is a fact about an INSTALL, and the install is named by the log —
+    /// so it is derived at attach and replaced at attach, which is exactly the lifetime a character
+    /// switch onto a second EverQuest folder needs.
+    ///
+    /// AN `Arc` SO IT CAN LEAVE THE LOCK. Reading it is 38 MB and a few hundred milliseconds on the
+    /// first ask, and holding this mutex across that would stall every other connection and the
+    /// ingest's own `report_*` calls. The handle is cloned out under the lock and the parse happens
+    /// with the lock released — the same discipline [`World::module_snapshot`] states for the wait.
+    client_spells: Option<std::sync::Arc<crate::spells::ClientSpells>>,
 }
 
 /// What the world's fold has consumed. A COORDINATE PAIR plus what was counted along the way.
@@ -369,6 +384,7 @@ impl World {
                     asks: None,
                     defines: std::collections::BTreeMap::new(),
                     write_to: None,
+                    client_spells: None,
                 }),
             }),
         }
@@ -760,6 +776,47 @@ impl World {
             ),
             Ok(Some(found)) => CombatAnswer::Answer(found),
         }
+    }
+
+    /// Answer `resist.levels` — how old these creatures are, as the resist fold knows it
+    /// (JOS-497 item 1, cutover ledger item 6).
+    ///
+    /// THE SAME DOOR AND THE SAME DEADLINE, and like `combat.snapshot` it is not a registry op: the
+    /// resist module's PUBLISHED state is two integers, and this fact is in neither of them.
+    ///
+    /// THERE IS NO `NotFound` ARM, and its absence is the answer being right rather than the
+    /// registry being lax. A creature nobody has conned and the committed catalog has never heard of
+    /// is not a request naming something that does not exist — it is a perfectly good question whose
+    /// honest answer is that nothing states a level. So a name with no answer is simply missing from
+    /// the list, and the only refusal here is the one every reader on this door shares: there is
+    /// nobody to ask.
+    pub fn resist_levels(
+        &self,
+        names: &[String],
+    ) -> Result<Vec<(String, fold::modules::resist::world::MobLevelFact)>, String> {
+        let names = names.to_vec();
+        self.ask_fold(|answer| ingest::Ask::MobLevels(ingest::MobLevelAsk { names, answer }))
+    }
+
+    /// THE CLIENT'S SPELL TABLE FOR THE INSTALL THIS WORLD IS ATTACHED TO (boundary verdict 7,
+    /// JOS-497 item 3). `None` when nothing has been attached, which is the only state in which
+    /// there is no install to speak of.
+    ///
+    /// IT DOES NOT GO THROUGH THE INGEST DOOR, and that is the difference between this and every
+    /// other reader on this type. The table is not fold state — the resist fold is emphatic that it
+    /// never reads the client table, which is what lets a ledger be replayed and re-estimated
+    /// without one — so there is nothing to ask the ingest thread ABOUT. It is a file beside a
+    /// directory the attach named, and reading it on the thread that tails the log is exactly the
+    /// stall this program exists to remove.
+    ///
+    /// THE HANDLE LEAVES THE LOCK AND THE PARSE HAPPENS OUTSIDE IT. That is the whole reason this
+    /// returns an `Arc` rather than an answer: `ClientSpells::table` blocks its caller for a few
+    /// hundred milliseconds on the first ask, and doing that under this mutex would stall every
+    /// other connection and deadlock against the ingest's own `report_*` calls — `module_snapshot`
+    /// states the same rule for the same lock.
+    #[must_use]
+    pub fn client_spells(&self) -> Option<Arc<crate::spells::ClientSpells>> {
+        self.lock().client_spells.clone()
     }
 
     /// POST ONE ASK THROUGH THE ONE DOOR AND WAIT FOR IT — the shape `module_snapshot` and
@@ -1219,6 +1276,18 @@ impl World {
             // construction. A session mark has no such second life — it is stored nowhere, so a
             // mark posted at a fold that is being replaced is simply a mark that did not happen.
             state.write_to = None;
+            // THE INSTALL IS NAMED BY THE LOG (boundary verdict 7, JOS-497 item 3), so the client
+            // table is re-derived here and NOWHERE else. `<eqRoot>/Logs/<log>` up two, plus
+            // `spells_us.txt` — a path join and an empty cell, so this costs an attach nothing and
+            // the 38 MB read waits for somebody to actually ask (`crate::spells`).
+            //
+            // REPLACED RATHER THAN KEPT, even when the path is the same. A character switch onto a
+            // second EverQuest folder must not answer out of the first folder's table, and deciding
+            // that by comparing paths would be a cache with an invalidation rule — which is the
+            // thing ruling 5 forbids and ruling 18 law 5 answers with "a mismatch is a full
+            // re-fold". A re-attach onto the same install pays one lazy re-read, once, if anybody
+            // asks.
+            state.client_spells = crate::spells::ClientSpells::beside_log(&log).map(Arc::new);
             let announcement = EngineMessage::EpochMessage(EpochMessage {
                 kind: EpochMessageKind::Epoch,
                 epoch: Epoch(state.epoch),

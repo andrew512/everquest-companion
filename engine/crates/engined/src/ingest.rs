@@ -333,6 +333,23 @@ pub trait EventSink {
         Vec::new()
     }
 
+    /// HOW OLD THESE CREATURES ARE, as the resist fold knows it (JOS-497 item 1) — the last fact
+    /// `src/main/ipc/resist.ts` was still reading out of the app's own fold synchronously.
+    ///
+    /// `&self` and therefore safe on this door: [`fold::modules::resist::ResistModule::level_of`]
+    /// is the non-memoising read, which is the whole reason that form exists.
+    ///
+    /// A SINK WITH NO RESIST MODULE ANSWERS WITH NO ROWS, which is not a special case: it is the
+    /// same value a creature nobody has conned and the catalog has never heard of answers with, and
+    /// the app reads both as the `null` its profile builder has always handled. `own_loot_drops`
+    /// makes the same choice for the same reason.
+    fn mob_levels(
+        &self,
+        _names: &[String],
+    ) -> Vec<(String, fold::modules::resist::world::MobLevelFact)> {
+        Vec::new()
+    }
+
     /// A monotonic signal that moves whenever `source` could have changed.
     ///
     /// THE WHOLE COST MODEL OF THE VIEW LAYER RESTS ON THIS. A subscription is re-cut only when its
@@ -560,6 +577,27 @@ pub enum Ask {
     Fights(FightSearchAsk),
     /// What has been looted off one creature — see [`LootAsk`].
     Loot(LootAsk),
+    /// How old some creatures are, as the resist fold knows it — see [`MobLevelAsk`].
+    MobLevels(MobLevelAsk),
+}
+
+/// ONE `resist.levels` QUESTION (JOS-497 item 1).
+///
+/// SAME DOOR, SAME REASON as every arm above, and the reason is sharper here than usual: the answer
+/// is SESSION STATE. A `/con` the player typed thirty seconds ago beats the committed catalog, and
+/// that statement lives inside the resist fold on the ingest thread — there is nowhere else to read
+/// it from. Publishing it into the world after every con line would be a cache (ruling 5), and
+/// sharing the fold behind a lock would put the reader in contention with the fold's hot loop.
+///
+/// PLURAL BECAUSE THE OP IS. The caller sends the names as the log spells them, already bounded by
+/// the op table; this thread folds each key and answers what it can state.
+pub struct MobLevelAsk {
+    /// The creature names to answer for, as the asker spelled them.
+    pub names: Vec<String>,
+    /// Where the answer goes: the echoed name beside the fact, and NO ENTRY for a creature the fold
+    /// can state nothing about. A short list is the honest answer rather than a padded one — see
+    /// the schema's `ResistLevelsResult`.
+    pub answer: std::sync::mpsc::Sender<Vec<(String, fold::modules::resist::world::MobLevelFact)>>,
 }
 
 /// ONE REQUEST FOR THE COMBAT ENGINE'S SNAPSHOT (JOS-485).
@@ -1432,6 +1470,9 @@ fn answer_asks(answers: &Receiver<Ask>, sink: &dyn EventSink, serving: &Serving)
             }
             Ask::Loot(ask) => {
                 let _dropped = ask.answer.send(sink.own_loot_drops(&ask.spellings));
+            }
+            Ask::MobLevels(ask) => {
+                let _dropped = ask.answer.send(sink.mob_levels(&ask.names));
             }
         }
     }

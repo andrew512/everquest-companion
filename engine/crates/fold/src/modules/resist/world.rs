@@ -113,6 +113,52 @@ impl MobLevels {
         self.catalog.insert(mob_key.to_string(), fact);
         fact
     }
+
+    /// THE SAME QUESTION, ASKED BY A READER RATHER THAN BY THE FOLD (JOS-497 item 1).
+    ///
+    /// ── WHY IT EXISTS AT ALL, AND IT IS NOT A STYLE PREFERENCE ────────────────────────────────
+    ///
+    /// [`MobLevels::level_of`] takes `&mut self` because it MEMOISES the catalog verdict, and the
+    /// ingest's one door is `&self` by law: `engined::ingest::answer_asks` states that every arm is
+    /// a read of the fold, and that this is a property of the `Ask` enum rather than of the loop —
+    /// "a new arm that needed `&mut` would not compile here". So a reader on that door cannot call
+    /// the memoising form, and this is the form it calls.
+    ///
+    /// ── IT ANSWERS THE SAME THING, AND HERE IS THE ARGUMENT ────────────────────────────────────
+    ///
+    /// The precedence is identical and in the same order — a `/con` this session beats the memo
+    /// beats a fresh catalog read — so the only difference between the two functions is whether the
+    /// verdict is written back. That is unobservable because [`catalog_level_of`] is a PURE function
+    /// of `display` and committed data: it reads the shipped mob catalog and the verified alias
+    /// roster, neither of which changes while this process runs. The memo is an optimisation of a
+    /// constant function, which is exactly the kind of state ruling 18 says a reader may recompute
+    /// without anybody being able to tell.
+    ///
+    /// The cache is still CONSULTED, and that is not redundant: on the hot path — a mob the fold has
+    /// already filed a row for — this returns the memo and does no catalog work at all, which is what
+    /// keeps a card draw from re-walking the roster. The fresh compute is the cold arm, reached once
+    /// per creature the fold has never seen, which for a resist card is a creature the ledger has no
+    /// rows for anyway.
+    ///
+    /// WHAT IT COSTS: a reader that misses the memo does not warm it, so a name asked about
+    /// repeatedly and never folded pays the catalog lookup every time. That is the right direction —
+    /// a reader must not be able to grow the fold's memory, or "how much does this engine hold" would
+    /// depend on how often a card was drawn.
+    #[must_use]
+    pub fn level_of_ref(&self, mob_key: &str, display: &str) -> Option<MobLevelFact> {
+        if let Some(&con) = self.conned.get(mob_key) {
+            return Some(MobLevelFact {
+                level: con,
+                lo: con,
+                hi: con,
+                from: "con",
+            });
+        }
+        if let Some(cached) = self.catalog.get(mob_key) {
+            return *cached;
+        }
+        catalog_level_of(display)
+    }
 }
 
 /// THE CATALOG IS ASKED UNDER EVERY SPELLING THE ROSTER STATES (JOS-422 — the owner's own bug).

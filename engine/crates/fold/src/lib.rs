@@ -54,6 +54,11 @@ pub mod modules;
 pub mod overlay_file;
 pub mod session;
 pub mod spell_facts;
+/// The CLIENT's spell table (`spells_us.txt`), parsed — boundary verdict 7. PURE over a string; the
+/// file and the directory belong to `engined::spells`, exactly as `overlay_file`'s do to
+/// `engined::state`. Nothing in the fold reads it: `modules/resist` is emphatic that a fold which
+/// never needs the client table can be replayed, shipped and re-estimated without one.
+pub mod spells_us;
 
 use event::Event;
 use serde_json::{json, Value};

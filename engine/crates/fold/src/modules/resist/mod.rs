@@ -191,6 +191,16 @@ impl ResistFold {
         Self::default()
     }
 
+    /// ONE CREATURE'S LEVEL, FOR A READER (JOS-497 item 1) — `fold.ts levelOf`, whose whole body is
+    /// `return this.levels.levelOf(key, display)`.
+    ///
+    /// The `&self` form, so the ingest's one door can carry it; [`world::MobLevels::level_of_ref`]
+    /// is where the argument for the two forms answering identically lives.
+    #[must_use]
+    pub fn level_of_ref(&self, mob_key: &str, display: &str) -> Option<world::MobLevelFact> {
+        self.levels.level_of_ref(mob_key, display)
+    }
+
     /// `ResistFold.beginSource` — start folding a source.
     ///
     /// Over there the ledger's own freshly-discarded bucket is handed IN so the fold writes straight
@@ -918,6 +928,25 @@ impl ResistModule {
     #[must_use]
     pub fn user_ledger_file(&self) -> ledger_file::UserLedgerFile {
         ledger_file::ledger_file_of(&self.ledger)
+    }
+
+    /// THE PULL SEAM FOR ONE CREATURE'S LEVEL (JOS-497 item 1) — `resist/module.ts levelOf`.
+    ///
+    /// It is the LAST thing `src/main/ipc/resist.ts` still asked the app's own fold synchronously,
+    /// and JOS-496 named it in place rather than leaving it: the resist module publishes COUNTS
+    /// (`{rows, mobs}`) and nothing else, so there was no op to ask and no cursor to mirror. This is
+    /// the op's half.
+    ///
+    /// IT TAKES BOTH THE KEY AND THE DISPLAY NAME, exactly as the TypeScript does, because the two
+    /// are used for different things: a `/con` this session is filed under the folded key, and the
+    /// committed catalog is looked up under the name the log spelled. The caller folds the key
+    /// (`consider::mob_key`) so that one spelling rule serves the whole engine.
+    ///
+    /// `&self`, THROUGH [`MobLevels::level_of_ref`], for the ingest door's no-mutation law — that
+    /// function carries the argument for why the answer is the same as the fold's own.
+    #[must_use]
+    pub fn level_of(&self, mob_key: &str, display: &str) -> Option<world::MobLevelFact> {
+        self.fold.level_of_ref(mob_key, display)
     }
 }
 

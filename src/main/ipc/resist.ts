@@ -23,6 +23,9 @@ import { characterModule, resistModule } from '../pipeline'
 // THE MIRROR (JOS-496). `viewerLevel` is read on every draw from inside a synchronous profile
 // builder, so it cannot be a query — see `serveMirrors.ts` for the third shape and its price.
 import { mirroredModuleState } from '../dataServer/serveMirrors'
+// THE LEVEL PULL (JOS-497 item 1) — the op that closes the census's last synchronous fold reader.
+import { serveMobLevel } from '../dataServer/serveShim'
+import type { MobLevelFact } from '../resist/world'
 import { mobResistCell, mobResistProfile, type ProfileDeps } from '../resist/profile'
 import type { CharacterSnap } from '../../shared/types'
 import { fullDamageRefs, unobservableSpells } from '../../shared/resistModel'
@@ -107,25 +110,65 @@ function viewerLevel(): number | null {
   return snap.level?.level ?? null
 }
 
-export function resistProfileDeps(): ProfileDeps {
+/**
+ * THE CREATURE'S LEVEL, ALREADY RESOLVED BY WHOEVER IS ABOUT TO DRAW (JOS-497 item 1).
+ *
+ * It is a BOX rather than a bare fact for the reason `serveShim.ts serveMobLevel` boxes its own
+ * answer: `null` is a real level fact ("nothing states a level for this creature") and `undefined`
+ * has to mean something else — here, "nobody resolved one, so ask this process's fold". A caller
+ * that cannot await (there are none left on this path) still gets the old behaviour by passing
+ * nothing.
+ */
+export interface ServedMobLevel {
+  /** The display name the level was resolved FOR. Checked, so a stale resolution cannot answer for
+   *  a creature it is not about — the same echo discipline the shim applies one layer down. */
+  readonly display: string
+  readonly fact: MobLevelFact | null
+}
+
+/**
+ * ASK WHICHEVER WORLD ANSWERS THIS APP'S READS how old a creature is (JOS-497 item 1).
+ *
+ * THE CENSUS'S LAST SYNCHRONOUS READER CLOSES HERE. `levelOf` used to be
+ * `resistModule.levelOf(key, display)` — a direct call into this process's fold from inside a
+ * synchronous profile builder — and JOS-496 named it in place because the engine's resist module
+ * publishes counts and nothing else, so there was no op to ask and no cursor to mirror. There is an
+ * op now, and this is the one place that asks it.
+ *
+ * THE KEY IS NOT SENT. The engine folds it (`consider::mob_key`, the port of `shared/mobKey.ts`),
+ * because a pre-folded key on the wire would be a second opinion about a join key — the same rule
+ * `knowledge.mob` states. Under fallback the shim hands the same display name to this process's
+ * own fold, which folds its own key exactly as it always has.
+ */
+export async function servedMobLevel(display: string): Promise<ServedMobLevel> {
+  const fact = await serveMobLevel(display, () => resistModule.levelOf(mobKey(display), display))
+  return { display, fact }
+}
+
+export function resistProfileDeps(level?: ServedMobLevel): ProfileDeps {
   return {
     rowsFor: rowsForIdentity,
     unobservable,
     damageModes: modes,
     spells: () => spellTableNow(),
-    // THE ONE READER ON THIS PAGE THE ENGINE CANNOT ANSWER, AND IT IS NAMED RATHER THAN QUIETLY
-    // LEFT (JOS-496). `levelOf` asks the resist fold's own level index — "what did a `/con` this
-    // session say this creature is, else what does the catalog say" — and the engine's `resist`
-    // module publishes COUNTS (`{rows, mobs}`) and nothing else, because that is all the app's own
-    // module ever published. So there is no op to ask and no cursor to mirror: serving it needs a
-    // new view source, which is the cutover ledger's item 3 rather than this one's.
+    // THE READER JOS-496 NAMED IN PLACE, AND IT IS CLOSED (JOS-497 item 1).
     //
-    // WHAT THAT COSTS, STATED HONESTLY: under serve, a resist card's mob level comes from this
-    // process's fold while the rest of the card's inputs come from the ledger (app-owned until
-    // boundary verdict 4 lands) and the viewer's level comes from the engine. All three folds agree
-    // — that is what the probe measures — so the card is right; what is not yet true is that main
-    // has stopped reading. This is the single remaining synchronous fold read on the resist path.
-    levelOf: (key, display) => resistModule.levelOf(key, display),
+    // What stood here was `resistModule.levelOf(key, display)` — a synchronous call into this
+    // process's own fold from inside a profile builder, the last of the census's eighteen — with a
+    // note saying it could not be served because the engine's `resist` module publishes counts and
+    // nothing else. `resist.levels` is the op that answers it now, and `servedMobLevel` above is
+    // the one place that asks; by the time this closure runs, the answer is already in hand.
+    //
+    // THE DISPLAY NAME IS COMPARED, not trusted. A resolution is about ONE creature and this
+    // closure is handed a `(key, display)` pair by the profile builder, so a box resolved for a
+    // different name must not answer for this one — it would be a level from the wrong card. The
+    // mismatch arm and the no-box arm are the same arm on purpose: both mean "nobody resolved this
+    // creature", and this process's own fold is what has always answered that.
+    //
+    // …WHICH IS ALSO THE FLAG-OFF PATH, unchanged. `EQC_ENGINE_SERVE=0` makes `serveMobLevel` fall
+    // straight through to this same fold read, so nothing about a launch with no engine moved.
+    levelOf: (key, display) =>
+      level?.display === display ? level.fact : resistModule.levelOf(key, display),
     viewerLevel,
     frozenAt: () => baselineFrozenAt(),
     // READ HERE, ON EVERY DRAW (JOS-385). The ledger folded those rows whatever this says; this is
@@ -148,15 +191,19 @@ function validAxis(value: unknown): value is ResistAxis {
 }
 
 export function registerResistIpc(): void {
+  // BOTH HANDLERS RESOLVE THE LEVEL BEFORE THEY BUILD (JOS-497 item 1). They are `ipcMain.handle`
+  // bodies and already await the spell table, so the level resolution rides the same shape — and
+  // under serve it is a loopback round trip to a process that has already folded, which is the
+  // sub-millisecond cost `readShim.ts` prices for every other served read.
   ipcMain.handle(IPC.resistProfile, async (_e, mob: unknown) => {
     if (!validMob(mob)) return null
     await spellTable()
-    return mobResistProfile(mob, resistProfileDeps())
+    return mobResistProfile(mob, resistProfileDeps(await servedMobLevel(mob)))
   })
   ipcMain.handle(IPC.resistCell, async (_e, mob: unknown, axis: unknown) => {
     if (!validMob(mob) || !validAxis(axis)) return null
     await spellTable()
-    return mobResistCell(mob, axis, resistProfileDeps())
+    return mobResistCell(mob, axis, resistProfileDeps(await servedMobLevel(mob)))
   })
   ipcMain.handle(IPC.resistPrefsGet, () => getResistPrefs())
   // The renderer supplies it, so the shared normalizer decides what it meant; a patch with nothing

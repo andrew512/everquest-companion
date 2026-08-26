@@ -373,9 +373,19 @@ the transport, not a graceful degradation.
 
 **Consequences, stated so nobody re-derives them:**
 
-* Item 4 was **not built** in JOS-496 — only measured and ruled. It is a follow-up ticket.
-* The app-side worker (`main/resist/spellTable.ts`) therefore **does not retire** yet, and under
-  serve it is still what answers `spellTableNow()`.
+* Item 4 was **not built** in JOS-496 — only measured and ruled. **JOS-497 item 3 built the engine
+  half of it**: `fold::spells_us` is the parser (the app's field map and, more importantly, the app's
+  JavaScript arithmetic — `Number()`, `Number(x) || 0`, and the `f.length < 172` row filter that is
+  172 and not 173), `engined::spells` is the file (path derived from the attach's log grandparent,
+  read lazily on a connection thread, exactly once per install), and `resist.spell` is the per-spell
+  op. No bulk shape exists and none can be added without deleting the argument above.
+* The app-side worker (`main/resist/spellTable.ts`) **still does not retire**, and this is the named
+  honest partial of JOS-497 rather than an omission. The blocker is not the engine's answer, it is
+  the SHAPE of every app-side consumer: `estimate()` takes the whole `SpellResistTable` as a value,
+  `buildLevelUnlocks` scans ~2,000 catalog spells against it, and `clientHpFor` is called from inside
+  synchronous builders. Retiring the worker means converting those call sites to per-spell awaits —
+  which is the surface-cutover work, not this ticket's, and doing it halfway would mean the app
+  holding two tables at once.
 * The con card's five resist chips are therefore **still joined app-side** (`main/conCard.ts
   noteEngineConCard`), off the app's own ledger and table, even though the engine resolves the whole
   header. That is deliberate: the engine's honest answer today is five EMPTY chips with

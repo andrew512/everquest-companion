@@ -74,6 +74,7 @@ import { engineEnabled } from './engineHost'
 import { engineLogMtimeMs, engineRequest, engineServeReadiness } from './engineClientHost'
 import { createReadShim, type ReadShim, type ServeOutcome } from './readShim'
 import type { CombatSnapshot, FightSearchResult, SnapshotOpts } from '../../shared/combat'
+import type { MobLevelFact } from '../resist/world'
 import type {
   CombatSnapshotOpts,
   ModuleSnapshotResult
@@ -306,6 +307,67 @@ export function serveSearchFights(
     (r) => ({ hits: r.hits, corpus: r.corpus }) as unknown as FightSearchResult,
     own
   )
+}
+
+// ── the fourth channel: how old is this creature (JOS-497 item 1) ──────────────────────────────
+
+/**
+ * ONE CREATURE'S LEVEL, SERVED — `resist/module.ts levelOf`, which was the LAST fact main read out
+ * of its own fold synchronously (JOS-496 named it in place: "the single remaining synchronous fold
+ * read on the resist path").
+ *
+ * ── WHY IT IS A CHANNEL HERE RATHER THAN A MIRROR ──────────────────────────────────────────────
+ *
+ * `serveMirrors.ts` exists for readers with nowhere to put an `await`, and `viewerLevel()` is one.
+ * THIS one is not, and the difference is the shape of the answer rather than the shape of the
+ * caller: a mirror holds a module's WHOLE published state, the resist module publishes two integers
+ * (`{rows, mobs}`), and this fact is in neither of them. It could not be mirrored even in
+ * principle — the answer is keyed by creature name, so a mirror of it would be an unbounded map of
+ * every mob anybody ever cons, growing forever, which is precisely the cache ruling 5 forbids.
+ *
+ * So the fold read had to become a QUERY, and the two callers were made to be able to wait for it.
+ * `ipc/resist.ts`'s handlers already could (they are `ipcMain.handle` bodies). The con card could
+ * not and now can: under serve its trigger is already a frame off a socket, so one more loopback
+ * round trip before the window opens is measured in the same microseconds the card already spends.
+ *
+ * ── THE ANSWER IS WRAPPED, AND THAT IS NOT CEREMONY ────────────────────────────────────────────
+ *
+ * `null` is reserved by `readShim.ts` for "the reply was not an ANSWER" — the guess test's verdict,
+ * which falls back to the app's own fold. But `null` is ALSO the honest served answer here: a
+ * creature nobody has conned and the committed catalog has never heard of has no level, and
+ * `levelOf` says so with a null. Two different `null`s on one channel is exactly the ambiguity the
+ * shim's header warns about, so the projection hands back a box: a box is an answer, and no box is
+ * a fallback.
+ *
+ * ── AND THE ECHO TEST IS `module.snapshot`'s ──────────────────────────────────────────────────
+ *
+ * The engine echoes the name as it was ASKED — never the folded key — so a row whose `mob` is not
+ * the string this app sent is a bookkeeping failure somewhere between here and the fold, and the
+ * honest response is this process's own answer rather than another creature's level under this
+ * creature's name. It costs one comparison and it is the same test `projectModule` makes.
+ */
+export function serveMobLevel(
+  mob: string,
+  own: () => MobLevelFact | null
+): Promise<MobLevelFact | null> {
+  return readShim()
+    .serve(
+      'resist.levels',
+      { mobs: [mob] },
+      (r) => {
+        // ONE NAME WENT OUT, so at most one row may come back — anything else is the engine
+        // answering a question this app did not ask, which is the echo test's whole subject.
+        if (r.levels.length > 1) return null
+        const [row] = r.levels
+        // NO ROW IS AN ANSWER, AND IT IS THE COMMON ONE: the op omits a creature it can state
+        // nothing about, which is the null `levelOf` has always returned.
+        if (row === undefined) return { fact: null }
+        if (row.mob !== mob) return null
+        return { fact: { level: row.level, lo: row.lo, hi: row.hi, from: row.from } }
+      },
+      () => ({ fact: own() })
+    )
+    .then((boxed) => boxed.fact)
 }
 
 // NO TEARDOWN FLUSH, AND THAT IS A DECISION. The tally prints its FIRST fallback immediately
