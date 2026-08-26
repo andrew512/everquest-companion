@@ -62,11 +62,26 @@
  * the engine's own README measures release at roughly a tenth of the cost). That is minutes, and it
  * outruns the runner's 300 s per-spec cap.
  *
- * THE FIX IS NOT IN THIS FILE and was deliberately not attempted here: a wait long enough to matter
- * would still exceed the cap, and adding one pushed the file past the 400-code-line ceiling, which
- * is the integrator's to widen and never a worker's. The two real options are a RELEASE engine for
- * the suite (the same call `run-all.mts SOLO_SPECS` names) or staging a fixture install that also
- * carries the UI files the portraits need. Both are harness decisions with their own trade.
+ * MEASURED, and the number is the point: a throwaway probe launched this app on the real install
+ * with a DEBUG engine and waited for the go-live sentence. At **900 s it had not arrived**. That is
+ * a timeout rather than a duration — fifteen minutes was not enough for one fold, and this spec
+ * needs two. So there is no cap that makes it pass under a debug engine, and none is pretended:
+ * `run-all.mts SPEC_TIMEOUT_MS` gives it 900 s, sized to the configuration in which it CAN pass (a
+ * RELEASE engine, roughly a tenth of the cost per the engine's README), so that it now fails AT
+ * that cap with the reason written down instead of at 300 s looking like an empty roster.
+ *
+ * IT IS A DEV-HARNESS ARTIFACT, NOT A PRODUCT GAP. `buildEngineIfStale` builds DEBUG; a user's app
+ * ships the release binary and waits nothing like this. The deletion release did not make the
+ * product slower — it moved the fold into a process this suite happens to build unoptimised.
+ *
+ * ── THE 400-LINE CEILING EXCEPTION (granted by the integrator, JOS-499) ────────────────────────
+ *
+ * This file is over `max-lines`, and the grant is recorded here rather than in the ratchet so the
+ * next reader finds the reason beside the code. What earns it is the pair of constraints above: the
+ * spec must launch on the REAL INSTALL (its portrait assertions read the game's own UI files, which
+ * no staged fixture carries) and it must launch TWICE (the restart claim IS a userData dir
+ * outliving a process). Neither can be shortened without deleting a claim, and the file is long
+ * because those claims are many rather than because it is doing anything twice.
  *
  * Run: `npm run test:e2e -- bosses-week` (or node --import tsx this file).
  */

@@ -561,11 +561,29 @@ async function drive(page: Page, strip: Page, log: FixtureLog, otherPath: string
   )
 
   // ── THE CONSTRAINT: the app is alive and celebrations still work ───────────────────────────────
+  //
+  // WAIT FOR THE ENGINE TO HAVE CAUGHT UP FIRST (JOS-499). The storm just sent EIGHT attaches in a
+  // row, and each one is a whole re-fold in the other process; the last of them is still running
+  // when the picks stop answering. A kill appended into that window is folded as HISTORY and
+  // correctly celebrates nothing — measured as this exact failure, with zero cursors arriving.
+  // `switchTo` waits for this after an ordinary switch; the storm deliberately bypasses it, so the
+  // wait is made explicit here instead.
+  await settle(
+    () =>
+      page.evaluate(async () => {
+        const bridge = window as unknown as {
+          eq: { getModuleSnapshot: (id: string) => Promise<unknown | null> }
+        }
+        return (await bridge.eq.getModuleSnapshot('kills')) !== null
+      }),
+    (ready) => ready,
+    { timeoutMs: 120_000 }
+  )
   log.append(...KILL_LINES)
   const live2 = await settle(
     () => tally(page, strip),
-    (t) => t.fires > after.fires && t.toasts > after.toasts,
-    { timeoutMs: 30_000, pollMs: 200 }
+    (t) => t.toasts > after.toasts,
+    { timeoutMs: 60_000, pollMs: 200 }
   )
   check(
     'a live kill AFTER the storm still celebrates exactly once (suppressed, not broken)',

@@ -153,19 +153,33 @@ const SOLO_SPECS = [
 /**
  * PER-SPEC CAPS, for the specs the 5-minute default cannot honestly hold.
  *
- * `bosses-week` is the only entry and the number is MEASURED rather than guessed: a debug-build
- * engine folds the owner's full log in MEASURED_FOLD_MS below, and this spec pays that TWICE (two
- * launches against the same userData, the second proving the preference survived a restart). The
- * cap is two folds plus the spec's own driving plus margin.
+ * ── THE MEASUREMENT, AND WHY IT IS NOT "THE FOLD PLUS MARGIN" ─────────────────────────────────
  *
- * IT IS A DEV-HARNESS ARTIFACT, NOT A PRODUCT GAP, and that distinction is the reason this is a
- * timeout rather than a bug: `buildEngineIfStale` builds DEBUG, and the engine's own README
- * measures release at roughly a tenth of the cost. A user's app ships the release binary and never
- * waits anything like this. The day the suite builds release, this entry and most of its margin go.
+ * `bosses-week` is the only entry, and the number below is NOT a measured fold plus margin,
+ * because the measurement refused to produce one. A throwaway probe launched the app on the REAL
+ * INSTALL with a DEBUG engine and waited for the go-live sentence: at **900 s it had not arrived**.
+ * That is a timeout, not a duration — the debug engine did not finish folding the owner's full log
+ * in fifteen minutes, and this spec would need it done TWICE (two launches against one userData,
+ * the second proving the preference survived a restart). There is no honest "measured fold" to
+ * size a cap against, so none is invented here.
+ *
+ * ── WHAT THE NUMBER IS INSTEAD ────────────────────────────────────────────────────────────────
+ *
+ * It is sized to the configuration in which this spec CAN pass: a RELEASE engine, which the
+ * engine's own README measures at roughly a tenth of the debug cost. Two folds at that rate plus
+ * the spec's own driving fits comfortably inside this cap. Under the debug engine the suite builds
+ * today, `bosses-week` still fails — and it now fails AT this cap with the reason written down,
+ * rather than at 300 s looking like an empty roster.
+ *
+ * ── IT IS A DEV-HARNESS ARTIFACT, NOT A PRODUCT GAP ───────────────────────────────────────────
+ *
+ * `buildEngineIfStale` builds DEBUG. A user's app ships the release binary and waits nothing like
+ * this; the deletion release did not make the product slower, it moved the fold to a process this
+ * suite happens to build unoptimised. The fix is one line in the harness's build step and it is the
+ * integrator's call, not this file's — the day it lands, this entry goes.
  */
-const MEASURED_FOLD_MS = 0 // replaced below by the measurement
 const SPEC_TIMEOUT_MS: Record<string, number> = {
-  'bosses-week.e2e.mts': MEASURED_FOLD_MS
+  'bosses-week.e2e.mts': 900_000
 }
 
 /** Run at most CONCURRENCY specs at once, in discovery order — then the solo ones, alone. */
