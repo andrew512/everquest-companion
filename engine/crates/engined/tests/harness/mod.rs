@@ -748,6 +748,30 @@ pub fn roster_define(id: i64, edits: &[(&str, &str, &str, i64)]) -> ClientMessag
     })
 }
 
+/// One `logs.setDir` request — the app naming the folder its own settings resolved (JOS-498, owner
+/// ruling 21 / decision sheet 1a). The engine never discovers a path of its own.
+#[must_use]
+pub fn logs_set_dir(id: i64, dir: &str) -> ClientMessage {
+    ClientMessage::LogsSetDirRequest(protocol::generated::LogsSetDirRequest {
+        id: RequestId(id),
+        op: protocol::generated::LogsSetDirRequestOp::LogsSetDir,
+        params: protocol::generated::LogsSetDirParams {
+            dir: dir.to_owned(),
+        },
+    })
+}
+
+/// One `logs.list` request. It names NOTHING: the directory is pushed, never sent, so two callers
+/// cannot disagree about which install this app is looking at.
+#[must_use]
+pub fn logs_list(id: i64) -> ClientMessage {
+    ClientMessage::LogsListRequest(protocol::generated::LogsListRequest {
+        id: RequestId(id),
+        op: protocol::generated::LogsListRequestOp::LogsList,
+        params: NoParams {},
+    })
+}
+
 /// One `view.unsubscribe` request naming a subscription.
 #[must_use]
 pub fn unsubscribe(id: i64, subscription: i64) -> ClientMessage {
