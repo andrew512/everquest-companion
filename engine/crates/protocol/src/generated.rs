@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:8c55c03f75727ce7926a5ef17f7fe636d1b3b82be42bebd6054e4cc98575ddce
+//! schema-digest: sha256:00dbda5f549bb3e44a27a401dea3d2fa61c8a4381c83ee38ffcbadf81cad93cd
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -6780,6 +6780,10 @@ impl ::std::fmt::Display for RowKey {
 ///    "logPath": {
 ///      "description": "Absolute path to the EverQuest log file. The engine never discovers a path of its own and never reads a settings file — the app owns discovery and pushes the answer in.",
 ///      "type": "string"
+///    },
+///    "stateDir": {
+///      "description": "WHERE THE ENGINE'S OWN PERSISTED KNOWLEDGE LIVES — Electron's `userData` directory, pushed in because the engine cannot derive it (boundary verdict 4, cutover ledger item 6). Two artifacts are read out of it at attach and written back on the engine's own cadence: `resist-ledger.json` and `message-overlay.json`, both in the app's EXISTING format, verbatim, so the two implementations can hold the same file. IT IS A FIELD OF THE ATTACH RATHER THAN A `*.define`, and the distinction is load-bearing twice over. A define may arrive mid-fold and this may not: the seed has to be in place BEFORE the first byte is folded, because a bucket seeded after the fold began would be added to the fold's own output — the JOS-231 doubling — and because `begin_source` can only discard a bucket it already has. And a state dir that could be changed halfway through a fold would mean the engine could be told to write this log's ledger somewhere else mid-flight, which is not a thing with an honest meaning. It rides `logPath` because it is the same KIND of fact: this world, folded from this log, filed beside this profile. ABSENT MEANS NO PERSISTENCE AT ALL — nothing is read, nothing is written, and the fold is exactly the file-free one the equivalence oracle records. That is the default and it is what every non-app client (the parity runner, every test) gets by saying nothing.",
+///      "type": "string"
 ///    }
 ///  },
 ///  "additionalProperties": false
@@ -6792,6 +6796,13 @@ pub struct SessionAttachParams {
     ///Absolute path to the EverQuest log file. The engine never discovers a path of its own and never reads a settings file — the app owns discovery and pushes the answer in.
     #[serde(rename = "logPath")]
     pub log_path: ::std::string::String,
+    ///WHERE THE ENGINE'S OWN PERSISTED KNOWLEDGE LIVES — Electron's `userData` directory, pushed in because the engine cannot derive it (boundary verdict 4, cutover ledger item 6). Two artifacts are read out of it at attach and written back on the engine's own cadence: `resist-ledger.json` and `message-overlay.json`, both in the app's EXISTING format, verbatim, so the two implementations can hold the same file. IT IS A FIELD OF THE ATTACH RATHER THAN A `*.define`, and the distinction is load-bearing twice over. A define may arrive mid-fold and this may not: the seed has to be in place BEFORE the first byte is folded, because a bucket seeded after the fold began would be added to the fold's own output — the JOS-231 doubling — and because `begin_source` can only discard a bucket it already has. And a state dir that could be changed halfway through a fold would mean the engine could be told to write this log's ledger somewhere else mid-flight, which is not a thing with an honest meaning. It rides `logPath` because it is the same KIND of fact: this world, folded from this log, filed beside this profile. ABSENT MEANS NO PERSISTENCE AT ALL — nothing is read, nothing is written, and the fold is exactly the file-free one the equivalence oracle records. That is the default and it is what every non-app client (the parity runner, every test) gets by saying nothing.
+    #[serde(
+        rename = "stateDir",
+        default,
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub state_dir: ::std::option::Option<::std::string::String>,
 }
 ///Begins tail + fold of one log. PREEMPTS any in-flight attach — last pick wins, never queued (JOS-457's generation ownership, promoted to protocol law). A successful attach bumps the epoch.
 ///

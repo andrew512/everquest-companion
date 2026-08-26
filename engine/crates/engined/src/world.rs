@@ -1184,8 +1184,17 @@ impl World {
     /// NO `progress` RIDES THE ANNOUNCEMENT. At the instant of the bump the fold has not opened the
     /// file, so a percentage would be inventing a measurement. The first honest frame arrives from
     /// the ingest a moment later, carrying `pct` 0 and the size it actually measured.
-    pub fn attach(&self, log_path: &str) -> AttachResult {
+    /// `state_dir` IS THE APP'S `userData` (JOS-496 item 3), and `None` — the file-free attach — is
+    /// what a client that said nothing gets, because `stateDir` is optional on the wire.
+    ///
+    /// IT IS A PARAMETER RATHER THAN A SECOND METHOD, even though almost every caller here passes
+    /// `None`, because a convenience wrapper would let a future call site attach without ever
+    /// considering the question. `logPath` and `stateDir` are the same KIND of fact — this world,
+    /// folded from this log, filed beside this profile — and an attach that named one and not the
+    /// other should say so out loud.
+    pub fn attach(&self, log_path: &str, state_dir: Option<&str>) -> AttachResult {
         let log = PathBuf::from(log_path);
+        let state_dir = state_dir.map(PathBuf::from);
         let generation;
         let epoch;
         {
@@ -1219,7 +1228,7 @@ impl World {
             broadcast(&mut state, &announcement);
         }
 
-        (self.inner.ingest)(self, generation, log);
+        (self.inner.ingest)(self, generation, log, state_dir);
 
         AttachResult {
             epoch,
@@ -1594,7 +1603,7 @@ mod tests {
 
     /// A world whose attaches start nothing.
     fn world() -> World {
-        World::with_ingest(Arc::new(|_world, _generation, _log| {}))
+        World::with_ingest(Arc::new(|_world, _generation, _log, _state_dir| {}))
     }
 
     /// The generation the current turn holds. A real ingest is HANDED its own number by `attach`
@@ -1631,7 +1640,7 @@ mod tests {
         let one = world.join();
         let two = world.join();
 
-        let result = world.attach(A_LOG);
+        let result = world.attach(A_LOG, None);
         assert!(result.accepted);
         assert_eq!(*result.epoch, 2);
 
@@ -1656,7 +1665,7 @@ mod tests {
         let left = world.join();
         world.leave(left.id);
 
-        world.attach(A_LOG);
+        world.attach(A_LOG, None);
 
         assert!(stayed.inbox.recv().is_ok());
         assert!(left.inbox.try_recv().is_err());
@@ -1666,8 +1675,8 @@ mod tests {
     fn the_generation_is_process_global_and_monotonic() {
         let world = world();
         let mirror = world.clone();
-        assert_eq!(*world.attach(A_LOG).epoch, 2);
-        assert_eq!(*mirror.attach(A_LOG).epoch, 3);
+        assert_eq!(*world.attach(A_LOG, None).epoch, 2);
+        assert_eq!(*mirror.attach(A_LOG, None).epoch, 3);
         assert_eq!(*world.health().epoch, 3);
         assert_eq!(*mirror.health().epoch, 3);
     }
@@ -1675,9 +1684,9 @@ mod tests {
     #[test]
     fn an_attach_strips_the_turn_before_it_of_every_way_to_speak() {
         let world = world();
-        world.attach(A_LOG);
+        world.attach(A_LOG, None);
         let loser = generation(&world);
-        world.attach(A_LOG);
+        world.attach(A_LOG, None);
 
         assert!(!world.owns(loser));
         assert!(!world.report_status(loser, HealthResultStatus::Live));
@@ -1690,7 +1699,7 @@ mod tests {
     fn a_progress_frame_carries_the_measurement_to_every_connection() {
         let world = world();
         let listener = world.join();
-        world.attach(A_LOG);
+        world.attach(A_LOG, None);
         let generation = generation(&world);
         // Drain the attach announcement.
         let _bump = listener.inbox.recv().expect("the bump");
@@ -1720,7 +1729,7 @@ mod tests {
         let bystander = world.join();
         world.open_subscription(listener.id, 7, a_view());
         world.open_subscription(listener.id, 9, a_view());
-        world.attach(A_LOG);
+        world.attach(A_LOG, None);
         let generation = generation(&world);
 
         assert!(land(&world, generation, mark(3, 100.0)));
@@ -1762,7 +1771,7 @@ mod tests {
     #[test]
     fn an_ingest_that_ends_leaves_the_world_idle_with_its_generation_intact() {
         let world = world();
-        world.attach(A_LOG);
+        world.attach(A_LOG, None);
         let generation = generation(&world);
         assert!(world.report_idle(generation));
         assert!(matches!(world.health().status, HealthResultStatus::Idle));

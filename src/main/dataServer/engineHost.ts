@@ -70,13 +70,14 @@
 //     a shipped app means the engine actually runs, which is the entire content of this ticket.
 
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { app } from 'electron'
 import { logError, logInfo } from '../errorLog'
 import { engineFlagOn } from '../../shared/dataServer/engineFlags'
 import { setEnginePid } from '../processPriority'
 import { mintToken } from './token'
-import { engineBinaryCandidates } from './engineProtocol'
+import { engineBinaryCandidates, isCargoTargetBinary, stagedEngineNames } from './engineProtocol'
 import { connectToEngine } from './socketChannel'
 import {
   createEngineSupervisor,
@@ -155,7 +156,115 @@ function resolveEngineBinary(): string | null {
     logInfo(`[everquest-companion] engine binary not found; looked in: ${candidates.join(', ')}`)
     return null
   }
-  return found
+  // A CARGO-BUILT BINARY IS RUN FROM A COPY — see `stageDevBinary` for the whole argument. The
+  // packaged path never reaches it, and a copy that could not be made falls through to the original,
+  // which is exactly the behaviour every launch before JOS-496 had.
+  return isCargoTargetBinary(found) ? stageDevBinary(found) : found
+}
+
+// ------------------------------------------------------------------ the dev copy (JOS-496)
+//
+// WHY THIS EXISTS, IN ONE SENTENCE: Windows locks the image file of a running process, so an app
+// that spawns `engine/target/debug/engined.exe` makes `cargo build -p engined` fail at the LINK
+// step for as long as the app is up.
+//
+// THAT IS NOT A THEORETICAL TOLL. The owner's dev app runs all day by design (the ENGINE-BY-DEFAULT
+// checkout), and every worker in this program builds the engine; before this, the two could not both
+// be true, and the workaround was "close the app, build, reopen it" performed by hand, repeatedly,
+// by whoever remembered. Copying the image once per launch removes the conflict at its cause: the
+// process holds a lock on the COPY, and the path cargo writes to is never open.
+//
+// IT IS CHEAP AND IT IS BOUNDED. One `copyFileSync` of a file the OS has in its cache moments after
+// a build, once per LAUNCH (not per request, not per attach) — tens of milliseconds for a debug
+// build, and it happens on the supervisor's own path before any socket exists, so nothing waits on
+// it. The directory is swept at every app start, so a checkout never accumulates images.
+//
+// WHAT IT DELIBERATELY DOES NOT DO:
+//   * IT DOES NOT TOUCH THE PACKAGED LAUNCH. `isCargoTargetBinary` is the gate and it is spelled
+//     against cargo's own output directories, so a shipped `resources/engine/engined.exe` is spawned
+//     exactly as it was — the same bytes JOS-473 signed, from the same path, with the same cwd.
+//     A staged copy of a signed binary would be a second file for the AV heuristics and the
+//     signature checker to have opinions about, for no benefit at all: nothing overwrites it.
+//   * IT DOES NOT COPY ANYTHING BESIDE THE EXECUTABLE. That is not an omission — it is the shipped
+//     arrangement, restated: `extraResources` puts `engined.exe` alone under `resources/engine/`
+//     and that build runs, so a lone image is known to resolve its imports. The `cwd` the spawn
+//     gives it is the staging directory rather than the cargo one, which matches the packaged
+//     launch's own `cwd` discipline (AGENTS.md's DLL-resolution law) rather than diverging from it.
+//   * IT DOES NOT FAIL A LAUNCH. Every error here is a dev-log line and a fall-through to the
+//     original path — the pre-JOS-496 behaviour — because a copy is an ergonomic convenience and an
+//     app that refused to start its engine over one would have traded a build annoyance for an
+//     outage.
+
+/** Where the copies live. Under `userData` rather than the OS temp directory on purpose: the app
+ *  already owns this tree, it is not swept by anything else mid-session, and an executable a machine's
+ *  temp cleaner can delete out from under a running process is a crash waiting for a slow week. */
+function stagingDir(): string {
+  return join(app.getPath('userData'), 'engine-run')
+}
+
+/**
+ * Drop whatever a previous launch left behind. BEST EFFORT AND SILENT ON FAILURE, which is the
+ * point: a copy still locked by an engine that outlived its app simply refuses to be deleted, and
+ * the staging below will pick the next name. Called once per app start.
+ */
+function sweepStaging(dir: string): void {
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return
+  }
+  for (const name of entries) {
+    try {
+      rmSync(join(dir, name), { force: true })
+    } catch {
+      // Locked, or gone since the listing. Either way it is not this launch's copy yet.
+    }
+  }
+}
+
+/** True once the sweep has run — it is about the DIRECTORY's history, so it happens once per app
+ *  rather than once per launch attempt (a crash loop must not keep re-sweeping the copy it is
+ *  about to spawn). */
+let swept = false
+
+/**
+ * Copy the cargo binary somewhere cargo does not write, and answer where. Falls back to `binPath`
+ * itself whenever the copy cannot be made — see the section header for why that is the right
+ * failure.
+ */
+function stageDevBinary(binPath: string): string {
+  const dir = stagingDir()
+  try {
+    mkdirSync(dir, { recursive: true })
+  } catch (err) {
+    logInfo(`[everquest-companion] data-server engine: no staging directory (${describeErr(err)}); running the cargo binary in place`)
+    return binPath
+  }
+  if (!swept) {
+    swept = true
+    sweepStaging(dir)
+  }
+  // THE NAMES ARE TRIED IN ORDER and the first that copies wins — see `stagedEngineNames` for what
+  // the later ones are for. A failure here is almost always EBUSY/EPERM against a child that has
+  // not exited yet, which is a fact about THIS name and not about the directory.
+  let lastErr: unknown = null
+  for (const name of stagedEngineNames()) {
+    const dest = join(dir, name)
+    try {
+      copyFileSync(binPath, dest)
+      logInfo(`[everquest-companion] data-server engine: running a copy at ${dest} so cargo can relink ${binPath}`)
+      return dest
+    } catch (err) {
+      lastErr = err
+    }
+  }
+  logInfo(`[everquest-companion] data-server engine: could not stage a copy (${describeErr(lastErr)}); running the cargo binary in place — a build will fail to link while this app is up`)
+  return binPath
+}
+
+function describeErr(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
 /**
@@ -193,11 +302,27 @@ function dirOf(path: string): string {
  */
 export function startEngineSupervisor(): void {
   if (!engineEnabled()) return
-  // THE AUDIO CUTOVER'S SWITCH (JOS-491), THROWN BEFORE ANYTHING CAN FIRE. It reads its own second
-  // flag (`EQC_ENGINE_ALERTS=1`) and its own gate, so this call is unconditional and silent on the
-  // launches that want nothing; what it must NOT be is late, because arming after a fire has
-  // arrived would mean one alert played by the wrong world.
-  armEngineAlerts()
+  // THE AUDIO CUTOVER'S SWITCH IS NOT THROWN HERE ANY MORE (JOS-496 fixing JOS-491's placement) —
+  // it is thrown on the supervisor's READY edge below. The bug, measured by reading:
+  //
+  //   `armEngineAlerts()` used to be called on this line, BEFORE any binary had been probed for. It
+  //   gates on `EQC_ENGINE_SERVE` and `EQC_ENGINE_ALERTS`, both DEFAULT-ON since JOS-495, so on a
+  //   dev checkout that has never run `cargo build` it armed — and arming calls
+  //   `alertsModule.setEngineOwnsAudio(true)`, which makes this process's own `publish` a no-op. No
+  //   binary means no client, no client means no `fire` frame, ever. So the app silenced its own
+  //   evaluator in favour of an engine that did not exist and PLAYED NO ALERTS AT ALL until quit,
+  //   with `disarmEngineAlerts()` unreachable before `stopEngineSupervisor()`.
+  //
+  // It contradicted this file's own header, which promises a cargo-less checkout "exactly the app it
+  // got before this ticket — TypeScript fold, TypeScript reads, TypeScript alerts". The same state
+  // is reachable in a packaged build whose engine fails to spawn or enters the crash-loop backoff.
+  //
+  // THE FLAG WAS NEVER THE RIGHT QUESTION. "Did anybody ask for the engine to be gone" is not "is
+  // there an engine", and every publisher handed off on the first answer goes silent when the second
+  // is no. The con card had the identical defect in this same ticket (`conCard.ts
+  // registerConCardIpc`); this is the third instance of the shape and the only one that was already
+  // shipping.
+  //
   // ARMED BEFORE THE SUPERVISOR CAN REACH READY. `installEngineClient` only registers the
   // world-rebuilt observer — it opens no socket — but the TypeScript fold can land at any moment
   // and a rebuild that arrived before the observer existed would be a rebuild the client never
@@ -236,6 +361,32 @@ export function startEngineSupervisor(): void {
     // waits on neither.
     onReady: (info) => {
       noteEngineLaunch(info)
+      // THE SOUND FOLLOWS THE LAUNCH (JOS-496). This is the edge that means "there IS an engine and
+      // a round trip has proven it" — not a process that started, and emphatically not a flag — so
+      // it is the earliest moment the handoff can be made honestly. `null` is the same edge in the
+      // other direction and gives the sound straight back, which is what makes a crash-loop, a
+      // failed spawn and a wedged engine all end in an app that still plays its own alerts.
+      //
+      // STILL BEFORE ANYTHING CAN FIRE, which was the original placement's one good reason: the
+      // client that will hear a `fire` frame is opened by `onEngineReady` on the line below, so the
+      // swap is complete before a frame can exist. That is the whole of what "must not be late"
+      // needed, and it never needed to be this early.
+      //
+      // IT IS STILL A LAUNCH-SHAPED EDGE, and that matters for `alertsAudio.ts`'s own argument that
+      // the verdict is taken ONCE rather than re-asked mid-session ("a gate that re-opened
+      // mid-session would mean the app could start playing from the engine halfway through a
+      // raid"). A respawn IS a launch (contract rule 5), so arming per launch keeps that property;
+      // arming on, say, the engine's fold going live would not.
+      //
+      // THE RESIDUAL, NAMED: between READY and the engine's own fold going live, this process's
+      // evaluator is silent and the engine's has not reached the tail. A live line in that window
+      // fires in neither world — the engine meets it during its historical catch-up, where it is
+      // not live and does not fire. That window is bounded by the fold and is STRICTLY SMALLER than
+      // the one shipping today (which began at process start); closing it entirely means arming on
+      // go-live, which trades this gap for the mid-session re-opening the file argues against. Left
+      // as an owner call rather than decided here.
+      if (info === null) disarmEngineAlerts()
+      else armEngineAlerts()
       onEngineReady(info)
     }
   })

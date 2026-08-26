@@ -465,3 +465,52 @@ export function engineBinaryCandidates(env: EngineBinaryEnv): string[] {
   }
   return out
 }
+
+/**
+ * IS THIS BINARY THE ONE CARGO IS ABOUT TO OVERWRITE? (JOS-496)
+ *
+ * WHAT IT IS FOR. Windows takes a mandatory, exclusive lock on the image file of every RUNNING
+ * process. So a dev app that spawns `engine/target/debug/engined.exe` directly holds that exact path
+ * open for as long as the app is up — and the next `cargo build -p engined` fails at the LINK step
+ * with "Access is denied", not at compile, which is the confusing half. The owner's dev app runs all
+ * day; every agent and every worker in this program pays that toll. The fix is one copy: spawn a
+ * DUPLICATE of the image and cargo's output path is never the file Windows has locked.
+ *
+ * SO THIS PREDICATE IS EXACTLY "DID THIS PATH COME OUT OF A CARGO TARGET DIRECTORY", and it is
+ * spelled against the two dev candidates `engineBinaryCandidates` builds above rather than against
+ * "is this app packaged" — because the question is about who ELSE writes to the path, and cargo is
+ * the only writer that matters. A packaged build's `resources/engine/engined.exe` has no compiler
+ * pointed at it and is answered `false`, which is what keeps the shipped launch byte-for-byte the
+ * one JOS-473 signed and proved.
+ *
+ * SEPARATOR-BLIND, because the caller's `existsSync` is: the candidates are built with `/` but a
+ * path that has been through `node:path` on Windows comes back with `\`, and a predicate that
+ * silently answered `false` for the same file spelled the other way would stage nothing and leave
+ * the lock exactly where it was.
+ */
+export function isCargoTargetBinary(path: string): boolean {
+  const slashed = path.replace(/\\/g, '/')
+  return slashed.includes('/engine/target/debug/') || slashed.includes('/engine/target/release/')
+}
+
+/**
+ * THE NAMES THE STAGED COPY MAY TAKE, in the order to try them.
+ *
+ * WHY MORE THAN ONE. The first name is the whole story on an ordinary launch: one copy, overwritten
+ * next time, no accumulation. The rest exist for a single awkward moment — a RESPAWN whose previous
+ * engine has not exited yet. The supervisor ends a launch and schedules the next one on a backoff,
+ * and three of its failure modes (`announce-timeout`, `bad-announce`, `unhealthy`) end a launch
+ * whose child is still ALIVE and still holding its own image locked. Copying over it there fails,
+ * and the honest answer is a second name rather than either spawning a stale copy or giving up on
+ * the engine for the rest of the session.
+ *
+ * BOUNDED AT FOUR because the failure it covers is transient by construction (the supervisor's
+ * `retire` escalates to `kill` after the stop grace), and an unbounded search would turn one wedged
+ * child into a directory full of executables.
+ */
+export function stagedEngineNames(binName = ENGINE_BIN_NAME): string[] {
+  const dot = binName.lastIndexOf('.')
+  const stem = dot === -1 ? binName : binName.slice(0, dot)
+  const ext = dot === -1 ? '' : binName.slice(dot)
+  return [binName, `${stem}-1${ext}`, `${stem}-2${ext}`, `${stem}-3${ext}`]
+}

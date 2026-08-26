@@ -22,7 +22,9 @@ import {
   engineBinaryCandidates,
   engineExitStep,
   engineRestartDelayMs,
+  isCargoTargetBinary,
   parseAnnounce,
+  stagedEngineNames,
   type EngineExitCause,
   type EngineExitTrail
 } from '../src/main/dataServer/engineProtocol'
@@ -232,4 +234,57 @@ test('an unknown root contributes no candidates rather than a path rooted at not
     'C:/r/engine/target/debug/e',
     'C:/r/engine/target/release/e'
   ])
+})
+
+// ---- 6. the dev copy (JOS-496) ---------------------------------------------------------
+//
+// WHY IT EXISTS. Windows takes a mandatory exclusive lock on the image file of a RUNNING process, so
+// an app that spawns `engine/target/debug/engined.exe` directly makes the next `cargo build -p
+// engined` fail at the LINK step — "Access is denied", not a compile error, which is the confusing
+// half. The owner's dev app runs all day and every worker in this program builds the engine; before
+// this the two could not both be true. `engineHost.ts` copies the image and spawns the copy.
+
+test('a CARGO TARGET binary is the one to copy, and a PACKAGED one is emphatically not', () => {
+  // The two dev candidates `engineBinaryCandidates` builds — the ones cargo writes to.
+  assert.ok(isCargoTargetBinary('C:/repo/engine/target/debug/engined.exe'))
+  assert.ok(isCargoTargetBinary('C:/repo/engine/target/release/engined.exe'))
+  // …AND THE SHIPPED PATH IS ANSWERED FALSE, which is what keeps the packaged launch byte-for-byte
+  // the one JOS-473 signed and proved by hand. Nothing overwrites it, so there is nothing to dodge,
+  // and a staged copy of a signed binary would be a second file for the AV heuristics and the
+  // signature checker to have opinions about for no benefit at all.
+  assert.equal(isCargoTargetBinary('C:/app/resources/engine/engined.exe'), false)
+  assert.equal(isCargoTargetBinary('C:/app/resources/engined.exe'), false)
+  // The predicate is about who ELSE WRITES to the path, so a `target` that is not cargo's engine
+  // output — and the staging directory itself, which is where the copies land — are both false.
+  assert.equal(isCargoTargetBinary('C:/app/target/debug/engined.exe'), false)
+  assert.equal(isCargoTargetBinary('C:/Users/x/AppData/Roaming/eqc/engine-run/engined.exe'), false)
+})
+
+test('the predicate is SEPARATOR-BLIND, because `node:path` hands back the other one', () => {
+  // MEASURED SHAPE, not defensiveness: `engineBinaryCandidates` builds its strings with `/`, but a
+  // path that has been through `join`/`dirname` on Windows comes back with `\`. A predicate that
+  // answered false for the same file spelled the other way would stage nothing and leave the lock
+  // exactly where it was — a silent no-op, which is the worst kind.
+  assert.ok(isCargoTargetBinary('C:\\repo\\engine\\target\\debug\\engined.exe'))
+  assert.ok(isCargoTargetBinary('C:\\repo/engine\\target/release\\engined.exe'))
+})
+
+test('the staged names keep the EXTENSION, because Windows will not execute a file without one', () => {
+  const names = stagedEngineNames('engined.exe')
+  assert.deepEqual(names, ['engined.exe', 'engined-1.exe', 'engined-2.exe', 'engined-3.exe'])
+  // The first name is the whole story on an ordinary launch: one copy, overwritten next time, no
+  // accumulation. The rest cover ONE awkward moment — a respawn whose previous engine has not
+  // exited yet and is still holding its own image locked (the supervisor ends a launch on an
+  // announce timeout, a bad announce or a failed health probe while the child is still ALIVE).
+  assert.equal(names[0], 'engined.exe')
+  // BOUNDED, because the failure it covers is transient by construction — the supervisor's `retire`
+  // escalates to `kill` after the stop grace — and an unbounded search would turn one wedged child
+  // into a directory full of executables.
+  assert.equal(names.length, 4)
+})
+
+test('a name with no extension still gets distinct siblings (the non-Windows spelling)', () => {
+  assert.deepEqual(stagedEngineNames('engined'), ['engined', 'engined-1', 'engined-2', 'engined-3'])
+  // …and the split takes the LAST dot, so a versioned name keeps all of its stem.
+  assert.deepEqual(stagedEngineNames('a.b.exe').slice(0, 2), ['a.b.exe', 'a.b-1.exe'])
 })

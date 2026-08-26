@@ -340,6 +340,87 @@ cuts both ways**, which is what makes an empty table a claim rather than a silen
 The shim never rewrote a served field to reach that state, and it should not: a shim that
 manufactured agreement would hide the gap being tracked.
 
+## The client spell table: NO BULK FRAME, EVER (JOS-496, integrator ruling 2026-08-25)
+
+Boundary verdict 8 says the engine parses the client's `spells_us.txt`, and the cutover ledger's item
+6 says "the app-side worker retires under serve". The obvious reading of those two sentences together
+— the engine parses the table and SERVES IT to the app, which stops parsing — is **ruled out**, and
+the measurement that ruled it out is worth keeping because it will keep looking tempting:
+
+> The owner's own parsed table, as this app caches it today
+> (`<userData>/spell-resist-cache.json`): **48,252 entries, 6,422,572 bytes of JSON — 6.13 MiB**.
+> The NDJSON frame ceiling is **8 MiB** (`shared/dataServer/ndjson.ts MAX_LINE_CHARS`, matched by the
+> Rust codec's `MAX_LINE_BYTES`). One reply would be **76.6% of the ceiling**, on one machine, today,
+> against a table that grows with every client patch.
+
+A single frame that already sits three quarters of the way to a hard limit is not a design with
+headroom, it is a design with a date on it — and the failure when it arrives is a refused frame at
+the transport, not a graceful degradation.
+
+**THE DIRECTION, ruled:**
+
+1. **The engine parses `spells_us.txt` INTERNALLY, for its own joins.** The path derives from the
+   attach log's install directory (`…/Logs/..`), so it needs no new schema field. The parse exists to
+   serve the engine's own resolution — first and foremost the con card's resist chips, which
+   `engined/src/concard.rs` currently sends empty and says so at length.
+2. **App consumers move to PER-SPELL QUERIES**, not to a bulk transfer. `knowledge.spell` already
+   exists and already carries a named gap (no effect classes, no rank lineage, no metrics); that op
+   is where the client table's facts belong. A card, a hover, a catalog row — every real consumer
+   asks about a handful of spells at a time, so the query shape matches the demand shape, and the
+   payload is bounded by the question rather than by the corpus.
+3. **The bulk shape is not to be built as an interim step.** It would work on the owner's machine
+   this month, which is exactly what makes it dangerous.
+
+**Consequences, stated so nobody re-derives them:**
+
+* Item 4 was **not built** in JOS-496 — only measured and ruled. It is a follow-up ticket.
+* The app-side worker (`main/resist/spellTable.ts`) therefore **does not retire** yet, and under
+  serve it is still what answers `spellTableNow()`.
+* The con card's five resist chips are therefore **still joined app-side** (`main/conCard.ts
+  noteEngineConCard`), off the app's own ledger and table, even though the engine resolves the whole
+  header. That is deliberate: the engine's honest answer today is five EMPTY chips with
+  `spellData: false`, and carrying those through would make every card under serve read "nothing seen
+  yet" forever while the app holds a ledger that can answer.
+
+## The two fold-owned artifacts, engine-side but NOT YET SWITCHED ON (JOS-496, boundary verdict 4)
+
+The engine can now read and write `resist-ledger.json` and `message-overlay.json` itself, in the
+app's existing paths and byte-verbatim formats, seeded at attach and written on its own 60-beat
+cadence with temp+fsync+rename. `SessionAttachParams.stateDir` is the one (optional, additive) schema
+field that carries Electron's `userData` directory in, because the engine cannot derive it.
+
+**The app does not send that field, on purpose.** Sending it while `main/resist/store.ts` and
+`main/data/overlayPersistence.ts` still persist would put **two processes on one file with two
+cadences**, which is a corruption risk rather than a cutover. And the app's writers cannot simply be
+retired "under serve", because `shimServing()` does not mean an engine exists (see below) — a
+cargo-less checkout would stop persisting and have nothing writing in its place.
+
+So the honest state is: **the engine half is built and proven; the switch is one line and is
+deliberately not thrown.** Throwing it is a follow-up whose whole content is the app-side retirement
+and the predicate that guards it — and that predicate has to be a fact about a live engine, not a
+flag.
+
+## `shimServing()` IS NOT "AN ENGINE EXISTS" (JOS-496 — read this before adding a gate)
+
+`shimServing()` is `EQC_ENGINE` AND `EQC_ENGINE_SERVE`. Both default **on** since JOS-495. It is
+therefore **true on every checkout that has never run `cargo build`**, where there is no binary, no
+client, and no frame will ever arrive. It answers "did anybody ask for the engine to be gone", which
+is a different question from "is there an engine".
+
+For the READ shim this is harmless by construction — `readShim.ts`'s `noClient` outcome answers every
+call from the app's own fold. For anything that **hands a duty over**, it is fatal and silent. Three
+instances have existed:
+
+| Where | What went silent | Fixed by |
+| --- | --- | --- |
+| `alertsAudio` armed from `startEngineSupervisor()` | **all alert audio**, until quit, on any build with no engine | arming on the supervisor's READY edge (and disarming on its loss edge) |
+| `registerConCardIpc(shimServing())` skipped the TS hook | the con card, permanently | asking `shimServing() && engineServeReadiness().ok` per `/con` |
+| the post-replay boot summary | one dev-log line | the gate withdrawn; the line names its subject instead |
+
+**The rule:** a gate that decides *who does a job* must ask `engineServeReadiness()` (or a
+launch-shaped edge like `onReady`), never a flag. And it should **fail towards the app doing the
+job** — a duplicated card or sound is cosmetic, a missing one is not.
+
 ## Tests
 
 | | |

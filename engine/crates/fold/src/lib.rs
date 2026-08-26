@@ -51,6 +51,7 @@ pub mod jsmap;
 pub mod knowledge;
 pub mod message_overlay;
 pub mod modules;
+pub mod overlay_file;
 pub mod session;
 pub mod spell_facts;
 
@@ -210,6 +211,35 @@ pub trait EqModule {
     /// and it MOVES a clock. Widening `as_respawn` to `&mut` for its sake would have let a view
     /// mutate the world it is drawing, and nothing but a comment would have said not to.
     fn as_respawn_mut(&mut self) -> Option<&mut modules::respawn::RespawnModule> {
+        None
+    }
+
+    // ── THE PERSISTED-KNOWLEDGE SEAMS (JOS-496 item 3) ─────────────────────────────────────────
+    //
+    // TWO MODULES OWN AN ARTIFACT THE APP KEEPS IN `userData` — `resist` owns `resist-ledger.json`
+    // and `buffs` owns the mined half of `message-overlay.json` — and both are read at attach and
+    // written on a cadence. They need a `&mut` seam for the seed and a `&` seam for the write, and
+    // the split is `as_respawn` / `as_respawn_mut`'s law rather than a new one: a reader may not
+    // mutate the world it is serializing.
+    //
+    // NOTHING IN THIS CRATE CALLS THEM. `registered()` cannot reach a directory and does not know
+    // one exists, so the world the six goldens were recorded in is still exactly what the parity
+    // runner and every fold test build — `install_knowledge`'s argument, applied to a second thing
+    // the app knows and the fold cannot derive.
+
+    /// The resist ledger, to be SEEDED from the app's persisted file.
+    fn as_resist_mut(&mut self) -> Option<&mut modules::resist::ResistModule> {
+        None
+    }
+
+    /// The resist ledger, to be WRITTEN.
+    fn as_resist(&self) -> Option<&modules::resist::ResistModule> {
+        None
+    }
+
+    /// The buffs module, to be seeded with the persisted message-overlay register — and, in the
+    /// same act, to be told which source key this fold's own observations are filed under.
+    fn as_buffs_mut(&mut self) -> Option<&mut modules::buffs::BuffsModule> {
         None
     }
 
@@ -499,6 +529,40 @@ impl Registry {
     /// claims.
     pub fn respawn_mut(&mut self) -> Option<&mut modules::respawn::RespawnModule> {
         self.mods.iter_mut().find_map(|m| m.as_respawn_mut())
+    }
+
+    /// The registered module that owns the resist ledger, to be READ (JOS-496 item 3).
+    pub fn resist(&self) -> Option<&modules::resist::ResistModule> {
+        self.mods.iter().find_map(|m| m.as_resist())
+    }
+
+    /// SEED THE APP'S PERSISTED KNOWLEDGE, THEN NAME THIS FOLD'S OWN SOURCE (JOS-496 item 3).
+    ///
+    /// ONE CALL, BECAUSE THE ORDER IS THE WHOLE POINT and splitting it would let a caller get it
+    /// wrong. Every persisted bucket goes back first; `key`'s bucket is discarded second, because
+    /// the log about to be folded is going to state that bucket's entire content again. Reversed,
+    /// this character would be seeded with counts its own fold is about to re-derive — the JOS-231
+    /// doubling, measured at 22 → 44 → 88 across three cold launches before the register existed.
+    ///
+    /// A bucket for a character you are NOT folding survives untouched, and that is not an
+    /// oversight: nothing can re-derive it. That asymmetry is what the per-source register is FOR.
+    ///
+    /// THE ONE CALLER IS `engined::foldsink`, and it calls this only when the attach carried a
+    /// `stateDir`. With no state dir there are no sources, and the `begin_source` half alone is
+    /// unobservable — every published surface (`resist.snapshot`'s two integers, the overlay in
+    /// `buffs.snapshot`) sums across buckets, so which single bucket a lone fold writes into cannot
+    /// be seen. The six goldens are recorded through `registered()`, which cannot reach this.
+    pub fn seed_persisted(&mut self, key: &str, state: &PersistedState) {
+        if let Some(resist) = self.mods.iter_mut().find_map(|m| m.as_resist_mut()) {
+            resist.seed(&state.resist);
+            resist.begin_source(key);
+        }
+        if let Some(buffs) = self.mods.iter_mut().find_map(|m| m.as_buffs_mut()) {
+            for (source, counts) in &state.overlay {
+                buffs.seed_overlay(source, counts);
+            }
+            buffs.begin_overlay_source(key);
+        }
     }
 
     /// The registered module that answers the progression pull.
@@ -798,6 +862,28 @@ impl Fold {
             }
         });
     }
+}
+
+/// THE APP'S PERSISTED KNOWLEDGE, ALREADY PARSED — what [`Registry::seed_persisted`] puts back.
+///
+/// IT IS NOT A FIELD OF [`ClusterDeps`], and that is the determinism law made structural rather
+/// than promised. `ClusterDeps` is what `registered()` takes, and `registered()` is what the parity
+/// runner, the bench arm and every test in this crate call; a seed field on it would be a door a
+/// file could walk through into the world the six-slice oracle records. So the seed arrives AFTER
+/// construction, from the one caller that was handed a `stateDir` — exactly as the knowledge corpus
+/// does, and for exactly that reason (`install_knowledge`).
+///
+/// Both halves are DEFAULT-EMPTY, and an empty seed is not the same act as no seed at all: the
+/// `begin_source` half still runs, because naming this fold's own bucket is right whether or not
+/// anything was seeded into a neighbouring one.
+#[derive(Debug, Default)]
+pub struct PersistedState {
+    /// `<userData>/resist-ledger.json`'s buckets, the shipped baseline's already refused.
+    pub resist: Vec<modules::resist::ledger_file::LedgerSource>,
+    /// `<userData>/message-overlay.json`'s buckets, keyed by the source that produced them. The key
+    /// travels with the counts because merging two origins under one key would put the fold's own
+    /// output back in the pile it is seeded from, which is the JOS-231 defect.
+    pub overlay: Vec<(String, Vec<message_overlay::SeedMessage>)>,
 }
 
 /// EVERYTHING THE CLUSTER NEEDS FROM OUTSIDE ITSELF — `wiring.ts ModuleWiringDeps`, minus the

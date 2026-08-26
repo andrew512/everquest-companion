@@ -466,14 +466,23 @@ pub fn health(id: i64) -> ClientMessage {
     })
 }
 
-/// One `session.attach` request.
+/// One `session.attach` request, with no `stateDir` — the file-free attach every suite but
+/// `tests/state.rs` wants (JOS-496 item 3): nothing read, nothing seeded, nothing written.
 #[must_use]
 pub fn attach(id: i64, log_path: &str) -> ClientMessage {
+    attach_with_state(id, log_path, None)
+}
+
+/// …and the attach the APP makes, carrying Electron's `userData`. The engine reads its two
+/// persisted artifacts out of it at attach and writes them back on its own cadence.
+#[must_use]
+pub fn attach_with_state(id: i64, log_path: &str, state_dir: Option<&str>) -> ClientMessage {
     ClientMessage::SessionAttachRequest(SessionAttachRequest {
         id: RequestId(id),
         op: SessionAttachRequestOp::SessionAttach,
         params: SessionAttachParams {
             log_path: log_path.to_owned(),
+            state_dir: state_dir.map(str::to_owned),
         },
     })
 }

@@ -210,7 +210,13 @@ test('both edges where the serving world changes hands are announced', () => {
   // Going live: the shim starts serving, so windows holding main's own state should take the
   // engine's. Taken once per turn, off the `first` test, because the health loop can run many times.
   assert.match(host, /const first = engineLiveOn === null/)
-  assert.match(host, /if \(first\) pushWorldChanged\(\)/)
+  assert.match(host, /if \(first\) \{\s*pushWorldChanged\(\)/, 'the announce is still off the `first` test')
+  // …AND MAIN'S OWN SYNCHRONOUS READERS ARE PRIMED ON THE SAME EDGE (JOS-496). It has to be this
+  // one and not the first read: the engine publishes a cursor when a module MOVES, and a module
+  // that has finished folding and gone quiet will not move again for minutes — so a mirror waiting
+  // for a cursor would fall back on every draw of a card the engine could answer perfectly. The two
+  // sit in one block because they are one statement about one moment: the world changed hands.
+  assert.match(host, /if \(first\) \{\s*pushWorldChanged\(\)[\s\S]*?primeMirrors\(\)\s*\}/)
   // Going away: a window holding a served snapshot is IGNORING module:delta because it was served,
   // so without this frame it would sit frozen until the next character rebuild.
   const edges = host.match(/const wasServing = engineLiveOn !== null/g) ?? []
@@ -351,4 +357,54 @@ test('the served snapshot SAYS it was served, and the app’s own arm never does
   assert.match(shim, /return \{ seq: r\.seq, state, served: true \}/)
   const world = code('../src/main/ipc/world.ts')
   assert.doesNotMatch(world, /served/, 'the app’s own arm started claiming it was served')
+})
+
+// ── 5. who draws the con card (JOS-496, boundary verdict 2) ────────────────────────────
+//
+// THE BUG THESE EXIST FOR is one this ticket wrote and then caught in its own audit, and it earns
+// a whole section because the shape is a repeat offender in this feature: `shimServing()` IS NOT
+// "AN ENGINE EXISTS". It is `EQC_ENGINE` AND `EQC_ENGINE_SERVE`, both default-ON since JOS-495, so
+// it answers TRUE on every dev checkout that has never run `cargo build` — where there is no
+// binary, no client, and no frame will ever arrive. A publisher handed off on that answer alone
+// goes permanently silent in exactly the tree `engineHost.ts`'s header promises "exactly the app it
+// got before this ticket", and in any packaged build whose engine failed to spawn.
+
+test('the con-card hook is ALWAYS installed — the handoff is per-`/con`, not per-launch', () => {
+  const card = code('../src/main/conCard.ts')
+  // No condition around the registration. A hook skipped at boot on a flag that does not mean what
+  // it looks like is a card that silently never appears again.
+  assert.match(
+    card,
+    /considerModule\.setConCardHook\(\(ev, zone\) => \{\s*if \(engineDrawsCards\(\)\) return/
+  )
+  assert.doesNotMatch(card, /if \(!serving\)/, 'the launch-time skip came back — see the section note')
+})
+
+test('the handoff asks the SAME authority the read path does, and both halves of it', () => {
+  const ipc = code('../src/main/ipc/index.ts')
+  // `shimServing()` alone would be the bug above; `engineServeReadiness()` alone would draw no card
+  // on a launch that deliberately turned serving off while an engine ran beside it. Both, and
+  // nothing newly invented — one gate, one authority.
+  assert.match(ipc, /registerConCardIpc\(\(\) => shimServing\(\) && engineServeReadiness\(\)\.ok\)/)
+})
+
+test('the engine card takes the engine’s HEADER, and the chips are still joined here', () => {
+  const card = code('../src/main/conCard.ts')
+  // Verdict 2's full form is "resist profile joined engine-side", and verdict 8 (the client spell
+  // table) has not landed — so `engined/src/concard.rs` honestly sends the five EMPTY chips.
+  // Carrying those through would make every card under serve read "nothing seen yet" forever while
+  // the app holds a ledger that can answer: a regression wearing a cutover's clothes.
+  assert.match(card, /const \{ chips, spellData \} = chipsFor\(card\.name\)/)
+  const serve = code('../src/main/dataServer/conCardServe.ts')
+  assert.doesNotMatch(serve, /chips/, 'the engine’s empty chips started being carried across')
+})
+
+test('the suppression and the Preferences switch stay app-side, in ONE place for both worlds', () => {
+  const card = code('../src/main/conCard.ts')
+  // `openCard` is what both `noteConsider` and `noteEngineConCard` call. The re-open suppression is
+  // measured on the WALL clock and its only input is a window event that reaches no fold; a second
+  // copy of either gate is how two worlds come to disagree about what the person asked for.
+  assert.equal((card.match(/conCardSuppressed\(closedAt\.get\(key\), now\)/g) ?? []).length, 1)
+  assert.equal((card.match(/getOverlayConfig\('conCard'\)\.open/g) ?? []).length, 1)
+  assert.match(card, /return openCard\(payload, card\.id, now\)/)
 })

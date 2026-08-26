@@ -76,6 +76,23 @@ impl OverlayMining {
         self.miner.observe_message(&text, ev.ts(), role);
     }
 
+    /// SEED ONE PERSISTED BUCKET (JOS-496 item 3) — `overlayPersistence.loadUserSources()`'s
+    /// output, one source at a time, through the same `merge` the committed baseline arrives by.
+    ///
+    /// SEPARATE FROM `new` ON PURPOSE. The baseline is a fact about COMMITTED DATA and is compiled
+    /// in; the user register is a file, and a construction that could reach one would be a
+    /// construction the six-slice oracle could not reproduce. So the constructor keeps the seed it
+    /// has always had and this is the extra act, made by the one caller that has been handed a
+    /// state directory.
+    pub fn seed(&mut self, key: &str, counts: &[SeedMessage]) {
+        self.miner.merge(counts, key);
+    }
+
+    /// The persistence view — every bucket's raw counts, filed under the source that produced them.
+    pub fn register(&self) -> crate::message_overlay::OverlayRegister {
+        self.miner.register()
+    }
+
     /// The served overlay.
     pub fn build(&self) -> Value {
         self.miner.build()

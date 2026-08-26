@@ -505,6 +505,28 @@ impl BuffsModule {
         self.seq
     }
 
+    /// A NEW LOG IS ABOUT TO BE FOLDED FROM ITS FIRST BYTE (JOS-231) — `beginOverlaySource`.
+    ///
+    /// Mining is GAME knowledge and survives `reset()` on purpose: a spell's cast messages are the
+    /// same for every character. But the counts THIS log accounts for are about to be re-stated in
+    /// full, so its bucket is discarded rather than added to. `session.resetWorldFor` is the caller
+    /// over there, before the scan; `engined::foldsink` is the caller here, at attach.
+    pub fn begin_overlay_source(&mut self, key: &str) {
+        self.mining.begin_source(key);
+    }
+
+    /// SEED ONE PERSISTED BUCKET (JOS-496 item 3). See `OverlayMining::seed` for why it is not part
+    /// of construction, and [`BuffsModule::begin_overlay_source`] for the call that must follow it.
+    pub fn seed_overlay(&mut self, key: &str, counts: &[crate::message_overlay::SeedMessage]) {
+        self.mining.seed(key, counts);
+    }
+
+    /// The persistence view of the mined overlay — raw counts per source, no verdicts.
+    #[must_use]
+    pub fn overlay_register(&self) -> crate::message_overlay::OverlayRegister {
+        self.mining.register()
+    }
+
     fn build_state(&self, stats: &SpellStats) -> Value {
         let active = self.active_buffs();
         json!({
@@ -734,6 +756,11 @@ impl EqModule for BuffsModule {
 
     /// THE VIEW PULL SEAM (JOS-487). See `EqModule::as_buffs`.
     fn as_buffs(&self) -> Option<&BuffsModule> {
+        Some(self)
+    }
+
+    /// THE PERSISTED-OVERLAY WRITE SEAM (JOS-496 item 3). See `EqModule::as_buffs_mut`.
+    fn as_buffs_mut(&mut self) -> Option<&mut BuffsModule> {
         Some(self)
     }
 }

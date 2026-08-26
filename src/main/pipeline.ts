@@ -316,6 +316,47 @@ logInfo(
   `[everquest-companion] Mob catalog: ${MOB_CATALOG_SIZE} mobs (scraped drop tables; the live wiki lookup is the fallback).`
 )
 
+/**
+ * ONE LINE AFTER A HISTORICAL REPLAY, SAYING WHAT THIS PROCESS'S FOLD HOLDS.
+ *
+ * IT LIVES HERE, beside the boot summaries above, because it is the same kind of statement: a
+ * sentence about the app's own fold, printed once, from the modules this file constructs. It moved
+ * out of `session.ts` with JOS-496 and that was not only a line-ceiling matter — the four snapshots
+ * it takes ARE the reason it had to grow a gate, and a gated read of this fold belongs where the
+ * fold is assembled rather than where the replay is orchestrated.
+ *
+ * ── IT NAMES ITS SUBJECT RATHER THAN GOING SILENT UNDER SERVE (JOS-496) ────────────────────────
+ *
+ * The first cut of this wave GATED the line off when the engine was serving, on the argument that
+ * its four snapshots describe a world nothing in the product reads. The argument was sound and the
+ * gate was not, and the reason is worth keeping: `shimServing()` IS NOT "AN ENGINE EXISTS". It is
+ * two default-on environment flags, so it answers true on every dev checkout that has never run
+ * `cargo build` — where these four snapshots are the only fold there is, and the silence would have
+ * deleted a boot line from the one tree that still needs it. (The same misreading is a live hazard
+ * elsewhere in this feature; `conCard.ts registerConCardIpc` has the long version.)
+ *
+ * SO IT NAMES WHOSE NUMBERS THEY ARE INSTEAD, which is honest in both worlds and costs a clause.
+ * A reader under serve now has the one fact the gate was trying to give them — that this is not
+ * what the engine folded — plus the pointer to where that is: the parity line
+ * `dataServer/engineClientHost.ts` writes the moment both folds land on the same log, carrying the
+ * engine's status, event count, byte mark and a module-by-module verdict.
+ *
+ * AND THE FOUR SNAPSHOTS ARE NOT A CUTOVER BLOCKER, which is the other half of the correction. The
+ * census is about reads the PRODUCT makes; this is a diagnostic over a fold that is on the deletion
+ * list itself (`docs/plans/data-server.md`: `pipeline.ts` fold construction), so it dies with the
+ * thing it reads rather than having to be moved off it first.
+ */
+export function logReplaySummary(): void {
+  const lootState = modules.loot.snapshot().state
+  const killState = modules.kills.snapshot().state
+  const lvlState = modules.leveling.snapshot().state
+  logInfo(
+    `[everquest-companion] This process’s own fold loaded ${lootState.length} loot, ${modules.turnIns.snapshot().state.length} turn-ins, ${
+      Object.keys(killState.mobs).length
+    } mobs, ${lvlState.levels.length} level-ups, ${lvlState.aaGains.length} AA gains, ${lvlState.aaSpends.length} AA buys. (The engine’s own fold is reported on the parity line.)`
+  )
+}
+
 /** Fold an `alerts` module delta into the event feed (alert id → its display name). */
 function feedAlertDelta(delta: ModuleDelta): void {
   if (delta.moduleId !== 'alerts') return

@@ -95,7 +95,10 @@ impl Session {
             // `ingest.rs` for the generation law that makes a second attach preempt this one.
             ClientMessage::SessionAttachRequest(request) => reply(
                 request.id,
-                ReplyResult::AttachResult(world.attach(&request.params.log_path)),
+                ReplyResult::AttachResult(world.attach(
+                    &request.params.log_path,
+                    request.params.state_dir.as_deref(),
+                )),
             ),
 
             // PROGRESS. Acknowledged with a `SubscribeAck` naming this request, because that is
@@ -866,7 +869,9 @@ mod tests {
     /// fold; giving these tests a real ingest would make them depend on a file, a thread and a spell
     /// DB none of them says anything about. `ingest.rs` and `tests/ingest.rs` own that half.
     fn table() -> (World, Session) {
-        let world = World::with_ingest(std::sync::Arc::new(|_world, _generation, _log| {}));
+        let world = World::with_ingest(std::sync::Arc::new(
+            |_world, _generation, _log, _state_dir| {},
+        ));
         let session = Session::new(world.join().id);
         (world, session)
     }
@@ -892,7 +897,7 @@ mod tests {
     #[test]
     fn health_reports_the_worlds_generation() {
         let (world, mut session) = table();
-        world.attach(A_LOG);
+        world.attach(A_LOG, None);
         let messages = sent(session.dispatch(
             &world,
             ClientMessage::SessionHealthRequest(SessionHealthRequest {
@@ -920,6 +925,7 @@ mod tests {
                 op: SessionAttachRequestOp::SessionAttach,
                 params: SessionAttachParams {
                     log_path: "C:/nowhere/eqlog_Primitive_freeport.txt".to_owned(),
+                    state_dir: None,
                 },
             }),
         ));
@@ -1061,7 +1067,7 @@ mod tests {
         // A world whose attaches start NOTHING has no ingest to ask, and the two refusals mean
         // different things to a client — see the dispatch arm.
         let (world, mut session) = table();
-        world.attach(A_LOG);
+        world.attach(A_LOG, None);
         let messages = sent(session.dispatch(
             &world,
             ClientMessage::ModuleSnapshotRequest(ModuleSnapshotRequest {
@@ -1186,7 +1192,7 @@ mod tests {
 
     fn knowledge_table() -> (World, Session, crate::world::Membership) {
         let world = World::with_parts(
-            std::sync::Arc::new(|_world, _generation, _log| {}),
+            std::sync::Arc::new(|_world, _generation, _log, _state_dir| {}),
             std::sync::Arc::new(knowledge::Corpus::new()),
         );
         let membership = world.join();

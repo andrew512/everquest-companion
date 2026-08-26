@@ -54,6 +54,15 @@ import { registerWorldIpc } from './world'
 // launch it hands out (src/main/dataServer/), like the toast and con-card producer channels above,
 // rather than in a file here — everything it does is socket + port lifecycle.
 import { registerRendererBrokerIpc } from '../dataServer/rendererBroker'
+// WHO DRAWS THE CON CARD (JOS-496, boundary verdict 2). Under serve the engine resolves the card
+// and `dataServer/conCardServe.ts` opens the window, so the TypeScript hook — which today calls
+// synchronously into Electron from inside the fold — stands down. Composed HERE and passed as a
+// predicate, for two reasons written out at `registerConCardIpc`: `conCard.ts` sits downstream of
+// the serve receiver so an import would close a module cycle, and the question can only be answered
+// honestly per `/con` rather than once at registration, because `shimServing()` alone is true on
+// every checkout with no engine binary at all.
+import { engineServeReadiness } from '../dataServer/engineClientHost'
+import { shimServing } from '../dataServer/serveShim'
 
 export function registerIpc(): void {
   registerCharacterIpc()
@@ -77,7 +86,7 @@ export function registerIpc(): void {
   registerWindowIpc()
   registerToastIpc()
   registerAlertBannerIpc()
-  registerConCardIpc()
+  registerConCardIpc(() => shimServing() && engineServeReadiness().ok)
   registerTrayIpc()
   registerClipboardIpc()
   registerFeedbackIpc()

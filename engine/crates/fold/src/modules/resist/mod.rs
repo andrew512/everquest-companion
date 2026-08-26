@@ -99,6 +99,7 @@
 pub mod cast_state;
 pub mod catalog;
 pub mod ledger;
+pub mod ledger_file;
 pub mod songs;
 pub mod world;
 
@@ -894,6 +895,30 @@ impl ResistModule {
         self.ledger.begin_source(key);
         self.fold.begin_source();
     }
+
+    /// SEED THE PERSISTED BUCKETS (JOS-496 item 3) — `store.ts resistLedger()`'s
+    /// `for (const src of loadUserSources()) created.bucket(src.key).seed(src.rows)`.
+    ///
+    /// IT MUST RUN BEFORE [`ResistModule::begin_source`], never after, and the two-call shape is
+    /// what makes that orderable at all: seeding puts every persisted bucket back, and the fold's
+    /// own source is discarded afterwards by the one call that names it. Reversed, this run's
+    /// character would be seeded with the counts its own log is about to re-state — the JOS-231
+    /// doubling, on the resist ledger this time.
+    ///
+    /// NOTHING IN THIS CRATE CALLS IT. `registered()` cannot reach a file and does not know a state
+    /// directory exists; the one caller is `engined::foldsink`, which is handed one at attach. That
+    /// is the same structural argument `Registry::install_knowledge` makes, and it is what keeps
+    /// the six-slice oracle's world file-free by construction rather than by discipline.
+    pub fn seed(&mut self, sources: &[ledger_file::LedgerSource]) {
+        ledger_file::seed_store(&mut self.ledger, sources);
+    }
+
+    /// THE USER'S HALF OF THE LEDGER, as it goes on disk — `store.ts saveUserSources`'s filter and
+    /// both of its sort orders. The shipped baseline's bucket and every empty bucket are dropped.
+    #[must_use]
+    pub fn user_ledger_file(&self) -> ledger_file::UserLedgerFile {
+        ledger_file::ledger_file_of(&self.ledger)
+    }
 }
 
 impl EqModule for ResistModule {
@@ -947,5 +972,14 @@ impl EqModule for ResistModule {
     fn snapshot(&self) -> Value {
         let (rows, mobs) = self.ledger.counts();
         json!({ "seq": self.seq, "state": { "rows": rows, "mobs": mobs } })
+    }
+
+    /// THE PERSISTED-LEDGER SEAMS (JOS-496 item 3). See `EqModule::as_resist_mut`.
+    fn as_resist_mut(&mut self) -> Option<&mut ResistModule> {
+        Some(self)
+    }
+
+    fn as_resist(&self) -> Option<&ResistModule> {
+        Some(self)
     }
 }
