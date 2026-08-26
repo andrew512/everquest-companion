@@ -1527,13 +1527,14 @@ impl World {
             progress: Some(FoldProgress {
                 pct: mark.pct,
                 events: mark.events,
-                // BOTH COORDINATES, NOT A ROUNDED ONE. `bytes` is the mark itself — the coordinate
-                // cache law 3 says all state is addressed by — and `totalBytes` is what `pct` was
-                // divided by. Saturating rather than wrapping: the wire type is a signed 64-bit
-                // integer and a log larger than 8 exabytes is not a thing, but a silent wrap would
-                // draw a negative progress bar and a saturate draws a stuck one.
-                bytes: i64::try_from(mark.checkpoint).unwrap_or(i64::MAX),
-                total_bytes: i64::try_from(mark.total).unwrap_or(i64::MAX),
+                // BOTH COORDINATES, NOT A ROUNDED ONE. `offset` is the mark itself — the same
+                // coordinate `HealthMark.offset` reports, which is why it carries that name — and
+                // `logSize` is what `pct` was divided by. Saturating rather than wrapping: the wire
+                // type is a signed 64-bit integer and a log larger than 8 exabytes is not a thing,
+                // but a silent wrap would draw a NEGATIVE progress bar where a saturate draws a
+                // stuck one.
+                offset: i64::try_from(mark.checkpoint).unwrap_or(i64::MAX),
+                log_size: i64::try_from(mark.total).unwrap_or(i64::MAX),
             }),
         });
         broadcast(&mut state, &frame);
@@ -1979,8 +1980,8 @@ mod tests {
             assert_eq!(progress.events, 1571);
             // THE TWO COORDINATES A LOADING BAR NEEDS, and they are the mark's own rather than
             // anything derived from `pct` — which is the whole reason they ride the frame.
-            assert_eq!(progress.bytes, 4096);
-            assert_eq!(progress.total_bytes, 8192);
+            assert_eq!(progress.offset, 4096);
+            assert_eq!(progress.log_size, 8192);
             break;
         }
         assert_eq!(world.mark().events, 1571);

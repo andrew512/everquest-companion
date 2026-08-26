@@ -29,8 +29,8 @@
         "progress": {
           "pct": 62.4,
           "events": 1571003,
-          "bytes": 156000000,
-          "totalBytes": 250000000
+          "offset": 156000000,
+          "logSize": 250000000
         }
       }
     },

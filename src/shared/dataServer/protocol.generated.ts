@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:5a2f69a0ca7ce0c2d94cdde5b6603dd262370710da0e155847a1321fa9f1a6d0
+// schema-digest: sha256:b8ce460eb8d88f24b6a126ed0c08e05b9db0c28a4b78344746b81d6e659d7283
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -1192,13 +1192,13 @@ export interface FoldProgress {
   pct: number
   events: number
   /**
-   * THE MARK, IN BYTES: the offset of the end of the last complete line this fold has folded, which is `pct`'s own numerator. It rides the frame because `pct` cannot be turned back into it - a client holding only a percentage can say `62%` and can never say `128 MB of 205 MB`, and the second sentence is the one that tells a person whether to wait or to go and make coffee. It is the coordinate cache law 3 names (state is addressed by log identity and byte offset), so it is a number the engine already had rather than a measurement taken for the wire.
+   * THE MARK: the end of the last complete line this fold has folded, and `pct`'s own numerator. It is the SAME coordinate `HealthMark.offset` reports and the same one cache law 3 names (state is addressed by log identity and byte offset), which is why it carries that field's name rather than a new one - it is a fact about the LOG, not about the wire, and nothing here is a framing concern. It rides the frame because `pct` cannot be turned back into it: a client holding only a percentage can say `62%` and can never say `128 MB of 205 MB`, and the second sentence is the one that tells a person whether to wait or to go and make coffee.
    */
-  bytes: number
+  offset: number
   /**
-   * `pct`'s DENOMINATOR, and it is the larger of the file's size at open and the bytes actually read - EverQuest is still appending while the fold runs, so a denominator fixed at open would let a live tail report more than 100%. It can therefore GROW between two frames, which is honest rather than awkward: a client deriving a completion estimate must re-read it every frame instead of caching the first one it saw.
+   * `pct`'s DENOMINATOR - how big the fold currently believes the log to be, which is the larger of the file's size at open and the amount actually read. EverQuest is still appending while the fold runs, so a denominator fixed at open would let a live tail report more than 100%. It can therefore GROW between two frames, which is honest rather than awkward: a client deriving a completion estimate must re-read it every frame instead of caching the first one it saw.
    */
-  totalBytes: number
+  logSize: number
 }
 /**
  * AN ALERT FIRED (owner ruling 22). The engine evaluates the user's alert definitions against LIVE events — replay must never make a sound, which is the same boundary law the app-side evaluator has always obeyed — and this is what it says when one matches. CONNECTION-WIDE, and therefore carrying NO `id`: a fire belongs to the world rather than to any subscription, which is the `EpochMessage` precedent. It carries no `epoch` either, and that is the difference from an epoch message rather than an oversight: every other stream frame describes WINDOW STATE a client has to reconcile across a generation, while a fire is a thing that happened once — there is nothing to drop and nothing to re-request, so a generation number would be a field with no reader. IT IS FULLY RESOLVED SERVER-SIDE (the conCard principle): everything the app needs in order to make the identical noise is in this frame, so no client ever has to hold the definition the fire came from.

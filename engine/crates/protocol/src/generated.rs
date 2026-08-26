@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:5a2f69a0ca7ce0c2d94cdde5b6603dd262370710da0e155847a1321fa9f1a6d0
+//! schema-digest: sha256:b8ce460eb8d88f24b6a126ed0c08e05b9db0c28a4b78344746b81d6e659d7283
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -3160,26 +3160,26 @@ impl ::std::convert::TryFrom<::std::string::String> for FireMessageKind {
 ///  "description": "What the loading UI reads. Present while a fold is running and on the bump that starts one.",
 ///  "type": "object",
 ///  "required": [
-///    "bytes",
 ///    "events",
-///    "pct",
-///    "totalBytes"
+///    "logSize",
+///    "offset",
+///    "pct"
 ///  ],
 ///  "properties": {
-///    "bytes": {
-///      "description": "THE MARK, IN BYTES: the offset of the end of the last complete line this fold has folded, which is `pct`'s own numerator. It rides the frame because `pct` cannot be turned back into it - a client holding only a percentage can say `62%` and can never say `128 MB of 205 MB`, and the second sentence is the one that tells a person whether to wait or to go and make coffee. It is the coordinate cache law 3 names (state is addressed by log identity and byte offset), so it is a number the engine already had rather than a measurement taken for the wire.",
+///    "events": {
 ///      "type": "integer"
 ///    },
-///    "events": {
+///    "logSize": {
+///      "description": "`pct`'s DENOMINATOR - how big the fold currently believes the log to be, which is the larger of the file's size at open and the amount actually read. EverQuest is still appending while the fold runs, so a denominator fixed at open would let a live tail report more than 100%. It can therefore GROW between two frames, which is honest rather than awkward: a client deriving a completion estimate must re-read it every frame instead of caching the first one it saw.",
+///      "type": "integer"
+///    },
+///    "offset": {
+///      "description": "THE MARK: the end of the last complete line this fold has folded, and `pct`'s own numerator. It is the SAME coordinate `HealthMark.offset` reports and the same one cache law 3 names (state is addressed by log identity and byte offset), which is why it carries that field's name rather than a new one - it is a fact about the LOG, not about the wire, and nothing here is a framing concern. It rides the frame because `pct` cannot be turned back into it: a client holding only a percentage can say `62%` and can never say `128 MB of 205 MB`, and the second sentence is the one that tells a person whether to wait or to go and make coffee.",
 ///      "type": "integer"
 ///    },
 ///    "pct": {
 ///      "description": "How far the fold has got, 0 to 100, FRACTIONAL. The engine emits the number it actually measured and does not pre-round it: rounding is a display decision and belongs to whoever is drawing the bar. That is not in tension with the renderer-never-munges rule - that rule is about DOMAIN data (no client-side filtering, sorting or aggregation of the world), and formatting a progress readout for the pixel it lands on is not domain work. A NOTE FOR WORKED EXAMPLES: Rust serializes an f64 whole value as X.0, so a fixture carrying `62` would come back `62.0` and stop being byte-verbatim across the two languages. Examples therefore use a genuinely fractional value (62.4), which round-trips identically in both.",
 ///      "type": "number"
-///    },
-///    "totalBytes": {
-///      "description": "`pct`'s DENOMINATOR, and it is the larger of the file's size at open and the bytes actually read - EverQuest is still appending while the fold runs, so a denominator fixed at open would let a live tail report more than 100%. It can therefore GROW between two frames, which is honest rather than awkward: a client deriving a completion estimate must re-read it every frame instead of caching the first one it saw.",
-///      "type": "integer"
 ///    }
 ///  },
 ///  "additionalProperties": false
@@ -3189,14 +3189,14 @@ impl ::std::convert::TryFrom<::std::string::String> for FireMessageKind {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct FoldProgress {
-    ///THE MARK, IN BYTES: the offset of the end of the last complete line this fold has folded, which is `pct`'s own numerator. It rides the frame because `pct` cannot be turned back into it - a client holding only a percentage can say `62%` and can never say `128 MB of 205 MB`, and the second sentence is the one that tells a person whether to wait or to go and make coffee. It is the coordinate cache law 3 names (state is addressed by log identity and byte offset), so it is a number the engine already had rather than a measurement taken for the wire.
-    pub bytes: i64,
     pub events: i64,
+    ///`pct`'s DENOMINATOR - how big the fold currently believes the log to be, which is the larger of the file's size at open and the amount actually read. EverQuest is still appending while the fold runs, so a denominator fixed at open would let a live tail report more than 100%. It can therefore GROW between two frames, which is honest rather than awkward: a client deriving a completion estimate must re-read it every frame instead of caching the first one it saw.
+    #[serde(rename = "logSize")]
+    pub log_size: i64,
+    ///THE MARK: the end of the last complete line this fold has folded, and `pct`'s own numerator. It is the SAME coordinate `HealthMark.offset` reports and the same one cache law 3 names (state is addressed by log identity and byte offset), which is why it carries that field's name rather than a new one - it is a fact about the LOG, not about the wire, and nothing here is a framing concern. It rides the frame because `pct` cannot be turned back into it: a client holding only a percentage can say `62%` and can never say `128 MB of 205 MB`, and the second sentence is the one that tells a person whether to wait or to go and make coffee.
+    pub offset: i64,
     ///How far the fold has got, 0 to 100, FRACTIONAL. The engine emits the number it actually measured and does not pre-round it: rounding is a display decision and belongs to whoever is drawing the bar. That is not in tension with the renderer-never-munges rule - that rule is about DOMAIN data (no client-side filtering, sorting or aggregation of the world), and formatting a progress readout for the pixel it lands on is not domain work. A NOTE FOR WORKED EXAMPLES: Rust serializes an f64 whole value as X.0, so a fixture carrying `62` would come back `62.0` and stop being byte-verbatim across the two languages. Examples therefore use a genuinely fractional value (62.4), which round-trips identically in both.
     pub pct: f64,
-    ///`pct`'s DENOMINATOR, and it is the larger of the file's size at open and the bytes actually read - EverQuest is still appending while the fold runs, so a denominator fixed at open would let a live tail report more than 100%. It can therefore GROW between two frames, which is honest rather than awkward: a client deriving a completion estimate must re-read it every frame instead of caching the first one it saw.
-    #[serde(rename = "totalBytes")]
-    pub total_bytes: i64,
 }
 ///What the engine's ingest is doing, and where it has got to. THE LAST FOUR FIELDS ARE OPTIONAL AND THAT IS NOT A CONVENIENCE: a health answer given before any attach honestly has no mark, no event count, no log timestamp and no file to stat, and a zero would be a measurement nobody took. Absent means `this engine has not folded anything`; present means the numbers are the fold's own.
 ///

@@ -90,7 +90,7 @@ function sameFold(a: FoldSay | null, b: FoldSay | null): boolean {
   if (a === null || b === null) return a === b
   // `at` is deliberately NOT compared: it is the host clock, it differs on every sample by
   // construction, and two frames reporting the same mark are the same measurement taken twice.
-  return a.bytes === b.bytes && a.totalBytes === b.totalBytes && a.events === b.events
+  return a.offset === b.offset && a.logSize === b.logSize && a.events === b.events
 }
 
 function sameFault(a: EngineFaultSay | null, b: EngineFaultSay | null): boolean {
@@ -138,8 +138,8 @@ export function noteFoldProgress(progress: FoldProgress, at: number): void {
   if (say.phase !== 'folding') return
   const fold: FoldSay = {
     pct: progress.pct,
-    bytes: progress.bytes,
-    totalBytes: progress.totalBytes,
+    offset: progress.offset,
+    logSize: progress.logSize,
     events: progress.events,
     at
   }

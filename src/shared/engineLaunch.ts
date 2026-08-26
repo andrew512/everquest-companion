@@ -99,14 +99,24 @@ export interface EngineFaultSay {
   readonly detail: string | null
 }
 
-/** One measurement of a running fold, as the engine reported it plus the instant we heard it. */
+/**
+ * One measurement of a running fold, as the engine reported it plus the instant we heard it.
+ *
+ * THE TWO BYTE FIELDS CARRY THE WIRE'S OWN NAMES, and the wire carries the schema's existing ones:
+ * `offset` is the coordinate `HealthMark.offset` already reports (cache law 3 — state is addressed
+ * by log identity and byte offset), and `logSize` is how big the fold currently believes the file
+ * to be. They are not called `bytes`/`totalBytes` because `bytes` is a name the protocol schema
+ * REFUSES: `tests/protocolSchema.test.mts` forbids the framing vocabulary outright so the wire
+ * method stays swappable (owner ruling 15), and a domain measurement wearing a transport word is
+ * exactly the confusion that guard exists to prevent. One vocabulary, end to end.
+ */
 export interface FoldSay {
   /** 0–100, fractional, engine-measured (owner ruling 17). */
   readonly pct: number
-  /** The mark: bytes of the log folded so far. */
-  readonly bytes: number
+  /** The mark: the end of the last complete line folded, in bytes from the start of the log. */
+  readonly offset: number
   /** What `pct` was divided by. It can GROW between samples — EverQuest is still appending. */
-  readonly totalBytes: number
+  readonly logSize: number
   /** Events folded so far. */
   readonly events: number
   /** THE HOST's wall clock when this sample was received. The ETA's only clock — see the header. */
@@ -166,7 +176,7 @@ export const NEW_FOLD_RING: FoldRing = { samples: [] }
  */
 export function pushFold(ring: FoldRing, sample: FoldSay): FoldRing {
   const previous = ring.samples[ring.samples.length - 1]
-  if (previous !== undefined && sample.bytes < previous.bytes) return { samples: [sample] }
+  if (previous !== undefined && sample.offset < previous.offset) return { samples: [sample] }
   const grown = [...ring.samples, sample]
   return { samples: grown.slice(Math.max(0, grown.length - FOLD_RATE_SAMPLES)) }
 }
@@ -183,7 +193,7 @@ export function foldRate(ring: FoldRing): number | null {
   const last = ring.samples[ring.samples.length - 1]
   if (first === undefined || last === undefined || first === last) return null
   const span = last.at - first.at
-  const moved = last.bytes - first.bytes
+  const moved = last.offset - first.offset
   if (span < FOLD_RATE_MIN_SPAN_MS || moved <= 0) return null
   return moved / span
 }
@@ -219,7 +229,7 @@ export function foldReadout(ring: FoldRing): FoldReadout | null {
   return {
     pct,
     pctText: `${String(Math.floor(pct))}%`,
-    bytesText: `${humanBytes(last.bytes)} of ${humanBytes(Math.max(last.bytes, last.totalBytes))}`,
+    bytesText: `${humanBytes(last.offset)} of ${humanBytes(Math.max(last.offset, last.logSize))}`,
     etaText: etaText(ring, last),
     eventsText: `${last.events.toLocaleString('en-US')} events`
   }
@@ -228,7 +238,7 @@ export function foldReadout(ring: FoldRing): FoldReadout | null {
 function etaText(ring: FoldRing, last: FoldSay): string | null {
   const rate = foldRate(ring)
   if (rate === null) return null
-  const remaining = last.totalBytes - last.bytes
+  const remaining = last.logSize - last.offset
   if (remaining <= 0) return null
   const ms = remaining / rate
   if (!Number.isFinite(ms) || ms > FOLD_ETA_MAX_MS) return null
@@ -293,7 +303,7 @@ export interface FailureWords {
  * describing a product that does not exist. This is the sentence that says so.
  */
 export const NO_ENGINE_CONSEQUENCE =
-  'Until it starts, EQ Companion cannot read your log at all — every panel will stay empty. ' +
+  'Until it starts, EQ Companion cannot read your log at all - every panel will stay empty. ' +
   'Your log file and your settings are untouched.'
 
 /**
