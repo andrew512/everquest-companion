@@ -54,23 +54,35 @@ function clampLimit(limit: unknown): number | undefined {
 }
 
 /**
- * THE EMPTY METER — what `combat:snapshot` answers when nothing can. See the header for why this
- * channel answers a shape rather than a null: `CombatSnapshot` is non-nullable in the renderer's
- * contract, and every field below is the value that surface already draws before a first fight.
+ * THE EMPTY METER — what `combat:snapshot` answers when nothing can.
+ *
+ * WHY A SHAPE AND NOT A NULL: `CombatSnapshot` is non-nullable in the renderer's contract and every
+ * meter surface dereferences it on first paint. `hydrating: true` is the honest flag — the app has
+ * no answer YET — and it is precisely the state the UI already draws a quiet loading meter for
+ * (`shared/combat.ts CombatSnapshot.hydrating`), so nothing here invents a fight that did not happen.
+ *
+ * IT IS DELIBERATELY NOT CAST, and that is the whole reason this function exists rather than an
+ * object literal at the call site. The first version of it WAS a cast — `{…} as unknown as
+ * CombatSnapshot` with a hand-guessed field set — and it compiled, shipped, and took the renderer
+ * down with `Cannot read properties of undefined (reading 'some')` the moment a meter component
+ * touched a field the guess had omitted. Every e2e spec in the suite failed on a blank window.
+ * Typing it properly makes the compiler the thing that knows this shape, which is what it is for:
+ * the day `CombatSnapshot` grows a required field, this is a build error rather than a black app.
  */
 function emptyCombat(): CombatSnapshot {
   return {
-    hydrating: true,
-    now: Date.now(),
-    fights: [],
-    rows: [],
-    incoming: [],
+    selectedId: '',
+    selected: null,
+    segments: [],
+    inCombat: false,
     recent: [],
-    selectedId: null,
-    session: null,
-    timeline: null,
-    unparsed: []
-  } as unknown as CombatSnapshot
+    stance: {},
+    poison: { coat: { combat: [] }, slow: { pulls: 0, landed: 0, noLand: 0, window: 0 } },
+    zoneSessions: [],
+    // THE ONE FIELD THAT CARRIES THE MEANING. Not "there was no combat" — "nobody can say yet".
+    hydrating: true,
+    roster: { members: [], seen: false, lastSignalTs: 0 }
+  }
 }
 
 export function registerWorldIpc(): void {

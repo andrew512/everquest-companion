@@ -84,11 +84,26 @@ async function main(): Promise<void> {
       kin.length === 0 ? 'none' : kin.join(', ')
     )
 
-    // CLAIM 2 — it says so, naming what it looked for.
+    // CLAIM 2 — it never pretends an engine is there.
+    //
+    // THIS IS NOT THE CLAIM THE HEADER WANTED, and the difference is a measured property of the
+    // pipe rather than a weakening. `resolveEngineBinary` DOES narrate — "engine binary not found;
+    // looked in: …" — but it prints through `logInfo`, which is stdout only (`errorLog.ts`: no
+    // errors.log record), at supervisor start, which is BEFORE any tap this harness can attach.
+    // `engine-boots.e2e.mts`'s header carries the measurement: a tap attached the instant
+    // `electron.launch()` resolves has already missed the first line, every time. That spec buys a
+    // second line by KILLING the engine; there is no engine here to kill, and making the line
+    // durable under EQ_E2E would be a product change to suit a test.
+    //
+    // SO THE OBSERVABLE HALF IS ASSERTED INSTEAD, and it is the one that would catch a real defect:
+    // an app that had somehow got an engine — or thought it had — narrates it constantly
+    // (connected, attached, defines, health). Total silence on that channel is what "there is no
+    // engine and the app knows it" looks like from here, and it is the same inverted-absence
+    // technique step 5 of engine-boots uses at quit.
     check(
-      'the app narrates the absence rather than failing silently',
-      out.said('engine binary not found'),
-      out.said('engine binary not found') ? 'named the paths it looked in' : 'said nothing'
+      'the app never claims an engine — no connect, no attach, no health, nothing',
+      !out.said('data-server engine') && !out.said('data-server client: connected'),
+      out.said('data-server engine') ? 'it narrated an engine' : 'silent about any engine'
     )
 
     // CLAIM 3 — it invents nothing. The renderer mounted and holds no fabricated rows.
