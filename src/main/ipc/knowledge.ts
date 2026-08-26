@@ -25,6 +25,7 @@ import { currentWornFocus } from '../planner/wornFocusCurrent'
 // already-resolved, so the wait is paid exactly where the race was.
 import { spellTable } from '../resist/spellTable'
 import type { AlertsSnap } from '../../shared/alertTypes'
+import { resolvedClasses, type ClassAbbr, type ComboSnap } from '../../shared/classCombo'
 import {
   OBSERVED_SPELL_RANKS_MODULE_ID,
   observedRankRow,
@@ -57,6 +58,25 @@ async function moduleState(moduleId: string): Promise<unknown> {
   // sites have always handled for a build that does not carry the module.
   const snap = await serveModuleSnapshot(moduleId)
   return snap?.state
+}
+
+/**
+ * THE LOADOUT YOU ARE PLAYING RIGHT NOW, as the combo module has RESOLVED it (JOS-508).
+ *
+ * A FOURTH read off the same door the ranks and the buff stats come through, and the same rules
+ * apply: never mutated, an absent module simply means no answer, and the answer is `[]` rather than
+ * a guess. `resolvedClasses` keeps only slots holding exactly ONE candidate — a trio where two
+ * slots are known and the third is `{CLR,PAL}` reports two classes, which is what "2 of 3 known"
+ * honestly looks like and is exactly what the drilldown needs: every level it prints as YOURS has
+ * to be a level the game will actually give this character.
+ *
+ * ONLY THE OPEN INTERVAL. `snap.current` is the span still running; an earlier interval describes a
+ * loadout that has since been swapped away from, and answering a spell page with it would print
+ * levels for a combo the player is not in.
+ */
+async function currentCombo(): Promise<ClassAbbr[]> {
+  const snap = (await moduleState('combo')) as ComboSnap | undefined
+  return snap?.current ? resolvedClasses(snap.current) : []
 }
 
 export function registerKnowledgeIpc(): void {
@@ -128,7 +148,12 @@ export function registerKnowledgeIpc(): void {
       rank: observedRankRow(rankSnap, wanted)?.rank,
       // JOS-452 — the same worn-focus answer the planner's inventory payload carries, from the same
       // memoized resolution, so the card and the leveling table can never credit a different item.
-      focus: currentWornFocus()
+      focus: currentWornFocus(),
+      // AND THE LOADOUT (JOS-508), which is what turns the upgrade ladder from a list of spells
+      // into a schedule: the level each rung unlocks at FOR THE CLASSES YOU ARE ACTUALLY PLAYING.
+      // Read here rather than in the renderer for the header's reason — the join belongs on the
+      // side that already holds the catalog, and a renderer that assembled it would be munging.
+      combo: await currentCombo()
     })
   })
 
