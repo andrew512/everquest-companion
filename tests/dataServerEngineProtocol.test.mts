@@ -17,11 +17,15 @@ import {
   ENGINE_QUICK_EXIT_MS,
   ENGINE_QUICK_EXIT_STREAK,
   ENGINE_RESTART_BACKOFF_MS,
+  ENGINE_SERVED_CYCLE_ERROR_NAME,
+  ENGINE_SERVED_CYCLE_STREAK,
   NEW_ENGINE_EXIT_TRAIL,
+  NEW_ENGINE_SERVED_TRAIL,
   boundedDetail,
   engineBinaryCandidates,
   engineExitStep,
   engineRestartDelayMs,
+  engineServedCycleStep,
   isCargoTargetBinary,
   parseAnnounce,
   stagedEngineNames,
@@ -170,6 +174,56 @@ test('a spawn that never produced a child reports no exit code rather than a fak
   const step = engineExitStep(NEW_ENGINE_EXIT_TRAIL, cause({ failure: 'spawn-failed', exitCode: null }))
   assert.equal(step.log?.code, undefined, '`errorCodeOf` takes a number; absent is the honest answer')
   assert.equal(step.log?.exitCode, null)
+})
+
+// ---- 3b. the OTHER trail: an engine that keeps dying after it served (JOS-519) ----------
+//
+// The mirror image of the section above, and the pair is the point. That trail asks "is this
+// launch loop never going to work" and is reset by a launch reaching READY. This one asks "has a
+// WORKING engine been replaced too often to be a coincidence", so reaching READY is what FEEDS it -
+// which is exactly why an engine that serves, dies, and always comes back was invisible.
+
+test('THREE DEATHS AFTER SERVING ARE ONE ENTRY, and the count keeps climbing under it', () => {
+  let trail = NEW_ENGINE_SERVED_TRAIL
+  const logs: (string | undefined)[] = []
+  for (let i = 0; i < 10; i += 1) {
+    const step = engineServedCycleStep(trail, cause({ detail: 'STATUS_ACCESS_VIOLATION' }))
+    trail = step.trail
+    if (step.log) logs.push(step.log.name)
+  }
+  assert.deepEqual(logs, [ENGINE_SERVED_CYCLE_ERROR_NAME], 'one entry per session, not one per death')
+  assert.equal(trail.cycles, 10, 'the count is still honest after the entry is written')
+  assert.equal(trail.reported, true)
+})
+
+test('the entry names the count and the last exit, and is its OWN fingerprint', () => {
+  let trail = NEW_ENGINE_SERVED_TRAIL
+  let log = null
+  for (let i = 0; i < ENGINE_SERVED_CYCLE_STREAK; i += 1) {
+    const step = engineServedCycleStep(trail, cause({ detail: 'the engine went away', exitCode: 3221225477 }))
+    trail = step.trail
+    log = step.log
+  }
+  assert.ok(log)
+  assert.equal(log.exits, ENGINE_SERVED_CYCLE_STREAK)
+  assert.equal(log.code, 3221225477, 'the ten-digit code rides the machine-readable field')
+  assert.match(log.message, /restarted 3 times this session after serving/)
+  assert.match(log.message, /the engine went away/, 'the fold’s own detail, not a second one')
+  assert.notEqual(log.name, ENGINE_EXIT_LOOP_ERROR_NAME, 'a working engine dying is a different ticket')
+})
+
+test('a death is a death however long the engine lived — this trail has no quick-exit window', () => {
+  // `engineExitStep` resets on a slow failure, because an hourly hiccup is not a launch loop. Here
+  // an engine that serves for an hour and then dies IS the subject, so nothing about lifetime is
+  // consulted at all: three of them, an hour apart, still file the entry.
+  let trail = NEW_ENGINE_SERVED_TRAIL
+  let log = null
+  for (let i = 0; i < ENGINE_SERVED_CYCLE_STREAK; i += 1) {
+    const step = engineServedCycleStep(trail, cause({ lifetimeMs: 3_600_000 }))
+    trail = step.trail
+    log = step.log
+  }
+  assert.equal(log?.name, ENGINE_SERVED_CYCLE_ERROR_NAME)
 })
 
 // ---- 4. the detail bound ---------------------------------------------------------------

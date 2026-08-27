@@ -494,6 +494,31 @@ the second sentence is the one that tells a person whether to wait. `bytes` is a
 method stays swappable (owner ruling 15) — and the schema already had its own word for this
 coordinate in `HealthMark.offset`. One vocabulary, end to end.
 
+## THE ENGINE THAT KEEPS DYING AFTER IT SERVED (JOS-519 — instrumentation only)
+
+A 1.11.0 user reported that the log "keeps catching up even while in-game", and the engine
+diagnostic his report carried at that same moment said no engine answered. One shape fits both
+facts: the engine reaches READY, folds, dies minutes later, and is respawned — and a respawn is a
+launch, so each one re-folds the whole log behind a fresh progress band.
+
+**IT WAS INVISIBLE BY CONSTRUCTION.** `supervisor.ts` resets the exit trail on every READY edge,
+which is right for a launch-time crash loop and means an engine that dies every ten minutes but
+always comes back never collapses a trail, never raises a fault, and mints no error-store entry at
+all. So the store's zero engine families could not be read either way.
+
+**THREE THINGS, AND NOTHING ELSE CHANGED** — no card, no respawn or backoff behaviour. (1) A
+SESSION-scoped counter of launches that had reached READY and then ended, incremented below the
+`stopping` return in `endLaunch` so a deliberate stop and the quit path are structurally excluded.
+Nothing resets it: reaching READY is what feeds it, not what forgives it. (2) At three, ONE entry
+(`EngineServedCycling`, `engineProtocol.ts engineServedCycleStep` — a pure fold shaped exactly like
+`engineExitStep`) naming the count and the last exit's own bounded, token-redacted detail. One per
+session, not one per death. (3) A breadcrumb per death (`engine:cycled`, beside the `engine:gone`
+`onPid` already writes), so a crash report's ring shows the cycling as a sequence.
+
+**ADDING A BREADCRUMB KIND IS A DEPLOY ORDER.** `telemetryValidateError.ts` REFUSES a whole report
+carrying a kind `TELEMETRY_BREADCRUMB_KINDS` does not hold, and the ingest lambda runs that same
+shared file — so the server takes the new member before a client that emits it ships.
+
 ## A FLAG IS NOT "AN ENGINE EXISTS" (JOS-496 — read this before adding a gate)
 
 The flags are gone (JOS-499) and this section stays, because the MISTAKE outlives them and the
@@ -526,6 +551,7 @@ proxy for.
 | --- | --- |
 | `tests/dataServerSupervisor.test.mts` | Every lifecycle failure path, plus the READY handover. No app, no Rust. Its harness is `dataServerSupervisorHarness.mts`, shared with the row below. |
 | `tests/dataServerSupervisorFault.test.mts` | The PERSON's edge (JOS-503): no fault while a fast failure could still be a hiccup, exactly one at the collapse, none after it, cleared by READY — and the retry, which forgives the trail, re-probes the disk on an absence, and leaves a live launch alone. |
+| `tests/dataServerSupervisorCycling.test.mts` | The INSTRUMENT (JOS-519): three READY→exit cycles are exactly one entry naming the count and the last exit's own detail, two are none, a deliberate stop cannot be the third, a launch that never served is the other bug — and the exit trail next door still files three ordinary exemplars, which is why this counter had to exist. |
 | `tests/engineLaunch.test.mts` | The banner's arithmetic and its prose: every case in which the ETA is REFUSED rather than guessed, the bounded ring, and the words for every failure class. |
 | `tests/dataServerBroker.test.mts` | Both ends of the brokered wire: splits cross unchanged, four teardown paths, and a real conversation delivered one character at a time. |
 | `tests/e2e/engine-loot-view.e2e.mts` | The row-parity oracle — the app-fed and served ledgers, compared as DOM. |

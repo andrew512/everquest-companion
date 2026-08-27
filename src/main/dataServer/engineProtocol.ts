@@ -209,7 +209,8 @@ export interface EngineExitLog extends EngineExitCause {
   readonly message: string
   /** The exit code, machine-readable, present only when there was one. */
   readonly code?: number
-  /** Set only on the collapsed entry: how many launches in a row got us here. */
+  /** How many launches this entry is counting: in a row, for the collapsed launch-loop entry; this
+   *  session, for the cycling entry (JOS-519). Absent on an ordinary report, which is about one. */
   readonly exits?: number
 }
 
@@ -380,8 +381,9 @@ export interface EngineExitStep {
   readonly log: EngineExitLog | null
 }
 
-/** The exit-code field, present only when there is one — `errorCodeOf` takes a number. */
-function codeField(cause: EngineExitCause): { code?: number } {
+/** The exit-code field, present only when there is one — `errorCodeOf` takes a number. It asks for
+ *  the ONE field it reads so the cycling fold below (which has no `attempt`) can share it. */
+function codeField(cause: Pick<EngineExitCause, 'exitCode'>): { code?: number } {
   return cause.exitCode === null ? {} : { code: cause.exitCode }
 }
 
@@ -431,6 +433,96 @@ export function engineExitStep(
         'by the restart backoff, not logged.',
       exits: streak
     }
+  }
+}
+
+// --------------------------------------------- the engine that keeps dying AFTER it served
+//
+// THE FAILURE SHAPE THIS EXISTS TO MAKE VISIBLE (JOS-519), and it came from a real report: a
+// 1.11.0 user said the log "keeps catching up even while in-game", and the engine diagnostic his
+// report carried at the same moment said no engine answered. One hypothesis fits both facts — the
+// engine reaches READY, folds, and dies minutes later (an EDR product, an OOM); the supervisor
+// respawns it, and a respawn is a launch (contract rule 5), so every one of them re-folds the log
+// from the beginning and the user watches another "Catching up on your log".
+//
+// IT WAS INVISIBLE, AND STRUCTURALLY SO. `supervisor.ts` resets the exit trail on every READY edge,
+// which is exactly right for the loop above — that trail is about launches that never worked — and
+// which means an engine that dies every ten minutes but always comes back never collapses a trail,
+// never raises a fault, and mints no error-store entry at all. The store holds zero engine families
+// today, and nobody can say whether that is because engines never die mid-session or because a
+// mid-session death has never been reported. This is the instrument that answers it.
+//
+// THE SAME FOLD SHAPE AS `engineExitStep` ABOVE, on purpose: a trail in, a trail and an optional
+// log out, so the supervisor holds one field and the policy stays a pure function this suite can
+// drive. What differs is the QUESTION — that one asks "is this launch loop never going to work",
+// this one asks "has a WORKING engine been replaced too often to be a coincidence" — and so the
+// counter is SESSION-scoped and is never reset by a launch reaching READY. Reaching READY is what
+// makes a death count here rather than what forgives it.
+
+/**
+ * How many mid-session deaths make a pattern. THREE, for `ENGINE_QUICK_EXIT_STREAK`'s reasons a
+ * second time: one is a machine having a moment, two is a coincidence anybody would shrug at, and
+ * three is the first count that says something about this install rather than about this minute.
+ */
+export const ENGINE_SERVED_CYCLE_STREAK = 3
+
+/** The NAME the one cycling entry carries — its own row in the error store, distinct from every
+ *  `FAILURE_NAMES` entry and from the launch-loop name, because it is its own ticket. */
+export const ENGINE_SERVED_CYCLE_ERROR_NAME = 'EngineServedCycling'
+
+/** How many launches that had SERVED have died this session, and whether the one entry has been
+ *  written. Session-scoped: nothing in a launch's life resets it. */
+export interface EngineServedTrail {
+  readonly cycles: number
+  readonly reported: boolean
+}
+
+export const NEW_ENGINE_SERVED_TRAIL: EngineServedTrail = { cycles: 0, reported: false }
+
+export interface EngineServedCycleStep {
+  readonly trail: EngineServedTrail
+  readonly log: EngineExitLog | null
+}
+
+/**
+ * Count one death of an engine that had reached READY, and say whether it is worth an entry.
+ *
+ * ONE ENTRY PER SESSION, NOT ONE PER DEATH — `engineExitStep`'s collapse argument, arrived at from
+ * the other direction: there the flood was already happening and had to be folded; here the whole
+ * condition is a slow drip that would otherwise file a row an hour for as long as the app is up.
+ * The count keeps climbing in the trail after the entry is written, because it costs nothing and
+ * the dev log narrates each one.
+ *
+ * `last` is the exit the supervisor's own fold just described, detail and all — the same bounded,
+ * token-redacted line an ordinary report carries. There is no second detail vocabulary here.
+ */
+export function engineServedCycleStep(
+  trail: EngineServedTrail,
+  last: Omit<EngineExitCause, 'attempt'>,
+  streak: number = ENGINE_SERVED_CYCLE_STREAK
+): EngineServedCycleStep {
+  const cycles = trail.cycles + 1
+  if (trail.reported || cycles < streak) return { trail: { cycles, reported: trail.reported }, log: null }
+  return { trail: { cycles, reported: true }, log: servedCycleLog(cycles, last) }
+}
+
+/** The entry itself. `attempt` is 0 for `engineShutdownExitLog`'s reason — this is not a retry of
+ *  anything — and the count rides `exits`, which is the field built for exactly that number. */
+function servedCycleLog(cycles: number, last: Omit<EngineExitCause, 'attempt'>): EngineExitLog {
+  const code = last.exitCode === null ? '' : `, exit code ${String(last.exitCode)}`
+  const signal = last.signal === null ? '' : `, signal ${last.signal}`
+  const detail = last.detail === null ? '' : `: ${last.detail}`
+  return {
+    ...last,
+    ...codeField(last),
+    attempt: 0,
+    name: ENGINE_SERVED_CYCLE_ERROR_NAME,
+    message:
+      `the data-server engine restarted ${String(cycles)} times this session after serving — each ` +
+      'restart re-folds the log from the beginning, which is what a person sees as another catch-up. ' +
+      `Last exit${detail} (${FAILURE_SENTENCES[last.failure]}, alive for ${String(last.lifetimeMs)} ms` +
+      `${code}${signal})`,
+    exits: cycles
   }
 }
 
