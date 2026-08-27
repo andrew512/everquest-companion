@@ -194,6 +194,21 @@ function noteCursor(entry: Entry, seq: number): void {
   if (seq > entry.pendingSeq) entry.pendingSeq = seq
 }
 
+/**
+ * Is ANY module being read right now? DERIVED from the subscriber Sets rather than kept as a
+ * counter beside them, and the difference is worth the loop: a counter is a second source of truth
+ * for the same fact, and the failure mode when it drifts is not a leak but a store that has
+ * DETACHED from the bridge while readers are still mounted — data that silently stops updating,
+ * with nothing in the app saying so. Twenty-odd modules make this loop free, and it cannot
+ * disagree with the thing it is counting.
+ */
+function watched(entries: Map<string, Entry>): boolean {
+  for (const entry of entries.values()) {
+    if (entry.subs.size > 0) return true
+  }
+  return false
+}
+
 /** Everything held stops describing the world (a character switch). */
 function resetEntry(entry: Entry): void {
   entry.snapshot = null
@@ -222,7 +237,6 @@ export function createModuleStore(deps: {
   /** Bumped whenever every held snapshot stops describing the world. Replies from an older
    *  generation are dropped on arrival. */
   let generation = 0
-  let watchers = 0
   let detach: (() => void) | null = null
 
   function markDirty(id: string): void {
@@ -315,17 +329,17 @@ export function createModuleStore(deps: {
 
   return {
     subscribe(moduleId, onChange) {
+      const idle = !watched(entries)
       const entry = entryFor(entries, moduleId)
       // CONTRACT 2 — the callback is registered before anything is fetched.
       entry.subs.add(onChange)
-      watchers += 1
-      if (watchers === 1) attach()
+      if (idle) attach()
       // One fetch for N subscribers: the second through Nth arrive while `fetching` is true.
       if ((!entry.hydrated || entry.stale) && !entry.fetching) hydrate(moduleId)
       return () => {
+        // Idempotent: a second call finds nothing to remove and must not close a live store.
         if (!entry.subs.delete(onChange)) return
-        watchers -= 1
-        if (watchers === 0) release()
+        if (!watched(entries)) release()
       }
     },
     getSnapshot(moduleId) {
