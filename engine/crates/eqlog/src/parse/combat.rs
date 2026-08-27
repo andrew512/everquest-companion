@@ -201,7 +201,9 @@ fn dmg(c: &Ctx, out: &mut Ev, spec: Dmg<'_>) {
     out.s(Key::Dtype, spec.dtype);
     out.s(Key::Skill, spec.skill);
     out.b(Key::Crit, spec.crit);
-    out.s(Key::Category, damage_category(spec.dtype, &[]));
+    // The empty list needs an element type now that `damage_category` is element-generic; `&str` is
+    // the arbitrary half of a choice that has no elements to make it matter.
+    out.s(Key::Category, damage_category(spec.dtype, &[] as &[&str]));
 }
 
 /// Misses / avoided swings (by far the most common combat line).

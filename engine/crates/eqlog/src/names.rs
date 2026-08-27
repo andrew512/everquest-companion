@@ -135,6 +135,21 @@ pub fn spell_rank(spell: &str) -> i64 {
     }
 }
 
+/// `cleanMob` — drop a possessive `'s` tail (three apostrophe variants), trim, and answer `None`
+/// for what is left of nothing.
+pub fn clean_mob(s: Option<&str>) -> Option<String> {
+    let s = s?;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"(?i)['`\u{2019}]s$").unwrap());
+    let cut = re.replace(s, "");
+    let out = js_trim(&cut);
+    if out.is_empty() {
+        None
+    } else {
+        Some(out.to_string())
+    }
+}
+
 #[cfg(test)]
 mod id_key_tests {
     use super::{id_key, id_key_ref};
@@ -188,20 +203,5 @@ mod id_key_tests {
         assert_eq!(id_key_ref("yourself"), "you");
         // An uppercase name is the case that genuinely has to build a new string.
         assert!(matches!(id_key_ref("A Large Rat"), Cow::Owned(_)));
-    }
-}
-
-/// `cleanMob` — drop a possessive `'s` tail (three apostrophe variants), trim, and answer `None`
-/// for what is left of nothing.
-pub fn clean_mob(s: Option<&str>) -> Option<String> {
-    let s = s?;
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"(?i)['`\u{2019}]s$").unwrap());
-    let cut = re.replace(s, "");
-    let out = js_trim(&cut);
-    if out.is_empty() {
-        None
-    } else {
-        Some(out.to_string())
     }
 }
