@@ -510,6 +510,10 @@ test('THE HOST READS THE VARIABLE AND EMITS THE LINE — the seam, pinned at the
   // the narration nobody noticed.
   assert.match(host, /const notice = engineProfileNotice\(found, env\)/)
   assert.match(host, /if \(notice !== null\) logWarn\(/)
+  // …and the one absence this ticket can newly cause — a checkout holding only a debug build —
+  // is answered where it is discovered, for the developer and for nobody else.
+  assert.match(host, /if \(!app\.isPackaged && env\.profile === undefined\)/)
+  assert.match(host, /not a candidate unless a launch names it/)
   // …and it is computed BEFORE staging, because a staged copy no longer carries the profile in its
   // path (JOS-496 copies the image into `userData/engine-run`).
   const resolve = /function resolveEngineBinary\(\): string \| null \{([\s\S]*?)\n\}/.exec(host)

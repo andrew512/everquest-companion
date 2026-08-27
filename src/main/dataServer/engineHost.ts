@@ -201,6 +201,18 @@ function resolveEngineBinary(): string | null {
   const found = candidates.find((path) => existsSync(path))
   if (found === undefined) {
     logInfo(`[everquest-companion] engine binary not found; looked in: ${candidates.join(', ')}`)
+    // THE ONE NEW WAY TO BE ABSENT (JOS-520), answered where it is discovered. A checkout that has
+    // built ONLY `cargo build -p engined` now resolves nothing, because `target/debug` is no longer
+    // a candidate — and a developer reading a list of release paths could reasonably conclude the
+    // resolver is broken. So the same line that says where it looked says what it deliberately did
+    // not look at, and how to ask for it. Dev-only and opt-in-only: a packaged user has no cargo
+    // tree, and somebody who already named a profile does not need the hint.
+    if (!app.isPackaged && env.profile === undefined) {
+      logInfo(
+        `[everquest-companion] …a cargo DEBUG build is not a candidate unless a launch names it: ` +
+          `set ${ENGINE_PROFILE_ENV}=debug to run it, or build release with \`cargo build --release -p engined\``
+      )
+    }
     return null
   }
   // A NON-RELEASE ENGINE SAYS SO, EVERY TIME (JOS-520, invariant 1). `logWarn` rather than
