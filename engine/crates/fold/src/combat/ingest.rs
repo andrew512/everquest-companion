@@ -56,7 +56,8 @@ use crate::combat::routing::{self, Attribution, HealLine, MissLine, MitigationLi
 use crate::combat::spellfacts::is_pet_summon_spell;
 use crate::combat::state::EngineState;
 use crate::event::{Event, Key, Kind};
-use eqlog::names::id_key;
+use eqlog::names::{id_key, id_key_ref};
+use std::borrow::Cow;
 
 /// Fold one canonical event into the state machine.
 pub fn ingest_event(st: &mut EngineState, ev: &Event) {
@@ -635,7 +636,7 @@ fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
             );
             // YOUR avoided swing is still a swing ATTEMPT, and the mechanical proc denominator is
             // attempts — a proc that cannot fire on a miss still had the chance to.
-            if id_key(&attacker) == "you" {
+            if id_key_ref(&attacker) == "you" {
                 fold_both(st, ev.ts(), |agg, active| {
                     agg.windows.fold(
                         &WindowFold {
@@ -657,7 +658,7 @@ fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
             // `<mob> resisted your <Charm>!` is the third way an armed cast fails to land. Only OUR
             // OWN outgoing resist counts; an incoming one — we shrugged off a mob's spell — says
             // nothing about what we were casting.
-            if !incoming && id_key(&caster) == "you" {
+            if !incoming && id_key_ref(&caster) == "you" {
                 // A FULLY-RESISTED cast landed NOTHING, so like a fizzle it must not stay in the window
                 // to claim the next proc of the same name. `forget` drops only an UNCLAIMED record,
                 // which is what keeps a partially-resisted AoE honest: if a target of the same firing
@@ -686,12 +687,15 @@ fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
 fn ingest_damage(st: &mut EngineState, ev: &Event) {
     // Caster-less other-player DoTs (`attacker: null`) are not our fight — and the RAW LINE is what
     // the ring keeps for one, because there is nothing else to say about a line nobody owns.
-    let Some(attacker) = ev.str(Key::Attacker).map(str::to_string) else {
+    let Some(attacker) = ev.str(Key::Attacker) else {
         st.log(ev.ts(), "other", "dropped", ev.raw().to_owned());
         return;
     };
     eval_closure(st, ev.ts());
-    let dmg = to_damage_event(st, ev, attacker);
+    // Built here rather than inside `to_damage_event` so the record can BORROW it — see that
+    // function's header.
+    let modifiers = ev.arr_str(Key::Modifiers);
+    let dmg = to_damage_event(st, ev, attacker, &modifiers);
     // WHERE IT CAME FROM, BEFORE IT IS FILED. The verdict names the LANE, so it has to be reached
     // before `route()` folds the hit — and it is reached exactly once, here, because it CONSUMES the
     // cast claim (asking twice would take two claims off one cast line and count the second landing as
@@ -700,22 +704,32 @@ fn ingest_damage(st: &mut EngineState, ev: &Event) {
     // The lane a cast-less firing lands in. A fresh record, never a mutation of the one the ledger
     // gets: `spell_procs` is keyed by the SPELL, so the ledger row, its PPM and its tag stay ONE lane
     // however many meter rows the spell now occupies.
+    //
+    // THE CLONE IS NOW FREE (JOS-506) and the record is still fresh. Every field but `skill` and
+    // `category` is a reference and `category` is borrowed on this path, so `dmg.clone()` copies
+    // pointers rather than re-allocating eight strings and a list — which is what it did on every
+    // cast-less firing in the log before this.
     let laned = match origin {
         None => None,
         Some(o) => Some(DamageEvent {
-            skill: lane_name_for(&dmg.skill, o),
+            skill: Cow::Owned(lane_name_for(&dmg.skill, o)),
             ..dmg.clone()
         }),
     };
     // Read the engine's active-time clock either side of `route()`: the DIFFERENCE is the exact
     // capped-gap delta it accrued for this hit. A fresh encounter (one `route()` opened) contributes
     // 0, which is precisely what the routing path does for a first hit.
+    //
+    // ONE CLONE, AND ONLY THE ONE THAT HAS TO CROSS THE `&mut` (JOS-506). The `before` reading is
+    // owned because `route()` takes the whole state mutably and may replace the encounter under it;
+    // the `after` reading has no such problem and used to clone anyway, which cost a second heap
+    // allocation on EVERY damage line in the log to answer a question that is a string COMPARE.
     let enc_before = st.current.as_ref().map(|e| e.id.clone());
     let active_before = st.current.as_ref().map_or(0, |e| e.active_ms);
     let Some(at) = routing::route(st, laned.as_ref().unwrap_or(&dmg)) else {
         return;
     };
-    let same_encounter = st.current.as_ref().map(|e| e.id.clone()) == enc_before;
+    let same_encounter = st.current.as_ref().map(|e| e.id.as_str()) == enc_before.as_deref();
     let delta = if same_encounter {
         st.current.as_ref().map_or(0, |e| e.active_ms) - active_before
     } else {
@@ -734,13 +748,13 @@ fn damage_origin(st: &mut EngineState, ev: &DamageEvent) -> Option<SpellOrigin> 
     if ev.amount <= 0 {
         return None;
     }
-    if !proc_eligible_damage(&ev.dtype, &ev.skill) {
+    if !proc_eligible_damage(ev.dtype, &ev.skill) {
         return None;
     }
-    if id_key(&ev.attacker) != "you" {
+    if id_key_ref(ev.attacker) != "you" {
         return None;
     }
-    if routing::classify(st, &ev.attacker, &ev.target) != Attribution::OutYou {
+    if routing::classify(st, ev.attacker, ev.target) != Attribution::OutYou {
         return None;
     }
     // The cast ledger answers cast-or-not; the held-clicky set is what turns a `proc` verdict into a
@@ -755,17 +769,32 @@ fn damage_origin(st: &mut EngineState, ev: &DamageEvent) -> Option<SpellOrigin> 
 ///
 /// `active` is the state timeline's O(1) open set, read at the event's own instant and PASSED (never
 /// re-read) into every accumulator, because the whole point of folding on ingest is that "what was on
-/// when this fired" is knowable only now. It is CLONED once per fold rather than borrowed, because the
-/// set and the two aggregates are three fields of one state object.
+/// when this fired" is knowable only now.
+///
+/// IT IS BORROWED, NOT CLONED (JOS-506). The clone was here because `fresh_encounter` takes `&mut
+/// self` and the set is a third field of the same state object — but `state_timeline`, `zone_agg` and
+/// `current` are DISJOINT FIELDS, and the borrow checker allows exactly that split as long as the
+/// freshness question is asked BEFORE the mutable borrow is taken. `fresh_encounter_id` is that
+/// question, already spelled once in `state.rs` beside `fresh_encounter` itself, so this reads the
+/// rule rather than restating it.
+///
+/// The semantics are untouched and cannot drift: `f` is handed `&mut Agg` and `&HashSet`, so it has
+/// no way to reach the timeline and mutate the set mid-fold — which is the one thing the clone was
+/// protecting against, and the type system was already protecting against it. What the clone
+/// actually cost was a fresh hash table plus one heap allocation PER OPEN SPAN, on every damage
+/// line, every avoided swing and every cast-less heal in the log.
 fn fold_both(
     st: &mut EngineState,
     ts: i64,
     f: impl Fn(&mut crate::combat::aggregate::Agg, &std::collections::HashSet<String>),
 ) {
-    let active = st.state_timeline.active.clone();
-    f(&mut st.zone_agg, &active);
-    if let Some(enc) = st.fresh_encounter(ts) {
-        f(&mut enc.agg, &active);
+    let fresh = st.fresh_encounter_id(ts);
+    f(&mut st.zone_agg, &st.state_timeline.active);
+    if fresh {
+        let active = &st.state_timeline.active;
+        if let Some(enc) = st.current.as_mut() {
+            f(&mut enc.agg, active);
+        }
     }
 }
 
@@ -830,7 +859,7 @@ fn fold_heal_analytics(st: &mut EngineState, ev: &HealLine, over_time: bool) {
     let Some(spell) = ev.spell.clone() else {
         return;
     };
-    if id_key(ev.healer.as_deref().unwrap_or("")) != "you" {
+    if id_key_ref(ev.healer.as_deref().unwrap_or("")) != "you" {
         return;
     }
     let quick_buff_ts = st.quick_buff_ts;
@@ -872,33 +901,41 @@ fn fold_heal_analytics(st: &mut EngineState, ev: &HealLine, over_time: bool) {
 /// the amount, the type, the category and the attribution are untouched, so every damage total stays
 /// byte-identical (law 8's tripwire). Gated on the attacker being YOU, because the state line is
 /// first-person-only and a mob's `strikes` must stay generic melee.
-fn to_damage_event(st: &EngineState, ev: &Event, attacker: String) -> DamageEvent {
-    let verb = ev.str(Key::Verb).map(str::to_string);
-    let mut skill = ev.str(Key::Skill).unwrap_or_default().to_string();
-    if id_key(&attacker) == "you" {
-        if let Some(lane) = st.specials.lane_skill(verb.as_deref()) {
-            skill = lane.to_string();
+/// THE MODIFIER LIST IS THE CALLER'S (JOS-506). `arr_str` has to build a list — the payload stores
+/// the tokens as a run rather than as a slice — so it is built ONCE, in `ingest_damage`'s frame, and
+/// the record borrows it. That is what lets the record itself be pure references: a `Vec<&str>` over
+/// no modifiers (which is the overwhelming majority of lines) allocates nothing at all, where the
+/// `Vec<String>` this replaces allocated a string per token AND a list to hold them.
+fn to_damage_event<'a>(
+    st: &EngineState,
+    ev: &'a Event,
+    attacker: &'a str,
+    modifiers: &'a [&'a str],
+) -> DamageEvent<'a> {
+    let verb = ev.str(Key::Verb);
+    let mut skill = Cow::Borrowed(ev.str(Key::Skill).unwrap_or_default());
+    if id_key_ref(attacker) == "you" {
+        if let Some(lane) = st.specials.lane_skill(verb) {
+            // The one owned spelling on this path, and it has to be: the lane name is the ENGINE's
+            // state, not the event's, so it cannot be borrowed for the event's lifetime.
+            skill = Cow::Owned(lane.to_string());
         }
     }
-    let modifiers: Vec<String> = ev
-        .arr_str(Key::Modifiers)
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let dtype = ev.str(Key::Dtype).unwrap_or_default().to_string();
+    let dtype = ev.str(Key::Dtype).unwrap_or_default();
     DamageEvent {
         ts: ev.ts(),
         attacker,
-        target: ev.str(Key::Target).unwrap_or_default().to_string(),
+        target: ev.str(Key::Target).unwrap_or_default(),
         amount: ev.int(Key::Amount).unwrap_or(0),
         // Prefer the parse-time category; derive as a fallback so any path that omits it still
-        // aggregates under the right axis.
-        category: ev
-            .str(Key::Category)
-            .map(str::to_string)
-            .unwrap_or_else(|| eqlog::taxonomy::damage_category(&dtype, &modifiers).to_string()),
+        // aggregates under the right axis. The fallback answers with a `'static` taxonomy constant,
+        // so neither arm allocates.
+        category: match ev.str(Key::Category) {
+            Some(c) => Cow::Borrowed(c),
+            None => Cow::Borrowed(eqlog::taxonomy::damage_category(dtype, modifiers)),
+        },
         dtype,
-        dclass: ev.str(Key::Dclass).map(str::to_string),
+        dclass: ev.str(Key::Dclass),
         skill,
         crit: ev.bool(Key::Crit),
         modifiers,
@@ -1104,7 +1141,7 @@ fn ingest_modifier(st: &mut EngineState, ev: &Event) {
         // log read as cast-less procs. Recording the activation is the whole fix: the burst is cast
         // evidence in a different shape.
         Kind::AaActivate => {
-            if id_key(ev.str(Key::Name).unwrap_or_default()) == QUICK_BUFF_AA {
+            if id_key_ref(ev.str(Key::Name).unwrap_or_default()) == QUICK_BUFF_AA {
                 st.quick_buff_ts = ev.ts();
             }
         }
@@ -1170,7 +1207,9 @@ fn bind_pet_buff_landing(st: &mut EngineState, ev: &Event) {
     }
     // A landing on YOURSELF is a self-buff the DB mislabels, never a pet — the third-person form can
     // still name you when another player's buff lands on you in the same second.
-    if id_key(&target) == st.player_key.clone().unwrap_or_default() {
+    // The `unwrap_or_default` is load-bearing and is kept verbatim: with no player key known yet the
+    // comparison is against the EMPTY string, which a whitespace-only target's key also is.
+    if id_key_ref(&target).as_ref() == st.player_key.as_deref().unwrap_or_default() {
         return;
     }
     bind_pet_claim(st, &target, ev.ts(), "petBuff");
