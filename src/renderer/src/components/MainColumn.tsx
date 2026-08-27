@@ -34,8 +34,9 @@ import { Box } from '@mui/material'
 import GearAreaTabs from './GearAreaTabs'
 import { EngineLaunchBanner } from './EngineLaunchBanner'
 import { isGearAreaView, type View } from '../appViews'
-// THE PER-VIEW COMMIT COUNTER (JOS-513). Dev-only and gated below; see lib/renderMeter.tsx.
-import { RENDER_METER, RenderProfiler } from '../lib/renderMeter'
+// THE PER-VIEW COMMIT COUNTER (JOS-513). Dev-only; the gate below is spelled inline because that
+// is the form vite folds at transform time — see lib/renderMeter.tsx's header for the measurement.
+import { RenderProfiler } from '../lib/renderMeter'
 
 export default function MainColumn({
   view,
@@ -63,7 +64,7 @@ export default function MainColumn({
             named `overview` / `combat` / … in the app's own vocabulary. It counts the SCROLLER's
             contents only: the launch banner and the gear tabs above are fixed bands and belong to
             the app-wide row, not to the view's. */}
-        {RENDER_METER ? <RenderProfiler id={view}>{children}</RenderProfiler> : children}
+        {import.meta.env.DEV ? <RenderProfiler id={view}>{children}</RenderProfiler> : children}
       </Box>
     </Box>
   )

@@ -153,11 +153,13 @@ function PerfDetail({
           renders nothing at all in a build with no engine. */}
       <PerfEngineSection sample={engine} />
       {/* RENDERER COMMITS (JOS-513) — the one measurement in this popover that is about the window
-          you are looking at rather than about a process. Dev-only: it renders nothing at all in a
-          build, the same way the engine section above renders nothing without an engine. It takes
-          `open` for that section's reason, one level down: the read is armed only while somebody is
-          looking. */}
-      <PerfRenderSection open={open} />
+          you are looking at rather than about a process. It takes `open` for the engine section's
+          reason, one level down: the read is armed only while somebody is looking.
+          DEV-ONLY, AND THIS GATE IS WHAT DELETES IT FROM A BUILD. `import.meta.env.DEV` is folded
+          to `false` inside this module at transform time, so the section below goes unreferenced
+          and rollup drops it, the meter, and the counter with it — measured by grep on out-e2e,
+          and asserted as an absence by tests/e2e/perf.e2e.mts. */}
+      {import.meta.env.DEV && <PerfRenderSection open={open} />}
       <Typography variant="caption" sx={{ color: SEVERITY_COLOR[severity] }}>
         {severity === 'normal'
           ? 'The app is keeping up. High CPU here with a low event-loop figure is work, not lag.'

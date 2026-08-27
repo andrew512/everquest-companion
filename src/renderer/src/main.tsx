@@ -14,10 +14,12 @@ import { AppBackProvider } from './appBack'
 import { EngineProvider } from './lib/engineProvider'
 import { DEV_TOOLS, DEV_TOOLS_DEFINE, OWNER_TOOLS } from './devFlags'
 import { currentViewId } from './lib/currentView'
-// THE RENDER METER (JOS-513) — dev-only, and the gate is a constant, so the wrapper below is not a
-// passthrough in a build: `RENDER_METER` folds to a literal `false` and the ternary folds with it.
-// See lib/renderMeter.tsx for the gate's argument and the audit that enforces it.
-import { APP_PROFILER_ID, RENDER_METER, RenderProfiler } from './lib/renderMeter'
+// THE RENDER METER (JOS-513) — dev-only. The gate below is spelled `import.meta.env.DEV` INLINE
+// rather than imported as a named constant, and that is measured rather than stylistic: vite
+// substitutes the builtin per-module at transform time, so the ternary is already `false ? … : …`
+// when rollup arrives and this import goes with it. A shared constant did NOT strip — see
+// lib/renderMeter.tsx's header for the grep that showed it.
+import { APP_PROFILER_ID, RenderProfiler } from './lib/renderMeter'
 
 // --- The dev-tools flags, stated out loud (dev only) ---
 // "The Triage tab is missing" has twice been a stale `npm run dev` whose bundle predates the
@@ -95,7 +97,7 @@ ReactDOM.createRoot(container).render(
                 the boundary that reports it. Written as a ternary rather than as a component that
                 passes children through when disabled: this way a build has no Profiler in the tree
                 at all, not an inert one. */}
-            {RENDER_METER ? (
+            {import.meta.env.DEV ? (
               <RenderProfiler id={APP_PROFILER_ID}>
                 <App />
               </RenderProfiler>

@@ -7,26 +7,33 @@
 // into, and the poll-while-open hook the panel reads.
 //
 // ---------------------------------------------------------------------------------------------
-// THE GATE, AND WHY THIS FILE IS THE ONLY PLACE THAT NAMES IT
+// THE GATE IS SPELLED `import.meta.env.DEV` AT EVERY SITE, AND THAT IS A MEASUREMENT, NOT A STYLE
 // ---------------------------------------------------------------------------------------------
-// `RENDER_METER` is `import.meta.env.DEV` — vite's own builtin, which is substituted with a literal
-// `false` by every `electron-vite build` (installer, `npm run test:e2e`, all of it). `devFlags.ts`
-// makes the long argument for anchoring a dev-only flag on the builtin rather than on a `define`,
-// and it applies here unchanged: a `define` only exists from the moment a dev server booted, so a
-// stale `npm run dev` would silently lose the instrument.
+// The anchor is vite's own builtin, for `devFlags.ts`'s reason, applied unchanged: a `define` only
+// exists from the moment a dev server booted, so a stale `npm run dev` would silently lose the
+// instrument. It is NOT `DEV_TOOLS` — that flag means "operator tooling that will never ship" and
+// carries a config override; this is a measurement of the app's own health that every
+// contributor's dev session should have, with nothing to configure.
 //
-// It is NOT `DEV_TOOLS`, deliberately. That flag means "operator tooling that will never ship" and
-// carries an override a config can set to `false`; this is a measurement of the app's own health
-// that every contributor's dev session should have, with nothing to configure.
+// THE FIRST VERSION OF THIS FILE EXPORTED `RENDER_METER` and every site read that, which is the
+// tidier shape and DID NOT STRIP. Measured on the real `electron-vite build` this repo's e2e suite
+// produces: `out-e2e/renderer/assets/index-*.js` still carried `perf-render`, `saturated` and the
+// whole ring. Rollup does not inline a cross-module constant here, so `RENDER_METER ? … : …` stayed
+// a runtime branch and everything behind it stayed reachable. `import.meta.env.DEV` is substituted
+// by vite AT TRANSFORM TIME, INSIDE EACH MODULE, so the ternary is already `false ? … : …` before
+// rollup sees it — the branch folds, the imports go unreferenced, and the meter leaves the bundle.
+// Same guarantee `devFlags.ts` claims for the triage tab, and proven the same way it says to prove
+// it: by grep on the build, not by intent.
 //
-// THE THREE CONSUMERS ARE ALL GATED, and `tests/renderCommits.test.mts` audits that mechanically —
-// it fails the build if a `<Profiler` appears anywhere in `src/renderer` outside this file's two
-// blessed mount sites, or if either mount site stops checking `RENDER_METER`:
+// FOUR GATES, ALL AUDITED by `tests/renderCommits.test.mts`, which fails the build if a `<Profiler`
+// appears in `src/renderer` outside the blessed sites or if any of them stops checking:
 //
-//   * the two mounts (`main.tsx`, `components/MainColumn.tsx`) pick the wrapper or the bare child,
-//     which is a constant-folded ternary in a build — no Profiler in the tree, no callback, no ring;
-//   * `useRenderCommits` refuses to arm its interval, so the panel's section stays `null` and draws
-//     nothing at all, exactly the way the engine section is absent in a build with no engine.
+//   * the two MOUNTS (`main.tsx`, `components/MainColumn.tsx`) pick the wrapper or the bare child —
+//     so a build has no Profiler in the tree, no callback, and no ring;
+//   * the SECTION (`components/PerfChip.tsx`) is not rendered at all, which is what makes
+//     `PerfRenderSection` and this whole file unreachable and therefore deletable;
+//   * `useRenderCommits` refuses to arm its interval regardless — belt and braces for a future
+//     caller, and the reason the section would still draw nothing even if the bytes survived.
 //
 // ---------------------------------------------------------------------------------------------
 // ONE RING PER WINDOW, AND WHAT THAT MEANS FOR THE OVERLAYS
@@ -46,9 +53,6 @@ import {
   type CommitRing,
   type RenderCommitSample
 } from './renderCommits'
-
-/** DEV only, folded to a literal `false` in every build. See the header. */
-export const RENDER_METER: boolean = import.meta.env.DEV
 
 /** The outermost Profiler's id — the app-wide row. Named here so the mount and the panel cannot
  *  drift apart on a string. */
@@ -115,7 +119,7 @@ export function useRenderCommits(open: boolean): RenderCommitSample | null {
   const [sample, setSample] = useState<RenderCommitSample | null>(null)
 
   useEffect(() => {
-    if (!RENDER_METER || !open) return undefined
+    if (!import.meta.env.DEV || !open) return undefined
     const read = (): void => {
       setSample(summarizeCommits(meter(), performance.now(), { rootId: APP_PROFILER_ID }))
     }

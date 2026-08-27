@@ -198,18 +198,39 @@ test('React’s Profiler is mounted in exactly two places, and both check the de
     if (path === 'lib/renderMeter.tsx') continue
     assert.match(
       sources.get(path) ?? '',
-      /RENDER_METER \?/,
-      `${path} mounts a Profiler without the RENDER_METER gate — that is a production cost`
+      /import\.meta\.env\.DEV \?/,
+      `${path} mounts a Profiler without the dev gate — that is a production cost`
     )
   }
 })
 
-test('the gate is anchored on vite’s builtin, which is a literal false in every build', () => {
+test('the popover’s section is gated too — that gate is what makes the meter DELETABLE', () => {
+  const chip = readFileSync(join(RENDERER, 'components', 'PerfChip.tsx'), 'utf8')
+  assert.match(
+    chip,
+    /import\.meta\.env\.DEV && <PerfRenderSection/,
+    'an ungated <PerfRenderSection> keeps the section, the meter and the ring reachable, so rollup ' +
+      'ships all three into every installer — inert, but shipped'
+  )
+})
+
+test('the gate is spelled inline everywhere, because a shared constant did NOT strip', () => {
   const meter = readFileSync(join(RENDERER, 'lib', 'renderMeter.tsx'), 'utf8')
-  assert.match(meter, /export const RENDER_METER: boolean = import\.meta\.env\.DEV/)
+  assert.match(meter, /import\.meta\.env\.DEV/, 'the meter is anchored on vite’s own builtin')
   // devFlags.ts's argument, applied: a `define` only exists from the moment a dev server booted,
   // so a stale `npm run dev` would silently lose the instrument.
   assert.doesNotMatch(meter, /__EQ_[A-Z_]+__/, 'the meter must not depend on a vite `define`')
+  // THE REGRESSION THIS PINS IS ONE THIS TICKET SHIPPED AND THEN MEASURED. The first version
+  // exported `RENDER_METER` and every site read it; rollup does not inline that across modules, so
+  // `out-e2e/renderer/assets/index-*.js` still carried `perf-render`, `saturated` and the entire
+  // ring. Only the per-module builtin folds before rollup sees the branch. Re-introducing the
+  // shared constant would silently re-ship the meter.
+  assert.doesNotMatch(
+    meter,
+    /export const RENDER_METER/,
+    'a shared gate constant is NOT constant-folded across modules — spell import.meta.env.DEV at ' +
+      'each site instead, and see this file’s header for the grep that measured it'
+  )
 })
 
 test('the panel section draws nothing without a sample — absence, not an empty heading', () => {
