@@ -814,7 +814,10 @@ fn a_melee_round_leaves_the_modules_it_has_nothing_to_do_with_silent() {
             seconds_ago,
             "You slash a fire giant warlord for 42 points of damage.",
         ));
-        staged.append(&line(seconds_ago, "You try to kick a fire giant warlord, but miss!"));
+        staged.append(&line(
+            seconds_ago,
+            "You try to kick a fire giant warlord, but miss!",
+        ));
         staged.append(&line(
             seconds_ago,
             "a fire giant warlord hits YOU for 106 points of damage.",

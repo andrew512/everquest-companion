@@ -135,10 +135,11 @@ fn loot_announces_on_the_line_that_moves_its_ledger_and_on_nothing_else() {
     let mut p = Probe::new();
     // A ZONE LINE IS THE MODULE'S OWN BOOKKEEPING. It decides what label the NEXT row carries and
     // changes not one byte of the published ledger.
-    let zoned = p.fold(
-        r#"{"kind":"zone","seq":1,"ts":1000,"raw":"z","zone":"Nagafen's Lair"}"#,
+    let zoned = p.fold(r#"{"kind":"zone","seq":1,"ts":1000,"raw":"z","zone":"Nagafen's Lair"}"#);
+    assert!(
+        !zoned.contains(&"loot"),
+        "a zone line is not a ledger change"
     );
-    assert!(!zoned.contains(&"loot"), "a zone line is not a ledger change");
     // The row.
     let looted = p.fold(
         r#"{"kind":"loot","seq":2,"ts":2000,"raw":"l","item":"Bone Chips","source":"a corpse"}"#,
@@ -176,15 +177,13 @@ fn turnins_announces_on_the_trade_that_closes_a_group_and_not_on_the_offer() {
 #[test]
 fn class_unlocks_announces_the_first_sighting_of_a_class_and_not_the_second() {
     let mut p = Probe::new();
-    let first = p.fold(
-        r#"{"kind":"classUnlock","seq":1,"ts":1000,"raw":"c","className":"Shadow Knight"}"#,
-    );
+    let first =
+        p.fold(r#"{"kind":"classUnlock","seq":1,"ts":1000,"raw":"c","className":"Shadow Knight"}"#);
     assert!(first.contains(&"classUnlocks"));
     // The same class in the other casing folds to the same key and is dropped by the dedupe — so
     // the published list did not move and neither does the cursor.
-    let again = p.fold(
-        r#"{"kind":"classUnlock","seq":2,"ts":1100,"raw":"c","className":"shadow knight"}"#,
-    );
+    let again =
+        p.fold(r#"{"kind":"classUnlock","seq":2,"ts":1100,"raw":"c","className":"shadow knight"}"#);
     assert!(!again.contains(&"classUnlocks"));
 }
 
@@ -233,18 +232,16 @@ fn kills_announces_the_counted_kill_and_not_the_zone_or_the_experience_that_set_
 #[test]
 fn output_files_announces_a_newer_dump_and_not_a_restatement_of_an_older_one() {
     let mut p = Probe::new();
-    let wrote = p.fold(
-        r#"{"kind":"outputFile","seq":1,"ts":5000,"raw":"o","file":"Inventory.txt"}"#,
-    );
+    let wrote =
+        p.fold(r#"{"kind":"outputFile","seq":1,"ts":5000,"raw":"o","file":"Inventory.txt"}"#);
     assert!(wrote.contains(&"outputFiles"));
     // An OLDER stamp for the same file is refused by the map, and now by the cursor.
     let older = p.fold(
         r#"{"kind":"outputFile","seq":2,"ts":4000,"raw":"o","file":"C:\\EQ\\inventory.txt"}"#,
     );
     assert!(!older.contains(&"outputFiles"));
-    let newer = p.fold(
-        r#"{"kind":"outputFile","seq":3,"ts":6000,"raw":"o","file":"Inventory.txt"}"#,
-    );
+    let newer =
+        p.fold(r#"{"kind":"outputFile","seq":3,"ts":6000,"raw":"o","file":"Inventory.txt"}"#);
     assert!(newer.contains(&"outputFiles"));
 }
 
@@ -257,19 +254,16 @@ fn roster_announces_a_group_line_and_not_the_party_experience_that_gates_it() {
     assert!(!party.contains(&"roster"));
     // Every group line is published: even an invite, which is usually declined, sets `seen` and
     // `lastSignalTs` — and both are in the snapshot.
-    let invited = p.fold(
-        r#"{"kind":"group","seq":2,"ts":2000,"raw":"g","change":"invite","name":"Dranix"}"#,
-    );
+    let invited =
+        p.fold(r#"{"kind":"group","seq":2,"ts":2000,"raw":"g","change":"invite","name":"Dranix"}"#);
     assert!(invited.contains(&"roster"));
-    let joined = p.fold(
-        r#"{"kind":"group","seq":3,"ts":3000,"raw":"g","change":"join","name":"Dranix"}"#,
-    );
+    let joined =
+        p.fold(r#"{"kind":"group","seq":3,"ts":3000,"raw":"g","change":"join","name":"Dranix"}"#);
     assert!(joined.contains(&"roster"));
     // A charm refuses a name for the weakest rung — knowledge about a NAME, published nowhere,
     // and nothing this one evicts because no `buffed` member answers to it.
-    let charmed = p.fold(
-        r#"{"kind":"charm","seq":4,"ts":4000,"raw":"c","mob":"a spiroc banisher"}"#,
-    );
+    let charmed =
+        p.fold(r#"{"kind":"charm","seq":4,"ts":4000,"raw":"c","mob":"a spiroc banisher"}"#);
     assert!(!charmed.contains(&"roster"));
 }
 
@@ -324,14 +318,12 @@ fn the_event_feed_admits_nothing_historical_and_says_so() {
 #[test]
 fn alerts_announces_the_cast_that_moved_its_recency_map_and_not_the_one_that_went_backwards() {
     let mut p = Probe::new();
-    let cast = p.fold(
-        r#"{"kind":"castBegin","seq":1,"ts":5000,"raw":"c","spell":"Mesmerization VII"}"#,
-    );
+    let cast =
+        p.fold(r#"{"kind":"castBegin","seq":1,"ts":5000,"raw":"c","spell":"Mesmerization VII"}"#);
     assert!(cast.contains(&"alerts"));
     // A stamp that went BACKWARDS does not move the recency and does not move the key's position.
-    let backwards = p.fold(
-        r#"{"kind":"castBegin","seq":2,"ts":4000,"raw":"c","spell":"Mesmerization VII"}"#,
-    );
+    let backwards =
+        p.fold(r#"{"kind":"castBegin","seq":2,"ts":4000,"raw":"c","spell":"Mesmerization VII"}"#);
     assert!(!backwards.contains(&"alerts"));
     // A slow proc is the other published field.
     let proc = p.fold(
@@ -346,9 +338,7 @@ fn alerts_announces_the_cast_that_moved_its_recency_map_and_not_the_one_that_wen
 #[test]
 fn buffs_announces_the_landing_and_the_wear_off_and_not_the_round_between_them() {
     let mut p = Probe::new();
-    let cast = p.fold(
-        r#"{"kind":"castBegin","seq":1,"ts":1000,"raw":"c","spell":"Clarity"}"#,
-    );
+    let cast = p.fold(r#"{"kind":"castBegin","seq":1,"ts":1000,"raw":"c","spell":"Clarity"}"#);
     assert!(cast.contains(&"buffs"));
     let landed = p.fold(
         r#"{"kind":"buffApply","seq":2,"ts":2000,"raw":"a","target":"self","spell":"Clarity","illusion":false,"durationMs":600000,"candidates":[{"name":"Clarity","durationMs":600000,"illusion":false}]}"#,
@@ -412,9 +402,8 @@ fn spell_sets_announces_the_gem_that_landed_and_the_settle_that_had_no_line_behi
     );
     assert!(done.contains(&"spellSets"));
     // A `loaded` line opens a pending window — not state, so not a change.
-    let loaded = p.fold(
-        r#"{"kind":"spellSet","seq":3,"ts":3000,"raw":"s","set":"dam","action":"loaded"}"#,
-    );
+    let loaded =
+        p.fold(r#"{"kind":"spellSet","seq":3,"ts":3000,"raw":"s","set":"dam","action":"loaded"}"#);
     assert!(!loaded.contains(&"spellSets"));
     // …and an unrelated line inside the settle window still says nothing.
     let quiet = p.fold(MELEE_HIT);
@@ -441,15 +430,13 @@ fn item_tiers_and_observed_ranks_each_announce_only_what_reached_their_map() {
     assert!(merged.contains(&"itemTiers"));
     assert!(!merged.contains(&"observedSpellRanks"));
     // A cast with a numeral is the mirror case: a rank sighting, and nothing itemTiers watches.
-    let cast = p.fold(
-        r#"{"kind":"castBegin","seq":2,"ts":2000,"raw":"c","spell":"Lay on Hands IX"}"#,
-    );
+    let cast =
+        p.fold(r#"{"kind":"castBegin","seq":2,"ts":2000,"raw":"c","spell":"Lay on Hands IX"}"#);
     assert!(cast.contains(&"observedSpellRanks"));
     assert!(!cast.contains(&"itemTiers"));
     // An itemMergeFailed that is not the 'mismatch' shape names no item and reaches neither map.
-    let failed = p.fold(
-        r#"{"kind":"itemMergeFailed","seq":3,"ts":3000,"raw":"f","reason":"missing"}"#,
-    );
+    let failed =
+        p.fold(r#"{"kind":"itemMergeFailed","seq":3,"ts":3000,"raw":"f","reason":"missing"}"#);
     assert!(!failed.contains(&"itemTiers"));
     assert!(!failed.contains(&"observedSpellRanks"));
 }
