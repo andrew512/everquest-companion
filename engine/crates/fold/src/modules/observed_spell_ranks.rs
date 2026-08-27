@@ -64,6 +64,10 @@ pub struct ObservedSpellRanksModule {
     /// no merge is ever admitted, which withholds a claim rather than inventing spells out of
     /// item names.
     known_spell: HashSet<String>,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`]. Bumped inside `observe`, past its
+    /// four refusals: no roman numeral, an empty key, a merge naming something no spell answers to,
+    /// and (through the arms) a resist that is somebody else's cast.
+    announce: crate::announce::Announce,
 }
 
 impl ObservedSpellRanksModule {
@@ -72,6 +76,7 @@ impl ObservedSpellRanksModule {
             rows: JsMap::new(),
             seq: 0,
             known_spell,
+            announce: crate::announce::Announce::default(),
         }
     }
 
@@ -120,6 +125,8 @@ impl ObservedSpellRanksModule {
         }
         next.rank = next.rank.max(parsed.rank);
         self.rows.insert(key, next);
+        // `last_at` is this sighting's instant, so a row that reaches here is always rewritten.
+        self.announce.changed(self.seq);
     }
 }
 
@@ -131,13 +138,17 @@ impl EqModule for ObservedSpellRanksModule {
     fn reset(&mut self) {
         self.rows.clear();
         self.seq = 0;
+        self.announce.reset();
     }
 
     fn on_event(&mut self, ev: &Event, _live: bool) {
         self.seq = ev.seq();
         match ev.kind() {
             // Character rebirth: every rank before the boundary belongs to the dead beta character.
-            "epoch" => self.rows.clear(),
+            "epoch" => {
+                self.rows.clear();
+                self.announce.changed(self.seq);
+            }
             // A ` +N` result is an item level (itemTiers owns it) and carries no numeral, so it
             // falls out of `observe` on the rank test without needing a second check here.
             "itemMerge" => {
@@ -159,10 +170,10 @@ impl EqModule for ObservedSpellRanksModule {
         }
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — a rank sighting that reached the map. See
+    /// the `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {

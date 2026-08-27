@@ -22,6 +22,13 @@ use serde_json::{json, Value};
 pub struct OutputFilesModule {
     written: JsMap<i64>,
     seq: i64,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`].
+    ///
+    /// THIS MODULE IS MIRRORED IN MAIN (`serveMirrors.ts MIRRORED_MODULES`), which is why the
+    /// seq-valued cursor is not a style choice: that mirror stores the SNAPSHOT's seq and drops any
+    /// cursor at or below it, so a counter here would have frozen the mirror on its first refresh
+    /// and every synchronous reader of it would have gone permanently stale. See `crate::announce`.
+    announce: crate::announce::Announce,
 }
 
 impl OutputFilesModule {
@@ -44,6 +51,7 @@ impl EqModule for OutputFilesModule {
     fn reset(&mut self) {
         self.written.clear();
         self.seq = 0;
+        self.announce.reset();
     }
 
     fn on_event(&mut self, ev: &Event, _live: bool) {
@@ -54,15 +62,20 @@ impl EqModule for OutputFilesModule {
         let key = file_key(ev.str("file").unwrap_or_default());
         let ts = ev.ts();
         match self.written.get(&key) {
+            // A dump whose stamp is not NEWER than the one held changes nothing — the same refusal
+            // the map already makes, now also the announce's.
             Some(&prev) if ts <= prev => {}
-            _ => self.written.insert(key, ts),
+            _ => {
+                self.written.insert(key, ts);
+                self.announce.changed(self.seq);
+            }
         }
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — a dump this module had not already
+    /// recorded at that instant or later. See the `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {

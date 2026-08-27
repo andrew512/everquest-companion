@@ -60,6 +60,13 @@ pub struct KillsModule {
     seq: i64,
     /// The experience line the next kill line may claim — the timestamp is all this module needs.
     pending_exp_ts: Option<i64>,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`].
+    ///
+    /// THREE ARMS MUTATE STATE NOBODY CAN READ. `zone` is the tier label the NEXT kill will be
+    /// filed under, `expGain` parks a timestamp the next death may claim, and a death that is not
+    /// a COUNTED kill consumes that timestamp and records nothing. Only the recorded kill and the
+    /// rebirth change the KillMap, which is the whole of `snapshot()`.
+    announce: crate::announce::Announce,
 }
 
 impl KillsModule {
@@ -168,6 +175,7 @@ impl EqModule for KillsModule {
         self.zone = None;
         self.seq = 0;
         self.pending_exp_ts = None;
+        self.announce.reset();
     }
 
     fn on_event(&mut self, ev: &Event, _live: bool) {
@@ -177,6 +185,7 @@ impl EqModule for KillsModule {
                 // Character rebirth (Task #49): the KillMap belongs to the dead beta character.
                 self.kills.clear();
                 self.pending_exp_ts = None;
+                self.announce.changed(self.seq);
                 return;
             }
             "zone" => {
@@ -209,12 +218,13 @@ impl EqModule for KillsModule {
             ev.ts(),
             credited,
         );
+        self.announce.changed(self.seq);
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — a COUNTED kill, or a rebirth. See the
+    /// `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {

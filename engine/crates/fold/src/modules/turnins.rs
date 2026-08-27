@@ -26,6 +26,9 @@ pub struct TurnInsModule {
     turn_ins: Vec<TurnInRow>,
     pending_offer: Option<PendingOffer>,
     seq: i64,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`]. `pending_offer` is not published
+    /// state: a handed-over item is a half-formed group nobody can read until the trade closes it.
+    announce: crate::announce::Announce,
 }
 
 impl TurnInsModule {
@@ -43,6 +46,7 @@ impl EqModule for TurnInsModule {
         self.turn_ins.clear();
         self.pending_offer = None;
         self.seq = 0;
+        self.announce.reset();
     }
 
     fn on_event(&mut self, ev: &Event, _live: bool) {
@@ -52,7 +56,11 @@ impl EqModule for TurnInsModule {
             "epoch" => {
                 self.turn_ins.clear();
                 self.pending_offer = None;
+                self.announce.changed(self.seq);
             }
+            // AN OFFER PUBLISHES NOTHING. It opens or extends the pending group, and the group is
+            // not in `snapshot()` — handing four items to an NPC and walking away leaves the
+            // published ledger exactly as it was.
             "offer" => {
                 let npc = ev.str("npc").unwrap_or_default().to_string();
                 let item = ev.str("item").unwrap_or_default().to_string();
@@ -75,6 +83,7 @@ impl EqModule for TurnInsModule {
                             npc: open.npc,
                             items: open.items,
                         });
+                        self.announce.changed(self.seq);
                     }
                 }
             }
@@ -82,10 +91,10 @@ impl EqModule for TurnInsModule {
         }
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — the trade that CLOSED a group, not every
+    /// line that passed by. See the `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {
