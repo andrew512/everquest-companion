@@ -95,6 +95,15 @@ pub struct LootModule {
     /// subscription would leave the length exactly where it was, and the view would serve a dead
     /// character's window as if nothing had happened. A counter cannot do that.
     revision: u64,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`].
+    ///
+    /// THE ONE-LINER CASE, and the one worth reading first: this module already knew exactly when
+    /// its ledger moved. `revision` above is bumped in the epoch arm and the loot arm and nowhere
+    /// else — the two arms that touch `self.loot`, which is the whole of what `snapshot()`
+    /// publishes — while `published_seq` was answering `self.seq`, the log-line counter stamped at
+    /// the top of `on_event` before the match. So the module was computing the honest signal and
+    /// announcing the dishonest one, side by side, in the same two arms.
+    announce: crate::announce::Announce,
 }
 
 impl LootModule {
@@ -125,6 +134,7 @@ impl EqModule for LootModule {
         self.zone = None;
         self.seq = 0;
         self.revision += 1;
+        self.announce.reset();
     }
 
     fn on_event(&mut self, ev: &Event, _live: bool) {
@@ -135,7 +145,11 @@ impl EqModule for LootModule {
             "epoch" => {
                 self.loot.clear();
                 self.revision += 1;
+                self.announce.changed(self.seq);
             }
+            // NOT A CHANGE TO PUBLISHED STATE. `zone` is the module's own bookkeeping — the label
+            // the NEXT row will carry — and `snapshot()` publishes `self.loot` alone. Zoning while
+            // looting nothing changes nothing anybody can read, and `revision` has always agreed.
             "zone" => self.zone = ev.str("zone").map(str::to_string),
             "loot" => {
                 self.loot.push(LootRow {
@@ -148,6 +162,7 @@ impl EqModule for LootModule {
                     created: ev.str("created").map(str::to_string),
                 });
                 self.revision += 1;
+                self.announce.changed(self.seq);
             }
             _ => {}
         }
@@ -158,10 +173,10 @@ impl EqModule for LootModule {
         Some(self)
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — moves when the LEDGER moved, not when the
+    /// log did. See the `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {
