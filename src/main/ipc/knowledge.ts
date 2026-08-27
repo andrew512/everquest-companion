@@ -134,26 +134,35 @@ export function registerKnowledgeIpc(): void {
   // fold answers "the highest rank this character holds" over merges as well as casts - which is
   // the number the `yours: VIII` pill already states, and therefore the number the at-rank figures
   // beside it have to be read at, or the card would contradict itself.
+  // AND THE LOADOUT (JOS-508), which is what turns the upgrade ladder from a list of spells into a
+  // SCHEDULE: the level each rung unlocks at for the classes you are actually playing. Read here
+  // rather than in the renderer for the header's reason — the join belongs on the side that already
+  // holds the catalog, and a renderer that assembled it would be munging (ruling 4).
+  //
+  // THE FOUR READS RUN TOGETHER NOW, AND THE FOURTH IS WHY. These were four sequential awaits over
+  // three engine round trips and a worker's parse, none of which depends on any other — so the
+  // handler's latency was their SUM for no reason. Adding a fourth made that visible rather than
+  // merely wasteful: `tests/e2e/unlockRowSteps.mts` had been reading the hover card at mount rather
+  // than at answer, an always-wrong read that the extra milliseconds turned into a reliable failure.
+  // The spec's own wait is fixed there (wave E3's law); this is the other half, and it makes the
+  // card FASTER than it was before this ticket rather than merely no slower.
   ipcMain.handle(IPC.spellsDetail, async (_e, name: unknown) => {
-    const snap = (await moduleState('alerts')) as AlertsSnap | undefined
-    const observed = Object.keys(snap?.spellLastCast ?? {})
     const wanted = typeof name === 'string' ? name : ''
-    const rankSnap = (await moduleState(OBSERVED_SPELL_RANKS_MODULE_ID)) as
-      | ObservedSpellRanksSnap
-      | undefined
-    return buildSpellDetail(appSpellDb(), wanted, observed, {
+    const [snap, rankSnap, client, combo] = await Promise.all([
+      moduleState('alerts') as Promise<AlertsSnap | undefined>,
+      moduleState(OBSERVED_SPELL_RANKS_MODULE_ID) as Promise<ObservedSpellRanksSnap | undefined>,
       // Awaited for the unlocks handler's reason, one hover earlier: a card opened in the first
       // seconds of a launch would otherwise state clientless facts for that one open.
-      client: await spellTable(),
+      spellTable(),
+      currentCombo()
+    ])
+    return buildSpellDetail(appSpellDb(), wanted, Object.keys(snap?.spellLastCast ?? {}), {
+      client,
       rank: observedRankRow(rankSnap, wanted)?.rank,
       // JOS-452 — the same worn-focus answer the planner's inventory payload carries, from the same
       // memoized resolution, so the card and the leveling table can never credit a different item.
       focus: currentWornFocus(),
-      // AND THE LOADOUT (JOS-508), which is what turns the upgrade ladder from a list of spells
-      // into a schedule: the level each rung unlocks at FOR THE CLASSES YOU ARE ACTUALLY PLAYING.
-      // Read here rather than in the renderer for the header's reason — the join belongs on the
-      // side that already holds the catalog, and a renderer that assembled it would be munging.
-      combo: await currentCombo()
+      combo
     })
   })
 

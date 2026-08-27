@@ -229,9 +229,17 @@ export function useAppRouting(view: View, setView: (v: View) => void): AppRoutin
   )
   // MEMOIZED LIKE THE REST, and here it is load-bearing twice over: this opener is the value
   // `SpellLinkProvider` publishes to every spell name in the window, so a fresh identity per render
-  // would re-render every list that draws one. It parks the view being left like every other link,
-  // which is what puts a Back on the page — including the spell → spell hop from one rung of a
-  // ladder to the next, where the origin stack is the only thing that remembers where you started.
+  // would re-render every list that draws one.
+  //
+  // A SPELL → SPELL HOP PARKS NOTHING, BY THE MODEL'S OWN RULE, and it is worth saying here because
+  // this is the first link whose destination is routinely the view it was fired from. `afterLink`
+  // returns the stack untouched when `from.view === to` ("you did not travel, so the trail behind
+  // you is still the trail behind you"), so walking a ladder from one rung to the next does NOT
+  // grow the trail: the whole excursion keeps ONE origin — the surface the first spell name was
+  // clicked on — and one Back leaves it. That is a deliberate semantics rather than a gap, the
+  // button says out loud where it goes, and the return trip up the ladder is the ladder itself,
+  // which every rung's page draws. Retracing hop by hop would mean changing `afterLink` for the
+  // five links that already depend on it.
   const openSpell = useCallback(
     (name: string) => {
       setSpellName(name)
