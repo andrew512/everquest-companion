@@ -345,6 +345,37 @@ export interface FixtureLaunch extends LaunchedApp {
 }
 
 /**
+ * The staging half of `launchOnFixture`'s options, forwarded to `stageFixture`.
+ *
+ * ITS OWN FUNCTION because the forwarding is a WHITELIST and every option is a branch: adding
+ * JOS-507's `clientTables` put `launchOnFixture` over the complexity ceiling, and this file's rule —
+ * like the repo's — is to SPLIT rather than to ratchet.
+ *
+ * AND A MISSING LINE HERE IS SILENT, which is the thing worth knowing about this shape: an option
+ * the caller set and this function drops produces no error anywhere. JOS-507's tables were staged
+ * nowhere for exactly that reason, and because "no client table" and "no engine" are
+ * indistinguishable from outside the app, the spec's honest skip branch reported the wrong cause for
+ * two full runs.
+ */
+function stagingOpts(opts: {
+  maps?: boolean
+  spells?: boolean
+  clientTables?: boolean
+  inventory?: string
+  achievements?: string
+  others?: Readonly<Record<string, string>>
+}): Parameters<typeof stageFixture>[1] {
+  return {
+    ...(opts.maps === undefined ? {} : { maps: opts.maps }),
+    ...(opts.spells === undefined ? {} : { spells: opts.spells }),
+    ...(opts.clientTables === undefined ? {} : { clientTables: opts.clientTables }),
+    ...(opts.inventory === undefined ? {} : { inventory: opts.inventory }),
+    ...(opts.achievements === undefined ? {} : { achievements: opts.achievements }),
+    ...(opts.others === undefined ? {} : { others: opts.others })
+  }
+}
+
+/**
  * THE ONE ENTRY POINT A SPEC USES: stage a fixture, launch the app onto it, and make `close()`
  * take the staged install away with it.
  *
@@ -358,6 +389,8 @@ export async function launchOnFixture(
   opts: {
     maps?: boolean
     spells?: boolean
+    /** Hand-authored client tables (JOS-507). Forwarded to `stageFixture` — see the note there. */
+    clientTables?: boolean
     inventory?: string
     /** a committed `/outputfile achievements` dump to stage beside the executable (JOS-429) */
     achievements?: string
@@ -392,15 +425,7 @@ export async function launchOnFixture(
   } = {}
 ): Promise<FixtureLaunch> {
   const owned = typeof fixture === 'string'
-  const log = owned
-    ? stageFixture(fixture, {
-        ...(opts.maps === undefined ? {} : { maps: opts.maps }),
-        ...(opts.spells === undefined ? {} : { spells: opts.spells }),
-        ...(opts.inventory === undefined ? {} : { inventory: opts.inventory }),
-        ...(opts.achievements === undefined ? {} : { achievements: opts.achievements }),
-        ...(opts.others === undefined ? {} : { others: opts.others })
-      })
-    : fixture
+  const log = owned ? stageFixture(fixture, stagingOpts(opts)) : fixture
   const launched = await launchApp({
     installDir: log.installDir,
     ...(opts.userData === undefined ? {} : { userData: opts.userData }),

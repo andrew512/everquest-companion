@@ -50,6 +50,7 @@ import type {
   SpellCatalogueRow,
   SpellCategoryFacet
 } from '@shared/dataServer/protocol.generated'
+import { SpellTooltip } from '../../lib/SpellCard'
 import type { SpellCatalogueState } from './useSpellCatalogue'
 
 /** The control's own value for "do not filter by type at all" — the default, and the disengaged state. */
@@ -63,17 +64,17 @@ export const ALL_TYPES = ''
  */
 export function SpellTypeFilter({
   category,
-  facets,
-  loading,
+  state,
   onChange,
   onOpen
 }: {
   category: string
-  facets: readonly SpellCategoryFacet[]
-  loading: boolean
+  state: SpellCatalogueState
   onChange: (next: string) => void
   onOpen: () => void
 }): JSX.Element {
+  const facets: readonly SpellCategoryFacet[] = state.result?.categories ?? []
+  const loading = state.loading
   return (
     <TextField
       select
@@ -95,6 +96,12 @@ export function SpellTypeFilter({
       data-testid="best-spells-type"
       data-category={category}
       data-facets={String(facets.length)}
+      // WHY THE CONTROL IS EMPTY, ON THE CONTROL ITSELF. Without these two, "no engine connection"
+      // and "an install with no client table in it" look identical from outside, and a spec's honest
+      // skip branch reports the wrong cause — which is exactly what happened while this ticket's own
+      // harness was silently dropping the staged tables.
+      data-offline={String(state.offline)}
+      data-table={state.result?.spellTable ?? 'unasked'}
     >
       <MenuItem value={ALL_TYPES} data-testid="best-spells-type-option" data-value={ALL_TYPES}>
         All types
@@ -294,9 +301,16 @@ export function BestSpellsCatalogue({
                   <span data-testid="best-spells-catalogue-level">{row.level}</span>
                 </TableCell>
                 <TableCell sx={{ fontSize: 10, px: 0.5, py: 0.25 }}>
-                  <Typography variant="caption" display="block" sx={{ fontSize: 10.5 }}>
-                    {row.name}
-                  </Typography>
+                  {/* THE ONE SEAM, LIKE EVERY OTHER SPELL NAME IN THE APP (JOS-508). Wrapping the
+                      name in `SpellTooltip` is the whole of it: the drill link lives inside that
+                      component behind a context, so a spell found by TYPE opens the same drilldown
+                      page as one found by name, and this file neither knows a router exists nor
+                      decides per-surface whether a name is a link. */}
+                  <SpellTooltip name={row.name}>
+                    <Typography variant="caption" display="block" sx={{ fontSize: 10.5 }}>
+                      {row.name}
+                    </Typography>
+                  </SpellTooltip>
                   {/* THE TWO WORDS THE GAME PRINTS, in the slot the era verdict and the class levels
                       already share — see the header for the measurement that keeps them off the
                       column axis. */}

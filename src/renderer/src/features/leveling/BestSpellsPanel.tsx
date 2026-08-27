@@ -530,8 +530,7 @@ export function BestSpellsPanel({ viewed }: BestSpellsPanelProps): JSX.Element |
           so there is no list this app could ship. */}
       <SpellTypeFilter
         category={category}
-        facets={catalogue.result?.categories ?? []}
-        loading={catalogue.loading}
+        state={catalogue}
         onChange={setCategory}
         onOpen={() => setTouched(true)}
       />

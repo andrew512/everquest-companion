@@ -143,12 +143,31 @@ const TYPE_INPUT = '[data-testid="best-spells-type"] [role="combobox"]'
 const TYPE_OPTION = '[data-testid="best-spells-type-option"]'
 const CATALOGUE = '[data-testid="best-spells-catalogue"]'
 const CATALOGUE_ROW = '[data-testid="best-spells-catalogue-row"]'
+/**
+ * THE APP-WIDE SPELL DRILL SEAM (JOS-508). `SpellTooltip` clones its anchor with `role="link"` when
+ * — and only when — an app published an opener, so the ROLE is the honest handle: a name that is
+ * plain text has no role at all, which is exactly the state this claim must be able to fail on.
+ */
+const SPELL_LINK = '[role="link"]'
 
-/** The names the catalogue body is drawing, as the DOM spells them. */
-function catalogueNames(page: Page): Promise<string[]> {
+/**
+ * Every catalogue row the body is drawing: its name, and the Category chip it wears.
+ *
+ * THE CATEGORY COMES BACK WITH THE NAME because the step has to be able to wait for the FILTER to
+ * have landed, not merely for rows to exist. Opening the control fetches the unfiltered list, so a
+ * step that settled on "any rows at all" reads the answer to the previous question — which is what
+ * this one did on its first green run, passing its central claim off a list the filter had not
+ * touched. That version would have gone on passing if the category filter had done nothing at all.
+ */
+function catalogueRows(page: Page): Promise<{ name: string; category: string }[]> {
   return page.evaluate(
-    (sel) => Array.from(document.querySelectorAll(sel)).map((r) => (r as HTMLElement).dataset.name ?? ''),
-    CATALOGUE_ROW
+    (sels) =>
+      Array.from(document.querySelectorAll(sels[0])).map((r) => ({
+        name: (r as HTMLElement).dataset.name ?? '',
+        category:
+          (r.querySelector(sels[1]) as HTMLElement | null)?.dataset.category ?? ''
+      })),
+    [CATALOGUE_ROW, '[data-testid="best-spells-catalogue-category"]']
   )
 }
 
@@ -187,7 +206,18 @@ export async function stepBestSpellsTypeSearch(page: Page): Promise<void> {
   )
   const types = options.filter((v) => v !== '')
   if (types.length === 0) {
-    note('the type control offered nothing - no engine connection, or no client spell table staged')
+    // THE CONTROL SAYS WHY IT IS EMPTY, and the distinction is load-bearing rather than tidy: while
+    // this step was first written the harness was silently dropping the staged client tables, and a
+    // note that could only say "no engine connection, or no table" reported the wrong cause for two
+    // full runs. The two states now read straight off the control.
+    const why = await page.evaluate(
+      (sel) => {
+        const el = document.querySelector(sel) as HTMLElement | null
+        return `offline=${el?.dataset.offline ?? '?'} table=${el?.dataset.table ?? '?'}`
+      },
+      TYPE
+    )
+    note(`the type control offered nothing - ${why}`)
     await page.keyboard.press('Escape')
     return
   }
@@ -205,13 +235,27 @@ export async function stepBestSpellsTypeSearch(page: Page): Promise<void> {
     `${String(swapped[0])} results / ${String(swapped[1])} tables / ${String(swapped[2])} catalogues`
   )
 
-  const names = await settle(() => catalogueNames(page), (n) => n.length > 0, { timeoutMs: 10_000 })
+  // WAIT FOR THE FILTER, NOT FOR ROWS. See `catalogueRows` — settling on "any rows" reads the
+  // unfiltered answer the control's own opening fetched.
+  const rows = await settle(
+    () => catalogueRows(page),
+    (rs) => rs.length > 0 && rs.every((r) => r.category === 'Taps'),
+    { timeoutMs: 10_000 }
+  )
+  const names = rows.map((r) => r.name)
+  const filtered = rows.length > 0 && rows.every((r) => r.category === 'Taps')
+  check(
+    'the picked type actually FILTERS - every row drawn is one of that category',
+    filtered,
+    rows.map((r) => `${r.name} [${r.category}]`).join(' | ')
+  )
   if (check('…and it draws rows out of the client table', names.length > 0, names.join(' | '))) {
-    // THE TICKET'S OWN CLAIM. A name-only filter would return none of these.
+    // THE TICKET'S OWN CLAIM, and it only means anything above the filter check: a name-only filter
+    // would return NONE of these, because none of these names contains the word.
     const byType = names.filter((n) => !n.toLowerCase().includes('tap'))
     check(
       'a TYPE search finds spells whose NAME does not contain the word - the whole capability',
-      byType.length > 0,
+      byType.length > 0 && filtered,
       `by type: ${byType.join(' | ')} — of ${names.join(' | ')}`
     )
     // Every row wears the two words the game prints in those columns.
@@ -219,6 +263,16 @@ export async function stepBestSpellsTypeSearch(page: Page): Promise<void> {
     check('…and every row carries its Category chip', chips === names.length, `${String(chips)} of ${String(names.length)}`)
     const level = await countOf(page, `${CATALOGUE_ROW} [data-testid="best-spells-catalogue-level"]`)
     check('…and its Level, which is what the list is sorted by', level === names.length)
+    // THE DRILL SEAM (JOS-508), VERIFIED RATHER THAN ASSUMED. Every spell name in the main window is
+    // a link because `SpellTooltip` publishes one from a context; a row that wrapped its name in
+    // plain text instead would look identical here and drill nowhere. So the claim is that the
+    // catalogue's names are inside the same seam every other spell name uses.
+    const links = await countOf(page, `${CATALOGUE_ROW} ${SPELL_LINK}`)
+    check(
+      'a spell found by TYPE drills like any other - its name is inside the app-wide link seam',
+      links === names.length,
+      `${String(links)} of ${String(names.length)} rows`
+    )
   }
 
   // BACK TO ALL TYPES, so the steps after this one are looking at what they were written against.
