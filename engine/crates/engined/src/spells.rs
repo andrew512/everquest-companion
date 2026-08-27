@@ -159,12 +159,6 @@ impl ClientSpells {
         })
     }
 
-    /// The word one category id names, or `None` — for an id nothing claims, and for every state in
-    /// which there is no string table.
-    pub fn category_name(&self, id: u32) -> Option<&str> {
-        self.category_names().get(&id).map(String::as_str)
-    }
-
     /// WHY there is no answer, for a surface that has to say something. Forces the read, like
     /// [`ClientSpells::table`], because "is it there" cannot be answered without looking.
     #[must_use]
