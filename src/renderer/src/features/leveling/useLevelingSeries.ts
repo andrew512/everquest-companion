@@ -14,15 +14,12 @@
 import { useMemo } from 'react'
 import type { AAEvent, AASpendEvent, LevelingSnap } from '@shared/types'
 import { computeAAAccounting } from '@shared/aa'
-import {
-  buildLevelSegments,
-  levelFeedEntries,
-  sortLevels,
-  type LevelPoint,
-  type LevelSegment
-} from './levelSeries'
-import { fmtDelta, type AaPoint } from './levelChartGeometry'
+import { buildLevelSegments, sortLevels, type LevelPoint, type LevelSegment } from './levelSeries'
+import type { AaPoint } from './levelChartGeometry'
 import type { FeedItem } from './LedgerColumn'
+// The feed is the one PURE piece of this move, so it sits where a node test can reach it — see
+// levelFeed.ts's header, and tests/levelingFeed.test.mts.
+import { buildFeed } from './levelFeed'
 
 /**
  * THE REFUND-PROOF AA HEADLINE (Task #48), in the shape the four hero cards take.
@@ -45,35 +42,6 @@ export interface AaHeadline {
   aaSpent: number
   aaUnspent: number | null
   boughtCount: number
-}
-
-/**
- * The interleaved level/AA/swap feed, newest first — a pure derivation.
- *
- * A post-swap ding is the first level of a NEW loadout: the elapsed time back to the previous
- * ding spans the (unlogged) swap, so it is not a "time to level" — showing `+38.9h` there would
- * be fabricated. Label the swap instead.
- *
- * UNCUT, and the view slices it AFTER scoping (JOS-75): a `.slice(0, 60)` here would take the
- * sixty NEWEST entries in the whole log and then filter, so a window that sits behind them
- * would come up empty with events plainly drawn on the chart above it. Each `sinceMs` is still
- * measured against the ding's true predecessor, in or out of scope — the elapsed time to reach
- * a level is a fact about the level, not about what you are looking at.
- */
-export function buildFeed(levels: readonly LevelPoint[], aas: readonly AAEvent[]): FeedItem[] {
-  const items: FeedItem[] = []
-  for (const e of levelFeedEntries(levels)) {
-    items.push({
-      ts: e.ts,
-      kind: e.afterSwap ? 'swap' : 'level',
-      label: e.afterSwap ? `Level ${e.level} (class swap)` : `Level ${e.level}`,
-      detail: e.afterSwap ? 'new loadout - level re-reported' : e.sinceMs != null ? `+${fmtDelta(e.sinceMs)}` : ''
-    })
-  }
-  for (const a of aas) {
-    items.push({ ts: a.ts, kind: 'aa', label: `+${a.amount} AA`, detail: `${a.nowHave} unspent` })
-  }
-  return items.sort((a, b) => b.ts - a.ts)
 }
 
 export interface LevelingSeries {
