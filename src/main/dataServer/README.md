@@ -472,14 +472,31 @@ transports would make the shell reconcile what main already knows.
 changing, at most twice a session; `null` on READY — never on a launch merely ending, or a crash loop
 would flicker the card); `engineClientHost.ts` for the fold's beginning (an ACCEPTED
 `session.attach`, the earliest instant it is true), its measurements (`client.onProgress`) and its
-landing (beside the go-live edge in `waitForFold`). The host clock is read exactly once, where a
+landing (beside the go-live edge, `sawHealth`). The host clock is read exactly once, where a
 progress frame arrives, and passed down — so the estimate's arithmetic (`src/shared/engineLaunch.ts`)
 reads no clock and is integer maths in a unit test.
 
-**LIVE PROGRESS FRAMES ARE DROPPED.** The engine reports progress from its TAIL as well as its scan.
-Nothing draws those — the bar is about a historical catch-up — so a session where somebody is playing
-would otherwise pay 4 Hz of IPC forever for no reader. `noteFoldProgress` records only while the
-phase is `folding`.
+**LIVE PROGRESS FRAMES ARE DROPPED, BY THE FLAG AND BY THE PHASE (JOS-518).** The engine reports
+progress from its TAIL as well as its scan, and the two shapes are identical — a caught-up tail sits
+at `pct` 100 with the event count climbing, which is what a scan that has just finished looks like.
+`FoldProgress.live` is the engine saying which loop it was in, and `noteFoldProgress` refuses a
+flagged frame first and then still asks the phase. Both, because the phase test alone WAS the whole
+defence and it failed: with the fold wait expired (below) nothing ever moved the phase off `folding`,
+and the tail's own frames then held a bar at 100% with the count rising for the rest of the session —
+the shape of two 1.11.0 reports. `foldFrameCounts` in `src/shared/engineLaunch.ts` is the decision.
+
+**THE FOLD WAIT HAS NO DEADLINE, AND THAT IS AN OWNER RULING (JOS-518).** `foldWait.ts` polls
+`session.health` after every accepted attach until the engine goes live, and that loop is what arms
+the entire read path (`engineLiveOn` → `engineServeReadiness`). It used to give up at 120 seconds — a
+number inherited from the deleted parity probe, where a bound on patience only cost a verdict — and
+post-cutover that stranded the session permanently: no panel ever filled and nothing ever asked
+again. The ruling, verbatim: *"it should only give up if the engine isn't doing anything or not
+present due to AV - in all cases but the most pathological, if its already parsing, why are we having
+a timeout?"* Every exit is a real event now: `live`, a superseded turn, or three refused polls in a
+row. Timeouts exist per REQUEST instead (`shared/dataServer/deadline.ts`, 15 s, above the engine's
+own 5 s `SNAPSHOT_PATIENCE`), which is what catches the wedged-alive pathology without ever giving up
+on a fold that is running. A long fold narrates itself into the dev log about once every 30 seconds,
+counted in polls — nothing in this path reads a wall clock.
 
 **THE CANDIDATE PATHS ARE SHOWN AND NEVER SENT.** "Where it looked" is the actionable half of an
 absence — it is how somebody finds the file their antivirus took — so it draws behind a disclosure on
@@ -487,7 +504,8 @@ the card. It is deliberately NOT in the report prefill: those strings carry the 
 directory, and the prefill carries the failure class alone (`engine-fault: <kind>`), which is all
 triage needs to grep.
 
-**THE SCHEMA GREW TWO FIELDS AND THEY ARE NOT CALLED `bytes`.** `FoldProgress` carries `offset` and
+**THE SCHEMA GREW TWO FIELDS AND THEY ARE NOT CALLED `bytes`** (a third, `live`, arrived with
+JOS-518 above). `FoldProgress` carries `offset` and
 `logSize` beside `pct`, because a percentage cannot be turned back into "148.8 MB of 238.4 MB" and
 the second sentence is the one that tells a person whether to wait. `bytes` is a name
 `tests/protocolSchema.test.mts` REFUSES outright — the framing vocabulary is banned so the wire
