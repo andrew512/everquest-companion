@@ -47,7 +47,6 @@ impl Probe {
     }
 
     /// The wall-clock heartbeat, for the modules whose published state ages without a line.
-    #[allow(dead_code, reason = "used by the modules migrated in later commits")]
     fn tick(&mut self, now_ms: i64) -> Vec<&'static str> {
         self.fold.tick(now_ms);
         self.moved()
@@ -117,14 +116,17 @@ const MELEE_MISS: &str = r#"{"kind":"miss","seq":11,"ts":10500,"raw":"m","source
 ///
 /// `eventFeed` IS NOT AN OFFENDER AND STAYS. It is a live ring of the last N events and a melee hit
 /// really does change what it publishes — the honest answer for that module is that it moved.
-const STILL_LOUD: [&str; 7] = [
+/// `progression` IS ON THIS LIST AND STAYS ON IT, and that is the honest answer rather than an
+/// unfinished one: its published `lastTs` really does advance on a melee line carrying a newer
+/// timestamp. What its migration bought is measured in its own test below — a whole log SECOND of
+/// combat is one announce instead of dozens — and the residual is named on the module's field.
+const STILL_LOUD: [&str; 6] = [
     "alerts",
     "buffs",
     "consider",
     "eventFeed",
     "progression",
     "roster",
-    "spellSets",
 ];
 
 #[test]
@@ -252,6 +254,69 @@ fn output_files_announces_a_newer_dump_and_not_a_restatement_of_an_older_one() {
         r#"{"kind":"outputFile","seq":3,"ts":6000,"raw":"o","file":"Inventory.txt"}"#,
     );
     assert!(newer.contains(&"outputFiles"));
+}
+
+#[test]
+fn progression_announces_once_per_log_second_of_combat_and_not_once_per_line() {
+    let mut p = Probe::new();
+    // The first line of a second advances the published `lastTs` — a real change, and announced.
+    let opens = p.fold(
+        r#"{"kind":"damage","seq":1,"ts":10000,"raw":"h","source":"Primitive","target":"a fire giant","amount":42,"dtype":"melee","skill":"slash"}"#,
+    );
+    assert!(opens.contains(&"progression"));
+    // EQ stamps its log to the second, so the rest of the round carries the SAME ts. Every one of
+    // these used to announce; none of them changes a published byte.
+    for seq in 2..8 {
+        let line = format!(
+            r#"{{"kind":"damage","seq":{seq},"ts":10000,"raw":"h","source":"Primitive","target":"a fire giant","amount":42,"dtype":"melee","skill":"slash"}}"#
+        );
+        assert!(
+            !p.fold(&line).contains(&"progression"),
+            "line {seq} of the same log second announced"
+        );
+    }
+    // A pet claim binds a name for the credit rule and publishes nothing.
+    let claim =
+        p.fold(r#"{"kind":"petClaim","seq":8,"ts":10000,"raw":"p","name":"Gyrating Bones"}"#);
+    assert!(!claim.contains(&"progression"));
+    // A kill inside that same second IS a column push, and it announces on its own account —
+    // which is the case a `lastTs`-only signal would have missed.
+    let killed = p.fold(
+        r#"{"kind":"death","seq":9,"ts":10000,"raw":"d","name":"a fire giant","bySelf":true}"#,
+    );
+    assert!(killed.contains(&"progression"));
+}
+
+#[test]
+fn spell_sets_announces_the_gem_that_landed_and_the_settle_that_had_no_line_behind_it() {
+    let mut p = Probe::new();
+    // A begin line proves the player is working and publishes nothing.
+    let begun = p.fold(
+        r#"{"kind":"spellMemorize","seq":1,"ts":1000,"raw":"m","spell":"Clarity II","done":false}"#,
+    );
+    assert!(!begun.contains(&"spellSets"));
+    let done = p.fold(
+        r#"{"kind":"spellMemorize","seq":2,"ts":2000,"raw":"m","spell":"Clarity II","done":true}"#,
+    );
+    assert!(done.contains(&"spellSets"));
+    // A `loaded` line opens a pending window — not state, so not a change.
+    let loaded = p.fold(
+        r#"{"kind":"spellSet","seq":3,"ts":3000,"raw":"s","set":"dam","action":"loaded"}"#,
+    );
+    assert!(!loaded.contains(&"spellSets"));
+    // …and an unrelated line inside the settle window still says nothing.
+    let quiet = p.fold(MELEE_HIT);
+    assert!(!quiet.contains(&"spellSets"));
+    // THE HEARTBEAT SETTLE — no event behind it at all. The set's definition is written here, and
+    // a cursor that could not outrun the fold position would have had nothing to say.
+    let settled = p.tick(3000 + 20_000);
+    assert!(
+        settled.contains(&"spellSets"),
+        "a wall-clock settle must announce"
+    );
+    // A second beat settles nothing and announces nothing.
+    let idle = p.tick(3000 + 40_000);
+    assert!(!idle.contains(&"spellSets"));
 }
 
 #[test]
