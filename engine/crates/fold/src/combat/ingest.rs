@@ -95,8 +95,6 @@ fn sweep_coat_class(st: &mut EngineState, ev: &Event) {
 /// a swap finer than that, so a faster poll would only re-ask a question whose answer cannot move.
 const CLASS_CHECK_MS: i64 = 15 * 60_000;
 
-// ── WORLD ─────────────────────────────────────────────────────────────────────────────────────
-
 fn ingest_world(st: &mut EngineState, ev: &Event) -> bool {
     match ev.kind_of() {
         // Character rebirth — a same-name character was wiped and recreated. The session's fights
@@ -466,8 +464,6 @@ fn ingest_death(st: &mut EngineState, ev: &Event) {
         st.charm.release(&key);
     }
 }
-
-// ── COMBAT ────────────────────────────────────────────────────────────────────────────────────
 
 /// The sentence a mitigation line gets in the ring, branching on `mtype` for which of the three
 /// prevention shapes it was.
@@ -856,8 +852,6 @@ fn to_damage_event<'a>(
     }
 }
 
-// ── CAST ──────────────────────────────────────────────────────────────────────────────────────
-
 /// The own-cast lifecycle. Its own family because both of the engine's ownership inferences run off
 /// it and must see the same lines: the cast-less proc detector, and the charm/CC/pet-buff ownership
 /// model, whose only honest owner signal is the exclusivity of `You begin casting <Spell>.`
@@ -924,8 +918,6 @@ fn ingest_cast(st: &mut EngineState, ev: &Event) -> bool {
     }
 }
 
-// ── CHOICE ────────────────────────────────────────────────────────────────────────────────────
-
 /// The character's standing choices — stance, invocation, and the active special attack.
 ///
 /// Its own family because none of the three is an event in a fight: they are what the character has
@@ -979,8 +971,6 @@ fn ingest_choice(st: &mut EngineState, ev: &Event) -> bool {
         _ => false,
     }
 }
-
-// ── MODIFIER ──────────────────────────────────────────────────────────────────────────────────
 
 /// coats · procs · dispel landings · Quick Buff · your own death. Everything here is an annotation:
 /// none of it opens, extends or closes an encounter.

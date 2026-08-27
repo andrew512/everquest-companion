@@ -236,8 +236,6 @@ fn both(st: &mut EngineState, ts: i64, fresh_only: bool, f: impl Fn(&mut Agg)) {
     f(&mut st.zone_agg);
 }
 
-// ── DAMAGE ────────────────────────────────────────────────────────────────────────────────────
-
 /// Fold one landed damage line and report the verdict it reached. `None` means the line was ignored
 /// before any verdict was needed, which is where the analytics fold returns early.
 pub fn route(st: &mut EngineState, ev: &DamageEvent<'_>) -> Option<Attribution> {
@@ -432,8 +430,6 @@ fn route_outgoing_damage(st: &mut EngineState, ev: &DamageEvent<'_>, at: &Attrib
     );
 }
 
-// ── MISS ──────────────────────────────────────────────────────────────────────────────────────
-
 /// The avoided swing as the aggregates fold it. `skill` stays `Melee` for every miss — that is the
 /// accuracy lane — while `verb`/`lane_skill`/`modifiers`/`target` are the amount-free inputs to the
 /// round grouper and the modifier tallies. The lane label goes through the same two steps a landed
@@ -558,8 +554,6 @@ fn route_outgoing_miss(st: &mut EngineState, ev: &MissLine, fold: &MissFold, kin
     );
 }
 
-// ── RESIST ────────────────────────────────────────────────────────────────────────────────────
-
 pub struct ResistLine {
     pub ts: i64,
     pub caster: String,
@@ -682,8 +676,6 @@ pub fn route_resist(st: &mut EngineState, ev: &ResistLine) {
         format!("{}'s {} resisted by {tgt_name}", src.name, ev.spell),
     );
 }
-
-// ── HEAL ──────────────────────────────────────────────────────────────────────────────────────
 
 pub struct HealLine {
     pub ts: i64,
@@ -863,8 +855,6 @@ fn add_hostile_heal(st: &mut EngineState, ev: &HealLine, healer_key: Option<&str
         st.note_presence(&name, ev.ts);
     }
 }
-
-// ── THE RECORD-EVERYTHING LADDER (otherRouting.ts) ────────────────────────────────────────────
 
 /// May this name be recorded as a combatant of its own? The refusal ladder in evaluation order,
 /// cheapest and most authoritative first, so a busy raid log's mob-vs-mob traffic leaves after one
@@ -1049,8 +1039,6 @@ fn miss_instant(ev: &MissLine, kind: &'static str, target: String) -> TimelineRa
         target: Some(target),
     }
 }
-
-// ── SOMEBODY ELSE'S CHARM PET (allyRouting.ts) ────────────────────────────────────────────────
 
 /// The ally pet's own meter row. The row id carries the CHARMER — `allypet:<charmer>:<pet>` — because
 /// the same mob re-charmed by a different enchanter is a different person's contribution, and one
