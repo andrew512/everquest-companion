@@ -37,7 +37,7 @@ import { visibleFrom, visibleSegments, windowFor, windowOver, type TimescaleId }
 // this tab's timescale — the duration rungs are four more slices in the same id space — so a
 // reader who narrows to this session on the Loot ledger finds the xp rates already narrowed.
 import { ScopeBar } from '../timeslice/ScopeBar'
-import { useTimeslice } from '../timeslice/useTimeslice'
+import { useTimesliceOn } from '../timeslice/useTimeslice'
 import { TAIL_MS, sliceDurationMs, type SliceId, type SliceRange, type Timeslice } from '@shared/timeslice'
 // The SCOPE (JOS-75): which stretch of the log every number on this tab describes. The timescale
 // moved the curves; this moves the arithmetic with them — one `rangeStats` call over one range,
@@ -274,8 +274,22 @@ function useLevelingCharts(o: {
   )
   // Rebuilt narrow, NOT the whole SelectionApi: the charts spread this straight onto a DOM
   // element, so anything else on the object would land there as an unknown attribute.
-  const pointer = { onPointerDown, onPointerMove, onPointerUp, onPointerCancel }
-  const chrome = scale ? { scale, bands, range: sel, draft, suppressed: dragging, pointer } : null
+  //
+  // MEMOIZED FOR ITS IDENTITY (JOS-511 item 2), which is the only thing about it that costs
+  // anything: the four handlers are `useChartSelection`'s own `useCallback`s and never change, so
+  // a fresh literal per render was a new object wrapping four stable functions — and it is a
+  // member of `chrome` below, which every chart, band and hover layer on the tab reads.
+  const pointer = useMemo(
+    () => ({ onPointerDown, onPointerMove, onPointerUp, onPointerCancel }),
+    [onPointerDown, onPointerMove, onPointerUp, onPointerCancel]
+  )
+  // …AND SO IS THE CHROME. It is the object both plots and both hover layers take, so a fresh one
+  // per render is a changed prop on every chart in the column whatever moved. Its members are all
+  // memoized or ordinary state now, so this identity moves exactly when the picture does.
+  const chrome = useMemo(
+    () => (scale ? { scale, bands, range: sel, draft, suppressed: dragging, pointer } : null),
+    [scale, bands, sel, draft, dragging, pointer]
+  )
   return { chrome, legend, scope, clear, aaVisible, segVisible, curve }
 }
 
@@ -584,7 +598,15 @@ export default function LevelingView({
   // now, and a session that spans a loadout swap sums `levelEquiv` straight across the boundary. The
   // Loot ledger's own opening (`All`, hiding nothing) is untouched — useTimeslice's header states
   // why those two coexist under one shared pick.
-  const { bounds, available, slice, setId, setCustom, custom } = useTimeslice(useExtraTs(sortedLevels, aaCumulative), 'zoneSession')
+  // THE SNAPSHOT TRAVELS, THE SUBSCRIPTION DOES NOT (JOS-511 item 1). `prog` above is this tab's
+  // own subscription; `useTimesliceOn` resolves the slice against THAT snapshot instead of opening
+  // a second `useModule('progression')` beside it. Two subscriptions were two hydrations at mount
+  // and two renders per progression push, over a ~7k-row snapshot.
+  const { bounds, available, slice, setId, setCustom, custom } = useTimesliceOn(
+    prog,
+    useExtraTs(sortedLevels, aaCumulative),
+    'zoneSession'
+  )
   const charts = useLevelingCharts({ prog, aas: aaCumulative, segments: levelSegments, slice, bounds })
   // The SCOPE on its own — the only one of the three the reads below need before the charted gate
   // has been asked. `chrome` and `curve` are null on exactly the same condition it is, and all
@@ -607,13 +629,21 @@ export default function LevelingView({
   const bestSpells = useBestSpellsVisible()
   // One props object, two placements (see both call sites): the panel is the same surface in the
   // charted and the chart-less state, and spelling its props twice is how they drift.
-  const unlockPanel = {
-    currentLevel,
-    viewed,
-    focusLevel,
-    focusNonce,
-    onFocusConsumed: onFocusConsumed ?? ((): void => undefined)
-  }
+  //
+  // MEMOIZED (JOS-511 item 2) because it is SPREAD onto the panel: a fresh object here is five
+  // fresh props on the surface that folds the unlock join, and the `onFocusConsumed` fallback
+  // minted a new no-op function on every render of the tab. `viewed` is stable now too
+  // (viewedLevel.ts), so this identity moves only when one of the five values does.
+  const unlockPanel = useMemo(
+    () => ({
+      currentLevel,
+      viewed,
+      focusLevel,
+      focusNonce,
+      onFocusConsumed: onFocusConsumed ?? ((): void => undefined)
+    }),
+    [currentLevel, viewed, focusLevel, focusNonce, onFocusConsumed]
+  )
 
   return (
     // NO HEIGHT, NO SCROLLER — THE PAGE IS THE SCROLLER (JOS-289, owner directive 2026-08-13:

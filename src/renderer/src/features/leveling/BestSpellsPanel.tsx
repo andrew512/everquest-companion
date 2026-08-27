@@ -67,7 +67,7 @@
 // today, and what it would do if a candidate were levelled - which is the owner's ask read
 // literally. The arithmetic is `shared/spellScale.ts`'s, fitted to his own log.
 
-import { type JSX, useMemo, useState } from 'react'
+import { type JSX, useCallback, useMemo, useState } from 'react'
 import {
   Box,
   Chip,
@@ -196,18 +196,21 @@ function RowDisclosure({
  */
 function TabTable({
   tab,
+  columns,
   data,
   sort,
   onSort,
   ranks
 }: {
   tab: BestSpellTab
+  /** The tab's columns, MEMOIZED BY THE PANEL (JOS-511 item 2) — see its call site for why the
+   *  array is passed rather than re-derived here: it is a prop on every row of the table. */
+  columns: readonly BestSpellColumn[]
   data: BestSpellsTable
   sort: BestSpellSort
   onSort: (s: BestSpellSort) => void
   ranks: ObservedSpellRanksSnap | null
 }): JSX.Element {
-  const columns = tabColumns(tab)
   const top = data.shown.slice(0, TOP_N)
   const rest = data.shown.slice(TOP_N)
   return (
@@ -490,6 +493,29 @@ export function BestSpellsPanel({ viewed }: BestSpellsPanelProps): JSX.Element |
   )
   // The loadout set the result chips are filled against: a class you could be running, at a glance.
   const loadout = useMemo(() => new Set<string>(best.classes), [best.classes])
+  // THE COLUMNS, ONCE PER TAB (JOS-511 item 2). `tabColumns` builds a fresh array, and it was
+  // called twice per render — once here for the results body and once inside `TabTable` — so every
+  // row of whichever table was drawn took a changed `columns` prop on every keystroke, every
+  // level step and every module push. One memo, one array, both bodies.
+  const columns = useMemo(() => tabColumns(tab), [tab])
+  // THE THREE HANDLERS THE ROWS AND THE HEADERS TAKE, STABLE. Each was an inline arrow, so each was
+  // a fresh function on every render of the panel — and `onSort` reaches every header cell of the
+  // table while `onLevel` reaches the stepper in the header line.
+  const onSort = useCallback(
+    (next: BestSpellSort) => {
+      setSorts((prev) => ({ ...prev, [tab]: next }))
+    },
+    [tab]
+  )
+  const onLevel = useCallback(
+    (n: number | null) => {
+      viewed.pick(n)
+    },
+    [viewed]
+  )
+  const onOpenTypes = useCallback(() => {
+    setTouched(true)
+  }, [])
   // THE CLIENT TABLE'S OWN ANSWER (JOS-507). Asked only once the control has been opened or a type
   // is picked, and the engine does the whole filter/sort/window — nothing here re-derives a row.
   // The text box feeds it too, so `tap` means the same thing to both bodies: the engine matches a
@@ -517,7 +543,7 @@ export function BestSpellsPanel({ viewed }: BestSpellsPanelProps): JSX.Element |
       data-searching={String(searching)}
       data-filtering={String(filtering)}
     >
-      <ReadoutHeader best={best} tab={tab} level={level} onLevel={(n) => viewed.pick(n)} />
+      <ReadoutHeader best={best} tab={tab} level={level} onLevel={onLevel} />
       <TabBar best={best} tab={tab} onPick={setPicked} />
       {/* THE BOX SITS UNDER THE TABS AND OVER THE SLIDER (JOS-450). Under the tabs because the tab
           is what a result is read AS - the reader picks the question first and then types the
@@ -532,7 +558,7 @@ export function BestSpellsPanel({ viewed }: BestSpellsPanelProps): JSX.Element |
         category={category}
         state={catalogue}
         onChange={setCategory}
-        onOpen={() => setTouched(true)}
+        onOpen={onOpenTypes}
       />
       <SpellRankSlider rank={simulate} onChange={setSimulate} />
       {/* KEYED BY THE TAB so the two disclosures inside reset when the table changes: `+7 more` left
@@ -543,9 +569,9 @@ export function BestSpellsPanel({ viewed }: BestSpellsPanelProps): JSX.Element |
         <BestSpellsResults
           results={results}
           tab={tab}
-          columns={tabColumns(tab)}
+          columns={columns}
           sort={sorts[tab]}
-          onSort={(next) => setSorts((prev) => ({ ...prev, [tab]: next }))}
+          onSort={onSort}
           ranks={ranks}
           loadout={loadout}
         />
@@ -553,9 +579,10 @@ export function BestSpellsPanel({ viewed }: BestSpellsPanelProps): JSX.Element |
         <TabTable
           key={tab}
           tab={tab}
+          columns={columns}
           data={best.tabs[tab]}
           sort={sorts[tab]}
-          onSort={(next) => setSorts((prev) => ({ ...prev, [tab]: next }))}
+          onSort={onSort}
           ranks={ranks}
         />
       )}
