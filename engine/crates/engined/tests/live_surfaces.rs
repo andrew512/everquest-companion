@@ -755,3 +755,97 @@ fn a_live_append_makes_the_modules_say_they_moved() {
     keys.sort_unstable();
     assert_eq!(keys, ["kind", "module", "seq"]);
 }
+
+/// A ROUND OF MELEE, AND WHO IS ENTITLED TO HEAR ABOUT IT (JOS-509).
+///
+/// This is the ticket's claim made from the far end: not "the cursor field moved" — `fold`'s own
+/// `tests/announce.rs` asks that one event at a time — but that a REAL TAIL reading REAL EQ LINES
+/// off a REAL SOCKET produces no `moduleChanged` frame for a module the lines have nothing to do
+/// with. It is the difference between a unit test about a struct field and the thing the owner
+/// measured: identical push counts for roster, loot and turnins during a live tail, and 11.9
+/// renderer commits per beat out of one log line, at 271-288 ms a push on his own tree.
+///
+/// THE SILENT SET IS NAMED RATHER THAN INFERRED. Asserting "only these announced" would make the
+/// test a pin on every module in the engine including the four this ticket never touched, and it
+/// would go red for a module legitimately doing its job. What is asserted is that these fourteen —
+/// every migrated module except `progression`, which announces on the log clock and says so — are
+/// ABSENT from the frames a melee round produced.
+///
+/// `progression` IS THE WITNESS THAT THE LINES WERE ACTUALLY READ, which is the half a silence test
+/// cannot do without: a suite that appended lines nothing ever folded would pass this by accident,
+/// and loudly. Its cursor moves on the published `lastTs`, so it is the one module guaranteed to
+/// speak for a melee line — and the wait for it is the proof the tail got that far.
+#[test]
+fn a_melee_round_leaves_the_modules_it_has_nothing_to_do_with_silent() {
+    /// Every migrated module but the one that answers to the log's clock.
+    const SILENT: [&str; 14] = [
+        "alerts",
+        "buffs",
+        "classUnlocks",
+        "consider",
+        "eventFeed",
+        "itemTiers",
+        "kills",
+        "leveling",
+        "loot",
+        "observedSpellRanks",
+        "outputFiles",
+        "roster",
+        "spellSets",
+        "turnins",
+    ];
+
+    let staged = Staged::new("melee-silence", ZONE);
+    let engine = Engine::start();
+    let mut conn = Conn::new(engine.connected());
+    conn.client.send(&subscribe(1, "loot.ledger"));
+    conn.reply(1);
+    conn.client.send(&attach(2, &staged.path()));
+    conn.wait_for_live(3);
+    // The landing beat announces every module's first cursor — that is the hydration edge, not this
+    // test's subject.
+    conn.wait_until("the first beat", |c| !c.changed.is_empty());
+    conn.changed.clear();
+
+    // A PURE MELEE EXCHANGE. Swings, a miss and a hit taken: the busiest thing an EQ log does, and
+    // the shape the owner's scroll hitch was measured under.
+    for seconds_ago in (10..16).rev() {
+        staged.append(&line(
+            seconds_ago,
+            "You slash a fire giant warlord for 42 points of damage.",
+        ));
+        staged.append(&line(
+            seconds_ago,
+            "You try to kick a fire giant warlord, but miss!",
+        ));
+        staged.append(&line(
+            seconds_ago,
+            "a fire giant warlord hits YOU for 106 points of damage.",
+        ));
+    }
+    conn.wait_until("the tail to have read the round", |c| {
+        c.changed.iter().any(|m| m.module == "progression")
+    });
+
+    let heard: Vec<&str> = conn
+        .changed
+        .iter()
+        .map(|m| m.module.as_str())
+        .filter(|m| SILENT.contains(m))
+        .collect();
+    assert!(
+        heard.is_empty(),
+        "a melee round announced modules that never read it: {heard:?}"
+    );
+
+    // …AND THE OTHER DIRECTION, in the same live world, because a test that only proves silence is
+    // satisfied by an engine that has stopped talking. One loot line, one frame.
+    conn.changed.clear();
+    staged.append(A_LIVE_LOOT);
+    conn.wait_until("the loot module's dirty bit", |c| {
+        c.changed.iter().any(|m| m.module == "loot")
+    });
+    let loot: Vec<&ModuleChangedMessage> =
+        conn.changed.iter().filter(|m| m.module == "loot").collect();
+    assert_eq!(loot.len(), 1, "exactly once: {loot:?}");
+}

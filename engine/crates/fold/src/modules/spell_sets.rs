@@ -60,6 +60,16 @@ pub struct SpellSetsModule {
     sets: JsMap<SpellSetDef>,
     pending: Option<PendingLoad>,
     seq: i64,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`].
+    ///
+    /// TWO OF THIS MODULE'S THREE MUTATIONS ARE NOT EVENTS, which is why it is the first one here
+    /// that needs the cursor's out-of-band half. `pending` is not published — a load line changes
+    /// nothing a reader can see — but the SETTLE it opens is a real change to `sets`, and a settle
+    /// arrives either from the log's clock (any event, ten seconds later) or from the WALL clock
+    /// (`on_tick`, on a live log that has fallen silent). The wall-clock one has no event behind it
+    /// at all, and `Announce::changed` landing strictly above the fold position is exactly what
+    /// lets it announce: see `crate::announce`'s property 3.
+    announce: crate::announce::Announce,
 }
 
 impl SpellSetsModule {
@@ -71,15 +81,19 @@ impl SpellSetsModule {
     fn on_memorize(&mut self, ts: i64, spell: &str, done: bool) {
         self.note_activity(ts);
         if !done {
+            // A BEGIN LINE PUBLISHES NOTHING. It only proves the player is still working, which
+            // keeps an open load window open — and the window is not state.
             return;
         }
         self.memorized
             .insert(memo_key(spell), js_trim(spell).to_string());
+        self.announce.changed(self.seq);
     }
 
     fn on_forget(&mut self, ts: i64, spell: &str) {
         self.note_activity(ts);
         self.memorized.remove(&memo_key(spell));
+        self.announce.changed(self.seq);
     }
 
     /// Gem activity keeps an open load window open.
@@ -97,6 +111,7 @@ impl SpellSetsModule {
             "saved" => self.define(set.to_string(), ts, "saved"),
             "deleted" => {
                 self.sets.remove(set);
+                self.announce.changed(self.seq);
             }
             // `loaded`: the bar is about to be rewritten. Nothing changes until the burst settles —
             // until then the set is still its PREVIOUS definition, which is the only reading that
@@ -121,6 +136,9 @@ impl SpellSetsModule {
                 source,
             },
         );
+        // Both callers (a `saved` line, and a settle closing a `loaded` one) rewrite the set's
+        // definition, so reaching here is always a published change.
+        self.announce.changed(self.seq);
     }
 
     /// Close an open load window if the log has been quiet long enough.
@@ -165,6 +183,7 @@ impl EqModule for SpellSetsModule {
         self.sets.clear();
         self.pending = None;
         self.seq = 0;
+        self.announce.reset();
     }
 
     fn on_event(&mut self, ev: &Event, _live: bool) {
@@ -173,6 +192,16 @@ impl EqModule for SpellSetsModule {
             // A rebirth behind the same name is a different character's bar. See the header on
             // what this does to `seq`.
             self.reset();
+            // AFTER the reset, and off `ev.seq()` rather than `self.seq` — WHICH THE RESET JUST
+            // ZEROED. This module is the only one that calls its own `reset()` from an arm, and
+            // bumping off the zeroed field would put the cursor at 1, BELOW the log-line seq a
+            // client is still holding in `knownSeq` from the dead character's snapshot: the bar
+            // would be emptied here and left on screen there. Off the event's own position the
+            // cursor lands above anything that could have been hydrated before it. It also lands
+            // above the zero `seq` the snapshot now publishes, which is the one case the cursor
+            // deliberately outruns it — see `crate::announce`'s property 3 for why that costs at
+            // most one re-fetch and can never cost an update.
+            self.announce.changed(ev.seq());
             return;
         }
         let ts = ev.ts();
@@ -196,14 +225,20 @@ impl EqModule for SpellSetsModule {
     }
 
     /// The wall-clock half of the settle rule. Never called on a historical fold.
+    ///
+    /// A SETTLE HERE HAS NO EVENT BEHIND IT and still moves the cursor — `settle_now` bumps, and
+    /// `Announce::changed` lands strictly above the fold position rather than at it, so a set that
+    /// settles on a log that has gone quiet is announced instead of waiting for the next line.
+    /// `buffTimers` is the precedent (its `on_tick` expires holds and moves its revision); a
+    /// heartbeat that changed published state silently is the JOS-87 defect wearing a clock.
     fn on_tick(&mut self, now_ms: i64, _rows: &[crate::modules::buff_timer_rows::BuffTimerRow]) {
         self.settle_if_idle(now_ms);
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — a gem loaded or forgotten, a set defined,
+    /// deleted or settled. See the `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {

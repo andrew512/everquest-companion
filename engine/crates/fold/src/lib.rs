@@ -43,6 +43,10 @@
 //! nine files rather than a change to the contract every later cluster will have been written
 //! against.
 
+/// THE ANNOUNCE CURSOR (JOS-509) — the one number that decides whether a renderer re-fetches, and
+/// the whole argument for why it is seq-valued rather than a counter. Read it before touching any
+/// module's [`EqModule::published_seq`].
+pub mod announce;
 pub mod combat;
 /// The CLIENT's string table (`dbstr_us.txt`), parsed down to its spell-category namespace — the
 /// words behind the integer ids `spells_us.txt` stores (JOS-507). PURE over a string, like
@@ -264,12 +268,23 @@ pub trait EqModule {
 
     /// THE MODULE'S PUBLISHED CURSOR, WITHOUT BUILDING ITS STATE (JOS-487) — the module dirty bit.
     ///
-    /// It is exactly the `seq` [`EqModule::snapshot`] puts in its answer: for most modules the seq
-    /// of the last event folded, and for the four that publish a private revision counter (combo,
-    /// character, respawn, buffTimers) that counter. THE POINT IS THAT IT IS CHEAP. The serve loop
-    /// asks every module this once per beat to decide which ones to announce, and asking through
-    /// `snapshot()` would serialize twenty modules' whole state ten times a second to compare
-    /// twenty integers.
+    /// IT IS A CURSOR THAT MOVES ONLY WHEN THE PUBLISHED STATE CHANGED (JOS-509), and that is the
+    /// whole contract. It used to be "the seq of the last event folded" for sixteen of the twenty,
+    /// which made it a global log-line counter wearing a per-module name: on a live tail every
+    /// module announced on every ~10 Hz beat and every subscription re-fetched a whole snapshot,
+    /// because `Serving::announced_seqs` was coalescing a number that always moves.
+    ///
+    /// TWO SHAPES ANSWER IT, and the split is forced rather than chosen. `combo`, `character`,
+    /// `respawn` and `buffTimers` publish a private revision counter (JOS-87) as BOTH this and the
+    /// `seq` inside their own snapshot, so the two agree by construction. The other sixteen cannot
+    /// touch their snapshot's `seq` — the goldens pin it byte-for-byte — so they carry an
+    /// [`crate::announce::Announce`] beside it, which is a cursor in the SAME NUMBER SPACE bumped
+    /// only from the arms that mutate published state. See that module for why a plain counter
+    /// there would have frozen every panel in the app after its first hydrate.
+    ///
+    /// THE POINT IS ALSO THAT IT IS CHEAP. The serve loop asks every module this once per beat to
+    /// decide which ones to announce, and asking through `snapshot()` would serialize twenty
+    /// modules' whole state ten times a second to compare twenty integers.
     ///
     /// `None` MEANS "THIS MODULE DOES NOT ANNOUNCE", which is an honest answer rather than a
     /// silent one: `Registry::published_seqs` reports what it was told and nothing about what it

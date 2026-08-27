@@ -23,6 +23,9 @@ pub struct ClassUnlocksModule {
     unlocks: Vec<ClassUnlockRow>,
     seen: HashSet<String>,
     seq: i64,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`]. The dedupe is the point here: the
+    /// SECOND `classUnlock` line for a class publishes nothing and now says nothing.
+    announce: crate::announce::Announce,
 }
 
 impl ClassUnlocksModule {
@@ -40,6 +43,7 @@ impl EqModule for ClassUnlocksModule {
         self.unlocks.clear();
         self.seen.clear();
         self.seq = 0;
+        self.announce.reset();
     }
 
     fn on_event(&mut self, ev: &Event, _live: bool) {
@@ -47,6 +51,7 @@ impl EqModule for ClassUnlocksModule {
         if ev.kind() == "epoch" {
             self.unlocks.clear();
             self.seen.clear();
+            self.announce.changed(self.seq);
             return;
         }
         if ev.kind() != "classUnlock" {
@@ -60,12 +65,13 @@ impl EqModule for ClassUnlocksModule {
             ts: ev.ts(),
             class_name: name.to_string(),
         });
+        self.announce.changed(self.seq);
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — a class this character had not unlocked
+    /// before. See the `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {

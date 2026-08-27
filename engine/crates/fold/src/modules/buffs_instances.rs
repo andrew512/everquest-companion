@@ -703,13 +703,19 @@ impl BuffInstances {
     /// true duration is the first one culled, and the learner can never ratchet past DB + 60 s. It
     /// costs nothing where the ruling actually bites: when the line is never coming, nothing ever
     /// pairs with the surviving record and the LONG STOP collects it minting nothing.
+    /// ANSWERS WHETHER IT CHANGED THE PUBLISHED SET (JOS-509). This runs once per event, before the
+    /// match, and on nearly every one of them it finds nothing to do — so it is the difference
+    /// between `buffs` announcing on every line and announcing when a buff actually aged out. The
+    /// `reap_orphaned_open` call at the end is deliberately NOT counted: it touches `open`, the
+    /// pairing record, which is not in `build_state`.
     pub fn sweep_hygiene(
         &mut self,
         now: i64,
         held_before_ts: i64,
         stats: &SpellStats,
         pets: &PetEntities,
-    ) {
+    ) -> bool {
+        let mut changed = false;
         // CALLED ONCE PER EVENT, so its cost is paid 1.4M times on a full replay. The TS's own note
         // applies: nothing here spreads the map into a fresh array, and the loop deletes only the
         // entry it is standing on.
@@ -738,16 +744,19 @@ impl BuffInstances {
                 // rather than a rounding of one.
                 let cutoff = (now as f64 - long_cap).floor() as i64;
                 self.retire_expired(&ik, cutoff, stats, pets);
+                changed = true;
                 continue;
             }
             if elapsed > unwitnessed_cull_cap(a) {
                 self.active.remove(&ik);
+                changed = true;
             }
         }
         // …AND THE RECORDS THE CULL ABOVE LEFT BEHIND (JOS-203). The loop can only ever reach a
         // record through its active row, so before this the open cast of a culled row had no reaper
         // at all.
         reap_orphaned_open(&mut self.open, &self.active, stats, now);
+        changed
     }
 
     /// The long-stop path: shed the landings older than `cutoff_ts`, and drop the record when empty.

@@ -45,6 +45,10 @@ enum How {
 pub struct ItemTiersModule {
     rows: JsMap<ItemTierRow>,
     seq: i64,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`]. Bumped inside `observe`, PAST its
+    /// refusals: a merge line for something with no tier in its name, and a `held` first sighting
+    /// that would create an empty row, both reach the map and leave it alone.
+    announce: crate::announce::Announce,
 }
 
 impl ItemTiersModule {
@@ -79,6 +83,7 @@ impl ItemTiersModule {
                     last_at: ts,
                 },
             );
+            self.announce.changed(self.seq);
             return;
         };
         let prev_tier = prev.tier;
@@ -103,6 +108,9 @@ impl ItemTiersModule {
             next.last_tier = Some(t);
         }
         self.rows.insert(key, next);
+        // The row is rewritten whatever else was true of it — `last_at` is this observation's
+        // instant — so reaching here is always a published change.
+        self.announce.changed(self.seq);
     }
 }
 
@@ -114,6 +122,7 @@ impl EqModule for ItemTiersModule {
     fn reset(&mut self) {
         self.rows.clear();
         self.seq = 0;
+        self.announce.reset();
     }
 
     fn on_event(&mut self, ev: &Event, _live: bool) {
@@ -121,7 +130,10 @@ impl EqModule for ItemTiersModule {
         match ev.kind() {
             // Character rebirth (Task #49): every merge before the boundary was performed by a
             // dead same-name character, and their upgrades are not in this character's bags.
-            "epoch" => self.rows.clear(),
+            "epoch" => {
+                self.rows.clear();
+                self.announce.changed(self.seq);
+            }
             // Tier-less results are SPELL-SCROLL merges (Roman rank), observedSpellRanks' half of
             // the same sentence. Still a merge we observed — recorded as one, with no tier.
             "itemMerge" => {
@@ -153,10 +165,10 @@ impl EqModule for ItemTiersModule {
         }
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — an observation that reached the map. See
+    /// the `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {

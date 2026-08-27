@@ -164,6 +164,26 @@ pub struct ProgressionModule {
     /// claim must never promote it to a zone-surviving summoned pet.
     ever_charmed: HashSet<String>,
     pending_exp: Option<PendingExp>,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`].
+    ///
+    /// THE HONEST CALL HERE IS NARROWER THAN THE OTHERS, and the reason is `Snap::last_ts`: it is a
+    /// PUBLISHED field and it advances on any event carrying a newer timestamp, whatever the event
+    /// was. So "announce only on rows" would be a genuine under-announce — `zoneBands.ts` clamps
+    /// the still-open zone interval's right edge to exactly that number, and a client that stopped
+    /// hearing about it would draw a band that stopped growing. The cursor therefore moves on the
+    /// `last_ts` advance as well as on every column push.
+    ///
+    /// WHAT THAT IS STILL WORTH: EQ stamps its log to the SECOND, so a busy combat second is dozens
+    /// of lines and exactly ONE `last_ts` advance. Against a ~10 Hz serve beat this module goes from
+    /// announcing on every beat to announcing on the beats that contain a new log second — and the
+    /// three pet arms (`petClaim`, `charm`, `uncharm`), which mutate binding sets nobody can read,
+    /// now say nothing at all on their own.
+    ///
+    /// THE RESIDUAL IS NAMED RATHER THAN TAKEN: dropping the `last_ts` bump would cut this module
+    /// to its rows alone, at the price of an open zone band whose right edge lags to the next kill,
+    /// loot or experience line. That is a product trade about a chart's edge, so it is an owner
+    /// call and not a worker's.
+    announce: crate::announce::Announce,
 }
 
 /// Drop-oldest across parallel columns that must stay index-aligned. Returns how many leading
@@ -212,9 +232,15 @@ impl ProgressionModule {
             .zip(self.s.aa_gain_amount.iter().copied())
     }
 
-    /// THE CHANGE SIGNAL. This module has no revision counter — its published `seq` is the last
-    /// event it folded — so, like `buffs`, it over-reports and never under-reports. See that
-    /// module's `revision` for the argument and for what it costs.
+    /// THE VIEW LAYER'S CHANGE SIGNAL — `foldsink::source_revision`, and NOT the announce cursor.
+    ///
+    /// IT IS STILL THE FOLD'S OWN `seq`, ON PURPOSE, and JOS-509 left it that way rather than
+    /// pointing it at `announce`. The two signals answer different questions for different readers:
+    /// this one decides whether a SUBSCRIPTION re-cuts a window of tens of rows on the ingest
+    /// thread, and it over-reports at a cost that comment names and accepts; the announce cursor
+    /// decides whether a RENDERER re-fetches a whole snapshot and re-renders a tree, which is
+    /// measured at 271-288 ms a push on the owner's real tree. Making them one number would have
+    /// tied a view's correctness to a per-arm audit done for the other reader's sake.
     #[must_use]
     pub fn revision(&self) -> i64 {
         self.seq
@@ -243,6 +269,7 @@ impl ProgressionModule {
         // handing a stale line to a later kill would be a fabricated attribution.
         self.pending_exp = Some(PendingExp { ts, pct, party });
         self.trim();
+        self.announce.changed(self.seq);
     }
 
     /// The experience line this kill line claims, or `None`. Claiming CONSUMES it.
@@ -276,6 +303,7 @@ impl ProgressionModule {
         }
         self.s.witness_ts.push(ts);
         self.trim();
+        self.announce.changed(self.seq);
     }
 
     fn push_kill(&mut self, ts: i64, credit: i64, name: &str, exp: Option<PendingExp>) {
@@ -286,6 +314,7 @@ impl ProgressionModule {
         self.s.kill_credit.push(credit);
         self.push_kill_row(ts, credit, name, exp);
         self.trim();
+        self.announce.changed(self.seq);
     }
 
     fn push_kill_row(&mut self, ts: i64, credit: i64, name: &str, exp: Option<PendingExp>) {
@@ -325,6 +354,7 @@ impl ProgressionModule {
         self.s.offline_end.push(to_ts);
         self.s.offline_camped.push(i64::from(camped));
         self.trim();
+        self.announce.changed(self.seq);
     }
 
     /// Close the open interval at the new zone's start, then open the next one.
@@ -339,6 +369,7 @@ impl ProgressionModule {
         // Charm cannot survive a zone transition; a SUMMONED pet does (law 4).
         self.charmed.clear();
         self.trim();
+        self.announce.changed(self.seq);
     }
 
     /// Enforce every cap, then re-derive the retention floor.
@@ -451,16 +482,21 @@ impl ProgressionModule {
                 // time out of real play.
                 self.s.loot_ts.push(ev.ts());
                 self.trim();
+                self.announce.changed(self.seq);
             }
             "level" => {
                 // UNCAPPED (with aaGain): ~5k rows/year, and the chart needs every ding.
                 self.s.level_ts.push(ev.ts());
                 self.s.level_value.push(ev.int("level").unwrap_or(0));
+                self.announce.changed(self.seq);
             }
             "aaGain" => {
                 self.s.aa_gain_ts.push(ev.ts());
                 self.s.aa_gain_amount.push(ev.int("amount").unwrap_or(0));
+                self.announce.changed(self.seq);
             }
+            // THE THREE PET ARMS PUBLISH NOTHING. They move the claimed/charmed/ever-charmed sets,
+            // which decide whether a LATER kill is credited or witnessed and appear in no snapshot.
             "petClaim" => self.on_claim(id_key(ev.str("name").unwrap_or_default())),
             "charm" => {
                 let key = id_key(ev.str("mob").unwrap_or_default());
@@ -484,6 +520,7 @@ impl EqModule for ProgressionModule {
     fn reset(&mut self) {
         self.clear();
         self.seq = 0;
+        self.announce.reset();
     }
 
     fn on_event(&mut self, ev: &Event, _live: bool) {
@@ -493,18 +530,23 @@ impl EqModule for ProgressionModule {
         // advanced by the boundary event itself.
         if ev.kind() == "epoch" {
             self.clear();
+            self.announce.changed(self.seq);
             return;
         }
         if ev.ts() > self.s.last_ts {
             self.s.last_ts = ev.ts();
+            // A PUBLISHED FIELD MOVED — see the `announce` field for why this bump is owed and what
+            // it still buys. Every column push below bumps for itself: two kills inside one log
+            // second are two rows and only one `last_ts` advance.
+            self.announce.changed(self.seq);
         }
         self.fold(ev);
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — a column push, a rebirth, or the log's
+    /// clock moving on. See the `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {

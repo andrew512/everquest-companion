@@ -160,6 +160,15 @@ pub struct EventFeedModule {
     last_con: HashMap<String, i64>,
     /// `deps.lookupItem`, or `None` in every construction but the production one.
     knowledge: Option<Arc<dyn Knowledge>>,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`].
+    ///
+    /// THE NARROWEST SURFACE IN THE SET, and the module was already written that way. `on_event`
+    /// records `seq` for every event and then RETURNS unless `live`; live, only `consider` and
+    /// `loot` reach anything, and each has its own refusal (the anti-spam window, and an item the
+    /// corpus does not call notable). Every path into the ring goes through `append`, so that one
+    /// function is the whole announce surface — and a historical fold, which admits nothing, now
+    /// announces nothing rather than announcing on all 1.28 million events.
+    announce: crate::announce::Announce,
 }
 
 impl EventFeedModule {
@@ -208,6 +217,9 @@ impl EventFeedModule {
             self.ring.remove(0);
         }
         self.seq += 1;
+        // THE FEED'S ONE MUTATION (JOS-509). Every path into the ring comes through here, so this
+        // is the whole of the module's announce surface — see the `announce` field.
+        self.announce.changed(self.seq);
     }
 
     /// Append a consider row, unless the same mob was already admitted inside the anti-spam window.
@@ -334,6 +346,7 @@ impl EqModule for EventFeedModule {
         self.seq = 0;
         self.id_counter = 0;
         self.last_con.clear();
+        self.announce.reset();
     }
 
     /// `onEvent` records the seq of EVERY event and then returns unless `live`. That gate is the
@@ -351,10 +364,10 @@ impl EqModule for EventFeedModule {
         }
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — a row that reached the ring, and nothing
+    /// else. See the `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {
