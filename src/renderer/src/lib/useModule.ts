@@ -51,8 +51,39 @@
 // and that is on purpose rather than incidental: the SELECTOR form (JOS-512 — subscribe to a
 // slice, re-render only when that slice moves) is `useSyncExternalStoreWithSelector` over exactly
 // the same two members, so it can be added beside this hook without this hook changing at all.
+//
+// ── AND YET THIS HOOK DOES NOT CALL `useSyncExternalStore`. THE REASON IS A PREFERENCE ───────
+//
+// It did briefly, and the honest history matters because the comment that first sat here was
+// WRONG. `useSyncExternalStore` is the textbook primitive for a store like this, and it was
+// swapped out mid-ticket on a theory — that its updates, being synchronous and non-interruptible
+// by design (which is how it guarantees no tearing), were starving the Mobs tab's
+// `useDeferredValue` ranking. That theory was TESTED AND DISPROVED: the swap did not fix the
+// failing spec. The real cause was elsewhere entirely and was not a scheduling problem at all
+// (tests/e2e/mob-drops-era.e2e.mts, and its own comment now records it).
+//
+// So this is not a measured necessity, and nobody should read it as one. It is a deliberate
+// PREFERENCE, on two grounds that stand on their own:
+//
+//   * `useView.ts` — the engine-backed successor to this hook, which every migrated surface will
+//     use — is subscribe-plus-state. Two hooks with the same job should not have two update
+//     disciplines, and the successor is the one that sets the house style.
+//   * A plain `setState` is an ORDINARY update React may batch and schedule against other work,
+//     which is the scheduling behaviour this app had before this ticket. Keeping it means this
+//     ticket changed WHERE data is held without also changing how urgently every one of 32 call
+//     sites re-renders — a smaller blast radius for a plumbing change, whatever the merits of the
+//     alternative.
+//
+// WHAT IS GIVEN UP: the tearing guarantee. It costs nothing here, and this is the part to re-check
+// before reversing the decision. Tearing means two components painting different values of one
+// store in one frame; every subscriber is notified inside a single store flush, React 18
+// auto-batches the resulting `setState`s into one pass, and they all read the SAME held object, so
+// they cannot disagree. The guarantee earns its keep when a store can change DURING rendering;
+// this one only ever changes in a promise continuation or a bridge callback, never mid-render.
+// Switching back to `useSyncExternalStore` is therefore a legitimate option, not a regression —
+// just do it on its own merits and not on the theory that was already tried and disproved.
 
-import { useCallback, useSyncExternalStore } from 'react'
+import { useEffect, useState } from 'react'
 import { createModuleStore, scheduleFrame, type ModuleStore } from './moduleStore'
 
 /**
@@ -69,23 +100,49 @@ function moduleStore(): ModuleStore {
   return store
 }
 
-// `Snap` APPEARS ONLY IN THE RETURN TYPE, which `no-unnecessary-type-parameters` reads as
+/** What this hook holds, and WHICH module it belongs to — see the render-time guard below. */
+interface Held<Snap> {
+  readonly id: string
+  readonly snap: Snap | null
+}
+
+// THE THREE ASSERTIONS BELOW ARE THE ONE PLACE THE SHAPE IS NAMED. The store is keyed by a runtime
+// string and answers `unknown`, which is the honest type for it; this hook knows the module id as a
+// literal at every call site and is where a caller states what that module's state is. They are
+// written out rather than wrapped in a `read<Snap>()` helper because such a helper would use `Snap`
+// exactly once — in a return position — which is the shape the lint rule below is right to refuse,
+// and earning a SECOND exemption to save two lines is not a trade worth making.
+//
+// `Snap` APPEARS ONLY IN THE RETURN TYPE here too, which `no-unnecessary-type-parameters` reads as
 // removable. It is not: `getModuleSnapshot` answers `unknown`, so widening this to `unknown` would
 // type every view's state as `unknown` and move twenty compile errors into runtime. This parameter
 // is the only statement anywhere of what a served snapshot's shape IS.
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- see above
 export function useModule<Snap>(moduleId: string): Snap | null {
-  // Both are keyed on `moduleId` alone. A fresh `subscribe` identity would make React tear the
-  // subscription down and re-open it on every render, which is the per-hook churn this whole
-  // ticket exists to remove.
-  const subscribe = useCallback(
-    (onChange: () => void) => moduleStore().subscribe(moduleId, onChange),
-    [moduleId]
-  )
-  // THE ONE PLACE THE SHAPE IS NAMED. The store is keyed by a runtime string and answers
-  // `unknown`, which is the honest type for it; this call site knows the module id as a literal and
-  // is where a caller states what that module's state is. The assertion buys the whole app its
-  // typed views — widening it to `unknown` would move twenty compile errors into runtime.
-  const read = useCallback(() => moduleStore().getSnapshot(moduleId) as Snap | null, [moduleId])
-  return useSyncExternalStore(subscribe, read)
+  // Seeded from the store rather than from `null`: a module something else is already reading is
+  // answered on this hook's FIRST render, with no loading frame it does not need.
+  const [held, setHeld] = useState<Held<Snap>>(() => ({
+    id: moduleId,
+    snap: moduleStore().getSnapshot(moduleId) as Snap | null
+  }))
+
+  useEffect(() => {
+    const take = (): void => {
+      const snap = moduleStore().getSnapshot(moduleId) as Snap | null
+      // Bail out the way React does. The store only notifies when it has taken a new reply, but
+      // this also covers the `take()` below, which fires on every subscribe.
+      setHeld((prev) => (prev.id === moduleId && Object.is(prev.snap, snap) ? prev : { id: moduleId, snap }))
+    }
+    const off = moduleStore().subscribe(moduleId, take)
+    // CLOSE THE GAP between the render that read the store and the effect that subscribed to it:
+    // a reply can land in between, and its notification went to nobody. `useSyncExternalStore` does
+    // exactly this re-read internally, and it is the one piece of that hook worth keeping by hand.
+    take()
+    return off
+  }, [moduleId])
+
+  // State belonging to a module nobody is asking about any more is not shown for the render
+  // between the id changing and the effect that acts on it — `useView`'s descriptor guard, for
+  // the same reason and with the same shape.
+  return held.id === moduleId ? held.snap : (moduleStore().getSnapshot(moduleId) as Snap | null)
 }
