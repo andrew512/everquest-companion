@@ -107,27 +107,19 @@ fn announced(moved: &[&'static str], want: &[&str]) {
 const MELEE_HIT: &str = r#"{"kind":"damage","seq":10,"ts":10000,"raw":"h","source":"Primitive","target":"a fire giant","amount":42,"dtype":"melee","skill":"slash"}"#;
 const MELEE_MISS: &str = r#"{"kind":"miss","seq":11,"ts":10500,"raw":"m","source":"a fire giant","target":"Primitive","skill":"kick"}"#;
 
-/// WHAT STILL SHOUTS AT A MELEE ROUND — the ticket's own ratchet, and it only shrinks.
+/// WHAT STILL ANNOUNCES ON A MELEE ROUND — the ticket's ratchet, migrated all the way down.
 ///
-/// Every name here is a module still stamping `self.seq = ev.seq()` at the top of `on_event` and
-/// publishing it, so it announces on a line it has nothing to say about. A module's migration
-/// commit DELETES its name from this list, and the list is what makes each of those commits prove
-/// something rather than assert it: the melee round is folded, and whoever is left is named.
+/// It began as fourteen names: every module stamping `self.seq = ev.seq()` at the top of `on_event`
+/// and publishing it, each announcing on a line it has nothing to say about. Each migration commit
+/// deleted a name, which is what made those commits prove something rather than assert it.
 ///
-/// `eventFeed` IS NOT AN OFFENDER AND STAYS. It is a live ring of the last N events and a melee hit
-/// really does change what it publishes — the honest answer for that module is that it moved.
-/// `progression` IS ON THIS LIST AND STAYS ON IT, and that is the honest answer rather than an
-/// unfinished one: its published `lastTs` really does advance on a melee line carrying a newer
-/// timestamp. What its migration bought is measured in its own test below — a whole log SECOND of
-/// combat is one announce instead of dozens — and the residual is named on the module's field.
-const STILL_LOUD: [&str; 6] = [
-    "alerts",
-    "buffs",
-    "consider",
-    "eventFeed",
-    "progression",
-    "roster",
-];
+/// `progression` IS THE ONE LEFT, and that is the honest answer rather than an unfinished one: its
+/// published `lastTs` really does advance on a melee line carrying a newer timestamp, and
+/// `zoneBands.ts` draws the open zone interval's right edge from exactly that number. What its
+/// migration bought is measured in its own test below — a whole log SECOND of combat is one
+/// announce instead of dozens — and the residual is named on the module's own field as an owner
+/// call.
+const STILL_LOUD: [&str; 1] = ["progression"];
 
 #[test]
 fn a_melee_round_moves_nothing_that_does_not_watch_combat() {
@@ -254,6 +246,126 @@ fn output_files_announces_a_newer_dump_and_not_a_restatement_of_an_older_one() {
         r#"{"kind":"outputFile","seq":3,"ts":6000,"raw":"o","file":"Inventory.txt"}"#,
     );
     assert!(newer.contains(&"outputFiles"));
+}
+
+#[test]
+fn roster_announces_a_group_line_and_not_the_party_experience_that_gates_it() {
+    let mut p = Probe::new();
+    // The party-experience line opens the gate the weakest membership rung is admitted through. It
+    // NAMES NOBODY, never sets `seen`, and publishes nothing — the module header is emphatic.
+    let party = p.fold(r#"{"kind":"expGain","seq":1,"ts":1000,"raw":"e","party":true}"#);
+    assert!(!party.contains(&"roster"));
+    // Every group line is published: even an invite, which is usually declined, sets `seen` and
+    // `lastSignalTs` — and both are in the snapshot.
+    let invited = p.fold(
+        r#"{"kind":"group","seq":2,"ts":2000,"raw":"g","change":"invite","name":"Dranix"}"#,
+    );
+    assert!(invited.contains(&"roster"));
+    let joined = p.fold(
+        r#"{"kind":"group","seq":3,"ts":3000,"raw":"g","change":"join","name":"Dranix"}"#,
+    );
+    assert!(joined.contains(&"roster"));
+    // A charm refuses a name for the weakest rung — knowledge about a NAME, published nowhere,
+    // and nothing this one evicts because no `buffed` member answers to it.
+    let charmed = p.fold(
+        r#"{"kind":"charm","seq":4,"ts":4000,"raw":"c","mob":"a spiroc banisher"}"#,
+    );
+    assert!(!charmed.contains(&"roster"));
+}
+
+#[test]
+fn consider_announces_the_con_and_not_the_loot_it_files_away() {
+    let mut p = Probe::new();
+    let conned = p.fold(
+        r#"{"kind":"consider","seq":1,"ts":1000,"raw":"c","mob":"a goblin priest","rare":false,"level":20,"faction":"indifferent","difficulty":"???"}"#,
+    );
+    assert!(conned.contains(&"consider"));
+    // THE OWN-LOOT INDEX IS NOT PUBLISHED. It reaches a client through `knowledge.mob`'s
+    // `dropsSeen`, a join made on demand — so a farming session's steady drip of loot lines moves
+    // this module's real state and says nothing.
+    let looted = p.fold(
+        r#"{"kind":"loot","seq":2,"ts":2000,"raw":"l","item":"Bone Chips","source":"a goblin priest"}"#,
+    );
+    assert!(!looted.contains(&"consider"));
+    // The zone is the label the NEXT row carries.
+    let zoned = p.fold(r#"{"kind":"zone","seq":3,"ts":3000,"raw":"z","zone":"Najena"}"#);
+    assert!(!zoned.contains(&"consider"));
+}
+
+#[test]
+fn the_event_feed_admits_nothing_historical_and_says_so() {
+    // The feed's own gate is `live`, so a HISTORICAL fold reaches nothing — and used to announce on
+    // every one of the 1.28 million events a slice carries anyway.
+    let mut historical = Probe {
+        fold: Fold::new(registered(ClusterDeps::default()), i64::MAX),
+        seen: BTreeMap::new(),
+    };
+    historical.moved();
+    let ev = Event::from_json(
+        r#"{"kind":"consider","seq":1,"ts":1000,"raw":"c","mob":"a rat","rare":false,"faction":"indifferent","difficulty":"???"}"#,
+    )
+    .expect("a JSON event");
+    historical.fold.on_primary(&ev, false);
+    assert!(!historical.moved().contains(&"eventFeed"));
+
+    // Live, the same line is a row.
+    let mut p = Probe::new();
+    let conned = p.fold(
+        r#"{"kind":"consider","seq":1,"ts":1000,"raw":"c","mob":"a rat","rare":false,"faction":"indifferent","difficulty":"???"}"#,
+    );
+    assert!(conned.contains(&"eventFeed"));
+    // The SAME mob again inside the anti-spam window is refused by the ring, and by the cursor.
+    let again = p.fold(
+        r#"{"kind":"consider","seq":2,"ts":1100,"raw":"c","mob":"a rat","rare":false,"faction":"indifferent","difficulty":"???"}"#,
+    );
+    assert!(!again.contains(&"eventFeed"));
+}
+
+#[test]
+fn alerts_announces_the_cast_that_moved_its_recency_map_and_not_the_one_that_went_backwards() {
+    let mut p = Probe::new();
+    let cast = p.fold(
+        r#"{"kind":"castBegin","seq":1,"ts":5000,"raw":"c","spell":"Mesmerization VII"}"#,
+    );
+    assert!(cast.contains(&"alerts"));
+    // A stamp that went BACKWARDS does not move the recency and does not move the key's position.
+    let backwards = p.fold(
+        r#"{"kind":"castBegin","seq":2,"ts":4000,"raw":"c","spell":"Mesmerization VII"}"#,
+    );
+    assert!(!backwards.contains(&"alerts"));
+    // A slow proc is the other published field.
+    let proc = p.fold(
+        r#"{"kind":"poisonProc","seq":3,"ts":6000,"raw":"p","effect":"slow","target":"a spectre","strike":"Weakening Strike"}"#,
+    );
+    assert!(proc.contains(&"alerts"));
+    // With no defs pushed nothing can fire, so an ordinary combat line writes no history.
+    let hit = p.fold(MELEE_HIT);
+    assert!(!hit.contains(&"alerts"));
+}
+
+#[test]
+fn buffs_announces_the_landing_and_the_wear_off_and_not_the_round_between_them() {
+    let mut p = Probe::new();
+    let cast = p.fold(
+        r#"{"kind":"castBegin","seq":1,"ts":1000,"raw":"c","spell":"Clarity"}"#,
+    );
+    assert!(cast.contains(&"buffs"));
+    let landed = p.fold(
+        r#"{"kind":"buffApply","seq":2,"ts":2000,"raw":"a","target":"self","spell":"Clarity","illusion":false,"durationMs":600000,"candidates":[{"name":"Clarity","durationMs":600000,"illusion":false}]}"#,
+    );
+    assert!(landed.contains(&"buffs"));
+    // THE ROUND BETWEEN. Every one of these ran the hygiene sweep and the miner and the session
+    // frame, found nothing to do in any of them, and used to announce anyway.
+    for seq in 3..9 {
+        let line = format!(
+            r#"{{"kind":"damage","seq":{seq},"ts":3000,"raw":"h","source":"Primitive","target":"a fire giant","amount":42,"dtype":"melee","skill":"slash"}}"#
+        );
+        assert!(!p.fold(&line).contains(&"buffs"), "melee line {seq}");
+    }
+    let worn = p.fold(
+        r#"{"kind":"buffWearOff","seq":9,"ts":9000,"raw":"w","spell":"Clarity","candidates":["Clarity"],"target":"self"}"#,
+    );
+    assert!(worn.contains(&"buffs"));
 }
 
 #[test]

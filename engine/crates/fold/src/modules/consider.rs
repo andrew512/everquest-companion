@@ -204,6 +204,18 @@ pub struct ConsiderModule {
     knowledge: Option<Arc<dyn Knowledge>>,
     /// The first live tick has run ⇒ the historical replay is over (`backfilled`).
     backfilled: bool,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`].
+    ///
+    /// `self.ring` IS THE WHOLE SNAPSHOT, which makes the honesty call here unusually clean: the
+    /// own-loot index is published nowhere (it reaches a client through `knowledge.mob`'s
+    /// `dropsSeen`, a join made on demand), and `zone` is the label the NEXT row will carry. So
+    /// every `loot` line this module folds — and on a farming session that is most of what it sees
+    /// — changes real state that no client can read, and now says nothing.
+    ///
+    /// THE BACKFILL ANNOUNCES TOO. `on_tick`'s first beat enriches the last N rows with corpus
+    /// knowledge, which rewrites published rows with no event behind it; `probe` bumps for each row
+    /// it actually fills, so a backfill that finds nothing to do is silent.
+    announce: crate::announce::Announce,
 }
 
 /// `mobLookupParse.ts MobLootIndex` — the note, the reset, and (since JOS-486) the READ that the
@@ -332,6 +344,7 @@ impl ConsiderModule {
         let answer = knowledge.mob(&row.mob.clone(), &self.own_loot);
         if let Some(row) = self.ring.get_mut(index) {
             row.knowledge = Some(answer.record);
+            self.announce.changed(self.seq);
         }
     }
 
@@ -372,6 +385,7 @@ impl ConsiderModule {
         while self.ring.len() > CONSIDER_CAP {
             self.ring.remove(0);
         }
+        self.announce.changed(self.seq);
         // LIVE cons enrich immediately; historical ones wait for the bounded backfill on the first
         // tick, so a startup replay of a month of logs never walks the corpus once per con.
         if live {
@@ -389,6 +403,7 @@ impl EqModule for ConsiderModule {
         self.ring.clear();
         self.zone = None;
         self.seq = 0;
+        self.announce.reset();
         self.own_loot.reset();
         // A CARD FOR THE WORLD THAT JUST ENDED IS NOT A CARD (JOS-487). Anything the ingest had not
         // drained by the time a rebirth or a character switch landed describes a creature the player
@@ -415,7 +430,10 @@ impl EqModule for ConsiderModule {
             "epoch" => {
                 self.ring.clear();
                 self.own_loot.reset();
+                self.announce.changed(self.seq);
             }
+            // NEITHER OF THE NEXT TWO PUBLISHES ANYTHING. `zone` is the label the next row carries;
+            // the own-loot index is state this module owns the lifetime of and no snapshot shows.
             "zone" => self.zone = ev.str("zone").map(str::to_string),
             "loot" => {
                 // A destroy names no mob and is not a drop — see the header.
@@ -450,10 +468,10 @@ impl EqModule for ConsiderModule {
         }
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — a con that reached the ring, a backfill
+    /// that enriched a row, or a rebirth. See the `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     /// THE FIRST LIVE TICK IS "THE HISTORICAL REPLAY IS OVER" — `onTick`, verbatim in shape.

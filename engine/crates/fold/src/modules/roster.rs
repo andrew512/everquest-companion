@@ -187,6 +187,21 @@ pub struct RosterModule {
     seen: bool,
     last_signal_ts: i64,
     seq: i64,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`].
+    ///
+    /// THREE OF THIS MODULE'S FIELDS ARE PUBLISHED AND THE REST ARE THE LADDER. `members`, `seen`
+    /// and `lastSignalTs` are the snapshot; `admitted_keys`, `party_exp`, `never_member`,
+    /// `fan_out` and `self_key` are how a name earns its way onto the roster and appear nowhere a
+    /// client can read. So the party-experience line — which the header is emphatic never puts a
+    /// name on the roster and never sets `seen` — is exactly the kind of arm that mutates real
+    /// state and publishes nothing.
+    ///
+    /// AND THE DEFINE ANNOUNCES NOW. `roster.define` replaces the user's edit list, which
+    /// `effective()` folds into `members`, and it advances no log seq — the JOS-87 shape. Before
+    /// this ticket it reached a client only when the next log line happened to move `seq`, and on
+    /// an idle log never; the cursor lands strictly above the fold position, so it can carry a
+    /// change no event caused.
+    announce: crate::announce::Announce,
     fan_out: BuffFanOut,
     /// THE PARTY-EXPERIENCE GATE. Sticky rather than windowed; it gates the `buffed` rung and
     /// nothing else, never puts a name on the roster and never sets `seen` — a fact that names
@@ -256,9 +271,12 @@ impl RosterModule {
             return;
         }
         self.never_member.insert(key.clone());
+        // The refusal itself is knowledge about a NAME and is not published. Only the eviction of
+        // a member the weakest rung had already admitted changes the roster anybody can read.
         if self.log.get(&key).map(|m| m.source) == Some("buffed") {
             self.log.remove(&key);
             self.admitted_keys.remove(&key);
+            self.announce.changed(self.seq);
         }
     }
 
@@ -281,10 +299,16 @@ impl RosterModule {
             self.seen = true;
             self.last_signal_ts = self.last_signal_ts.max(ev.ts());
             self.add(&key, &name, "buffed", ev.ts());
+            self.announce.changed(self.seq);
         }
     }
 
     fn fold_group(&mut self, ev: &Event) {
+        // EVERY GROUP LINE IS A PUBLISHED CHANGE, including the invite that is usually declined and
+        // the `selfJoin` that names nobody: both set `seen` and `lastSignalTs`, and both of those
+        // are in the snapshot. That is the whole point of `seen` — it is what turns a silent
+        // Everyone fallback into an honest "no roster yet".
+        self.announce.changed(self.seq);
         // An INVITE is not a membership fact — it may be (and in this log usually is) declined. It
         // still proves a group is in play, so it counts as a SIGNAL: with an invite on the board,
         // "no roster yet" is the honest chip rather than a silent Everyone.
@@ -414,6 +438,7 @@ impl EqModule for RosterModule {
         self.seen = false;
         self.last_signal_ts = 0;
         self.seq = 0;
+        self.announce.reset();
         self.party_exp = false;
         self.fan_out.reset();
         // The never-a-member set is NOT cleared with the roster: it is knowledge about which names
@@ -431,23 +456,38 @@ impl EqModule for RosterModule {
                 // `live_edits` drops every edit older than this boundary.
                 self.reset();
                 self.epoch_ts = ev.ts();
+                // Off `ev.seq()`, not `self.seq` — the reset just zeroed it. `spell_sets` carries
+                // the full argument: a cursor bumped off the zeroed field would land BELOW the
+                // seq a client still holds from the wiped character's snapshot, and the group
+                // would be cleared here and left on screen there.
+                self.announce.changed(ev.seq());
             }
             "offlineGap" => {
                 // The world stopped being observable. Nothing SAID the group broke — EQ never does
                 // — so every member is marked stale rather than removed, and stays in the
                 // allowlist.
                 let from_ts = ev.int("fromTs").unwrap_or(0);
+                // `stale` IS A PUBLISHED FIELD, so a member flipping it is a change a client draws.
+                // Counted rather than assumed: a gap with an empty roster, or one every member was
+                // already stale through, publishes nothing.
+                let mut flipped = false;
                 for m in self.log.values_mut() {
-                    if m.last_confirmed_ts <= from_ts {
+                    if m.last_confirmed_ts <= from_ts && !m.stale {
                         m.stale = true;
+                        flipped = true;
                     }
+                }
+                if flipped {
+                    self.announce.changed(self.seq);
                 }
                 self.party_exp = false;
                 self.fan_out.reset();
             }
+            // `You gain party experience!` — the game's own statement that you are in a group right
+            // now. IT NAMES NOBODY, so it opens the gate and touches nothing else: the header is
+            // emphatic that it never puts a name on the roster and never sets `seen`, which is
+            // exactly what makes it publish nothing.
             "expGain" => {
-                // `You gain party experience!` — the game's own statement that you are in a group
-                // right now. It names nobody, so it opens the gate and touches nothing else.
                 if ev.bool("party") {
                     self.party_exp = true;
                 }
@@ -460,10 +500,11 @@ impl EqModule for RosterModule {
         }
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — a group line, a heal burst that reached a
+    /// name, a pet evicted from the weakest rung, a gap that staled somebody, or a rebirth. See the
+    /// `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {
@@ -510,6 +551,10 @@ impl crate::Defines for RosterModule {
             return;
         };
         self.edits = list.iter().filter_map(RosterEdit::read).collect();
+        // `effective()` folds these into the published `members`, so a pushed edit list is a
+        // published change with no event behind it — the JOS-87 shape, announced now rather than
+        // waiting for whatever line happened to come next. See the `announce` field.
+        self.announce.changed(self.seq);
     }
 }
 

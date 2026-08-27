@@ -43,14 +43,25 @@ impl OverlayMining {
     /// Offer one event to the miner. A `castBegin` is the association ANCHOR; the message-bearing
     /// events (buffApply / spellEmote = landing, buffWearOff / illusionFade / buffFade = wears-off)
     /// are candidate messages associated to the nearest anchor within the window.
-    pub fn observe(&mut self, ev: &Event) {
+    /// ANSWERS WHETHER IT FED THE MINER (JOS-509). The mined overlay is published — it is the
+    /// `overlay` key of the buffs snapshot — so a line that reaches the miner may move it and one
+    /// that does not cannot. The answer is deliberately the CALL and not the miner's own verdict:
+    /// "unsure whether this mutated" is the case the announce law says to bump on.
+    pub fn observe(&mut self, ev: &Event) -> bool {
         match ev.kind_of() {
             Kind::CastBegin => {
                 let spell = ev.str(Key::Spell).unwrap_or_default().to_string();
                 self.miner.observe_cast(&spell, ev.ts());
+                true
             }
-            Kind::BuffApply | Kind::SpellEmote => self.note(ev, "landing"),
-            Kind::BuffWearOff | Kind::IllusionFade | Kind::BuffFade => self.note(ev, "wearsOff"),
+            Kind::BuffApply | Kind::SpellEmote => {
+                self.note(ev, "landing");
+                true
+            }
+            Kind::BuffWearOff | Kind::IllusionFade | Kind::BuffFade => {
+                self.note(ev, "wearsOff");
+                true
+            }
             // The AA potion quaff is a LANDING message the leveling analytics now claim as their own
             // kind. It fell through here as `unknown` before that rule existed and the overlay
             // learned it as a verified Bottle of Alternate Adventure landing (it is absent from
@@ -65,9 +76,11 @@ impl OverlayMining {
                 let t = message_text_of(ev.raw()).to_string();
                 if looks_landing_message(&t) {
                     self.miner.observe_message(&t, ev.ts(), "landing");
+                    return true;
                 }
+                false
             }
-            _ => {}
+            _ => false,
         }
     }
 

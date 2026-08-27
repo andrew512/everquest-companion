@@ -136,6 +136,24 @@ pub struct BuffsModule {
     /// copied rather than tidied, because a port that tidies is a port that has stopped matching.
     cur_seq: i64,
     cur_ts: i64,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`].
+    ///
+    /// THIS MODULE'S OWN `revision()` SAYS A COUNTER IS "the honest fix, not a cache", and names
+    /// why it was not taken: the state is mutated through a shared instance core with a dozen write
+    /// paths, and threading a counter through all of them is a change to the buff system the owner
+    /// has paused. NOTHING HERE IS THAT COUNTER. It is the same question asked one level up, where
+    /// `on_event` already has the whole event in front of it: three published things (`active`,
+    /// `stats`, `overlay`), a prelude that runs for every line, and a match whose arms are the
+    /// mutations. Each answers "could this have moved one of the three", the arms that could not
+    /// are named individually, and the ones nobody can answer without reopening the buff system
+    /// answer `true`. So it OVER-REPORTS ON A SUBSET, which is the announce law's own instruction
+    /// — and the subset excludes the catch-all arm, which on a melee round is where every line
+    /// lands.
+    ///
+    /// THE PRELUDE IS WHERE THE WIN ACTUALLY IS. `sweep_hygiene` runs once per event and finds
+    /// nothing to do on nearly all of them; asking it for an answer is what turns "buffs announces
+    /// on every line" into "buffs announces when a buff aged out".
+    announce: crate::announce::Announce,
 }
 
 impl BuffsModule {
@@ -159,6 +177,7 @@ impl BuffsModule {
             derived: Vec::new(),
             cur_seq: 0,
             cur_ts: 0,
+            announce: crate::announce::Announce::default(),
         }
     }
 
@@ -492,14 +511,21 @@ impl BuffsModule {
         active
     }
 
-    /// THE CHANGE SIGNAL, and it is honest about being COARSE. This module has no revision counter:
-    /// its state is mutated through a shared instance core with a dozen write paths, and threading a
-    /// counter through all of them is a change to the buff system the owner has paused. So it
-    /// reports the fold's own `seq`, which moves on EVERY event — it can never miss a change (the
-    /// property the view layer's correctness needs) and it over-reports (the property that costs).
-    /// What that costs is one re-cut of the buff and timer windows per serve beat on a busy tail,
-    /// over a row set of tens; it is named here rather than hidden, and the honest fix is the
-    /// counter, not a cache.
+    /// THE VIEW LAYER'S CHANGE SIGNAL — `foldsink::source_revision`, and NOT the announce cursor.
+    ///
+    /// It is honest about being COARSE. This module has no revision counter: its state is mutated
+    /// through a shared instance core with a dozen write paths, and threading a counter through all
+    /// of them is a change to the buff system the owner has paused. So it reports the fold's own
+    /// `seq`, which moves on EVERY event — it can never miss a change (the property the view layer's
+    /// correctness needs) and it over-reports (the property that costs). What that costs is one
+    /// re-cut of the buff and timer windows per serve beat on a busy tail, over a row set of tens.
+    ///
+    /// JOS-509 LEFT IT THAT WAY DELIBERATELY. The announce cursor beside it answers the same
+    /// question for a reader with a hugely different cost (a renderer re-fetching a snapshot and
+    /// re-rendering a tree, measured at 271-288 ms a push), and it answers it by over-approximating
+    /// per arm — which is sound for a dirty bit and would be a bet for a window whose remaining
+    /// times are a function of `now`. Two readers, two signals; fusing them would tie a view's
+    /// correctness to an audit made for somebody else's sake.
     #[must_use]
     pub fn revision(&self) -> i64 {
         self.seq
@@ -564,6 +590,7 @@ impl EqModule for BuffsModule {
 
     fn reset(&mut self) {
         self.seq = 0;
+        self.announce.reset();
         self.inst.reset();
         {
             let mut core = self.core.borrow_mut();
@@ -595,6 +622,7 @@ impl EqModule for BuffsModule {
             self.frame.close_hole();
             self.inst.clear_for_gap();
             self.pets.clear_for_gap();
+            self.announce.changed(self.seq);
             return;
         }
         if ev.kind() == "offlineGap" {
@@ -608,6 +636,7 @@ impl EqModule for BuffsModule {
             // login. `lastEventTs` is NOT advanced: the gap restates the Welcome's instant, which
             // the Welcome itself already recorded as a primary event.
             self.pets.clear_for_gap();
+            self.announce.changed(self.seq);
             return;
         }
         let (seq, ts) = (ev.seq(), ev.ts());
@@ -617,34 +646,60 @@ impl EqModule for BuffsModule {
         self.cur_ts = ts;
         // A log hole that no login ever explained: we lost the thread rather than the character
         // having left, so what was standing when it opened goes, and the pet bindings with it.
+        // THE PER-EVENT PRELUDE, AND WHETHER ANY OF IT PUBLISHED ANYTHING (JOS-509). All four of
+        // these run for EVERY line, which is precisely why this module used to announce on every
+        // line: the question was never asked. Each answers for itself now.
+        let mut published = false;
         if let Some(unexplained_before) = self.frame.observe(ev) {
             self.inst.drop_predating(unexplained_before);
             self.pets.clear_for_gap();
+            published = true;
         }
+        // NOT COUNTED: `pending` is a cast in flight and is not in `build_state` — dropping one
+        // that never landed changes nothing a client can read.
         self.inst.drop_unconfirmed_pending(ts);
-        self.inst
-            .sweep_hygiene(ts, self.frame.held_before_ts(), &core.stats, &self.pets);
+        published |=
+            self.inst
+                .sweep_hygiene(ts, self.frame.held_before_ts(), &core.stats, &self.pets);
 
         // Observed-message overlay mining: feed the anchor cast + any candidate message line so the
-        // miner accretes (message, spell) associations across replay AND live.
-        self.mining.observe(ev);
+        // miner accretes (message, spell) associations across replay AND live. The overlay IS
+        // published, so a line that reaches the miner counts.
+        published |= self.mining.observe(ev);
 
-        match ev.kind_of() {
+        // EVERY ARM ANSWERS THE SAME QUESTION: can this one move `active`, `stats` or `overlay`?
+        // The four that answer `false` move the ANCHORS, the pending cast, the pet bindings or the
+        // AA ownership stamp — real state, all of it, and none of it in the snapshot. Everything
+        // else says `true`, which is the over-approximation the announce law asks for on a subset
+        // that is genuinely small: on a melee round this match reaches `_` and none of it runs.
+        published |= match ev.kind_of() {
             // ── the cast lifecycle + activated AA ──
-            Kind::CastBegin => self.on_cast_begin(ev, &mut core),
-            Kind::SpellEmote => self.on_spell_emote(ev),
+            Kind::CastBegin => {
+                self.on_cast_begin(ev, &mut core);
+                true
+            }
+            Kind::SpellEmote => {
+                self.on_spell_emote(ev);
+                true
+            }
             // `<Name> begins casting <S>.` — an anchor ONLY for a caster on the externals allowlist
             // (default: nobody). The anchors enforce that; the event is folded either way so the
             // refusal lives in one place.
-            Kind::OtherCastBegin => core.anchors.note_other_cast(
-                ev.str(Key::Caster).unwrap_or_default(),
-                ev.str(Key::Spell).unwrap_or_default(),
-                ts,
-            ),
+            Kind::OtherCastBegin => {
+                core.anchors.note_other_cast(
+                    ev.str(Key::Caster).unwrap_or_default(),
+                    ev.str(Key::Spell).unwrap_or_default(),
+                    ts,
+                );
+                // An anchor is what a LATER landing is attributed by. It is not published.
+                false
+            }
             Kind::CastFizzle | Kind::CastInterrupted => {
                 let spell = ev.str(Key::Spell).unwrap_or_default().to_string();
                 self.inst.clear_pending_cast(&spell_key(&spell));
                 core.anchors.clear_cast(&spell);
+                // A cast that never landed opened nothing to retract — see `begin_cast`.
+                false
             }
             // `You activate Quick Buff.` is a SELF anchor that names no spell — a WINDOW, not a name
             // (owner amendment, 2026-08-09). It applies many spells at once with no cast line of
@@ -653,6 +708,8 @@ impl EqModule for BuffsModule {
                 if id_key(ev.str(Key::Name).unwrap_or_default()) == QUICK_BUFF {
                     core.anchors.note_quick_buff(ts);
                 }
+                // A window an anchor is read through — not published.
+                false
             }
             Kind::AaSpend => {
                 if self.permanent_illusion_owned_ts.is_none()
@@ -660,37 +717,80 @@ impl EqModule for BuffsModule {
                 {
                     self.permanent_illusion_owned_ts = Some(ts);
                 }
+                // The stamp decides how a LATER illusion is classified; no snapshot carries it.
+                false
             }
             // ── buff application / expiry ──
-            Kind::BuffApply => self.on_buff_apply(ev, &mut core),
+            Kind::BuffApply => {
+                self.on_buff_apply(ev, &mut core);
+                true
+            }
             // The wear-off emote prints to the buff HOLDER, so it clears the SELF instance. MANY
             // spells share one wear-off message, so it is resolved against the ACTIVE self set.
             Kind::BuffWearOff => {
                 let cands = wear_off_candidates(ev);
                 self.inst
                     .remove_shared_wear_off(&cands, SELF_KEY, ts, &mut core.stats, &self.pets);
+                true
             }
             // `Your illusion fades.` — only one illusion is ever active on self, so this removes
             // whichever illusion self buff is active. No spell name needed: the line is 27-way
             // ambiguous by design.
-            Kind::IllusionFade => self.inst.clear_self_illusion(&core.stats),
-            Kind::Heal => self.on_heal(ev, &mut core),
-            Kind::BuffFade => self.on_buff_fade(ev, &mut core),
-            Kind::PlayerDeath => self.inst.on_player_death(&core.stats, &self.pets),
+            Kind::IllusionFade => {
+                self.inst.clear_self_illusion(&core.stats);
+                true
+            }
+            Kind::Heal => {
+                self.on_heal(ev, &mut core);
+                true
+            }
+            Kind::BuffFade => {
+                self.on_buff_fade(ev, &mut core);
+                true
+            }
+            Kind::PlayerDeath => {
+                self.inst.on_player_death(&core.stats, &self.pets);
+                true
+            }
             // ── entity lifecycle (the who/what) ──
-            Kind::Charm => self.on_charm(ev),
-            Kind::PetClaim => self.on_pet_claim(ev),
-            Kind::Uncharm => self.on_uncharm(ev),
+            // THESE THREE ARE `true` BY THE UNSURE RULE rather than by audit. A charm or a claim
+            // rebinds an entity, and instances are held against entities — whether a rebinding
+            // censors a live row is a question about the buff system the owner has paused, so the
+            // announce answers it the safe way.
+            Kind::Charm => {
+                self.on_charm(ev);
+                true
+            }
+            Kind::PetClaim => {
+                self.on_pet_claim(ev);
+                true
+            }
+            Kind::Uncharm => {
+                self.on_uncharm(ev);
+                true
+            }
             Kind::Cc => {
                 let mob = ev.str(Key::Mob).unwrap_or_default().to_string();
                 self.pets.pet_target_key = Some(id_key(&mob));
                 self.pets.pet_target_display = Some(mob);
+                // Which mob your pet is on. It names the target a later landing binds to and is
+                // published nowhere.
+                false
             }
-            Kind::Death => self.on_death(ev, &mut core),
-            Kind::Zone => self.inst.on_zone(&core.stats, &mut self.pets),
-            _ => {}
-        }
+            Kind::Death => {
+                self.on_death(ev, &mut core);
+                true
+            }
+            Kind::Zone => {
+                self.inst.on_zone(&core.stats, &mut self.pets);
+                true
+            }
+            _ => false,
+        };
         drop(core);
+        if published {
+            self.announce.changed(self.seq);
+        }
         self.flush_expiries(seq, ts);
     }
 
@@ -715,16 +815,25 @@ impl EqModule for BuffsModule {
         let core_rc = Rc::clone(&self.core);
         let core = core_rc.borrow();
         self.inst.drop_unconfirmed_pending(now_ms);
-        self.inst
-            .sweep_hygiene(now_ms, self.frame.held_before_ts(), &core.stats, &self.pets);
+        let retired =
+            self.inst
+                .sweep_hygiene(now_ms, self.frame.held_before_ts(), &core.stats, &self.pets);
         drop(core);
+        // A BUFF RETIRED BY THE WALL CLOCK HAS NO EVENT BEHIND IT, and this is the case the module
+        // header calls the biggest thing a live tick does: a log whose last line was days ago served
+        // twelve buffs where the app served three. `Announce::changed` lands strictly above the fold
+        // position, so the sweep can announce a removal the log never mentioned — and a beat that
+        // retired nothing stays silent.
+        if retired {
+            self.announce.changed(self.seq);
+        }
         self.flush_expiries(self.cur_seq, self.cur_ts);
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — a landing, a wear-off, a retirement, a
+    /// mined message, or a rebirth. See the `announce` field and `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {

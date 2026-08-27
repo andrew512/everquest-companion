@@ -122,6 +122,22 @@ pub struct AlertsModule {
     early: EarlyWarnings,
     /// Fires accumulated since the ingest last drained them — `pending`, one indirection out.
     pending: Vec<Fire>,
+    /// THE ANNOUNCE CURSOR (JOS-509) — see [`crate::announce`].
+    ///
+    /// FOUR PUBLISHED THINGS AND A LOT OF MACHINERY BEHIND THEM. `defs`, `history`, `spellLastCast`
+    /// and `poisonSlowSeen` are the snapshot; the compiled rules, the cooldown clocks
+    /// (`RuleSet::last_fire`), the armed early warnings and the pending fire queue are not. So the
+    /// arms that say nothing here are the interesting ones: an event that matches a rule but is
+    /// swallowed by a cooldown, or taken by an early warning to speak later, writes no history and
+    /// changes nothing a client can read — and a fire LEAVING the process is `take_fires`, a
+    /// different door entirely.
+    ///
+    /// AND THE DEFINE ANNOUNCES, which is new. `alerts.define` replaces the published `defs` and
+    /// advances no log seq (the JOS-87 shape), so before this ticket it reached a client only when
+    /// the next log line happened to move the module's `seq` — and on an idle log, never. The
+    /// cursor lands strictly above the fold position, so it can announce a change with no event
+    /// behind it; see `crate::announce`'s property 3.
+    announce: crate::announce::Announce,
 }
 
 impl AlertsModule {
@@ -162,6 +178,9 @@ impl AlertsModule {
                 self.spell_last_cast.remove(&k);
             }
         }
+        // Past both refusals — a line that is not a cast, and a stamp that went backwards — so the
+        // published recency map really moved.
+        self.announce.changed(self.seq);
     }
 
     /// `notePoisonSlow`. `effect` is the unambiguous half of a poison proc: the two shared emotes
@@ -186,6 +205,7 @@ impl AlertsModule {
             count: self.poison_slow_seen.as_ref().map_or(0, |p| p.count) + 1,
             last_target,
         });
+        self.announce.changed(self.seq);
     }
 }
 
@@ -200,6 +220,7 @@ impl EqModule for AlertsModule {
     /// repopulates it.
     fn reset(&mut self) {
         self.seq = 0;
+        self.announce.reset();
         self.spell_last_cast.clear();
         self.poison_slow_seen = None;
         // Only the per-character firing bookkeeping — the DEFS survive, exactly as the TS's do:
@@ -229,8 +250,15 @@ impl EqModule for AlertsModule {
         if !live {
             return;
         }
-        self.pending
-            .append(&mut self.rules.fire(ev, &mut self.early));
+        // A FIRE IS THE ONLY THING THAT WRITES THE PUBLISHED HISTORY — `RuleSet::fire` calls
+        // `record` exactly once per fire it returns — so a non-empty batch is the change and an
+        // empty one is a rule that matched and was swallowed by a cooldown, or taken by an early
+        // warning to speak later, or simply an event no rule wanted.
+        let mut fired = self.rules.fire(ev, &mut self.early);
+        if !fired.is_empty() {
+            self.announce.changed(self.seq);
+        }
+        self.pending.append(&mut fired);
     }
 
     /// THE WALL-CLOCK HEARTBEAT — `onTick`, and it exists for ONE thing: the early-warning offset,
@@ -262,14 +290,19 @@ impl EqModule for AlertsModule {
         for due in self.early.tick(now_ms, timer_rows, &self.rules) {
             if let Some(fire) = self.rules.fire_warning(&due, now_ms) {
                 self.pending.push(fire);
+                // A WARNING SPOKEN BY THE HEARTBEAT WRITES HISTORY WITH NO LINE BEHIND IT, and
+                // `fire_warning` records exactly when it answers `Some` — a warning the def no
+                // longer wants, or one a cooldown swallows, writes nothing and says nothing.
+                self.announce.changed(self.seq);
             }
         }
     }
 
-    /// THE DIRTY BIT (JOS-487) — the same cursor `snapshot` publishes, without building the
-    /// state to read it. See `EqModule::published_seq`.
+    /// THE DIRTY BIT (JOS-487, made honest by JOS-509) — a cast that moved the recency map, a slow
+    /// proc, a fire that wrote history, or a pushed def set. See the `announce` field and
+    /// `crate::announce`.
     fn published_seq(&self) -> Option<i64> {
-        Some(self.seq)
+        Some(self.announce.cursor())
     }
 
     fn snapshot(&self) -> Value {
@@ -312,6 +345,10 @@ impl Defines for AlertsModule {
             return;
         };
         self.rules.set_defs(list.clone());
+        // THE PUBLISHED `defs` JUST CHANGED WITH NO EVENT BEHIND IT (JOS-87's shape, JOS-509's
+        // cursor). Before this the module could only announce it when the next log line moved
+        // `seq` — and on an idle log, never.
+        self.announce.changed(self.seq);
     }
 }
 
