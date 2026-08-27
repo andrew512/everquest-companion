@@ -44,6 +44,10 @@
 //! against.
 
 pub mod combat;
+/// The CLIENT's string table (`dbstr_us.txt`), parsed down to its spell-category namespace — the
+/// words behind the integer ids `spells_us.txt` stores (JOS-507). PURE over a string, like
+/// `spells_us`; the file belongs to `engined::spells`, which owns the install directory both sit in.
+pub mod dbstr;
 pub mod epoch;
 pub mod event;
 pub mod jsfn;
