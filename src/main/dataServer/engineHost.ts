@@ -173,7 +173,8 @@ export function engineSupervisorStatus(): EngineStatus | null {
  *
  * It NARRATES ITS OWN FAILURE. A resolver that answers null in silence is how "the feature is off"
  * and "the feature is broken" become the same observation; naming every path it looked at makes
- * the dev's next move obvious (`cargo build -p engined`).
+ * the dev's next move obvious (`cargo build --release -p engined` — RELEASE since JOS-520, which is
+ * the profile a dev tree resolves unless a launch opts into debug by name).
  */
 function resolveEngineBinary(): string | null {
   const env: EngineBinaryEnv = {
