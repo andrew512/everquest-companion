@@ -212,28 +212,11 @@ interface ProbeState {
 }
 
 /**
- * WHICH FRAMES BELONG TO THE CONNECTION RATHER THAN TO THIS CONVERSATION (JOS-522).
- *
- * A `Record` KEYED BY THE UNION, not a `Set` and not a switch, and that is the whole safety
- * argument: TypeScript requires every arm of `EngineMessage['kind']` to appear here, so a frame kind
- * added to the schema cannot be quietly treated as a protocol violation — the build stops on this
- * table and somebody has to say which side of the line it falls on. A `Set<string>` would have
- * accepted the same typo forever.
- *
- * WHY THE PROBE HAS TO KNOW. The engine broadcasts to EVERY open connection with no subscription
- * filter (`engine/crates/engined/src/world.rs broadcast()`), so a probe socket that happens to be
- * open while a fold reports progress receives an `epoch` where it expected its own reply. Treating
- * that as `unexpected` is what killed 381 healthy engines on 2026-08-27: the supervisor read a
- * broadcast as a protocol violation and restarted a mid-catch-up engine, which then started its
- * catch-up again. The five `true` rows are exactly the frames `broadcast()` sends — an `epoch`
- * (attach bumps and every fold measurement), a `fire`, a `conCard`, a `moduleChanged` and a
- * `knowledgeMiss` — and they are the same family `shared/dataServer/broadcasts.ts` names, plus the
- * `epoch` that file deliberately leaves to `noteEpoch`.
- *
- * EVERYTHING ELSE STAYS FATAL, and the `false` rows are not an oversight either. `reset` and `diff`
- * carry an `id` and answer a subscription; this connection never subscribes, so one arriving here is
- * a genuine violation and is still reported as one. The probe gets more tolerant about frames that
- * were never addressed to it and not one bit more tolerant about anything else.
+ * Frames the engine broadcasts to every open connection (world.rs `broadcast()`); the probe skips
+ * these and keeps waiting, because they are addressed to the connection, not to its request.
+ * `reset`/`diff` stay fatal: this connection never subscribes, so receiving one is a real violation.
+ * A `Record` keyed by the kind union, so a new schema kind stops the build here instead of being
+ * silently classed either way.
  */
 const CONNECTION_WIDE: Readonly<Record<EngineMessage['kind'], boolean>> = {
   hello: false,
@@ -248,14 +231,8 @@ const CONNECTION_WIDE: Readonly<Record<EngineMessage['kind'], boolean>> = {
   moduleChanged: true
 }
 
-/**
- * Skip a frame that was addressed to the connection rather than to the probe.
- *
- * IT DOES NOT TOUCH THE CLOCK, which is the rule that keeps this from becoming a hole in the
- * timeout: the single `opts.timer` above bounds the WHOLE conversation, and a peer that streams
- * progress frames forever without ever answering `session.health` still fails on `timeout` at the
- * same 5 s it always did. Skipping means "keep waiting", never "wait again".
- */
+/** Skipping never resets the conversation timeout: a peer that streams broadcasts forever without
+ *  answering still fails at the same 5 s. */
 function isConnectionWide(msg: EngineMessage): boolean {
   return CONNECTION_WIDE[msg.kind]
 }
