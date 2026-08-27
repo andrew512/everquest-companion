@@ -16,7 +16,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { blankNonCode, complexityOf, measureRustSource } from '../scripts/rustFactoring.mjs'
@@ -28,6 +28,7 @@ import {
   isClean,
   measureTree,
   readBaseline,
+  rustSources,
   writeBaseline,
   type Baseline,
   type Violation,
@@ -265,6 +266,38 @@ test('the seeded register round-trips: written, read back, and clean against its
 })
 
 // ── the live claim ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A comment wave, applied to a string: delete every WHOLE-LINE comment, then staple a fat new
+ * header on the front. Which lines are whole-line comments comes from the blanked text, so a `//`
+ * living inside a string literal is never mistaken for one and never deleted.
+ */
+function commentWave(src: string): string {
+  const blanked = blankNonCode(src).split('\n')
+  const kept = src
+    .split('\n')
+    .filter((line, i) => !(blanked[i].trim() === '' && line.trim() !== ''))
+  const header = Array.from({ length: 40 }, () => '//! Another line of prose nobody asked for.')
+  return [...header, ...kept, '// and a trailing thought.'].join('\n')
+}
+
+test('THE DISJOINTNESS CLAIM: a comment wave over the real engine moves no number', () => {
+  // The register was seeded while JOS-524 pruned comments across every engine crate in a parallel
+  // worktree. The two are only disjoint if comments genuinely cannot reach these counters, so this
+  // asserts it over all 145 real files rather than on a sample: delete every comment line in the
+  // engine, add forty more, and every file length, function length and complexity is unchanged.
+  let files = 0
+  for (const path of rustSources(ENGINE_DIR)) {
+    files++
+    const src = readFileSync(path, 'utf8')
+    const before = measureRustSource(src)
+    const after = measureRustSource(commentWave(src))
+    const shape = (m: typeof before): string =>
+      `${m.lines}|${m.functions.map((f) => `${f.name}:${f.lines}:${f.complexity}`).join(',')}`
+    assert.equal(shape(after), shape(before), `a comment pass moved a number in ${path}`)
+  }
+  assert.ok(files > 100, `expected the whole engine, measured ${files} files`)
+})
 
 test('the committed register describes the engine as it stands today', () => {
   const { violations, unreadable } = measureTree(ENGINE_DIR)
