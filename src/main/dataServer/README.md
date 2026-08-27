@@ -537,6 +537,37 @@ session, not one per death. (3) A breadcrumb per death (`engine:cycled`, beside 
 carrying a kind `TELEMETRY_BREADCRUMB_KINDS` does not hold, and the ingest lambda runs that same
 shared file — so the server takes the new member before a client that emits it ships.
 
+## WHICH ENGINE: RELEASE BY DEFAULT, DEBUG BY OPT-IN (JOS-520)
+
+**The incident.** `cargo test` writes `engine/target/debug/engined.exe` as a side effect of running
+the engine's own unit tests. The resolver probed `target/debug` BEFORE `target/release` on purpose
+— "a developer with a fresh `cargo build` means to run THAT binary" — so the first time anybody ran
+`cargo test` in the owner's checkout, his dev app silently switched engines on the next restart:
+spell DB **4050 ms instead of 469 ms**, parse ~10× slower, catch-up in minutes on a log that folds
+in seconds. The only tell in the product was one dev-log line. The old comment had predicted it.
+
+**The ruling** (owner, verbatim): *it should not do that unless we are opting into performance
+testing and then afterwards it should swap back. or it should be a separate build path so they
+don't interact.*
+
+**What it is now.** The dev tree contributes its **release** candidate only. `target/debug` is a
+candidate only when a launch names it: `EQC_ENGINE_PROFILE=debug`, read once per resolution in
+`engineHost.ts` and handed to `engineBinaryCandidates` as data (`EngineBinaryEnv.profile`), where an
+opt-in puts debug FIRST. Nothing writes the choice down, so **"afterwards it should swap back" needs
+no mechanism** — the next launch without the variable is on the release engine. A value that is
+neither `debug` nor `release` is refused out loud and resolves release as usual.
+
+**And a non-release engine is never quiet again.** `engineProfileNotice` (pure) composes one
+`logWarn` line whenever the binary that won is not a release build — the profile, the opt-in that
+selected it, the measured cost, and how to undo it. It is silent for the ordinary launch and for
+every packaged one.
+
+**This is not the gate rule below.** That rule is about a flag deciding *who does a job*; this
+selects *which binary does the same job*, and absence still resolves an engine.
+
+**Untouched:** the packaged candidates (`resources/engine/engined.exe` first — `tests/
+enginePackaging.test.mts`), and the e2e override, which still outranks everything under `EQ_E2E=1`.
+
 ## A FLAG IS NOT "AN ENGINE EXISTS" (JOS-496 — read this before adding a gate)
 
 The flags are gone (JOS-499) and this section stays, because the MISTAKE outlives them and the
