@@ -125,6 +125,25 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.12.0',
+    date: '2026-08-26',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Scrolling no longer stutters during combat. The app was quietly redrawing almost every panel ten times a second whenever your log was busy - it now redraws only what actually changed, batched to the display’s own rhythm, and the busiest page went from a fifth of the machine’s attention to under three percent. Hover cards also stopped piling up while you scroll: sweeping the pointer across a list opens at most one.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Search your spells by type, just like the game’s own window - type “tap” and get every tap you can cast, by level, with category and subcategory shown, scoped to your class combo.'
+      },
+      {
+        kind: 'new',
+        text: 'Every spell name in the app is now a link. Click one and get its page: the upgrade line it belongs to, the level YOUR combo gets each step, and every class that learns it.'
+      }
+    ]
+  },
+  {
     version: '1.11.0',
     date: '2026-08-26',
     entries: [
