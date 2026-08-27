@@ -70,6 +70,9 @@ import {
   type ViewDescriptor
 } from './protocol.generated'
 import { createBroadcasts, deliver, listen, type Broadcasts } from './broadcasts'
+// THE PER-REQUEST DEADLINE's timer and its number, in the one module that touches a clock — see
+// this file's header for what it is for, and that one's for why it is not written inline.
+import { REQUEST_DEADLINE_MS, armDeadline } from './deadline'
 import { TransportError, type Transport } from './transport'
 import { EngineError, RESULT_GUARDS, type ParamsFor, type RequestOp, type ResultFor } from './ops'
 import { LOADING, applyDiff, type ViewState } from './viewWindow'
@@ -77,19 +80,6 @@ import { LOADING, applyDiff, type ViewState } from './viewWindow'
 export { EngineError, OPS_ARE_EXHAUSTIVE } from './ops'
 export type { OpsAreExhaustive, ParamsFor, RequestOp, ResultFor } from './ops'
 export type { ViewState } from './viewWindow'
-
-/**
- * How long one request may go unanswered before this client gives up on it.
- *
- * GENEROUS ON PURPOSE, and the number is chosen against the engine's own door rather than against a
- * round trip. `SNAPSHOT_PATIENCE` in `engine/crates/engined/src/world.rs` is 5 s — an engine whose
- * fold cannot answer refuses at five seconds and says so — so anything under that would be this
- * client racing a refusal that is already on its way, and every millisecond above the real wait is
- * spent only on an engine that is never going to answer. A healthy loopback round trip to a process
- * that has folded the log is sub-millisecond; the shapes in between are a fold answering between its
- * own read boundaries, which is bounded by one slice of a scan.
- */
-const REQUEST_DEADLINE_MS = 15_000
 
 // ---- what a caller sees -------------------------------------------------------------------------
 
@@ -368,30 +358,14 @@ function sendRequest<O extends RequestOp>(
   params: ParamsFor<O>
 ): Promise<ReplyResult> {
   return new Promise<ReplyResult>((resolve, reject) => {
-    s.pending.set(id, { op, resolve, reject, deadline: armDeadline(s, id, op) })
+    const deadline = armDeadline(() => {
+      onDeadline(s, id, op)
+    })
+    s.pending.set(id, { op, resolve, reject, deadline })
     // The registry above is what makes this cast true: `op` and `params` are drawn from the same
     // wire union this is asserting into, and TypeScript simply cannot see that through a generic.
     send(s, { id, op, params } as unknown as ClientMessage)
   })
-}
-
-/**
- * ARM ONE REQUEST'S DEADLINE — see the header for why it exists and why the number is what it is.
- *
- * IT IS UNREF'D WHERE THAT MEANS ANYTHING. This module is bundled into the renderer as well as into
- * main, and only Node's timer has the method: a browser's `setTimeout` answers a number. So the call
- * is made through a shape test rather than a platform assumption — and it matters, because a pending
- * request must never be the reason an Electron main process refuses to quit.
- */
-function armDeadline(s: ClientState, id: RequestId, op: RequestOp): ReturnType<typeof setTimeout> {
-  const handle = setTimeout(() => {
-    onDeadline(s, id, op)
-  }, REQUEST_DEADLINE_MS)
-  const timer: unknown = handle
-  if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
-    ;(timer as { unref: () => void }).unref()
-  }
-  return handle
 }
 
 /**
@@ -405,13 +379,13 @@ function armDeadline(s: ClientState, id: RequestId, op: RequestOp): ReturnType<t
  * because a folding engine is never given up on.
  */
 function onDeadline(s: ClientState, id: RequestId, op: RequestOp): void {
-  const pending = s.pending.get(id)
+  // THROUGH THE SAME DOOR as a reply and an error reply, even though this one's timer has already
+  // fired and clearing it is a no-op: one settlement path is what makes "the map and the timer go
+  // together" a property of the code rather than a thing three functions have to remember.
+  const pending = takePending(s, id)
   if (pending === undefined) return
-  s.pending.delete(id)
   s.debug(`${op} (request ${id}) went unanswered for ${REQUEST_DEADLINE_MS} ms - given up on`)
-  pending.reject(
-    new EngineError('timeout', `the engine did not answer ${op} within ${REQUEST_DEADLINE_MS} ms`, id)
-  )
+  pending.reject(new EngineError('timeout', `the engine did not answer ${op} in time`, id))
 }
 
 function onReply(s: ClientState, reply: Reply): void {
