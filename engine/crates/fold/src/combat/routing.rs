@@ -45,7 +45,8 @@ use crate::combat::lifecycle::ensure_encounter;
 use crate::combat::procdetect::base_lane_name;
 use crate::combat::state::EngineState;
 use crate::combat::world::Resolved;
-use eqlog::names::id_key;
+use eqlog::names::id_key_ref;
+use std::borrow::Cow;
 
 /// How a damage event `A → B` is attributed given the pet-name set.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,8 +98,11 @@ impl Attribution {
 ///   ANY mob → member is IGNORED, unchanged: incoming-on-members is a real feature and explicitly
 ///     out of scope — sources first, one wave at a time.
 pub fn classify(st: &EngineState, attacker: &str, target: &str) -> Attribution {
-    let a_key = id_key(attacker);
-    let b_key = id_key(target);
+    // BORROWED (JOS-506). This function is the busiest identity question in the fold — the damage,
+    // miss and resist probes each ask it of every line — and every answer but the `OutPet` one is
+    // dropped after a comparison or a set lookup. Only the branch that RETAINS the key pays for it.
+    let a_key = id_key_ref(attacker);
+    let b_key = id_key_ref(target);
     if a_key == "you" {
         // You → anything (including a pet name, which is then a hostile twin) is outgoing.
         return if b_key == "you" {
@@ -108,16 +112,16 @@ pub fn classify(st: &EngineState, attacker: &str, target: &str) -> Attribution {
         };
     }
     let b_you = b_key == "you";
-    if st.pet_names.contains(&a_key) {
+    if st.pet_names.contains(a_key.as_ref()) {
         if b_you {
             return Attribution::Incoming; // pet-name → You is always incoming
         }
-        if st.known_players.contains(&b_key) || st.roster.admitted.contains(&b_key) {
+        if st.known_players.contains(b_key.as_ref()) || st.roster.admitted.contains(b_key.as_ref()) {
             return Attribution::Ignore; // …but never AT a player, nor at a group-mate
         }
         let ambiguous = a_key == b_key; // same-name twin: cannot tell pet from twin
         return Attribution::OutPet {
-            pet_key: a_key,
+            pet_key: a_key.into_owned(),
             pet_name: attacker.to_string(),
             ambiguous,
         };
@@ -125,11 +129,11 @@ pub fn classify(st: &EngineState, attacker: &str, target: &str) -> Attribution {
     // A GROUP MEMBER is the attacker. Checked BEFORE the incoming rule so a member's hit ON you is
     // dropped rather than filed as an enemy's; checked AFTER the pet rules so a charmed mob that
     // shares a member's name still attributes as your pet.
-    if st.roster.admitted.contains(&a_key) {
-        if b_you || st.pet_names.contains(&b_key) {
+    if st.roster.admitted.contains(a_key.as_ref()) {
+        if b_you || st.pet_names.contains(b_key.as_ref()) {
             return Attribution::Ignore;
         }
-        if st.known_players.contains(&b_key) || st.roster.admitted.contains(&b_key) {
+        if st.known_players.contains(b_key.as_ref()) || st.roster.admitted.contains(b_key.as_ref()) {
             return Attribution::Ignore;
         }
         return Attribution::OutMember;
@@ -185,7 +189,7 @@ fn out_source(st: &mut EngineState, attacker: &str, kind: OutKind, ts: i64) -> S
             name: "You".to_string(),
             kind: SourceKind::You,
         },
-        OutKind::Member => other_source(st, attacker, &id_key(attacker), true),
+        OutKind::Member => other_source(st, attacker, &id_key_ref(attacker), true),
         OutKind::Pet => {
             let inst = match st.world.pet_instance(attacker) {
                 Some(i) => i,
@@ -275,7 +279,7 @@ pub fn route(st: &mut EngineState, ev: &DamageEvent) -> Option<Attribution> {
     // resist probes as well, and a pure decision that also mutated state would count one swing three
     // times.
     if at == Attribution::OutYou {
-        st.note_struck(&id_key(&ev.target));
+        st.note_struck(&id_key_ref(&ev.target));
     }
     // BEFORE the ignore gate, and before the outgoing/incoming split: a bound ally pet swinging at
     // YOU classifies as `Incoming` rather than `Ignore`, and that line is the strongest soft-hostile
@@ -299,7 +303,7 @@ pub fn route(st: &mut EngineState, ev: &DamageEvent) -> Option<Attribution> {
 
     // Twin evidence: You→pet-name, or same-name→same-name, proves a hostile twin co-exists with the
     // pet; ensure the world model has a second instance so the two resolve to distinct identities.
-    if at == Attribution::OutYou && st.pet_names.contains(&id_key(&ev.target)) {
+    if at == Attribution::OutYou && st.pet_names.contains(id_key_ref(&ev.target).as_ref()) {
         st.world.note_twin_evidence(&ev.target, ev.ts);
         st.drain_retirements();
     }
@@ -392,7 +396,7 @@ fn route_outgoing_damage(st: &mut EngineState, ev: &DamageEvent, at: &Attributio
         ambiguous = *amb;
         // The pet is trading blows with its target — record that engagement for death case (b).
         st.world
-            .note_pet_engagement(&ev.attacker, &id_key(&ev.target));
+            .note_pet_engagement(&ev.attacker, &id_key_ref(&ev.target));
         // A pet LANDING a hit is pet-shaped evidence (see the miss and resist twins).
         st.charm.note_pet_evidence(pet_key);
     }
@@ -566,7 +570,7 @@ fn route_outgoing_miss(st: &mut EngineState, ev: &MissLine, fold: &MissFold, kin
     // A pet WHIFFING is every bit as much proof it is fighting for us as a landed hit. A MEMBER's
     // whiff proves nothing about charm — they are a player, bound by a group line, not by evidence.
     if kind == OutKind::Pet {
-        st.charm.note_pet_evidence(&id_key(&ev.attacker));
+        st.charm.note_pet_evidence(&id_key_ref(&ev.attacker));
     }
     both(st, ev.ts, true, |agg| agg.add_out_miss(&src, fold));
     // Timeline: a miss tick lanes under `Melee` (a hollow mark in the renderer). The defender goes
@@ -673,7 +677,7 @@ pub fn route_resist(st: &mut EngineState, ev: &ResistLine) {
         return;
     }
 
-    let Some(kind) = resist_caster(st, &id_key(&ev.caster)) else {
+    let Some(kind) = resist_caster(st, &id_key_ref(&ev.caster)) else {
         // A resisted cast by a combatant the log named — the same widening the damage path got,
         // asked of the CASTER because a resist has no attacker/defender pair to classify.
         if route_other_resist(st, ev, CATEGORY) {
@@ -693,7 +697,7 @@ pub fn route_resist(st: &mut EngineState, ev: &ResistLine) {
     // Same corroboration as the damage/miss twins: a pet whose spell got resisted was casting for
     // us. A member's resisted cast is not charm evidence.
     if kind == OutKind::Pet {
-        st.charm.note_pet_evidence(&id_key(&ev.caster));
+        st.charm.note_pet_evidence(&id_key_ref(&ev.caster));
     }
     let spell = ev.spell.clone();
     both(st, ev.ts, true, |agg| {
@@ -763,13 +767,13 @@ pub fn route_heal(st: &mut EngineState, ev: &HealLine) {
     if ev.amount < 0 {
         return;
     }
-    let t_key = id_key(&ev.target);
-    let healer_key = ev.healer.as_deref().map(id_key);
+    let t_key = id_key_ref(&ev.target);
+    let healer_key = ev.healer.as_deref().map(id_key_ref);
     let is_you_tgt = t_key == "you";
-    let is_pet_tgt = !is_you_tgt && st.pet_names.contains(&t_key);
+    let is_pet_tgt = !is_you_tgt && st.pet_names.contains(t_key.as_ref());
 
     st.learn_player_key(healer_key.as_deref(), &t_key, is_you_tgt, is_pet_tgt);
-    let is_player_tgt = st.player_key.as_deref() == Some(t_key.as_str());
+    let is_player_tgt = st.player_key.as_deref() == Some(t_key.as_ref());
 
     // WHAT ONE HEAL LINE PROVES ABOUT WHO IS WHO, read off the same line the meter is about to
     // aggregate. KNOWN-PLAYER evidence, ONE direction only: a heal LANDING ON THE OWNER names its
@@ -879,7 +883,7 @@ pub fn route_mitigation(st: &mut EngineState, ev: &MitigationLine) {
 
 /// Heal on a hostile instance we are currently engaged with → enemy healing.
 fn add_hostile_heal(st: &mut EngineState, ev: &HealLine, healer_key: Option<&str>) {
-    let t_key = id_key(&ev.target);
+    let t_key = id_key_ref(&ev.target);
     // A KNOWN PLAYER is never a hostile, so their heals are never "enemy healing". `engage_hostile`
     // already keeps them out of `engaged`, which makes this unreachable for a player the heal stream
     // identified; it is stated anyway because the two rules answer the same question and must not be
@@ -937,9 +941,13 @@ fn add_hostile_heal(st: &mut EngineState, ev: &HealLine, healer_key: Option<&str
 /// points of magic damage by Lifespike.` — a lifetap resolving on its own caster, 60+ of them in one
 /// slice), and a same-name line is the pet model's twin-ambiguity case, not a fight. Booking it would
 /// credit somebody for hitting themselves.
-fn records_other(st: &mut EngineState, attacker: &str, target: &str) -> Option<String> {
-    let key = id_key(attacker);
-    let target_key = id_key(target);
+fn records_other<'a>(
+    st: &mut EngineState,
+    attacker: &'a str,
+    target: &str,
+) -> Option<Cow<'a, str>> {
+    let key = id_key_ref(attacker);
+    let target_key = id_key_ref(target);
     if key == target_key {
         return None;
     }
@@ -982,11 +990,11 @@ fn recordable_attacker(st: &mut EngineState, attacker: &str, key: &str) -> bool 
 /// `known_players`, so nothing here can un-file a player and hand a real person back to `engaged`.
 /// The worst it can do is hide a row.
 fn note_other_hostile(st: &mut EngineState, attacker: &str) {
-    let key = id_key(attacker);
+    let key = id_key_ref(attacker);
     if key.is_empty() || key == "you" || st.is_known_player(&key) {
         return;
     }
-    if st.pet_names.contains(&key) || st.ever_pet.contains(&key) {
+    if st.pet_names.contains(key.as_ref()) || st.ever_pet.contains(key.as_ref()) {
         return;
     }
     if !st.others.shaped(attacker, &key) {
@@ -1137,14 +1145,14 @@ fn note_ally_pet_evidence(st: &mut EngineState, attacker: &str, target: &str, ts
     if st.ally.idle() {
         return;
     }
-    let a_key = id_key(attacker);
+    let a_key = id_key_ref(attacker);
     if st.ally.bind_of(&a_key).is_none() {
         return;
     }
     st.ally.note_activity(&a_key, ts);
     // The bind is read again for its DISPLAY name and charmer at each of the two endings, because
     // `mark_ambiguous`/`soft_hostile` take `&mut st.ally` and a borrow of the bind cannot span one.
-    if a_key == id_key(target) {
+    if a_key == id_key_ref(target) {
         let said = st.ally.mark_ambiguous(&a_key);
         if said {
             if let Some(b) = st.ally.bind_of(&a_key) {
@@ -1159,7 +1167,7 @@ fn note_ally_pet_evidence(st: &mut EngineState, attacker: &str, target: &str, ts
         }
         return;
     }
-    if !st.ally_friendly(&id_key(target)) {
+    if !st.ally_friendly(&id_key_ref(target)) {
         return;
     }
     // `soft_hostile` HANDS BACK THE BIND IT RETIRED, which is exactly what the line needs to name —
@@ -1184,7 +1192,7 @@ fn route_ally_pet_damage(st: &mut EngineState, ev: &DamageEvent) {
     if st.ally.idle() {
         return;
     }
-    let Some(bind) = st.ally.creditable(&id_key(&ev.attacker)) else {
+    let Some(bind) = st.ally.creditable(&id_key_ref(&ev.attacker)) else {
         return;
     };
     let src = ally_pet_source(bind);
@@ -1211,7 +1219,7 @@ fn route_ally_pet_miss(st: &mut EngineState, ev: &MissLine, fold: &MissFold) {
     if st.ally.idle() {
         return;
     }
-    let Some(bind) = st.ally.creditable(&id_key(&ev.attacker)) else {
+    let Some(bind) = st.ally.creditable(&id_key_ref(&ev.attacker)) else {
         return;
     };
     let src = ally_pet_source(bind);
@@ -1250,7 +1258,7 @@ mod tests {
         let mut st = EngineState::new();
         st.set_player_name("Primitive");
         st.world.claim(pet, 0);
-        st.note_pet(&id_key(pet));
+        st.note_pet(&id_key_ref(pet));
         st
     }
 

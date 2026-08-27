@@ -56,7 +56,7 @@ use crate::combat::routing::{self, Attribution, HealLine, MissLine, MitigationLi
 use crate::combat::spellfacts::is_pet_summon_spell;
 use crate::combat::state::EngineState;
 use crate::event::{Event, Key, Kind};
-use eqlog::names::id_key;
+use eqlog::names::{id_key, id_key_ref};
 
 /// Fold one canonical event into the state machine.
 pub fn ingest_event(st: &mut EngineState, ev: &Event) {
@@ -635,7 +635,7 @@ fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
             );
             // YOUR avoided swing is still a swing ATTEMPT, and the mechanical proc denominator is
             // attempts — a proc that cannot fire on a miss still had the chance to.
-            if id_key(&attacker) == "you" {
+            if id_key_ref(&attacker) == "you" {
                 fold_both(st, ev.ts(), |agg, active| {
                     agg.windows.fold(
                         &WindowFold {
@@ -657,7 +657,7 @@ fn ingest_combat(st: &mut EngineState, ev: &Event) -> bool {
             // `<mob> resisted your <Charm>!` is the third way an armed cast fails to land. Only OUR
             // OWN outgoing resist counts; an incoming one — we shrugged off a mob's spell — says
             // nothing about what we were casting.
-            if !incoming && id_key(&caster) == "you" {
+            if !incoming && id_key_ref(&caster) == "you" {
                 // A FULLY-RESISTED cast landed NOTHING, so like a fizzle it must not stay in the window
                 // to claim the next proc of the same name. `forget` drops only an UNCLAIMED record,
                 // which is what keeps a partially-resisted AoE honest: if a target of the same firing
@@ -742,7 +742,7 @@ fn damage_origin(st: &mut EngineState, ev: &DamageEvent) -> Option<SpellOrigin> 
     if !proc_eligible_damage(&ev.dtype, &ev.skill) {
         return None;
     }
-    if id_key(&ev.attacker) != "you" {
+    if id_key_ref(&ev.attacker) != "you" {
         return None;
     }
     if routing::classify(st, &ev.attacker, &ev.target) != Attribution::OutYou {
@@ -850,7 +850,7 @@ fn fold_heal_analytics(st: &mut EngineState, ev: &HealLine, over_time: bool) {
     let Some(spell) = ev.spell.clone() else {
         return;
     };
-    if id_key(ev.healer.as_deref().unwrap_or("")) != "you" {
+    if id_key_ref(ev.healer.as_deref().unwrap_or("")) != "you" {
         return;
     }
     let quick_buff_ts = st.quick_buff_ts;
@@ -895,7 +895,7 @@ fn fold_heal_analytics(st: &mut EngineState, ev: &HealLine, over_time: bool) {
 fn to_damage_event(st: &EngineState, ev: &Event, attacker: String) -> DamageEvent {
     let verb = ev.str(Key::Verb).map(str::to_string);
     let mut skill = ev.str(Key::Skill).unwrap_or_default().to_string();
-    if id_key(&attacker) == "you" {
+    if id_key_ref(&attacker) == "you" {
         if let Some(lane) = st.specials.lane_skill(verb.as_deref()) {
             skill = lane.to_string();
         }
@@ -1124,7 +1124,7 @@ fn ingest_modifier(st: &mut EngineState, ev: &Event) {
         // log read as cast-less procs. Recording the activation is the whole fix: the burst is cast
         // evidence in a different shape.
         Kind::AaActivate => {
-            if id_key(ev.str(Key::Name).unwrap_or_default()) == QUICK_BUFF_AA {
+            if id_key_ref(ev.str(Key::Name).unwrap_or_default()) == QUICK_BUFF_AA {
                 st.quick_buff_ts = ev.ts();
             }
         }
@@ -1190,7 +1190,9 @@ fn bind_pet_buff_landing(st: &mut EngineState, ev: &Event) {
     }
     // A landing on YOURSELF is a self-buff the DB mislabels, never a pet — the third-person form can
     // still name you when another player's buff lands on you in the same second.
-    if id_key(&target) == st.player_key.clone().unwrap_or_default() {
+    // The `unwrap_or_default` is load-bearing and is kept verbatim: with no player key known yet the
+    // comparison is against the EMPTY string, which a whitespace-only target's key also is.
+    if id_key_ref(&target).as_ref() == st.player_key.as_deref().unwrap_or_default() {
         return;
     }
     bind_pet_claim(st, &target, ev.ts(), "petBuff");
