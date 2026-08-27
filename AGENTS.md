@@ -483,6 +483,15 @@ Two boundary laws hold this up, and both FAIL THE BUILD rather than relying on m
   `src/renderer/**`, exemptions inline and reasoned, count only ever shrinks
   (`tests/domainMunging.test.mts`).
 
+**ENGINE COMMENTS STATE THE RULE, NOT THE STORY (owner, 2026-08-27).** A comment earns its
+place by naming a design rule or a constraint the code cannot show — 1-3 lines, at most a
+one-line why ("Epoch bumps under the world lock so the atomic and the epoch never disagree").
+Module headers say what the module is and the rules it enforces, in single-digit lines. What
+does NOT go in a comment: build history, `JOS-nnn` breadcrumbs, alternatives-considered
+essays, restatements of the next line, or pointers to another file's comment header. **Git
+carries provenance; comments carry the rule.** A fact you cannot verify from the code — an
+observed game behaviour, a measured threshold — is kept, but in one line.
+
 The world-model laws below are still the law — they describe what the fold MEANS, and every one of
 them was ported to Rust and proven deep-equal on six slices of the real log before the TypeScript
 copy was deleted. Where one names a TypeScript file that is gone, read it for the RULE.
