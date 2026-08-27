@@ -32,6 +32,7 @@ import {
 import { usePerfHud } from '../lib/perfHud'
 import { useEnginePerf } from '../lib/enginePerfHud'
 import PerfEngineSection from './PerfEngineSection'
+import PerfRenderSection from './PerfRenderSection'
 import { Tooltip } from '../lib/Tooltip'
 
 /** Chip colour per severity. 'normal' stays the bar's own quiet grey — a HUD you can leave on
@@ -151,6 +152,12 @@ function PerfDetail({
           from the table above by construction — this is where it appears (owner ruling 19). It
           renders nothing at all in a build with no engine. */}
       <PerfEngineSection sample={engine} />
+      {/* RENDERER COMMITS (JOS-513) — the one measurement in this popover that is about the window
+          you are looking at rather than about a process. Dev-only: it renders nothing at all in a
+          build, the same way the engine section above renders nothing without an engine. It takes
+          `open` for that section's reason, one level down: the read is armed only while somebody is
+          looking. */}
+      <PerfRenderSection open={open} />
       <Typography variant="caption" sx={{ color: SEVERITY_COLOR[severity] }}>
         {severity === 'normal'
           ? 'The app is keeping up. High CPU here with a low event-loop figure is work, not lag.'

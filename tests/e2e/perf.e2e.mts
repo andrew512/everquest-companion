@@ -141,6 +141,15 @@ async function stepPopover(page: Page): Promise<void> {
     text.slice(0, 160)
   )
   check('…counts the renderer’s own long tasks', /long tasks/i.test(text))
+  // THE DEV-ONLY HALF, PROVEN BY ITS ABSENCE (JOS-513). This spec runs a production-shaped build
+  // (`buildIfStale` → `electron-vite build`, where `import.meta.env.DEV` is a literal `false`), so
+  // the render meter's whole story — no Profiler in the tree, no ring, no poll, no row — is exactly
+  // what an installed app does. In a dev window this section is present and reads commits/second;
+  // here it must not exist at all, and only a real build can say that.
+  check(
+    '…and the dev-only render-commit rows are ABSENT from a production build of the same popover',
+    (await countOf(page, '[data-testid="perf-render"]')) === 0
+  )
   check(
     '…and draws the last two minutes as a sparkline with a real path',
     (await page.evaluate(
