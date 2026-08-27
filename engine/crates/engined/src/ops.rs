@@ -670,11 +670,19 @@ impl Session {
                         // Every code the wire can carry has a column, because both lists are the
                         // same sixteen classes; `filter_map` is the total function that says so
                         // without a panic standing behind it.
-                        let columns: Vec<usize> = params
+                        // SORTED AND DEDUPED, which is where this list's BOUND lives. The schema
+                        // carries no `maxItems` (it would generate a tuple union in TypeScript that
+                        // no ordinary array satisfies), so a stranger may send the same class ten
+                        // thousand times; after this it is at most sixteen entries by construction.
+                        // A repeated class was never meaningful, and the scope test below is a
+                        // linear scan per row — an unbounded one would be the whole cost of the op.
+                        let mut columns: Vec<usize> = params
                             .classes
                             .iter()
                             .filter_map(|c| fold::spells_us::class_column(&c.to_string()))
                             .collect();
+                        columns.sort_unstable();
+                        columns.dedup();
                         let limit = clamp_spell_rows(params.limit);
                         let offset = params
                             .offset
@@ -1783,6 +1791,42 @@ mod tests {
         assert_eq!(result.limit, MAX_SPELL_ROWS);
         // No class scope is every class, so the wizard's row is here too.
         assert_eq!(result.total, 3);
+    }
+
+    #[test]
+    fn a_repeated_class_is_deduped_rather_than_scanned_ten_thousand_times() {
+        // THE BOUND ON THIS LIST LIVES HERE rather than in the schema: a `maxItems` with no
+        // `minItems` anchor generates a tuple union in TypeScript that no ordinary array satisfies,
+        // and this list must be allowed to be empty. So the columns are sorted and deduped, and a
+        // stranger sending the same class ten thousand times gets the same answer as one sending it
+        // once — for the same work, which is the half that matters.
+        let dir = staged_install("dedupe");
+        let (world, mut session) = table();
+        world.attach(
+            dir.join("Logs")
+                .join("eqlog_Primitive_freeport.txt")
+                .to_string_lossy()
+                .as_ref(),
+            None,
+        );
+        let mut answer = |classes: &[ClassAbbr]| {
+            let messages = sent(session.dispatch(&world, spells_search(65, None, classes, None)));
+            let [EngineMessage::Reply(reply)] = messages.as_slice() else {
+                panic!("a reply");
+            };
+            let ReplyResult::SpellsSearchResult(result) = &reply.result else {
+                panic!("a spells.search result");
+            };
+            result
+                .spells
+                .iter()
+                .map(|s| s.name.clone())
+                .collect::<Vec<_>>()
+        };
+        let once = answer(&[ClassAbbr::Shd]);
+        let many = answer(&vec![ClassAbbr::Shd; 10_000]);
+        assert_eq!(once, many);
+        assert_eq!(once, ["Siphon Strength", "Lifetap"]);
     }
 
     // ── logs.setDir / logs.list (owner ruling 21, decision sheet 1a — JOS-498) ─────────────────

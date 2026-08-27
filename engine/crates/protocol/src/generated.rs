@@ -8,7 +8,7 @@
 //! and a schema edit that lands without regenerating turns the protocol-codegen staleness
 //! test red on this side and tests/protocolSchema.test.mts red on the other.
 //!
-//! schema-digest: sha256:becf61a30810021959ca14e337d4eb4f88de60774372762aa804269f5c9f64ed
+//! schema-digest: sha256:b6f362f405c373d629ffc2b193a21b016358eb8c7b1a53857f89be2c02068103
 #![allow(missing_docs, clippy::all, clippy::pedantic)]
 
 /// Error types.
@@ -9794,12 +9794,11 @@ impl ::std::convert::TryFrom<::std::string::String> for SpellTableState {
 ///      "type": "string"
 ///    },
 ///    "classes": {
-///      "description": "Scope the list to these classes - the player's own combo, which is what the surface sends by default. ABSENT MEANS EVERY CLASS, which is the show-all toggle. The app names the classes rather than the engine reading its own combo module, deliberately: this is a question about a static client file, and answering it out of fold state would make a catalogue lookup depend on how far a replay had got.",
+///      "description": "Scope the list to these classes - the player's own combo, which is what the surface sends by default. ABSENT OR EMPTY MEANS EVERY CLASS, which is the show-all toggle; the two spellings are one state because an optional array cannot carry its own absence into Rust (typify defaults it to an empty vector), so giving them different meanings would make the languages disagree about a request neither could round-trip. The app names the classes rather than the engine reading its own combo module, deliberately: this is a question about a static client file, and answering it out of fold state would make a catalogue lookup depend on how far a replay had got. THERE IS NO `maxItems` HERE AND THAT IS DELIBERATE: a `maxItems` with no `minItems` anchor generates a tuple UNION in TypeScript that no ordinary array satisfies (`resist.levels` escapes that only because its `minItems: 1` makes it a rest-tuple), and this list must be allowed to be empty. The bound belongs in the engine, which sorts and dedupes the columns it derives - at most sixteen by construction, and a repeated class was never meaningful anyway.",
 ///      "type": "array",
 ///      "items": {
 ///        "$ref": "#/$defs/ClassAbbr"
-///      },
-///      "maxItems": 16
+///      }
 ///    },
 ///    "limit": {
 ///      "description": "How many rows the window holds. Absent takes the engine's default and a number above its cap takes the cap - CLAMPED rather than refused, which is the same call `combat.searchFights` makes about the same kind of number. `total` states how many matched, so a caller says `1-20 of 143` without ever holding 143.",
@@ -9831,7 +9830,7 @@ pub struct SpellsSearchParams {
     ///An exact category, spelled as `categories` in the result spells it. Case-insensitive so a value round-tripped through a stored preference still matches. A category no row carries is not an error - it is an empty list, which is what a filter that excludes everything means.
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub category: ::std::option::Option<::std::string::String>,
-    ///Scope the list to these classes - the player's own combo, which is what the surface sends by default. ABSENT MEANS EVERY CLASS, which is the show-all toggle. The app names the classes rather than the engine reading its own combo module, deliberately: this is a question about a static client file, and answering it out of fold state would make a catalogue lookup depend on how far a replay had got.
+    ///Scope the list to these classes - the player's own combo, which is what the surface sends by default. ABSENT OR EMPTY MEANS EVERY CLASS, which is the show-all toggle; the two spellings are one state because an optional array cannot carry its own absence into Rust (typify defaults it to an empty vector), so giving them different meanings would make the languages disagree about a request neither could round-trip. The app names the classes rather than the engine reading its own combo module, deliberately: this is a question about a static client file, and answering it out of fold state would make a catalogue lookup depend on how far a replay had got. THERE IS NO `maxItems` HERE AND THAT IS DELIBERATE: a `maxItems` with no `minItems` anchor generates a tuple UNION in TypeScript that no ordinary array satisfies (`resist.levels` escapes that only because its `minItems: 1` makes it a rest-tuple), and this list must be allowed to be empty. The bound belongs in the engine, which sorts and dedupes the columns it derives - at most sixteen by construction, and a repeated class was never meaningful anyway.
     #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub classes: ::std::vec::Vec<ClassAbbr>,
     ///How many rows the window holds. Absent takes the engine's default and a number above its cap takes the cap - CLAMPED rather than refused, which is the same call `combat.searchFights` makes about the same kind of number. `total` states how many matched, so a caller says `1-20 of 143` without ever holding 143.

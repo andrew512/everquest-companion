@@ -2307,12 +2307,11 @@
           "type": "string"
         },
         "classes": {
-          "description": "Scope the list to these classes - the player's own combo, which is what the surface sends by default. ABSENT MEANS EVERY CLASS, which is the show-all toggle. The app names the classes rather than the engine reading its own combo module, deliberately: this is a question about a static client file, and answering it out of fold state would make a catalogue lookup depend on how far a replay had got.",
+          "description": "Scope the list to these classes - the player's own combo, which is what the surface sends by default. ABSENT OR EMPTY MEANS EVERY CLASS, which is the show-all toggle; the two spellings are one state because an optional array cannot carry its own absence into Rust (typify defaults it to an empty vector), so giving them different meanings would make the languages disagree about a request neither could round-trip. The app names the classes rather than the engine reading its own combo module, deliberately: this is a question about a static client file, and answering it out of fold state would make a catalogue lookup depend on how far a replay had got. THERE IS NO `maxItems` HERE AND THAT IS DELIBERATE: a `maxItems` with no `minItems` anchor generates a tuple UNION in TypeScript that no ordinary array satisfies (`resist.levels` escapes that only because its `minItems: 1` makes it a rest-tuple), and this list must be allowed to be empty. The bound belongs in the engine, which sorts and dedupes the columns it derives - at most sixteen by construction, and a repeated class was never meaningful anyway.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/ClassAbbr"
-          },
-          "maxItems": 16
+          }
         },
         "sort": {
           "$ref": "#/$defs/SpellSort"

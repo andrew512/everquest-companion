@@ -132,6 +132,110 @@ async function checkResultRow(page: Page, target: { name: string; cls: string; l
   )
 }
 
+const TYPE = '[data-testid="best-spells-type"]'
+/**
+ * THE VISIBLE HALF of the type control. A MUI `select` TextField renders a hidden native `input`
+ * (which is what `slotProps.htmlInput` decorates, and which cannot be clicked) beside the div a
+ * person actually presses. That div carries `role="combobox"`, so the role is the durable handle
+ * here — a testid on the input would find an element with no size.
+ */
+const TYPE_INPUT = '[data-testid="best-spells-type"] [role="combobox"]'
+const TYPE_OPTION = '[data-testid="best-spells-type-option"]'
+const CATALOGUE = '[data-testid="best-spells-catalogue"]'
+const CATALOGUE_ROW = '[data-testid="best-spells-catalogue-row"]'
+
+/** The names the catalogue body is drawing, as the DOM spells them. */
+function catalogueNames(page: Page): Promise<string[]> {
+  return page.evaluate(
+    (sel) => Array.from(document.querySelectorAll(sel)).map((r) => (r as HTMLElement).dataset.name ?? ''),
+    CATALOGUE_ROW
+  )
+}
+
+/**
+ * SEARCH BY TYPE, ASSERTED ON SCREEN (JOS-507).
+ *
+ * WHAT THIS PROVES THAT NO UNIT TEST CAN. `spell_search.rs`'s suite pins the query in Rust and
+ * `ops.rs`'s pins the op; both are hand-authored rows inside one process. Only the running app can
+ * show that the whole path holds end to end — a renderer with its OWN engine connection, a request
+ * over the wire, the player's client files read beside the staged install, and rows drawn in a
+ * 260px column that already carries a box, five tabs, a slider and now a type control.
+ *
+ * AND THE ONE CLAIM THE TICKET IS ABOUT: `Leech` and `Siphon Strength` are in a `Taps` list while
+ * containing no `tap` in their NAMES. That is what searching by TYPE means, and it is the assertion
+ * that failed when the engine's filter was first written the obvious name-only way.
+ *
+ * The staged tables are HAND-AUTHORED (`logFixture.mts stageClientTables`) so this holds on any
+ * machine rather than only on one with EverQuest installed — and every row is learnable by every
+ * class, so the step never has to guess what loadout the fixture log inferred.
+ */
+export async function stepBestSpellsTypeSearch(page: Page): Promise<void> {
+  if (!check('the readout offers a spell-TYPE filter beside its search box', (await countOf(page, TYPE)) === 1)) {
+    return
+  }
+  // THE CONTROL ASKS THE ENGINE WHEN IT IS OPENED, and the vocabulary it offers is the player's own
+  // file's — there is no list this app could ship, so an unopened control has no options by design.
+  await page.click(TYPE_INPUT, { timeout: 10_000 })
+  const options = await settle(
+    () =>
+      page.evaluate(
+        (sel) => Array.from(document.querySelectorAll(sel)).map((o) => (o as HTMLElement).dataset.value ?? ''),
+        TYPE_OPTION
+      ),
+    (v) => v.length > 1,
+    { timeoutMs: 10_000 }
+  )
+  const types = options.filter((v) => v !== '')
+  if (types.length === 0) {
+    note('the type control offered nothing - no engine connection, or no client spell table staged')
+    await page.keyboard.press('Escape')
+    return
+  }
+  check(`the control offers the client table's own categories (${types.join('/')})`, types.includes('Taps'))
+
+  await page.click(`${TYPE_OPTION}[data-value="Taps"]`, { timeout: 10_000 })
+  const swapped = await settle(
+    () => bodies(page).then(async (b) => [...b, await countOf(page, CATALOGUE)]),
+    (n) => n[2] === 1 && n[1] === 0,
+    { timeoutMs: 10_000 }
+  )
+  check(
+    'picking a type swaps in the catalogue body - the ranked table is GONE, not merely hidden',
+    swapped[2] === 1 && swapped[1] === 0,
+    `${String(swapped[0])} results / ${String(swapped[1])} tables / ${String(swapped[2])} catalogues`
+  )
+
+  const names = await settle(() => catalogueNames(page), (n) => n.length > 0, { timeoutMs: 10_000 })
+  if (check('…and it draws rows out of the client table', names.length > 0, names.join(' | '))) {
+    // THE TICKET'S OWN CLAIM. A name-only filter would return none of these.
+    const byType = names.filter((n) => !n.toLowerCase().includes('tap'))
+    check(
+      'a TYPE search finds spells whose NAME does not contain the word - the whole capability',
+      byType.length > 0,
+      `by type: ${byType.join(' | ')} — of ${names.join(' | ')}`
+    )
+    // Every row wears the two words the game prints in those columns.
+    const chips = await countOf(page, `${CATALOGUE_ROW} [data-testid="best-spells-catalogue-category"]`)
+    check('…and every row carries its Category chip', chips === names.length, `${String(chips)} of ${String(names.length)}`)
+    const level = await countOf(page, `${CATALOGUE_ROW} [data-testid="best-spells-catalogue-level"]`)
+    check('…and its Level, which is what the list is sorted by', level === names.length)
+  }
+
+  // BACK TO ALL TYPES, so the steps after this one are looking at what they were written against.
+  await page.click(TYPE_INPUT, { timeout: 10_000 })
+  await page.click(`${TYPE_OPTION}[data-value=""]`, { timeout: 10_000 })
+  const restored = await settle(
+    () => bodies(page).then(async (b) => [...b, await countOf(page, CATALOGUE)]),
+    (n) => n[2] === 0 && n[1] === 1,
+    { timeoutMs: 10_000 }
+  )
+  check(
+    'clearing the type filter hands the ranked table back',
+    restored[2] === 0 && restored[1] === 1,
+    `${String(restored[1])} tables / ${String(restored[2])} catalogues`
+  )
+}
+
 /**
  * THE STEP. It LEAVES THE BOX EMPTY, like every other step in this suite leaves what it found —
  * the checks after it in `stepBestSpells` are claims about the ranked table.

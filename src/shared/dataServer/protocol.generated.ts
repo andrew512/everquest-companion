@@ -8,7 +8,7 @@
 // schema edit that lands without regenerating turns tests/protocolSchema.test.mts red on the
 // TypeScript side and the protocol-codegen staleness test red on the Rust side.
 //
-// schema-digest: sha256:becf61a30810021959ca14e337d4eb4f88de60774372762aa804269f5c9f64ed
+// schema-digest: sha256:b6f362f405c373d629ffc2b193a21b016358eb8c7b1a53857f89be2c02068103
 
 /**
  * Anything that can travel the wire, in either direction. The transport adapters are generic over exactly this: a transport moves ProtocolMessages and knows nothing else about the protocol.
@@ -664,136 +664,9 @@ export interface SpellsSearchParams {
    */
   subcategory?: string
   /**
-   * Scope the list to these classes - the player's own combo, which is what the surface sends by default. ABSENT MEANS EVERY CLASS, which is the show-all toggle. The app names the classes rather than the engine reading its own combo module, deliberately: this is a question about a static client file, and answering it out of fold state would make a catalogue lookup depend on how far a replay had got.
-   *
-   * @maxItems 16
+   * Scope the list to these classes - the player's own combo, which is what the surface sends by default. ABSENT OR EMPTY MEANS EVERY CLASS, which is the show-all toggle; the two spellings are one state because an optional array cannot carry its own absence into Rust (typify defaults it to an empty vector), so giving them different meanings would make the languages disagree about a request neither could round-trip. The app names the classes rather than the engine reading its own combo module, deliberately: this is a question about a static client file, and answering it out of fold state would make a catalogue lookup depend on how far a replay had got. THERE IS NO `maxItems` HERE AND THAT IS DELIBERATE: a `maxItems` with no `minItems` anchor generates a tuple UNION in TypeScript that no ordinary array satisfies (`resist.levels` escapes that only because its `minItems: 1` makes it a rest-tuple), and this list must be allowed to be empty. The bound belongs in the engine, which sorts and dedupes the columns it derives - at most sixteen by construction, and a repeated class was never meaningful anyway.
    */
-  classes?:
-    | []
-    | [ClassAbbr]
-    | [ClassAbbr, ClassAbbr]
-    | [ClassAbbr, ClassAbbr, ClassAbbr]
-    | [ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr]
-    | [ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr]
-    | [ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr]
-    | [ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr]
-    | [ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr, ClassAbbr]
-    | [
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr
-      ]
-    | [
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr
-      ]
-    | [
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr
-      ]
-    | [
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr
-      ]
-    | [
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr
-      ]
-    | [
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr
-      ]
-    | [
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr
-      ]
-    | [
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr,
-        ClassAbbr
-      ]
+  classes?: ClassAbbr[]
   sort?: SpellSort
   /**
    * Where the window starts. Past the end is an EMPTY PAGE and never an error: a client holding a stale offset while a filter narrows underneath it is ordinary rather than exceptional, and `total` still says how many there were.
