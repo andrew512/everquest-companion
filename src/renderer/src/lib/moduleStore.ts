@@ -123,8 +123,18 @@ interface Entry {
   subs: Set<() => void>
 }
 
-/** Two frames. The header says why this is a FLOOR and not the schedule. */
-const FRAME_FLOOR_MS = 32
+/**
+ * ONE frame. The header says why this is a FLOOR and not the schedule.
+ *
+ * It was two frames on the theory that a compositing window should always reach its rAF first and
+ * the timer should stay visibly a fallback. That reasoning had the cost backwards: the windows that
+ * take this path are precisely the ones where rAF never fires at all — a minimized window, one
+ * closed to the tray with alerts still firing, and EVERY e2e launch — so for them the floor is not
+ * a fallback, it is the whole schedule, and doubling it doubled their latency to no end. Bursts
+ * still coalesce either way: cursors that arrive in one IPC batch are all marked dirty inside the
+ * same task, before any timer scheduled during it can fire.
+ */
+const FRAME_FLOOR_MS = 16
 
 /**
  * The globals the default scheduler arms, declared structurally on purpose: the guarded
