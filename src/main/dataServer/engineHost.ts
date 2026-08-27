@@ -442,6 +442,14 @@ export function startEngineSupervisor(): void {
     // back off. The candidate paths are grafted on inside `noteEngineFault` from the list above.
     onFault: (fault) => {
       noteEngineFault(fault)
+    },
+    // THE CYCLING EDGE (JOS-519). `onPid(null)` above already wrote `engine:gone` for this same
+    // ending — this is the one bit that ending did not carry: the engine had REACHED READY, so what
+    // the ring shows is not a launch that failed but a working engine being replaced, which the user
+    // meets as another "Catching up on your log". The error-store entry that names the count is the
+    // supervisor's own (`report`); this is the sequence a crash report carries.
+    onServedExit: () => {
+      noteEngineEdge('engine:cycled')
     }
   })
   supervisor.start()
