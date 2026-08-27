@@ -20,7 +20,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { encodeLine } from '../src/shared/dataServer/ndjson'
 import type { ByteChannel } from '../src/shared/dataServer/ndjson'
-import type { EngineMessage } from '../src/shared/dataServer/protocol.generated'
+import type {
+  EngineMessage,
+  HelloReply,
+  Reply,
+  ResetMessage
+} from '../src/shared/dataServer/protocol.generated'
 import {
   engineHealthCheck,
   EngineHealthError,
@@ -91,14 +96,20 @@ async function settle(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve))
 }
 
-/** The two answers a healthy engine gives, as the frames it actually puts on the wire. */
-const HELLO: EngineMessage = {
+/**
+ * The two answers a healthy engine gives, at their OWN types rather than at the union's.
+ *
+ * `HelloReply` and `Reply` rather than `EngineMessage` so the cases below can spread one and
+ * override a field — a hello with `ok: false`, a reply naming the wrong id — without a cast
+ * standing between the fixture and the shape it claims to be.
+ */
+const HELLO: HelloReply = {
   kind: 'hello',
   ok: true,
   engineVersion: '0.0.0-scripted',
   protocolVersion: PROTOCOL
 }
-const HEALTH: EngineMessage = {
+const HEALTH: Reply = {
   kind: 'reply',
   id: HEALTH_REQUEST_ID,
   ok: true,
@@ -108,9 +119,12 @@ const HEALTH: EngineMessage = {
 /**
  * THE FIVE CONNECTION-WIDE FRAMES, one of each, in the shapes the engine sends.
  *
- * They are `EngineMessage` values rather than loose objects on purpose: the generated type is the
- * only statement of what the engine may say, so a frame that stopped compiling here would be a
- * schema change this suite is entitled to notice.
+ * Annotated with the generated types rather than left as loose objects because the generated types
+ * are the only statement of what the engine may say — a fixture that drifted from one would be
+ * saying the probe tolerates something the engine cannot send. It is DOCUMENTATION, not a gate:
+ * `tests/**` is in neither tsconfig today (eslint.config.ts's carve-out says so and calls wiring it
+ * up a worthwhile follow-up), so nothing compiles this file. It becomes a gate for free on the day
+ * that follow-up lands, which is the cheapest reason to write the annotation now.
  */
 const EPOCH_PROGRESS: EngineMessage = {
   kind: 'epoch',
@@ -203,7 +217,7 @@ test('EVERY CONNECTION-WIDE KIND IS SKIPPED, not just the epoch that caused the 
 test('A REPLY NAMING THE WRONG ID IS STILL `unexpected`', async () => {
   const w = wire((frame, wr) => {
     if (frame.op === 'hello') wr.send(HELLO)
-    else wr.send(EPOCH_PROGRESS, { ...HEALTH, id: HEALTH_REQUEST_ID + 1 } as EngineMessage)
+    else wr.send(EPOCH_PROGRESS, { ...HEALTH, id: HEALTH_REQUEST_ID + 1 })
   })
   await assert.rejects(probe(w).result, (err: unknown) => {
     assert.ok(err instanceof EngineHealthError)
@@ -215,8 +229,9 @@ test('A REPLY NAMING THE WRONG ID IS STILL `unexpected`', async () => {
 test('A SUBSCRIPTION FRAME IS STILL `unexpected` — this connection never subscribed', async () => {
   // `reset` and `diff` carry an `id` and answer a subscription the probe never opened. They are the
   // line: tolerating a frame nobody addressed to us is not the same as tolerating a wrong answer.
+  const subscriptionFrame: ResetMessage = { kind: 'reset', id: 9, epoch: 3, total: 0, rows: [] }
   const w = wire((_frame, wr) => {
-    wr.send({ kind: 'reset', id: 9, epoch: 3, total: 0, rows: [] })
+    wr.send(subscriptionFrame)
   })
   await assert.rejects(probe(w).result, (err: unknown) => {
     assert.ok(err instanceof EngineHealthError)
@@ -228,14 +243,14 @@ test('A SUBSCRIPTION FRAME IS STILL `unexpected` — this connection never subsc
 
 test('THE REFUSALS AND THE MISMATCH ARE UNTOUCHED', async () => {
   const refused = wire((_frame, wr) => {
-    wr.send(EPOCH_PROGRESS, { ...HELLO, ok: false } as EngineMessage)
+    wr.send(EPOCH_PROGRESS, { ...HELLO, ok: false })
   })
   await assert.rejects(probe(refused).result, (err: unknown) => {
     assert.equal((err as EngineHealthError).reason, 'refused')
     return true
   })
   const skewed = wire((_frame, wr) => {
-    wr.send(EPOCH_PROGRESS, { ...HELLO, protocolVersion: PROTOCOL + 1 } as EngineMessage)
+    wr.send(EPOCH_PROGRESS, { ...HELLO, protocolVersion: PROTOCOL + 1 })
   })
   await assert.rejects(probe(skewed).result, (err: unknown) => {
     assert.equal((err as EngineHealthError).reason, 'protocolMismatch')
