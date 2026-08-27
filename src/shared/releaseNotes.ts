@@ -125,6 +125,21 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.13.0',
+    date: '2026-08-27',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'The catch-up bar can no longer get stuck at 100%. The app used to stop waiting after two minutes on a big log or a slow disk - it now waits as long as your log takes, and it can tell catching up from live play, so the bar always finishes.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'An engine that stops answering or keeps restarting mid-session now shows up in diagnostics, so a report about "it never finishes loading" arrives with its cause.'
+      }
+    ]
+  },
+  {
     version: '1.12.0',
     date: '2026-08-26',
     entries: [
