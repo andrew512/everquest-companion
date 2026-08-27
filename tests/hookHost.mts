@@ -139,6 +139,35 @@ export function mountHook<T>(hook: () => T): HookHost<T> {
     slot.deps = deps
   }
 
+  /**
+   * `useSyncExternalStore`, in the smallest honest form (added for JOS-510's module store).
+   *
+   * Two slots: one to hold the snapshot, one for the subscription effect. Read the snapshot on
+   * EVERY render, which is what React does and what makes a store-backed hook's value follow the
+   * store without a state write of its own; subscribe in a passive effect keyed on the `subscribe`
+   * IDENTITY, which is the dependency a store-backed hook has to get right — a fresh closure per
+   * render resubscribes forever, and that is exactly the class of bug this harness exists to see.
+   *
+   * The re-read after subscribing is React's own behaviour and is not decoration: the store can
+   * move between the render that read it and the effect that subscribes, and without this the hook
+   * would sit on a snapshot it had already missed the notification for.
+   */
+  const useSyncExternalStoreLike = <S,>(
+    subscribe: (onStoreChange: () => void) => () => void,
+    getSnapshot: () => S
+  ): S => {
+    const slot = slotAt<StateSlot>(() => ({ kind: 'state', value: undefined }))
+    slot.value = getSnapshot()
+    useEffectLike(false)(() => {
+      const unsubscribe = subscribe(() => {
+        dirty = true
+      })
+      if (!Object.is(getSnapshot(), slot.value)) dirty = true
+      return unsubscribe
+    }, [subscribe])
+    return slot.value as S
+  }
+
   const dispatcher = {
     useState,
     useRef: <S,>(initial: S) => slotAt<RefSlot>(() => ({ kind: 'ref', ref: { current: initial } })).ref,
@@ -147,6 +176,7 @@ export function mountHook<T>(hook: () => T): HookHost<T> {
     useEffect: useEffectLike(false),
     useLayoutEffect: useEffectLike(true),
     useInsertionEffect: useEffectLike(true),
+    useSyncExternalStore: useSyncExternalStoreLike,
     useDebugValue: (): void => undefined,
     useContext: (): never => {
       throw new Error('hookHost: useContext is out of scope — see the header')
