@@ -1931,7 +1931,12 @@ mod tests {
             else {
                 panic!("a progress announcement is an epoch message");
             };
-            flags.push(epoch.progress.expect("a progress frame carries progress").live);
+            flags.push(
+                epoch
+                    .progress
+                    .expect("a progress frame carries progress")
+                    .live,
+            );
         }
         assert_eq!(
             flags,
