@@ -124,6 +124,15 @@ export const ENGINE_HEALTH_INTERVAL_MS = 30_000
 export const ENGINE_HEALTH_TIMEOUT_MS = 5_000
 
 /**
+ * How long after the machine wakes the watchdog waits before asking again.
+ *
+ * A resume is the one moment when every clock in the process is wrong at once and the engine is
+ * competing with the whole desktop for a disk that just spun up. Asking immediately would be asking
+ * a machine that is still coming back whether it is serving, and a no is not a diagnosis.
+ */
+export const ENGINE_RESUME_GRACE_MS = 5_000
+
+/**
  * The restart schedule, in ms, indexed by consecutive failures — `WATCHER_RESTART_BACKOFF_MS`'s
  * shape and its argument (presenceProtocol.ts), because it is the same problem.
  *
@@ -155,6 +164,19 @@ export function engineRestartDelayMs(consecutiveFailures: number): number {
  */
 export type EngineTimer = (fn: () => void, ms: number) => () => void
 
+/**
+ * THE MACHINE'S OWN SLEEP, seamed exactly as the clock is: the supervisor states what it wants to be
+ * told, and the composition root is the only thing that knows the word `powerMonitor`.
+ *
+ * It matters because a suspend freezes every `setTimeout` in the process without crediting the
+ * sleep: a health probe armed a second before the lid closed lands on a socket to an engine that has
+ * not finished waking, and the verdict is about the machine rather than about the engine.
+ */
+export interface EnginePowerHandlers {
+  suspend(): void
+  resume(): void
+}
+
 // --------------------------------------------------------------- what ended a launch, and why
 //
 // THE REPORTING MISTAKE THIS SECTION EXISTS TO NOT REPEAT is written up in `childProcessGone.ts`:
@@ -173,6 +195,39 @@ export type EngineTimer = (fn: () => void, ms: number) => () => void
 //     or more digits to `<n>` and a Windows crash exit code is ten digits (0xC0000005 is
 //     3221225477). The one number that separates an access violation from a stack overflow
 //     survives the redactor by riding in the field built for it.
+
+/**
+ * Why ONE health probe failed. A closed set, so a report can name it without repeating a sentence
+ * the engine wrote — and so `engineHealth.ts` can decide which of them is worth asking twice about.
+ *
+ * It lives here rather than beside the probe because a failed probe ends a launch, and a launch's
+ * ending is this section's subject; keeping it here is also what lets the exit cause below name it
+ * without the two files importing each other.
+ */
+export type HealthFailure =
+  | 'connect'
+  | 'timeout'
+  | 'closed'
+  | 'transport'
+  | 'refused'
+  | 'protocolMismatch'
+  | 'unexpected'
+
+/**
+ * WHAT THE HEALTH WATCHDOG CONCLUDED, on the report of a launch a probe ended.
+ *
+ * Enums and a number, which is the whole point: a probe verdict travels to the error store, and the
+ * bright line means the reasons ride as members of a closed set rather than as a second sentence.
+ */
+export interface EngineHealthVerdict {
+  /** The reasons in the order they happened: the first strike, then the confirmation where one ran.
+   *  Two entries means a transient failure was confirmed on a fresh connection; one means the
+   *  reason was fatal on the first ask. */
+  readonly healthReasons: readonly HealthFailure[]
+  /** Milliseconds since the machine last woke, or null when it has not slept this session — the
+   *  number that answers whether a wedge verdict is sleep-adjacent. */
+  readonly resumedAgoMs: number | null
+}
 
 /** Which way a launch ended. Each is its own error NAME below. */
 export type EngineFailure =
@@ -201,6 +256,11 @@ export interface EngineExitCause {
   /** One bounded line of context: the offending stdout line, the spawn error, the engine's last
    *  stderr line. See `boundedDetail` for why it is shaped rather than trusted. */
   readonly detail: string | null
+  /** Present only where a health probe is what ended the launch — `EngineHealthVerdict`'s two
+   *  fields, flat, so a reader of `errors.log` and a fingerprint reading the message see the same
+   *  facts without unwrapping anything. */
+  readonly healthReasons?: readonly HealthFailure[]
+  readonly resumedAgoMs?: number | null
 }
 
 /** The payload the supervisor hands its reporter. See the section header for the three fields. */
@@ -326,8 +386,17 @@ export function describeEngineExit(cause: EngineExitCause): string {
   const detail = cause.detail === null ? '' : `: ${cause.detail}`
   return (
     `${FAILURE_SENTENCES[cause.failure]}${detail} (alive for ${String(cause.lifetimeMs)} ms` +
-    `${code}${signal}; attempt ${String(cause.attempt)})`
+    `${code}${signal}${probeClause(cause)}; attempt ${String(cause.attempt)})`
   )
+}
+
+/** The probe verdict as part of that sentence, because the error store keeps the MESSAGE and not the
+ *  payload: without this, both reason enums and the wake distance would exist only in `errors.log`. */
+function probeClause(cause: EngineExitCause): string {
+  if (cause.healthReasons === undefined) return ''
+  const ago = cause.resumedAgoMs
+  const woke = ago === null || ago === undefined ? 'no resume this session' : `${String(ago)} ms after resume`
+  return `; probes ${cause.healthReasons.join(' then ')}; ${woke}`
 }
 
 // ------------------------------------------------------- the immediate-exit loop, folded
