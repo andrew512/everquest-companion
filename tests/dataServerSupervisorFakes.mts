@@ -142,8 +142,15 @@ export class FakeChild implements SupervisedChild {
   }
 }
 
-/** How a scripted engine answers a probe. Each is a real binary somebody will ship one day. */
-export type ChannelBehaviour = 'ok' | 'refuse' | 'mute' | 'mismatch' | 'closed'
+/**
+ * How a scripted engine answers a probe. Each is a real binary somebody will ship one day.
+ *
+ * `refuse` and `deny` are the SAME rejection at two different politenesses, and the difference is
+ * exactly what the two-strike rule turns on: contract rule 4's hang-up reaches the probe as `closed`
+ * — indistinguishable from a stall, so it is asked about twice — while a spoken `ok: false` is
+ * `refused`, a statement about the credential that no second ask can change.
+ */
+export type ChannelBehaviour = 'ok' | 'refuse' | 'deny' | 'mute' | 'mismatch' | 'closed'
 
 /**
  * An engine at the far end of a `ByteChannel`, scripted.
@@ -199,6 +206,10 @@ export function scriptedChannel(token: string, behaviour: ChannelBehaviour, prot
       // check working, seen from the caller's side.
       if (message.op !== 'hello' || message.token !== token || behaviour === 'refuse') {
         hangUp()
+        return
+      }
+      if (behaviour === 'deny') {
+        reply({ kind: 'hello', ok: false, engineVersion: '0.0.0-scripted', protocolVersion: protocol })
         return
       }
       greeted = true
