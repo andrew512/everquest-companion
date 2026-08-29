@@ -262,7 +262,7 @@ export class EngineSupervisor {
   private failures = 0
   private cancelRestart: (() => void) | null = null
   /** Set by `stop()`. A stop must survive a launch that is mid-handshake, so it is a latch rather
-   *  than a status read: an async health probe that resolves afterwards checks THIS. */
+   *  than a status read: the exit that arrives afterwards checks THIS. */
   private stopping = false
   /** When the machine last woke, SESSION-scoped like `servedTrail` and for the same reason: a
    *  respawn must not forget that the last minute contained a sleep. */
