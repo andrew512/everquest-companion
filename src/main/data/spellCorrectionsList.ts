@@ -123,7 +123,9 @@
 // contradicting itself. Like a name and a polarity it patches EVERY row of the name, and that
 // matters most here: the two rows are exactly what disagree, `buildLevelUnlocks` emits one row per
 // DB ROW, and the renderer folds by name only within ONE level — so a half-applied correction would
-// leave the phantom level-12 card untouched. See `rowsFor` in spellCorrections.ts.
+// leave the phantom level-12 card untouched. See `rowsFor` in spellCorrections.ts. The seventh's
+// and eighth's ENTRIES live in `spellCorrectionsColumns.ts` — the polarity split, repeated at this
+// file's own ceiling.
 //
 // IDEMPOTENCE, IN BOTH DIRECTIONS. Every correction states the text it REPLACES. If a re-scrape
 // leaves the wiki text unchanged the correction applies; if the wiki is fixed upstream the entry
@@ -162,6 +164,10 @@ import { HEALING_LADDER_CORRECTIONS } from './spellCorrectionsHealing'
 // long, it carries a derived census that this file's code-mass ceiling should not be shared with, and
 // a reader checking the ruling is checking the whole family at once.
 import { POLARITY_CORRECTIONS } from './spellCorrectionsPolarity'
+// The seventh and eighth drift classes — the wrong LEVEL and the wrong EFFECT LINE, the column
+// corrections — live in their own file, split at this file's measured 400-code-line ceiling along
+// the polarity precedent: a non-sentence drift class gets its own file.
+import { COLUMN_CORRECTIONS } from './spellCorrectionsColumns'
 
 /**
  * The hand-derived overlay. Ordered by the drift it fixes, not by spell name, because the drifts
@@ -704,48 +710,6 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
     attribution: 'cast',
     evidence:
       'The wiki page`s `spellname` became `Invisibility vs. Undead` in a 2026-08-18 retitle of pageid 49735; the game has never printed it. Owner log, whole file (2,235,271 lines): 83 lines naming `Invisibility Versus Undead` (28 `You begin casting`, 15 `You have finished memorizing`, 15 `You forget`, 15 `Beginning to memorize`, 7 fizzles, 1 `You have been granted the following spell`, 1 another player`s cast) and 0 naming `Invisibility vs. Undead`. The install`s own table says the same: spells_us.txt id 235 is `Invisibility Versus Undead`. An abbreviation, never a different spell — the two pages state the same five classes at the same five levels and the same three messages, and the surviving row`s own slot line already reads `Invisibility versus Undead`. Blast radius: one catalog entry instead of two; spellClassIndex 1413 -> 1412 with no per-class count moving; the unlock cards draw one row at NEC 1 / SHD 4 / CLR 11 / ENC 14 / PAL 17; `spellLineLookup` and `clientSpellHp` join by name and now reach the row.'
-  },
-  // --- the seventh drift class: the wrong LEVEL (JOS-415) ----------------------------------------
-  // The header's paragraph carries the bar; this is its one entry. The wiki has two pages for this
-  // spell — pageid 46874, titled `Leech`, `{{Classic Era}}`, `* [[Necromancer]] - Level 9`, and
-  // pageid 50162, titled `Leach`, `{{Paineel Era}}`, `* [[Necromancer]] - Level 12 Recourse
-  // Effect` — and BOTH set `spellname = Leach`, so the scrape files two rows under one name. Every
-  // other field the two share is identical (mana 72, cast 2.40, recast 10.00, the same
-  // `Decrease Hitpoints by 8 per tick` slot, the same four vendors in the same four zones), which
-  // is what makes them one spell rather than two. The level-12 row is the one that is wrong.
-  {
-    spells: ['Leach'],
-    field: 'classes',
-    from: '* Necromancer - Level 12 Recourse Effect',
-    to: '* Necromancer - Level 9',
-    attribution: 'db',
-    evidence:
-      'Reported 6AT44D (v1.5.0): `For a necro, on level up to level 12. Shows Leach beting a spell. But leach was learned at lvl 9 for a necro.` Checked against EQ LEGENDS data, not classic EQ: eqlwiki`s own Necromancer spell list places the spell ONCE, at Level 9, as `Leach NEC(9)` linking the page titled `Leech`; its Level 12 rows are Bind Affinity, Convoke Shadow and Lifedraw, and no row anywhere in that list links the page titled `Leach`. The DB is its own witness twice over: our other row for this name already says `* Necromancer - Level 9` (so this correction reports satisfied on it), and the level-12 page`s own description reads `6 ticks @L9 to 9 ticks @L15` while its duration row says `7 ticks @L12` — the page contradicts itself about the floor. `Level 12 Recourse Effect` is a note the wiki hung on the classes bullet; shared/spellLevels.ts`s SEGMENT regex reads the number and ignores the trailing words, which is correct behaviour on a line that is wrong. Blast radius: buildLevelUnlocks emitted a second Leach row at NEC 12 and the panel drew a card there; with both rows at NEC 9 the renderer`s fold-by-name draws one card at 9 and none at 12. spellClasses is unchanged (both rows already said Necromancer).'
-  },
-  // The seventh class's second entry — the Leach shape exactly: two wiki pages under one
-  // `spellname`, and the one that is wrong is a live-EQ copy that pre-dates the Legends re-tier.
-  {
-    spells: ['Swift Like The Wind'],
-    field: 'classes',
-    from: '* Enchanter - Level 49',
-    to: '* Enchanter - Level 47',
-    attribution: 'db',
-    evidence:
-      'Reported 01M0T4RJCRZRFTFZ6W717T2W14 (v1.9.0): `hi see the spell swift like the wind for enchanter at both 47 and 49. it`s only at 47. thanks!` The wiki holds two pages that both set `spellname = Swift Like The Wind` (checked 2026-08-28): pageid 48049, `* Enchanter - Level 47`, recast 1.50, duration `16 Min` — the Legends page — and pageid 49816, `* Enchanter - Level 49`, recast 2.25, duration `15.7 minutes @L49 to 16 minutes @L50`, which is live EQ`s level-scaled figure for its L49 enchanter haste, copied before the re-tier. eqlwiki`s own Enchanter spell index carries the spell ONCE, in its ==Level 47== section, linking the 48049 page; no index row places it at 49. Blast radius: buildLevelUnlocks drew a phantom card at ENC 49; with both rows at 47 the renderer`s fold-by-name draws one card at 47. Duration is untouched (both rows already parse to 960000 ms) and no message moves.'
-  },
-  // --- the eighth drift class: the wrong EFFECT LINE (JOS-528) -----------------------------------
-  // The header paragraph lives in spellCorrections.ts beside the field union; this is its one
-  // entry. `shared/spellMetrics.ts` reads the slot list`s `per tick` marker to decide whether
-  // damage arrives over time, so a DoT whose slot line omits the marker files as direct damage:
-  // wrong tab, and a total counted once instead of once per tick.
-  {
-    spells: ['Vengeance of the Wild'],
-    field: 'effects',
-    from: 'Decrease Hit Points between 121 and 132',
-    to: 'Decrease Hit Points between 121 and 132 per tick',
-    attribution: 'db',
-    evidence:
-      'Reported 01M0V24TW8FP3WFS38AFGN1HDH (v1.9.0): `Vengeance of the Wild is not showing as a DoT and the damage listed does not match the actual DoT damage (likely because its is not being seen as a DoT?)` The page is its own witness (pageid fetched 2026-08-28): its description reads `causing between 122 and 131 damage every six seconds for 30s` and its duration row `5 ticks`, while its slot line alone omits the rate marker. The DB is the family witness: 138 detrimental rows with a duration carry `per tick` on their Decrease-Hitpoints line verbatim, and every other no-marker row with a duration (censused 2026-08-28: the root families, Fire, Ice, Flame Song of Ro, Stone Spider Stun) is genuinely front-loaded damage riding a root/resist/stun duration — Vengeance of the Wild is the sole row whose own description contradicts its slot. The numbers 121/132 are the slot`s and stay: the description`s 122/131 is the page disagreeing with itself by one, and a correction fixes the marker, not the wiki`s arithmetic. Blast radius: spellMetrics reads perTick true, so bestSpells moves the spell from the DD tab to the DoT tab and its total becomes per-tick x 5 ticks (126.5 midpoint -> 632.5) with dps over the 30 s cycle; the parser is untouched (DoT damage attribution is log-shape driven); spellEffectClass`s heal families are untouched (this is a Decrease line).'
   }
 ]
 
@@ -762,6 +726,7 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
  */
 export const SPELL_CORRECTIONS: readonly SpellCorrection[] = [
   ...HAND_DERIVED_CORRECTIONS,
+  ...COLUMN_CORRECTIONS,
   ...SUBJECT_PLACEHOLDER_CORRECTIONS,
   ...HEALING_LADDER_CORRECTIONS,
   ...POLARITY_CORRECTIONS

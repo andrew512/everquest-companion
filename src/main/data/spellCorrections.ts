@@ -45,8 +45,9 @@ export type SpellMessageField = 'msgCastOnYou' | 'msgCastOnOther' | 'msgWearsOff
  * THE WRONG LEVEL IS THE SEVENTH (JOS-415), and it is the polarity's neighbour rather than a
  * message's: `classes` is the wiki's OTHER column, the one `shared/spellLevels.ts` reads into
  * (class, level) pairs and `buildLevelUnlocks` turns into "new at this level" cards. A correction
- * here says the wiki filed the spell at the wrong LEVEL. Its one entry and its argument live in
- * `spellCorrectionsList.ts`, beside the drift-class paragraph that governs it.
+ * here says the wiki filed the spell at the wrong LEVEL. Its entries live in
+ * `spellCorrectionsColumns.ts`; the drift-class paragraph that governs them stays in
+ * `spellCorrectionsList.ts` with the rest of the bar.
  *
  * THE EFFECT LINE IS THE EIGHTH (JOS-528). `effects` is the wiki's numbered slot list, kept
  * verbatim (`SpellEntry.effects`), and `shared/spellMetrics.ts` reads its `per tick` marker to
@@ -236,7 +237,7 @@ function applyOne(pass: Pass, c: SpellCorrection, name: string): void {
 function applyEffectsLine(pass: Pass, c: SpellCorrection, at: number): void {
   const { out, report } = pass
   const list = out[at].effects
-  if (list !== undefined && list.includes(c.to)) {
+  if (list?.includes(c.to)) {
     report.satisfied++
     return
   }
