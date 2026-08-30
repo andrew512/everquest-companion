@@ -124,6 +124,23 @@ export const ENGINE_HEALTH_INTERVAL_MS = 30_000
 export const ENGINE_HEALTH_TIMEOUT_MS = 5_000
 
 /**
+ * How long the watchdog waits when a connect failed on OUR side of the wire.
+ *
+ * Short, because a local endpoint usually comes back within a second or two — and a wait AT ALL,
+ * because the immediate second ask the two-strike rule buys is the same instant from the same
+ * exhausted pool and can only ever agree with the first.
+ */
+export const ENGINE_LOCAL_SOCKET_GRACE_MS = 2_000
+
+/**
+ * How many consecutive local-socket refusals are worth an entry — and how many are asked at the
+ * short grace before the cadence falls back to the ordinary interval. Three, for
+ * `ENGINE_QUICK_EXIT_STREAK`'s reason: one is a machine having a moment, three is a condition that
+ * is not clearing.
+ */
+export const ENGINE_LOCAL_SOCKET_STREAK = 3
+
+/**
  * How long after the machine wakes the watchdog waits before asking again.
  *
  * A resume is the one moment when every clock in the process is wrong at once and the engine is
@@ -212,6 +229,9 @@ export type HealthFailure =
   | 'refused'
   | 'protocolMismatch'
   | 'unexpected'
+  /** The connect never left this process: the OS would not give US a local endpoint. It is the one
+   *  reason in this set that is not evidence about the engine, so it never ends a launch. */
+  | 'localSocket'
 
 /**
  * WHAT THE HEALTH WATCHDOG CONCLUDED, on the report of a launch a probe ended.
@@ -240,6 +260,15 @@ export type EngineFailure =
    *  `exited` because nothing about it is a crash of a running engine and it must never fold into
    *  the restart trail: the app asked the child to leave and the child left badly. */
   | 'shutdown-exit'
+  /**
+   * THIS PROCESS COULD NOT OPEN A SOCKET — and the launch is therefore NOT over.
+   *
+   * A `connect` that fails on the local endpoint says nothing about the engine, which has already
+   * bound its listener and announced it. Respawning cannot fix a local endpoint and costs a re-fold,
+   * so this is a report about a launch that is still running. Like `shutdown-exit` it is excluded
+   * from `LaunchFailure`, which is what makes "it never ends a launch" structural.
+   */
+  | 'local-socket'
 
 /** Everything known about ONE ended launch, in the order a reader asks for it. */
 export interface EngineExitCause {
@@ -281,7 +310,8 @@ const FAILURE_NAMES: Readonly<Record<EngineFailure, string>> = {
   'bad-announce': 'EngineBadAnnounce',
   unhealthy: 'EngineUnhealthy',
   exited: 'EngineExited',
-  'shutdown-exit': 'EngineShutdownExit'
+  'shutdown-exit': 'EngineShutdownExit',
+  'local-socket': 'EngineLocalSocket'
 }
 
 /** The sentence each failure opens with. */
@@ -291,7 +321,8 @@ const FAILURE_SENTENCES: Readonly<Record<EngineFailure, string>> = {
   'bad-announce': 'the data-server engine printed something other than its announce line',
   unhealthy: 'the data-server engine stopped answering session.health',
   exited: 'the data-server engine exited unexpectedly',
-  'shutdown-exit': 'the data-server engine exited nonzero after the shutdown signal'
+  'shutdown-exit': 'the data-server engine exited nonzero after the shutdown signal',
+  'local-socket': 'this app could not open a loopback socket to the data-server engine'
 }
 
 /**
@@ -326,6 +357,40 @@ export function engineShutdownExitLog(
     message:
       `the data-server engine exited ${code === null ? `by signal ${signal ?? 'unknown'}` : String(code)} ` +
       `after the shutdown signal — the polite path ended badly`
+  }
+}
+
+/**
+ * A CONNECT THAT NEVER LEFT THIS PROCESS, MADE DURABLE — the launch is still running.
+ *
+ * The evidence it exists for: `EngineLaunchLoop … connect EADDRINUSE 127.0.0.1:<port>`, where the
+ * port is the DESTINATION Node stamps on every connect error and the engine had already bound and
+ * announced it. On Windows an outbound connect that names no local address commits one at connect
+ * time, so `EADDRINUSE` there is the dynamic port range, never the listener — and the app spent
+ * three launches killing a serving engine over it.
+ *
+ * `attempt` is 0 and the count rides `exits`, both for `engineShutdownExitLog`'s reason: this is not
+ * a retry of anything, and it must never fold into a restart trail.
+ */
+export function engineLocalSocketLog(
+  tries: number,
+  lifetimeMs: number,
+  detail: string | null
+): EngineExitLog {
+  return {
+    failure: 'local-socket',
+    exitCode: null,
+    signal: null,
+    lifetimeMs,
+    attempt: 0,
+    detail,
+    name: FAILURE_NAMES['local-socket'],
+    message:
+      `${FAILURE_SENTENCES['local-socket']}: ${String(tries)} consecutive attempts were refused by ` +
+      `this machine${detail === null ? '' : ` (last: ${detail})`}. The engine is bound and serving, ` +
+      'so it is left alone and asked again — a respawn cannot supply a local port and would cost a ' +
+      'full re-fold.',
+    exits: tries
   }
 }
 

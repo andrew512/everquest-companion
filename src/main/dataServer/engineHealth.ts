@@ -77,7 +77,10 @@ const TRANSIENT_FAILURE: Readonly<Record<HealthFailure, boolean>> = {
   transport: true,
   refused: false,
   protocolMismatch: false,
-  unexpected: false
+  unexpected: false,
+  // Transient by nature, and never reached through this table: the watchdog intercepts a local
+  // socket before the two-strike rule, because an immediate second ask asks the same instant.
+  localSocket: true
 }
 
 export function isTransientHealthFailure(reason: HealthFailure): boolean {
@@ -85,14 +88,44 @@ export function isTransientHealthFailure(reason: HealthFailure): boolean {
 }
 
 /**
+ * THE ERRNOS THAT MEAN THE CONNECT NEVER LEFT THIS PROCESS — a local endpoint, not a peer.
+ *
+ * `connectToEngine` names no local address or port, so libuv binds the wildcard `0.0.0.0:0` itself
+ * and Windows commits a specific local endpoint at connect time; the bind's error comes back
+ * wearing the `connect` syscall and the DESTINATION's address, which is what made `EADDRINUSE
+ * 127.0.0.1:<engine port>` read as a statement about the engine's listener. It is not one: the
+ * engine had already bound that port and announced it.
+ *
+ * An explicit list, so a code that is not here falls through to `connect` and is treated as evidence
+ * about the engine — the safe direction, and the behaviour every reason had before.
+ */
+const LOCAL_SOCKET_CODES: readonly string[] = [
+  'EADDRINUSE',
+  'EADDRNOTAVAIL',
+  'EMFILE',
+  'ENFILE',
+  'ENOBUFS'
+]
+
+/**
  * The reason behind whatever a probe round trip rejected with.
  *
  * `engineHealthCheck` rejects only with `EngineHealthError`, so the one other thing a caller can
  * catch is the CONNECT that has to succeed before the conversation starts — an OS error, with no
- * reason of its own. That is the whole taxonomy, which is why anything else reads as `connect`.
+ * reason of its own. Those split in two: the codes above are about OUR socket, everything else
+ * (a refusal, a timeout, an unreachable peer) is about the engine and reads as `connect`.
  */
 export function healthFailureReason(err: unknown): HealthFailure {
-  return err instanceof EngineHealthError ? err.reason : 'connect'
+  if (err instanceof EngineHealthError) return err.reason
+  return LOCAL_SOCKET_CODES.includes(errorCode(err)) ? 'localSocket' : 'connect'
+}
+
+/** An errno off whatever was thrown, or `''`. The house pattern (`update.ts`): a shaped read rather
+ *  than a trusted one, because this is an object from outside our types. */
+function errorCode(err: unknown): string {
+  if (typeof err !== 'object' || err === null) return ''
+  const code = (err as { code?: unknown }).code
+  return typeof code === 'string' ? code : ''
 }
 
 /** What one probe needs. An options object rather than five parameters — `max-params` is 4 here,

@@ -300,9 +300,16 @@ test('THE TRANSIENT SET IS EXACTLY THE FOUR A SERVING ENGINE CAN PRODUCE', () =>
     'transport',
     'refused',
     'protocolMismatch',
-    'unexpected'
+    'unexpected',
+    'localSocket'
   ]
-  assert.deepEqual(every.filter(isTransientHealthFailure), ['connect', 'timeout', 'closed', 'transport'])
+  assert.deepEqual(every.filter(isTransientHealthFailure), [
+    'connect',
+    'timeout',
+    'closed',
+    'transport',
+    'localSocket'
+  ])
 })
 
 test('A REJECTION CARRIES ITS REASON, AND ANYTHING ELSE IS THE CONNECT', () => {
@@ -311,6 +318,21 @@ test('A REJECTION CARRIES ITS REASON, AND ANYTHING ELSE IS THE CONNECT', () => {
   assert.equal(healthFailureReason(new EngineHealthError('timeout', 'no answer')), 'timeout')
   assert.equal(healthFailureReason(new Error('ECONNREFUSED 127.0.0.1:51413')), 'connect')
   assert.equal(healthFailureReason('nothing throwable is off the table'), 'connect')
+})
+
+test('THE ERRNO SEPARATES OUR SOCKET FROM THE ENGINE — the field EADDRINUSE was never the listener', () => {
+  // The message says `connect … 127.0.0.1:<engine port>` either way: Node stamps the DESTINATION on
+  // every connect error, so only the code can say which endpoint failed.
+  const withCode = (code: string): Error => Object.assign(new Error(`connect ${code} 127.0.0.1:51413`), { code })
+  for (const code of ['EADDRINUSE', 'EADDRNOTAVAIL', 'EMFILE', 'ENFILE', 'ENOBUFS']) {
+    assert.equal(healthFailureReason(withCode(code)), 'localSocket', code)
+  }
+  // Anything not on the list stays evidence about the engine — the safe direction.
+  for (const code of ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT']) {
+    assert.equal(healthFailureReason(withCode(code)), 'connect', code)
+  }
+  // The connect TIMEOUT rejects with a plain Error and no code at all.
+  assert.equal(healthFailureReason(new Error('connecting to the engine on port 51413 timed out')), 'connect')
 })
 
 test('THE PROBE SAYS EXACTLY TWO THINGS, however many frames it skipped', async () => {

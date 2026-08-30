@@ -75,6 +75,7 @@ import {
   NEW_ENGINE_SERVED_TRAIL,
   boundedDetail,
   engineExitStep,
+  engineLocalSocketLog,
   engineRestartDelayMs,
   engineServedCycleStep,
   engineShutdownExitLog,
@@ -101,7 +102,11 @@ export type { SupervisedChild, SupervisedStdin, SupervisedStream } from './super
 export type EngineStatus = 'stopped' | 'absent' | 'starting' | 'ready' | 'backoff' | 'stopping'
 
 /**
- * THE FAILURES A *LAUNCH* CAN HAVE — `EngineFailure` minus the one that is not about a launch.
+ * THE FAILURES A *LAUNCH* CAN HAVE — `EngineFailure` minus the two that do not end one.
+ *
+ * `local-socket` is the second exclusion and it earns the same structural treatment: a connect that
+ * failed on our own endpoint is not evidence about the engine, so `fold` and `endLaunch` cannot be
+ * handed it and a serving engine cannot be retired over it.
  *
  * `shutdown-exit` is a child that exited badly after the app closed its stdin. It is handled in
  * `onExit`'s stopping arm, which returns before `endLaunch` — so it can never fold into a restart
@@ -109,7 +114,7 @@ export type EngineStatus = 'stopped' | 'absent' | 'starting' | 'ready' | 'backof
  * `fold` and `endLaunch` cannot be handed it, which is also what lets a fault carry `cause.failure`
  * straight across to `EngineFaultKind` with no unreachable branch to prove dead (JOS-503).
  */
-export type LaunchFailure = Exclude<EngineFailure, 'shutdown-exit'>
+export type LaunchFailure = Exclude<EngineFailure, 'shutdown-exit' | 'local-socket'>
 
 /**
  * A LAUNCH THAT PROVED ITSELF, and everything a client needs to talk to it (JOS-479).
@@ -550,8 +555,17 @@ export class EngineSupervisor {
     const target = { port: announce.port, token: l.token, protocolVersion: this.protocolVersion }
     l.health = createLaunchHealthWatch(this.deps, target, {
       onHealthy: (health, first) => { if (first) this.reachedReady(l, announce, health) },
-      onUnhealthy: (reasons, err) => { this.unhealthy(l, reasons, err) }
+      onUnhealthy: (reasons, err) => { this.unhealthy(l, reasons, err) },
+      onLocalSocket: (tries, err) => { this.localSocket(l, tries, err) }
     })
+  }
+
+  /** The app could not open a socket, repeatedly. One entry, and the launch is left running — the
+   *  engine is bound and serving, and a respawn cannot supply a local port. */
+  private localSocket(l: Launch, tries: number, err: unknown): void {
+    this.deps.report(
+      engineLocalSocketLog(tries, Math.max(0, this.deps.now() - l.startedAt), boundedDetail(describeErr(err)))
+    )
   }
 
   /**

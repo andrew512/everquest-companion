@@ -32,6 +32,8 @@ import {
 import {
   ENGINE_HEALTH_INTERVAL_MS,
   ENGINE_HEALTH_TIMEOUT_MS,
+  ENGINE_LOCAL_SOCKET_GRACE_MS,
+  ENGINE_LOCAL_SOCKET_STREAK,
   ENGINE_RESUME_GRACE_MS,
   type EngineTimer,
   type HealthFailure
@@ -51,6 +53,8 @@ export interface HealthWatchDeps {
   healthIntervalMs?: number
   healthTimeoutMs?: number
   resumeGraceMs?: number
+  localSocketGraceMs?: number
+  localSocketStreak?: number
 }
 
 /** The launch being asked about. Fixed for the watch's whole life: a respawn is a launch (contract
@@ -69,6 +73,14 @@ export interface HealthWatchListener {
    *  reason was fatal on the first ask, two where a transient failure was confirmed. `err` is the
    *  LAST probe's own error, which is the sentence a failure report already carried. */
   onUnhealthy(reasons: readonly HealthFailure[], err: unknown): void
+  /**
+   * THIS PROCESS COULD NOT OPEN A SOCKET, `ENGINE_LOCAL_SOCKET_STREAK` times running.
+   *
+   * A SECOND EDGE RATHER THAN A REASON ON THE FIRST, because the two say opposite things about the
+   * launch: `onUnhealthy` means retire the engine, this means the engine is fine and we are not.
+   * Fired ONCE per watch — the condition is a drip, and one entry is the diagnosis.
+   */
+  onLocalSocket(tries: number, err: unknown): void
 }
 
 /** The watch, as its owner holds it. Every verb is idempotent. */
@@ -105,10 +117,16 @@ class HealthWatch implements LaunchHealthWatch {
    */
   private round = 0
   private first = true
+  /** Consecutive asks that never reached the engine. Reset by any answer — see `answered`. */
+  private localTries = 0
+  /** Has the one local-socket entry been written for this watch? See `onLocalSocket`. */
+  private localSaid = false
   private cancel: (() => void) | null = null
   private readonly intervalMs: number
   private readonly timeoutMs: number
   private readonly graceMs: number
+  private readonly localGraceMs: number
+  private readonly localStreak: number
 
   constructor(
     private readonly deps: HealthWatchDeps,
@@ -118,6 +136,8 @@ class HealthWatch implements LaunchHealthWatch {
     this.intervalMs = deps.healthIntervalMs ?? ENGINE_HEALTH_INTERVAL_MS
     this.timeoutMs = deps.healthTimeoutMs ?? ENGINE_HEALTH_TIMEOUT_MS
     this.graceMs = deps.resumeGraceMs ?? ENGINE_RESUME_GRACE_MS
+    this.localGraceMs = deps.localSocketGraceMs ?? ENGINE_LOCAL_SOCKET_GRACE_MS
+    this.localStreak = deps.localSocketStreak ?? ENGINE_LOCAL_SOCKET_STREAK
   }
 
   begin(): void {
@@ -171,15 +191,20 @@ class HealthWatch implements LaunchHealthWatch {
     if (this.spent(round)) return
     const first = this.first
     this.first = false
+    this.localTries = 0
     this.on.onHealthy(health, first)
     this.schedule(this.intervalMs)
   }
 
   /** An ask failed. A transient FIRST strike buys the one confirmation; everything else, and the
-   *  confirmation itself, is the answer. */
+   *  confirmation itself, is the answer. A local socket is neither — see `localSocket`. */
   private failed(round: number, strike: HealthFailure | null, err: unknown): void {
     if (this.spent(round)) return
     const reason = healthFailureReason(err)
+    if (reason === 'localSocket') {
+      this.localSocket(err)
+      return
+    }
     if (strike === null && isTransientHealthFailure(reason)) {
       this.deps.debug(
         `data-server engine: health probe failed (${reason}); confirming on a fresh connection`
@@ -188,6 +213,26 @@ class HealthWatch implements LaunchHealthWatch {
       return
     }
     this.on.onUnhealthy(strike === null ? [reason] : [strike, reason], err)
+  }
+
+  /**
+   * THE ASK NEVER REACHED THE ENGINE, so it is not a verdict on one and the launch stands.
+   *
+   * Any strike before it is DROPPED — a confirmation that could not open a socket confirmed nothing.
+   * The first few retries take the short grace and then the cadence falls back to the ordinary
+   * interval, because a machine with no local ports is not helped by being asked every two seconds.
+   */
+  private localSocket(err: unknown): void {
+    this.localTries += 1
+    this.deps.debug(
+      `data-server engine: this app could not open a socket to port ${String(this.target.port)} ` +
+        `(${String(this.localTries)} in a row); the engine is serving and is not respawned`
+    )
+    if (this.localTries >= this.localStreak && !this.localSaid) {
+      this.localSaid = true
+      this.on.onLocalSocket(this.localTries, err)
+    }
+    this.schedule(this.localTries < this.localStreak ? this.localGraceMs : this.intervalMs)
   }
 
   /** A FRESH CONNECTION EVERY ASK, which is why a confirmation can disagree with a strike at all:
