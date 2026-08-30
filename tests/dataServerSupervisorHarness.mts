@@ -12,7 +12,7 @@
 
 import { createEngineSupervisor, type EngineFaultCause, type EngineSupervisorDeps, type ReadyEngine } from '../src/main/dataServer/supervisor'
 import type { EngineExitLog, EnginePowerHandlers } from '../src/main/dataServer/engineProtocol'
-import { FakeChild, fakeClock, scriptedChannel, type ChannelBehaviour } from './dataServerSupervisorFakes.mts'
+import { FakeChild, connectError, fakeClock, scriptedChannel, type ChannelBehaviour } from './dataServerSupervisorFakes.mts'
 
 /** Everything one supervisor-under-test is wired to, and everything it said. */
 export function harness(opts: { binary?: string | null; behaviour?: ChannelBehaviour; spawnThrows?: Error } = {}) {
@@ -49,6 +49,9 @@ export function harness(opts: { binary?: string | null; behaviour?: ChannelBehav
     connect: (_port) => {
       const next = queued.shift() ?? behaviour
       connects.push(next)
+      // A `ConnectRefusal` is the dep rejecting: there is no channel and the engine never heard the
+      // question, which is the whole point of the local-socket class.
+      if (typeof next === 'object') return Promise.reject(connectError(next.connectFails))
       return Promise.resolve(scriptedChannel(tokens[tokens.length - 1] ?? '', next))
     },
     mintToken: () => {

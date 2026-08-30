@@ -19,7 +19,11 @@ import assert from 'node:assert/strict'
 import {
   ENGINE_HEALTH_INTERVAL_MS,
   ENGINE_HEALTH_TIMEOUT_MS,
-  ENGINE_RESUME_GRACE_MS
+  ENGINE_LOCAL_SOCKET_GRACE_MS,
+  ENGINE_LOCAL_SOCKET_STREAK,
+  ENGINE_QUICK_EXIT_STREAK,
+  ENGINE_RESUME_GRACE_MS,
+  engineRestartDelayMs
 } from '../src/main/dataServer/engineProtocol'
 import { harness, launched, settle, type Harness } from './dataServerSupervisorHarness.mts'
 
@@ -194,6 +198,138 @@ test('A RESUME WITH NO LAUNCH IS NOT AN ERROR — the commonest sleep is an idle
   await settle()
   assert.equal(h.reports.length, 0)
   assert.equal(h.connects.length, 0)
+})
+
+// ---- 4. the connect that never left this process ---------------------------------------------
+//
+// THE FIELD SHAPE THIS SECTION EXISTS FOR: `EngineLaunchLoop: 3 consecutive launches failed …
+// connect EADDRINUSE 127.0.0.1:<port> (alive for 24 ms)`. The port is the DESTINATION Node stamps on
+// every connect error and the engine had already bound and announced it, so the collision is on OUR
+// local endpoint — and the app answered by killing a serving engine three times in a row, each kill
+// costing a full re-fold and none of them able to supply a local port.
+
+/** The engine is up; this process cannot open a socket to it. One ask, then the grace. */
+async function localBeat(h: Harness): Promise<void> {
+  h.clock.advance(ENGINE_LOCAL_SOCKET_GRACE_MS)
+  await settle()
+}
+
+/** A launch that announced, whose every probe is refused before it reaches the engine. */
+async function launchedWithNoSocket(code = 'EADDRINUSE'): Promise<Harness> {
+  const h = harness({ behaviour: { connectFails: code } })
+  h.supervisor.start()
+  h.children[0].announce()
+  await settle()
+  return h
+}
+
+test('A LOCAL SOCKET FAILURE NEVER KILLS THE ENGINE — the launch-loop shape, at its cause', async () => {
+  const h = await launchedWithNoSocket()
+  await localBeat(h)
+  await localBeat(h)
+  await localBeat(h)
+  assert.equal(h.children.length, 1, 'one engine, still running: a respawn cannot supply a local port')
+  assert.equal(h.children[0].kills, 0)
+  assert.equal(h.children[0].stdin.ended, false, 'and it was never retired')
+  assert.equal(
+    h.reports.filter((r) => r.name === 'EngineUnhealthy' || r.name === 'EngineLaunchLoop').length,
+    0,
+    'the engine is not the one that failed, so it is not the one reported'
+  )
+})
+
+test('IT IS ASKED AGAIN ON A GRACE — an immediate second ask is the same instant, same pool', async () => {
+  const h = await launchedWithNoSocket()
+  assert.equal(h.connects.length, 1, 'no confirmation: the two-strike rule is for reasons the engine gave')
+  h.clock.advance(ENGINE_LOCAL_SOCKET_GRACE_MS - 1)
+  await settle()
+  assert.equal(h.connects.length, 1)
+  await localBeat(h)
+  assert.equal(h.connects.length, 2)
+})
+
+test('THE SAME ENGINE REACHES READY WHEN THE MACHINE RECOVERS — no respawn, no re-fold', async () => {
+  const h = await launchedWithNoSocket()
+  await localBeat(h)
+  h.setBehaviour('ok')
+  await localBeat(h)
+  assert.equal(h.supervisor.state, 'ready')
+  assert.equal(h.children.length, 1)
+  assert.equal(h.readies.filter((r) => r !== null).length, 1, 'one READY edge, from the launch that announced')
+  assert.equal(h.reports.length, 0)
+})
+
+test('THE STREAK IS WORTH ONE ENTRY, and it names the app rather than the engine', async () => {
+  const h = await launchedWithNoSocket()
+  for (let i = 1; i < ENGINE_LOCAL_SOCKET_STREAK; i += 1) await localBeat(h)
+  assert.equal(h.reports.length, 1)
+  assert.equal(h.reports[0].name, 'EngineLocalSocket')
+  assert.equal(h.reports[0].exits, ENGINE_LOCAL_SOCKET_STREAK)
+  assert.equal(h.reports[0].attempt, 0, 'this is not a retry of anything')
+  assert.match(h.reports[0].message, /EADDRINUSE/)
+  assert.equal(h.supervisor.state, 'starting', 'the launch is still the launch')
+})
+
+test('ONE ENTRY, THEN THE ORDINARY CADENCE — a drip is not a flood to report', async () => {
+  const h = await launchedWithNoSocket()
+  for (let i = 1; i < ENGINE_LOCAL_SOCKET_STREAK; i += 1) await localBeat(h)
+  const asked = h.connects.length
+  await localBeat(h)
+  assert.equal(h.connects.length, asked, 'the short grace is spent; the interval owns the cadence now')
+  h.clock.advance(ENGINE_HEALTH_INTERVAL_MS)
+  await settle()
+  assert.equal(h.connects.length, asked + 1)
+  assert.equal(h.reports.length, 1, 'and still one entry')
+})
+
+test('ONLY THE LOCAL ERRNOS — a refused connect is still evidence about the engine', async () => {
+  const h = harness({ behaviour: { connectFails: 'ECONNREFUSED' } })
+  h.supervisor.start()
+  h.children[0].announce()
+  await settle()
+  assert.equal(h.connects.length, 2, 'the ordinary transient path: one strike, one confirmation')
+  assert.equal(h.reports.length, 1)
+  assert.equal(h.reports[0].name, 'EngineUnhealthy')
+  assert.deepEqual(h.reports[0].healthReasons, ['connect', 'connect'])
+})
+
+/** Drive `ENGINE_QUICK_EXIT_STREAK` whole launches: announce, let the probes land, ride the backoff. */
+async function threeLaunches(h: Harness): Promise<void> {
+  h.supervisor.start()
+  for (let i = 0; i < ENGINE_QUICK_EXIT_STREAK; i += 1) {
+    // A launch that was never replaced has no next child to announce — which is the whole assertion.
+    if (h.children.length > i) h.children[i].announce()
+    await settle()
+    h.clock.advance(engineRestartDelayMs(ENGINE_QUICK_EXIT_STREAK))
+    await settle()
+  }
+}
+
+test('THE REPORTED LOOP, BOTH WAYS — a peer refusal collapses a trail, a local socket does not', async () => {
+  const peer = harness({ behaviour: { connectFails: 'ECONNREFUSED' } })
+  await threeLaunches(peer)
+  assert.equal(peer.children.length, ENGINE_QUICK_EXIT_STREAK + 1, 'three failed launches and the next')
+  assert.ok(
+    peer.reports.some((r) => r.name === 'EngineLaunchLoop'),
+    'a connect the ENGINE caused is still a launch loop, and is still collapsed'
+  )
+  // The same three launches, the same instant, the same message — but the errno says the connect
+  // never left this process, and the field report's `EADDRINUSE` is that errno.
+  const local = harness({ behaviour: { connectFails: 'EADDRINUSE' } })
+  await threeLaunches(local)
+  assert.equal(local.children.length, 1, 'one engine, never replaced')
+  assert.equal(local.reports.filter((r) => r.name === 'EngineLaunchLoop').length, 0)
+})
+
+test('A LOCAL SOCKET ON THE CONFIRMATION DROPS THE STRIKE — it confirmed nothing', async () => {
+  const h = harness()
+  await launched(h)
+  h.queueBehaviours('closed', { connectFails: 'EADDRINUSE' })
+  h.clock.advance(ENGINE_HEALTH_INTERVAL_MS)
+  await settle()
+  assert.equal(h.reports.length, 0, 'a socket that never opened is not a second opinion about a stall')
+  assert.equal(h.supervisor.state, 'ready')
+  assert.equal(h.children.length, 1)
 })
 
 /** A ready launch, then one whole watchdog beat answered by `behaviour` — strike and confirmation. */

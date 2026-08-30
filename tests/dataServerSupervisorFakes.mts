@@ -150,7 +150,27 @@ export class FakeChild implements SupervisedChild {
  * — indistinguishable from a stall, so it is asked about twice — while a spoken `ok: false` is
  * `refused`, a statement about the credential that no second ask can change.
  */
-export type ChannelBehaviour = 'ok' | 'refuse' | 'deny' | 'mute' | 'mismatch' | 'closed'
+export type EngineBehaviour = 'ok' | 'refuse' | 'deny' | 'mute' | 'mismatch' | 'closed'
+
+/** What a probe meets: an engine at the far end, or no channel at all. */
+export type ChannelBehaviour = EngineBehaviour | ConnectRefusal
+
+/**
+ * A CONNECT THAT NEVER PRODUCES A CHANNEL — the `connect` dep rejecting rather than an engine
+ * answering. `code` is what libuv put on the error, which is the only thing that separates "the
+ * machine would not give us a socket" from "the engine is not there".
+ */
+export interface ConnectRefusal {
+  readonly connectFails: string
+}
+
+/** The real shape of a failed `net.connect`: the syscall and the DESTINATION, whatever the local
+ *  endpoint was — the field message that made an EADDRINUSE read as the engine's port. */
+export function connectError(code: string, port = 51413): Error & { code: string } {
+  const err = new Error(`connect ${code} 127.0.0.1:${String(port)}`) as Error & { code: string }
+  err.code = code
+  return err
+}
 
 /**
  * An engine at the far end of a `ByteChannel`, scripted.
@@ -160,7 +180,7 @@ export type ChannelBehaviour = 'ok' | 'refuse' | 'deny' | 'mute' | 'mismatch' | 
  * `session.health`. Replies arrive on a microtask so the supervisor's promise chain behaves exactly
  * as it does over a socket: nothing resolves inside the call that sent it.
  */
-export function scriptedChannel(token: string, behaviour: ChannelBehaviour, protocol = 1): ByteChannel {
+export function scriptedChannel(token: string, behaviour: EngineBehaviour, protocol = 1): ByteChannel {
   let onData: ((chunk: string) => void) | undefined
   let onClose: ((error?: unknown) => void) | undefined
   let greeted = false

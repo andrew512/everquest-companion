@@ -569,6 +569,43 @@ has not slept this session, SESSION-scoped so a respawn inside the wake window s
 a number, inside the telemetry bright line, and `describeEngineExit` puts them in the MESSAGE because
 that is the field the error store keeps.
 
+## A CONNECT THAT NEVER LEFT THIS PROCESS (JOS-532)
+
+**The evidence.** `EngineLaunchLoop: 3 consecutive launches failed inside 30000 ms (last: … connect
+EADDRINUSE 127.0.0.1:<port> (alive for 24 ms …))` — 25 occurrences on 1.14.0 over three days.
+
+**Which side owned the port: ours.** The engine binds `127.0.0.1:0` (`main.rs`, contract rule 2) and
+a bind that fails makes it exit 1 with a stderr diagnostic and NO announce line — so a launch that
+announced a port is a launch whose listener is bound, by the engine, exclusively. The port in the
+message is not that fact: Node stamps every connect error with the DESTINATION
+(`exceptionWithHostPort`), whatever the local endpoint was. And `connectToEngine` names no
+`localAddress`/`localPort`, so an explicit bind failure (`syscall: 'bind'`) is impossible here — the
+error came out of `uv_tcp_connect`, which binds the wildcard `0.0.0.0:0` itself and lets Windows
+commit a specific local endpoint at connect time. `WSAEADDRINUSE` there is the dynamic port range or
+a `TIME_WAIT` tuple. **Our local endpoint, never the engine's listener.**
+
+**What the app did with it.** `healthFailureReason` read anything that was not an `EngineHealthError`
+as `connect`, which is transient, so the two-strike rule bought one immediate confirmation — the same
+instant, the same exhausted pool — and then declared the launch `unhealthy`. That retires a SERVING
+engine, respawns it, and the respawn's first probe meets the same local condition; three inside 30 s
+collapse the trail into `EngineLaunchLoop`, whose card says the engine is not going to start on this
+machine. It started fine every time.
+
+**The class.** `localSocket` is the reason for the errnos that mean the OS would not give us a local
+endpoint — `EADDRINUSE`, `EADDRNOTAVAIL`, `EMFILE`, `ENFILE`, `ENOBUFS`, an explicit list so an
+unlisted code stays evidence about the engine. It is the one reason in the set that never ends a
+launch, and that is STRUCTURAL: `local-socket` is excluded from `LaunchFailure` exactly as
+`shutdown-exit` is, so `fold` and `endLaunch` cannot be handed it. The watchdog re-asks on
+`ENGINE_LOCAL_SOCKET_GRACE_MS` (2 s) for `ENGINE_LOCAL_SOCKET_STREAK` (3) asks, then falls back to
+the ordinary 30 s cadence; any answer resets the count and the launch reaches READY on the SAME
+engine with no re-fold. At the streak it mints ONE `EngineLocalSocket` entry per launch — a drip, not
+a flood — which is the honest diagnosis the fleet was getting `EngineLaunchLoop` for.
+
+**Two candidate fixes rejected on the evidence.** `SO_REUSEADDR` on the engine's listener fixes a
+bind that never failed, and on Windows it lets an unrelated process take a bound port — widening the
+impostor surface a token-authenticated loopback listener deliberately closes. "Always take an
+OS-assigned ephemeral port" is already what the engine does.
+
 ## WHICH ENGINE: RELEASE BY DEFAULT, DEBUG BY OPT-IN (JOS-520)
 
 **The incident.** `cargo test` writes `engine/target/debug/engined.exe` as a side effect of running
