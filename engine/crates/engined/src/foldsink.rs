@@ -100,8 +100,8 @@ impl FoldSink {
         });
         Self {
             fold,
-            // Cloned, never rebuilt from a name: a fixed-offset clock has no name to rebuild from.
-            clock: inputs.clock.clone(),
+            // Copied, never rebuilt from a name: a fixed-offset clock has no name to rebuild from.
+            clock: *inputs.clock,
             live: false,
             beats: 0,
             knowledge: corpus(),

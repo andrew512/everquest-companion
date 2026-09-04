@@ -52,6 +52,15 @@ pub enum Zone {
 }
 
 impl Zone {
+    /// A constant offset stated in minutes east of UTC, or `None` when that is not an offset.
+    #[must_use]
+    pub fn fixed(minutes: i32) -> Option<Zone> {
+        minutes
+            .checked_mul(60)
+            .and_then(FixedOffset::east_opt)
+            .map(Zone::Fixed)
+    }
+
     /// How this zone names itself on the wire: the IANA name, or the signed `+HH:MM` offset.
     #[must_use]
     pub fn name(&self) -> String {
@@ -59,6 +68,23 @@ impl Zone {
             Zone::Iana(tz) => tz.name().to_owned(),
             Zone::Fixed(off) => off.to_string(),
         }
+    }
+
+    /// This zone's distance from UTC in minutes east, at one instant — the same number the attach
+    /// hint carries, so the two can be compared without either side spelling the arithmetic again.
+    #[must_use]
+    pub fn offset_min(&self, at: chrono::DateTime<chrono::Utc>) -> i32 {
+        let seconds = match self {
+            Zone::Iana(tz) => at.with_timezone(tz).offset().fix().local_minus_utc(),
+            Zone::Fixed(off) => off.local_minus_utc(),
+        };
+        seconds / 60
+    }
+
+    /// …at an epoch-millis instant, for a caller with no `chrono` of its own.
+    #[must_use]
+    pub fn offset_min_at_ms(&self, ms: i64) -> i32 {
+        chrono::DateTime::from_timestamp_millis(ms).map_or(0, |at| self.offset_min(at))
     }
 }
 
@@ -123,7 +149,7 @@ fn agrees(tz: Tz, utc_offset_min: Option<i32>, now: chrono::DateTime<chrono::Utc
     let Some(want) = utc_offset_min else {
         return true;
     };
-    now.with_timezone(&tz).offset().fix().local_minus_utc() == want * 60
+    Zone::Iana(tz).offset_min(now) == want
 }
 
 /// Which zone this generation parses through, in the order (a) the host's name, (b) this process's
@@ -143,7 +169,8 @@ fn now_utc() -> chrono::DateTime<chrono::Utc> {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
-    chrono::DateTime::from_timestamp(secs, 0).unwrap_or_else(|| chrono::DateTime::from_timestamp_nanos(0))
+    chrono::DateTime::from_timestamp(secs, 0)
+        .unwrap_or_else(|| chrono::DateTime::from_timestamp_nanos(0))
 }
 
 /// [`resolve_zone`] with both readings of the outside world stated: the instant the agreement rule
@@ -172,13 +199,9 @@ pub fn resolve_zone_at(
             source: ZoneSource::Platform,
         };
     }
-    if let Some(off) = hint
-        .utc_offset_min
-        .and_then(|m| m.checked_mul(60))
-        .and_then(FixedOffset::east_opt)
-    {
+    if let Some(zone) = hint.utc_offset_min.and_then(Zone::fixed) {
         return ResolvedZone {
-            zone: Zone::Fixed(off),
+            zone,
             source: ZoneSource::Offset,
         };
     }
@@ -205,7 +228,9 @@ fn instant_of<T: TimeZone>(tz: &T, naive: NaiveDateTime) -> i64 {
     match tz.offset_from_local_datetime(&naive) {
         LocalResult::Single(off) => (naive - off.fix()).and_utc().timestamp_millis(),
         // The repeated hour: the earlier of the two offsets is the pre-transition one.
-        LocalResult::Ambiguous(before, _after) => (naive - before.fix()).and_utc().timestamp_millis(),
+        LocalResult::Ambiguous(before, _after) => {
+            (naive - before.fix()).and_utc().timestamp_millis()
+        }
         // The skipped hour: read the pre-transition offset off the previous day.
         LocalResult::None => {
             let probe = naive - Duration::hours(24);
@@ -447,7 +472,11 @@ mod tests {
 
     #[test]
     fn a_garbage_zone_name_is_skipped() {
-        let resolved = resolve_zone_at(&hint(Some("Middle/Earth"), Some(-420)), september(), NO_PROBE);
+        let resolved = resolve_zone_at(
+            &hint(Some("Middle/Earth"), Some(-420)),
+            september(),
+            NO_PROBE,
+        );
         assert_eq!(resolved.source, ZoneSource::Offset);
         assert_eq!(resolved.zone.name(), "-07:00");
     }
