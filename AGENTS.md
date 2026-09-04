@@ -334,6 +334,7 @@ docs/agents-archive.md.
 
 - Node/git/gh NOT on PATH in fresh shells: prepend `C:\Program Files\nodejs`,
   `C:\Program Files\git\bin`, `C:\Program Files\GitHub CLI`.
+- macOS: see `docs/macos.md` (fork-local).
 - NO RAW CONTROL BYTES IN SOURCE FILES — spell escapes out (`\u0000`, not a
   literal NUL). A NUL as a "collision-proof key separator" is a fine idea and
   has now been written as a raw byte twice (JOS-133, JOS-150); git classifies

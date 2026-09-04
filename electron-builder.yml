@@ -26,25 +26,19 @@ files:
   # thing keeping ~6 MB of them out of every installer. They are kept as a private CI artifact
   # instead; `tests/symbolicate.test.mts` pins this line so it cannot be tidied away.
   - '!**/*.{o,obj,map,ts,tsx}'
-  # onnxruntime-node ships PREBUILT binaries for every platform it supports in one npm
-  # package — 184 MB on disk, of which this Windows-x64-only app can use 33 MB. Without these
-  # excludes the installer carries macOS dylibs and Linux .so files it can never load. Keep
-  # the list in sync with `win.target.arch` above; a future arm64 target needs its line back.
-  - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,linux}/**'
-  - '!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**'
-  # native-reg (JOS-184, the in-process registry reads that replaced `reg.exe`/`wmic` in
-  # discovery) ships prebuilt N-API binaries for all three Windows architectures in one tarball.
-  # Same reasoning as onnxruntime above: this build is win/x64 only, so the other two are ~1 MB
-  # of binary the app can never load. A future arm64 target needs the ia32 line only.
-  - '!node_modules/native-reg/prebuilds/win32-{arm64,ia32}/**'
-  # koffi (JOS-182, the presence watcher's Win32 surface) is the same story again, and the most
-  # lopsided of the three: 18 prebuilt N-API binaries in one tarball, 28.7 MB unpacked, of which
-  # this Windows-x64-only app can load exactly one. Keep in sync with `win.target.arch` too.
-  - '!node_modules/koffi/build/koffi/!(win32_x64)/**'
+  # THE PER-PLATFORM BINARY PRUNING MOVED TO `win.files` / `mac.files` (below) AND MUST STAY
+  # THERE. onnxruntime-node, koffi and native-reg each ship every platform's prebuilt N-API
+  # binary in one tarball, so each target wants a DIFFERENT set kept — and a pattern written
+  # here applies to every target. The Windows list used to live at this spot and named
+  # `{darwin,linux}` among its exclusions, which is exactly the shape that produced a mac build
+  # with its own dylibs pruned out of it. app-builder-lib appends `<platform>.files` to this
+  # list rather than replacing it (fileMatcher.getFileMatchers: `addPatterns(config.files)` then
+  # `addPatterns(customBuildOptions.files)`), so the split costs nothing but the two homes.
   # And koffi's SOURCES, which ship in the same tarball so `cnoke` can build a prebuild for a
   # platform it has none for. We never build one — `.npmrc` ignores install scripts and the
-  # win32_x64 binary above is the one we load — so the C++, the vendored node-api headers and
-  # the docs are 4 MB of installer that can never be read.
+  # per-platform prebuilt binary is the one we load — so the C++, the vendored node-api headers
+  # and the docs are 4 MB of installer that can never be read. PLATFORM-NEUTRAL, unlike the
+  # binary pruning above, so this one is right to live in the shared list.
   - '!node_modules/koffi/{src,vendor,doc,lib}/**'
   # DirectML.dll (18.5 MB) is NOT excludable, and that was MEASURED, not assumed. This app
   # never asks for the DirectML execution provider — Kokoro runs on CPU on purpose, because it
@@ -169,6 +163,25 @@ win:
     - target: nsis
       arch:
         - x64
+  # THE WINDOWS BINARY PRUNING (it used to live in the shared `files` list; see the note there).
+  # These are ADDED to that list, not a replacement for it.
+  #
+  # onnxruntime-node ships PREBUILT binaries for every platform it supports in one npm
+  # package — 184 MB on disk, of which this Windows-x64 target can use 33 MB. Without these
+  # excludes the installer carries macOS dylibs and Linux .so files it can never load. Keep
+  # the list in sync with `win.target.arch` above; a future arm64 target needs its line back.
+  files:
+    - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,linux}/**'
+    - '!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**'
+    # native-reg (JOS-184, the in-process registry reads that replaced `reg.exe`/`wmic` in
+    # discovery) ships prebuilt N-API binaries for all three Windows architectures in one tarball.
+    # Same reasoning as onnxruntime above: this target is win/x64 only, so the other two are ~1 MB
+    # of binary the app can never load. A future arm64 target needs the ia32 line only.
+    - '!node_modules/native-reg/prebuilds/win32-{arm64,ia32}/**'
+    # koffi (JOS-182, the presence watcher's Win32 surface) is the same story again, and the most
+    # lopsided of the three: 18 prebuilt N-API binaries in one tarball, 28.7 MB unpacked, of which
+    # this Windows-x64 target can load exactly one. Keep in sync with `win.target.arch` too.
+    - '!node_modules/koffi/build/koffi/!(win32_x64)/**'
   # Brand the exe + installer with our generated mark (scripts/gen-icon.mts).
   icon: build/icon.ico
   # We sign+edit the exe so it carries the icon + version metadata (rcedit). This
@@ -203,6 +216,65 @@ win:
     # With it set, every downloaded update must carry a valid Authenticode
     # signature from this publisher or it is rejected before install.
     publisherName: Joshua Moyers
+
+# macOS. THE PLATFORM THE APP IS NOT PRIMARILY TARGETED AT, and this block says exactly how far
+# that goes rather than leaving a `--mac` run to guess.
+#
+# The app itself already runs here: EQ Legends on a Mac runs under a Wine prefix, `log/discovery.ts`
+# finds `…/osxEQL/prefix/drive_c/…`, and every Windows-only surface in the tree is behind a runtime
+# guard rather than an import (`native-reg` is `require`d inside a try/catch — see discovery.ts —
+# and the presence watcher's koffi calls fail into `observed:false`, overlays visible). What was
+# missing was the PACKAGING, which is this block.
+#
+# WHAT DOES NOT WORK HERE, STATED SO NOBODY RE-DISCOVERS IT:
+#   - the registry install probe (`native-reg` has no darwin prebuild, by its nature), which
+#     degrades to the drive sweep exactly as it does on a Windows machine with no Daybreak keys;
+#   - the presence watcher's Win32 calls (koffi loads on darwin, `user32.dll` does not exist), which
+#     is the module's one designed failure and parks the ring fail-open;
+#   - auto-update, because `identity: null` below means these builds are unsigned — macOS will not
+#     apply an update to an app whose signature it cannot verify.
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  # NOT `build/icon.png` — that one is 256x256, which is the size Windows and the tray want and
+  # which app-builder-lib REFUSES here ("Icon must be at least 512x512 pixels", iconConverter.ts).
+  # `scripts/gen-icon.mts` draws this second master at 1024 from the same glyph; regenerate both
+  # together with `npm run gen:icon`.
+  icon: build/icon-1024.png
+  category: public.app-category.games
+  # UNSIGNED, DELIBERATELY, AND THAT IS WHY THIS KEY IS PRESENT RATHER THAN ABSENT. With no
+  # `identity`, app-builder-lib searches the login keychain for a Developer ID and the build's
+  # outcome depends on what the developer happens to have installed — signed on one machine,
+  # skipped with a warning on the next. `null` makes the ad-hoc signature the ANSWER instead of the
+  # fallback, which is what arm64 macOS requires to launch a modified .app at all. A real signed
+  # release needs an Apple Developer ID, `notarize`, and this key removed.
+  identity: null
+  # The mirror of `win.files`: keep this target's own onnxruntime binaries, drop the others.
+  # `native-reg` has no darwin build to keep, so the whole prebuilds tree is Windows freight here.
+  files:
+    - '!node_modules/onnxruntime-node/bin/napi-v3/{win32,linux}/**'
+    - '!node_modules/native-reg/prebuilds/**'
+    - '!node_modules/koffi/build/koffi/!(darwin_arm64|darwin_x64)/**'
+  # THE ENGINE, UNDER ITS DARWIN NAME. The top-level `extraResources` matcher filters for
+  # `engined.exe`; cargo writes `engined` here, and `ENGINE_BIN_NAME` (engineProtocol.ts) resolves
+  # to the same bare name at runtime, so without this matcher a mac build would package no engine
+  # and only warn. Both matchers run on every build — the one whose filter matches nothing copies
+  # nothing — so this ADDS the darwin address rather than replacing the Windows one.
+  extraResources:
+    - from: engine/target/release
+      to: engine
+      filter:
+        - engined
+
+dmg:
+  artifactName: everquest-companion-${version}-${arch}.${ext}
 
 # One-click installer (Discord model): double-click installs per-user under
 # %LOCALAPPDATA%\Programs (no UAC prompt), then launches. Friendly for friends

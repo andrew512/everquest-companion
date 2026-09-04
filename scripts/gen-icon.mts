@@ -5,7 +5,8 @@
 //   export PATH="/c/Program Files/nodejs:$PATH"   # this machine
 //   npx tsx scripts/gen-icon.mts
 //
-// Outputs build/icon.png (256x256, for reference/Linux) and build/icon.ico (the
+// Outputs build/icon.png (256x256, for the tray + reference), build/icon-1024.png (the macOS
+// app icon — electron-builder rejects anything under 512x512 there) and build/icon.ico (the
 // Windows app + installer icon electron-builder consumes). The .ico embeds PNG-
 // compressed frames at 256/128/64/48/32/16 px — Windows Vista+ and NSIS both read
 // PNG-in-ICO frames, so we avoid hand-rolling legacy BMP frames.
@@ -156,52 +157,71 @@ function encodePng(cv: Canvas): Buffer {
   ])
 }
 
-/** Draw the 256x256 master icon. */
-function drawMaster(): Canvas {
-  const S = 256
+/**
+ * Draw the master icon at `256 * scale` px.
+ *
+ * ONE GLYPH, DRAWN AT SIZE — not one drawing upscaled. Every coordinate below is a 256-space
+ * constant multiplied through `k`, so `drawMaster(4)` re-rasterizes the discs at 1024 with round
+ * edges rather than 4x4 staircases. `k(1) === 1` is the identity, so the Windows art this file has
+ * always produced is byte-for-byte unchanged.
+ *
+ * WHY A BIGGER MASTER EXISTS AT ALL: macOS refuses an app icon under 512x512
+ * (app-builder-lib `iconConverter.doConvertSingleFile`: "Icon must be at least 512x512 pixels"),
+ * which is why `build/icon-1024.png` is emitted beside the 256 one rather than replacing it.
+ * The 256 master stays the Windows/tray art — `src/main/tray.ts` imports `build/icon.png` through
+ * the asset pipeline, and the .ico frames top out at 256 because that is the largest frame Windows
+ * reads.
+ *
+ * Every constant is chosen so `scale` 1 and 4 both land on integers (strokeW 12 → 48, the shared
+ * cap height 88..168 → 352..672); a scale that did not would still draw, just with the fractional
+ * pixel dropped by `Math.floor` inside the primitives.
+ */
+function drawMaster(scale = 1): Canvas {
+  const k = (n: number): number => n * scale
+  const S = k(256)
   const cv = new Canvas(S, S)
   cv.fill(BG)
   // Rounded inner panel with a subtle border.
-  cv.roundRect({ x0: 16, y0: 16, x1: S - 16, y1: S - 16 }, 40, [58, 48, 26, 255]) // gold-ish border
-  cv.roundRect({ x0: 20, y0: 20, x1: S - 20, y1: S - 20 }, 36, PANEL)
+  cv.roundRect({ x0: k(16), y0: k(16), x1: S - k(16), y1: S - k(16) }, k(40), [58, 48, 26, 255]) // gold-ish border
+  cv.roundRect({ x0: k(20), y0: k(20), x1: S - k(20), y1: S - k(20) }, k(36), PANEL)
 
   // "EQC" glyph (was "EQ" — the two-letter mark read as plain "EverQuest", which is
   // exactly the confusion the app must not invite; EQC is the app's own identity).
   // Three narrower letterforms sharing the E/Q language: gold with highlight accents.
-  const strokeW = 12
+  const strokeW = k(12)
   // One shared cap height (72px) for all three letters — the first draft kept the old
   // 100px E beside 64px rings and read as "Eqc".
-  const top = 88
-  const bot = 168
-  const midY = (top + bot) / 2 // 128
+  const top = k(88)
+  const bot = k(168)
+  const midY = (top + bot) / 2 // 128 at scale 1
 
   // --- E ---
-  const eX = 28
-  const eW = 44
+  const eX = k(28)
+  const eW = k(44)
   cv.rect({ x0: eX, y0: top, x1: eX + strokeW, y1: bot }, GOLD) // vertical spine
   cv.rect({ x0: eX, y0: top, x1: eX + eW, y1: top + strokeW }, GOLD) // top bar
-  cv.rect({ x0: eX, y0: midY - strokeW / 2, x1: eX + eW - 7, y1: midY + strokeW / 2 }, GOLD) // mid bar
+  cv.rect({ x0: eX, y0: midY - strokeW / 2, x1: eX + eW - k(7), y1: midY + strokeW / 2 }, GOLD) // mid bar
   cv.rect({ x0: eX, y0: bot - strokeW, x1: eX + eW, y1: bot }, GOLD) // bottom bar
-  cv.rect({ x0: eX, y0: top, x1: eX + 4, y1: bot }, GOLD_HI) // highlight along the spine
+  cv.rect({ x0: eX, y0: top, x1: eX + k(4), y1: bot }, GOLD_HI) // highlight along the spine
 
   // --- Q ---
-  const qcx = 120
-  const qR = 40
+  const qcx = k(120)
+  const qR = k(40)
   cv.disc(qcx, midY, { outer: qR, inner: qR - strokeW }, GOLD) // ring
-  cv.disc(qcx, midY, { outer: qR, inner: qR - 4 }, GOLD_HI) // thin bright outer edge
-  cv.disc(qcx, midY, { outer: qR - strokeW + 4, inner: qR - strokeW }, [58, 48, 26, 255]) // inner shadow edge
+  cv.disc(qcx, midY, { outer: qR, inner: qR - k(4) }, GOLD_HI) // thin bright outer edge
+  cv.disc(qcx, midY, { outer: qR - strokeW + k(4), inner: qR - strokeW }, [58, 48, 26, 255]) // inner shadow edge
   // Q tail (short diagonal, sized to stop before the C's ring)
-  for (let t = 0; t < 14; t++) {
-    cv.rect({ x0: qcx + 14 + t, y0: midY + 14 + t, x1: qcx + 14 + t + strokeW, y1: midY + 14 + t + strokeW }, GOLD)
+  for (let t = 0; t < k(14); t++) {
+    cv.rect({ x0: qcx + k(14) + t, y0: midY + k(14) + t, x1: qcx + k(14) + t + strokeW, y1: midY + k(14) + t + strokeW }, GOLD)
   }
 
   // --- C --- (the Q's ring with its right side opened — erased back to panel color)
-  const ccx = 200
-  const cR = 40
+  const ccx = k(200)
+  const cR = k(40)
   cv.disc(ccx, midY, { outer: cR, inner: cR - strokeW }, GOLD)
-  cv.disc(ccx, midY, { outer: cR, inner: cR - 4 }, GOLD_HI)
-  cv.disc(ccx, midY, { outer: cR - strokeW + 4, inner: cR - strokeW }, [58, 48, 26, 255])
-  cv.rect({ x0: ccx + 12, y0: midY - 14, x1: ccx + cR + 2, y1: midY + 14 }, PANEL) // the C's opening
+  cv.disc(ccx, midY, { outer: cR, inner: cR - k(4) }, GOLD_HI)
+  cv.disc(ccx, midY, { outer: cR - strokeW + k(4), inner: cR - strokeW }, [58, 48, 26, 255])
+  cv.rect({ x0: ccx + k(12), y0: midY - k(14), x1: ccx + cR + k(2), y1: midY + k(14) }, PANEL) // the C's opening
   return cv
 }
 
@@ -240,6 +260,15 @@ const master = drawMaster()
 const masterPng = encodePng(master)
 writeFileSync(join(outDir, 'icon.png'), masterPng)
 
+// THE macOS MASTER, 1024x1024. electron-builder REFUSES an app icon under 512x512 on mac
+// (app-builder-lib `iconConverter`), so `build/icon.png` — 256, and the size Windows and the tray
+// want — cannot be `mac.icon`. This is the same glyph re-rasterized at 4x, not that file upscaled,
+// and `electron-builder.yml`'s `mac.icon` names it. 1024 rather than 512 because that is the
+// largest frame a .icns carries, and app-builder downscales the rest from whatever it is given.
+const macMaster = drawMaster(4)
+const macPng = encodePng(macMaster)
+writeFileSync(join(outDir, 'icon-1024.png'), macPng)
+
 const sizes = [256, 128, 64, 48, 32, 16]
 const frames = sizes.map((size) => ({
   size,
@@ -249,4 +278,5 @@ const ico = buildIco(frames)
 writeFileSync(join(outDir, 'icon.ico'), ico)
 
 console.log(`wrote build/icon.png (${masterPng.length} bytes, 256x256)`)
+console.log(`wrote build/icon-1024.png (${macPng.length} bytes, 1024x1024 — mac.icon)`)
 console.log(`wrote build/icon.ico (${ico.length} bytes, frames: ${sizes.join('/')})`)

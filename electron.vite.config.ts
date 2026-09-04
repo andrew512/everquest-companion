@@ -2,6 +2,25 @@ import { resolve } from 'path'
 import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 
+// ELECTRON_RUN_AS_NODE MAKES `npm run dev` DIE BEFORE IT DRAWS ANYTHING, and the message names
+// none of this: `TypeError: Cannot read properties of undefined (reading 'isPackaged')` at the
+// first `app.` in the bundle, with a plain `Node.js vNN` footer under it. The variable tells the
+// Electron binary to behave as a bare Node interpreter — no `app`, no windows — so
+// `require('electron')` returns the npm shim (a path string) instead of the API, and every read
+// off it is undefined.
+//
+// NOBODY SETS IT ON PURPOSE. VS Code (and every editor built on it) is itself an Electron app and
+// exports the variable into its integrated terminal, so it is inherited by whatever is run there
+// and by nothing run from a normal terminal — which is why this reads as "the app is broken on my
+// machine" rather than as a terminal setting, and why the same checkout works two windows over.
+//
+// electron-vite spawns the Electron binary with THIS process's environment, so deleting it here —
+// before the spawn, in the one file every `electron-vite` command loads — is what makes the dev
+// launch independent of which terminal it was started from. `electron-vite build` loads this file
+// too and the delete is a no-op there. The e2e harness sanitizes its own copy of the environment
+// for the same reason (tests/e2e/appWindow.mts).
+delete process.env.ELECTRON_RUN_AS_NODE
+
 export default defineConfig({
   main: {
     // `include` EXTERNALIZES four devDependencies that would otherwise be BUNDLED.

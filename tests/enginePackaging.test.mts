@@ -81,11 +81,51 @@ function listEntries(key: string): string[] {
   return out
 }
 
-/** The one `extraResources` matcher, as the three fields that decide everything below. */
-function engineMatcher(): { from: string; to: string; filter: string } {
-  const block = /extraResources:\n\s*- from: (\S+)\n\s*to: (\S+)\n\s*filter:\n\s*- (\S+)\n/.exec(builderYml)
-  assert.ok(block, 'electron-builder.yml must ship the engine via an extraResources matcher')
-  return { from: block[1], to: block[2], filter: block[3] }
+interface EngineMatcher {
+  from: string
+  to: string
+  filter: string
+}
+
+/**
+ * EVERY `extraResources` matcher in the config, as the three fields that decide everything below.
+ *
+ * THERE IS MORE THAN ONE NOW, and that is the packaging fact this helper exists to carry: cargo
+ * writes `engined.exe` on Windows and `engined` everywhere else, so the config declares a matcher
+ * per platform (the top-level one for `--win`, `mac.extraResources` for `--mac`). Both are read
+ * on every build — the one whose filter matches no file copies nothing — so the tests below ask
+ * about the SET, and `engineMatcher()` picks the one this host's `ENGINE_BIN_NAME` names.
+ */
+function engineMatchers(): EngineMatcher[] {
+  const re = /- from: (\S+)\n\s*to: (\S+)\n\s*filter:\n\s*- (\S+)\n/g
+  const found = [...builderYml.matchAll(re)].map((m) => ({ from: m[1], to: m[2], filter: m[3] }))
+  assert.ok(
+    found.length > 0,
+    'electron-builder.yml must ship the engine via an extraResources matcher'
+  )
+  return found
+}
+
+/** The WINDOWS matcher, by name rather than by position. Section 2 below is entirely about
+ *  Authenticode, which is a Windows question — `shouldSignFile` recognises `.exe`, `mac` ships
+ *  unsigned on purpose (see the block in electron-builder.yml) — so those tests must ask about
+ *  this matcher on every host, not about whichever one the host happens to be. */
+function winEngineMatcher(): EngineMatcher {
+  const win = engineMatchers().find((m) => m.filter.endsWith('.exe'))
+  assert.ok(win, 'electron-builder.yml must keep an extraResources matcher for the Windows engine')
+  return win
+}
+
+/** The matcher for THIS host's platform — the one whose filter is the name the resolver will look
+ *  for when the packaged app runs here. */
+function engineMatcher(): EngineMatcher {
+  const mine = engineMatchers().find((m) => m.filter === ENGINE_BIN_NAME)
+  assert.ok(
+    mine,
+    `electron-builder.yml has no extraResources matcher naming ${ENGINE_BIN_NAME} — a build on ` +
+      'this platform would package no engine and only WARN about it'
+  )
+  return mine
 }
 
 // =========================================================================================
@@ -113,12 +153,19 @@ test('THE SHIPPED PATH IS THE PROBED PATH — composed, not restated', () => {
 })
 
 test('the binary comes out of cargo`s RELEASE directory, and only the binary does', () => {
-  const { from, filter } = engineMatcher()
-  assert.equal(from, 'engine/target/release')
+  for (const { from } of engineMatchers()) assert.equal(from, 'engine/target/release')
   // The filter is load-bearing for SIZE, not just tidiness: `engine/target/release` also holds
   // deps/, build/, incremental/ and a 1.6 MB .pdb. `createFilter` prunes a non-matching directory
   // before walking into it, so the copy visits one file.
-  assert.equal(filter, 'engined.exe')
+  //
+  // BOTH SPELLINGS OF THE NAME AND NOTHING ELSE. A third filter here would be a second file in
+  // the copy; a missing one is a platform whose build packages no engine and only warns.
+  assert.deepEqual(
+    engineMatchers()
+      .map((m) => m.filter)
+      .sort(),
+    ['engined', 'engined.exe']
+  )
 })
 
 test('the engine is NOT in `files`, and therefore needs no asarUnpack entry', () => {
@@ -146,15 +193,17 @@ test('the engine is NOT in `files`, and therefore needs no asarUnpack entry', ()
 // =========================================================================================
 
 test('THE MATCHER IS A DIRECTORY — a file `from` would ship an UNSIGNED engine and say nothing', () => {
-  const { from } = engineMatcher()
   // `fileMatcher.copyFiles`: `fromStat.isFile()` → `copyOrLinkFile`, transformer never consulted.
   // Only the directory branch reaches `copyDir(..., { transformer })`. Both configs produce a
-  // working app; exactly one produces a signed one.
-  assert.equal(
-    from.endsWith(ENGINE_BIN_NAME),
-    false,
-    'extraResources `from` must be a DIRECTORY (with a filter) or the sign transformer is skipped'
-  )
+  // working app; exactly one produces a signed one. Asked of EVERY matcher: the signing rule is
+  // about the shape of the entry, so a new platform's entry must satisfy it too.
+  for (const { from, filter } of engineMatchers()) {
+    assert.equal(
+      from.endsWith(filter),
+      false,
+      'extraResources `from` must be a DIRECTORY (with a filter) or the sign transformer is skipped'
+    )
+  }
 })
 
 test('the sign hook is wired, and it is the one every shipped executable goes through', () => {
@@ -172,8 +221,10 @@ test('nothing in the config narrows the signable set out from under the engine',
   assert.equal(/^\s*signExts:/m.test(builderYml), false, 'signExts would replace the .exe default')
   assert.equal(/signExecutable: false/.test(builderYml), false)
   assert.equal(/signAndEditExecutable: false/.test(builderYml), false)
-  // …and the file that gets signed has to be the extension `shouldSignFile` recognises.
-  assert.match(engineMatcher().filter, /\.exe$/)
+  // …and the file that gets signed has to be the extension `shouldSignFile` recognises. The
+  // WINDOWS matcher specifically: this is an Authenticode question, and the mac matcher beside it
+  // names a file with no extension precisely because nothing on that path signs it.
+  assert.match(winEngineMatcher().filter, /\.exe$/)
 })
 
 // =========================================================================================
@@ -186,7 +237,15 @@ test('BOTH dist scripts build the engine BEFORE packaging', () => {
   // additionally asserts cargo actually left a binary behind (scripts/build-engine.mts).
   const scripts = JSON.parse(packageJson) as { scripts: Record<string, string> }
   assert.match(scripts.scripts['build:engine'], /build-engine\.mts/)
-  for (const name of ['dist', 'dist:dir']) {
+  // EVERY packaging script, discovered rather than listed: the mac pair (`dist:mac`,
+  // `dist:mac:dir`) joined `dist`/`dist:dir` when the mac target was configured, and a fifth added
+  // later must not be able to arrive without this ordering guarantee. The warning it protects
+  // against is platform-neutral — a missing extraResources source never fails a build.
+  const packagingScripts = Object.entries(scripts.scripts)
+    .filter(([, body]) => body.includes('electron-builder'))
+    .map(([name]) => name)
+  assert.ok(packagingScripts.length >= 4, `expected the dist scripts, saw ${packagingScripts.join(', ')}`)
+  for (const name of packagingScripts) {
     const script = scripts.scripts[name]
     assert.ok(script.includes('build:engine'), `${name} must build the engine`)
     assert.ok(

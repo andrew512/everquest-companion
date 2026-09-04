@@ -353,6 +353,12 @@ export async function launchApp(
   // the DEFAULT; the one spec that wants the opt-in names it in opts.env below, which outranks
   // this delete.
   delete env.EQ_OWNER_TOOLS
+  // An editor's integrated terminal exports this (VS Code is an Electron app and passes it down),
+  // and it turns the binary we are about to launch into a bare Node interpreter — playwright's
+  // `electron.launch` then hangs until its own timeout with no window and no `app`. Deleted here
+  // for the same reason electron.vite.config.ts deletes it: the suite must not pass or fail on
+  // which terminal started it.
+  delete env.ELECTRON_RUN_AS_NODE
   // LAST, deliberately: a spec that names a variable outranks the harness's own defaults.
   Object.assign(env, opts.env ?? {})
   const app = await electron.launch({

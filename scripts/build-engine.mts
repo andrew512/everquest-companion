@@ -46,7 +46,12 @@ export const ENGINE_RELEASE_BIN = join(ENGINE_DIR, 'target', 'release', ENGINE_B
  */
 export function cargoBinary(): string {
   const home = process.env.USERPROFILE ?? process.env.HOME ?? ''
-  const fallback = home === '' ? null : join(home, '.cargo', 'bin', 'cargo.exe')
+  // `.exe` ONLY ON WINDOWS. rustup installs `~/.cargo/bin/cargo` with no extension everywhere
+  // else, so a hardcoded `cargo.exe` makes this probe miss on macOS and Linux and fall through to
+  // the bare name — which is the one path that depends on the shell having sourced
+  // `~/.cargo/env`, i.e. it works in a login shell and fails in whatever spawned the build.
+  const exe = process.platform === 'win32' ? 'cargo.exe' : 'cargo'
+  const fallback = home === '' ? null : join(home, '.cargo', 'bin', exe)
   if (fallback !== null && existsSync(fallback)) return fallback
   return 'cargo'
 }
