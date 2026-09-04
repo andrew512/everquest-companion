@@ -114,15 +114,10 @@ docs/agents-archive.md.
   row (spec · signature · occurrences · disposition), integrators append on
   sighting, and a flake at 3+ occurrences must have a fix ticket or chip —
   "green on re-run" is a report line, never a resolution. Known rows:
-  - `sky-filters.e2e` · expanded-quest step vs live-log viewKey remount (6
-    sightings, multi-spec-sweep only) · **RESOLVED 9816cd34 (JOS-279)** —
-    order-hardening was a BET; `tests/e2e/viewRemount.mts` HOLDS the
-    precondition instead. Full history: docs/agents-archive.md.
-  - `sky-filters.e2e` · a SECOND, distinct cause: collapsed-mount/close-panel
-    steps failed once with the remount guard HOLDING ("0 rebuilds seen while
-    settling") · 1 sighting (2026-08-13, JOS-294 worker six-spec sweep; green
-    standalone and in the next full sweep) · NOT the resolved row's signature —
-    unknown mechanism, watch for a second sighting before diagnosing.
+  - `sky-filters.e2e` · remount race · **RESOLVED 9816cd34 (JOS-279)**
+    (`tests/e2e/viewRemount.mts` holds the precondition); a SECOND distinct
+    cause with the guard holding · 1 sighting 2026-08-13 · watch. Both rows
+    at full length: docs/agents-archive.md.
   - `engined tests/perf_snapshot.rs` · `perf.snapshot was refused: Unavailable
     "the fold did not answer within 5000 ms"` from the `until` poll while the
     engine is still loading its spell catalog on a starved CI runner · 1
