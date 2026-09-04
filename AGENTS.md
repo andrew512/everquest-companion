@@ -476,6 +476,15 @@ Two boundary laws hold this up, and both FAIL THE BUILD rather than relying on m
   `src/renderer/**`, exemptions inline and reasoned, count only ever shrinks
   (`tests/domainMunging.test.mts`).
 
+- **THE LOG CLOCK IS THE HOST'S TO NAME, AND A SILENT UTC IS A DEFECT (JOS-536).** A log stamp is
+  a zone-less local wall clock; the engine's own probe (`iana-time-zone`, a WinRT call) fails under
+  Wine and on some real installs, and a UTC fallback moves every event by whole hours so fights close
+  on every beat. `session.attach` carries the host's `clock` (IANA name + UTC offset, read fresh per
+  attach), `eqlog::resolve_zone` ranks host name → platform probe → fixed offset → UTC, an offset
+  vetoes a name that disagrees with it, and `perf.snapshot.clockSkewMs` measures the live tail's
+  newest line against the wall clock — a whole number of hours there is a wrong zone, never lag.
+  In a bug report's perf block, `behindMs` of exactly N hours is this bug; `clock utc` names it.
+
 **ENGINE COMMENTS STATE THE RULE, NOT THE STORY (owner, 2026-08-27, JOS-524).** A comment
 names a design rule or a constraint the code cannot show: 1-3 lines, one-line why. Module
 headers, single-digit lines. Out: build history, `JOS-nnn` breadcrumbs, alternatives essays,
