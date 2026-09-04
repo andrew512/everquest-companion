@@ -100,7 +100,8 @@ impl FoldSink {
         });
         Self {
             fold,
-            clock: eqlog::Clock::new(inputs.clock.tz()),
+            // Cloned, never rebuilt from a name: a fixed-offset clock has no name to rebuild from.
+            clock: inputs.clock.clone(),
             live: false,
             beats: 0,
             knowledge: corpus(),
