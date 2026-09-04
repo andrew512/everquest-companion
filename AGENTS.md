@@ -123,6 +123,13 @@ docs/agents-archive.md.
     settling") · 1 sighting (2026-08-13, JOS-294 worker six-spec sweep; green
     standalone and in the next full sweep) · NOT the resolved row's signature —
     unknown mechanism, watch for a second sighting before diagnosing.
+  - `engined tests/perf_snapshot.rs` · `perf.snapshot was refused: Unavailable
+    "the fold did not answer within 5000 ms"` from the `until` poll while the
+    engine is still loading its spell catalog on a starved CI runner · 1
+    sighting (2026-09-04, v1.16.0 tag run, two tests at once; the main-push
+    run of the same commit was green) · HARDENED same day: `until` reads that
+    one refusal as "not yet" and keeps polling to `PATIENCE`; every other
+    refusal still panics.
   - `combat-dashboard.e2e` · narrow-window resize never lands, settleStable
     settles on stale geometry · 6 sightings 2026-08-10→26, including
     STANDALONE (the full-sweep-only pattern is broken) · fix shape diagnosed

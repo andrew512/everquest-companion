@@ -22,9 +22,9 @@ use harness::{
     Client, Engine, PATIENCE,
 };
 use protocol::generated::{
-    ClientMessage, ClockHint, EngineMessage, PerfBudgetId, PerfBudgetVerdict, PerfBudgetsResult,
-    PerfServeSource, PerfSnapshotResult, PerfSnapshotResultClockSource, PerfSnapshotResultStatus,
-    PerfTimelineResult, ReplyResult, SessionAttachParams,
+    ClientMessage, ClockHint, EngineMessage, ErrorCode, PerfBudgetId, PerfBudgetVerdict,
+    PerfBudgetsResult, PerfServeSource, PerfSnapshotResult, PerfSnapshotResultClockSource,
+    PerfSnapshotResultStatus, PerfTimelineResult, ReplyResult, SessionAttachParams,
 };
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -104,6 +104,14 @@ impl Drop for Staged {
 /// announcement, a subscription's reset, a progress tick — is skipped rather than asserted about:
 /// this suite is about one reply, and the ordering of the rest is `tests/ingest.rs`'s claim.
 fn ask_perf(client: &mut Client, id: i64) -> PerfSnapshotResult {
+    try_ask_perf(client, id).unwrap_or_else(|why| panic!("perf.snapshot was unavailable: {why}"))
+}
+
+/// [`ask_perf`] with the one refusal a healthy engine can give surfaced as `Err`: the fold was busy
+/// past the world's patience (a spell catalog loading on a starved CI runner is enough). A caller
+/// waiting for a condition reads that as "not yet"; every other refusal is still a panic, because
+/// none of them means anything but a broken test.
+fn try_ask_perf(client: &mut Client, id: i64) -> Result<PerfSnapshotResult, String> {
     client.send(&perf_snapshot(id));
     loop {
         match client.recv() {
@@ -111,9 +119,12 @@ fn ask_perf(client: &mut Client, id: i64) -> PerfSnapshotResult {
                 let ReplyResult::PerfSnapshotResult(result) = reply.result else {
                     panic!("a perf snapshot result, got {:?}", reply.result);
                 };
-                return result;
+                return Ok(result);
             }
             EngineMessage::ErrorReply(refusal) if *refusal.id == id => {
+                if matches!(refusal.error.code, ErrorCode::Unavailable) {
+                    return Err(refusal.error.message);
+                }
                 panic!("perf.snapshot was refused: {:?}", refusal.error);
             }
             _ => {}
@@ -186,13 +197,20 @@ fn until(
     let deadline = Instant::now() + PATIENCE;
     loop {
         *id += 1;
-        let perf = ask_perf(client, *id);
-        if ready(&perf) {
-            return perf;
-        }
+        // A fold too busy to answer inside the world's patience is "not yet" exactly like an
+        // answer that is not ready — the deadline below is the only verdict this loop gives.
+        let last = match try_ask_perf(client, *id) {
+            Ok(perf) => {
+                if ready(&perf) {
+                    return perf;
+                }
+                format!("{perf:?}")
+            }
+            Err(why) => why,
+        };
         assert!(
             Instant::now() < deadline,
-            "waited {PATIENCE:?} for {what}; the engine last said {perf:?}"
+            "waited {PATIENCE:?} for {what}; the engine last said {last}"
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
