@@ -125,6 +125,21 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.16.0',
+    date: '2026-09-03',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Fights no longer end after one second on some machines, most often under Wine. The engine asked Windows for your time zone through a call Wine does not provide, quietly assumed UTC when it failed, and then read every log line as hours old - so each fight was closed on the very next tick and the Combat tab filled with one-second encounters, while buff and debuff timers ran against the same wrong clock. The app now hands the engine the zone it already knows, the engine checks that answer against your clock before trusting it, and it never falls back to UTC silently again.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The performance panel shows which clock the engine is on and how far it sits from your machine\'s. A few seconds is normal; a whole number of hours is a wrong time zone, and the panel says so in plain words. The same reading rides every bug report, so a clock problem is visible from the report alone.'
+      }
+    ]
+  },
+  {
     version: '1.15.0',
     date: '2026-09-02',
     entries: [
