@@ -130,6 +130,14 @@ docs/agents-archive.md.
     run of the same commit was green) · HARDENED same day: `until` reads that
     one refusal as "not yet" and keeps polling to `PATIENCE`; every other
     refusal still panics.
+  - `engined tests/combat.rs` live-meter tests · the fight closes before the
+    test's hit lands (`Drop` op where an edit was expected; segment "fight"
+    not "current"), plus one harness connect timeout · 1 sighting (2026-09-04,
+    v1.16.0 tag engine job, second attempt, three tests; same commit green on
+    the main push) · MECHANISM KNOWN: `Staged::line` stamps relative to TEST
+    START while closure is judged on the wall clock (`FALLBACK_IDLE_MS` 60 s),
+    so a runner that takes over a minute to go live has already idled the
+    fight · chip filed: anchor live stamps to go-live.
   - `combat-dashboard.e2e` · narrow-window resize never lands, settleStable
     settles on stale geometry · 6 sightings 2026-08-10→26, including
     STANDALONE (the full-sweep-only pattern is broken) · fix shape diagnosed
