@@ -1491,7 +1491,11 @@ the full per-lane evidence lives in docs/agents-archive.md.
   rule 2026-08-10).** Notes are a release-driven activity; worker branches
   never touch `releaseNotes.ts` — the integrator drafts the whole entry from
   the release's merged tickets when the tag is cut. Full story:
-  docs/agents-archive.md.
+  docs/agents-archive.md. **A NOTE IS SHORT (owner, 2026-09-03):** at most
+  three sentences — what the player sees now, optionally why it was wrong,
+  optionally what changed in a clause; a second visible thing is a second
+  bullet. The shape rules live in the file header and
+  `tests/releaseNotes.test.mts` enforces the ceiling.
 - **RELEASE CADENCE: tag only when the user asks, or at a clearly STABLE
   point** — features verified end-to-end, the gauntlet green, no waves in
   flight. Commits land on main continuously; a tag is a deliberate act,
