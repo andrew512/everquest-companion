@@ -66,7 +66,11 @@
  *   9. and clicking a row opens that item's Loot drill-down (with its own per-zone drop-rate
  *      table) through the app's ONE navigation seam, so Back NAMES the Leveling tab and returns
  *      here (the JOS-43 law, on the app's newest cross-view link). Steps 8/9 live in
- *      `dropSteps.mts` — this spec is at the repo's max-lines budget.
+ *      `dropSteps.mts` — this spec is at the repo's max-lines budget;
+ *   10. (JOS-450) and the best-spells readout SEARCHES the whole catalog: typing swaps its ranked
+ *      table for results, a spell no class in this loadout can learn is drawn as a row of that
+ *      readout wearing its own class-level chip, and clearing the box hands the table back. It runs
+ *      inside step 6f's sequence and lives in `bestSpellsSearchSteps.mts`.
  *
  * FRESH-MACHINE HONESTY. A machine with no EQ logs mounts no feature view at all, and a
  * character whose log carries fewer than two dings and fewer than two AA gains draws no chart —
@@ -643,7 +647,18 @@ async function main(): Promise<void> {
   // See the header: a fresh dir is what makes "before any selection" mean the same thing on
   // every machine, and every launch gets one.
   console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-leveling.log…')
-  const { app, close, log } = await launchOnFixture('e2e-leveling.log')
+  // THE INVENTORY DUMP IS STAGED FOR STEP 8's WORN-FOCUS MARKER (JOS-452). The tab itself reads
+  // nothing else from it: the gear compare card lives on another surface, and with no dump the
+  // best-spells readout is byte-identical to what it was, which is what that step's `note` arm
+  // covers. It is the owner's own committed dump, so the focus effects in force are real ones.
+  const { app, close, log } = await launchOnFixture('e2e-leveling.log', {
+    inventory: 'Primitive_freeport-Inventory.txt',
+    // JOS-507 — hand-authored `spells_us.txt` + `dbstr_us.txt` so the readout's search-by-TYPE step
+    // holds on any machine rather than only on one with EverQuest installed. It changes nothing the
+    // other steps read: the ranked tables and the wiki search are the committed catalog's, and this
+    // is a file only the engine's `spells.search` opens.
+    clientTables: true
+  })
 
   let page: Page | null = null
   try {

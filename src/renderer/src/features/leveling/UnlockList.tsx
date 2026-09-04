@@ -66,7 +66,7 @@
 // for a ranked spell they understate; src/main/modules/observedSpellRanks.ts carries that
 // statement in full, and it stays off the screen (the caveat diet).
 
-import { type JSX, useState } from 'react'
+import { type JSX, memo, useState } from 'react'
 import { Box, Chip, Collapse, Stack, Typography } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import type { ClassAbbr } from '@shared/classCombo'
@@ -105,7 +105,7 @@ const KIND_COLOR: Record<UnlockRow['kind'], string> = {
  * because that row is drawn at no level and a bare `CLR` would be a fact withheld. A LEVEL row's
  * chips stay bare: the level is stated once, for the whole panel, by the stepper.
  */
-function ClassChips({
+const ClassChips = memo(function ClassChips({
   row,
   resolved
 }: {
@@ -132,7 +132,7 @@ function ClassChips({
       ))}
     </>
   )
-}
+})
 
 /**
  * `yours: III` — the rank of this line the log has watched you reach (JOS-446).
@@ -147,8 +147,13 @@ function ClassChips({
  *
  * EXPORTED for the best-spells readout next door (JOS-445 landed in the same merge window):
  * one chip, one wording, one tooltip — the `outOfEraLabel` arrangement, one component further.
+ *
+ * MEMOIZED (JOS-511 item 3) on the two scalars it takes. It is drawn once per spell row on the
+ * unlock lists AND once per row of the best-spells table, and `observedRankLabel` is a map read per
+ * row: when anything else on either surface moves — a keystroke, a level step, a spell-set push —
+ * the chip now re-renders nowhere.
  */
-export function RankChip({
+export const RankChip = memo(function RankChip({
   name,
   ranks
 }: {
@@ -164,6 +169,34 @@ export function RankChip({
         label={label}
         data-testid="unlock-observed-rank"
         color="success"
+        variant="outlined"
+        sx={{ height: 17, fontSize: 10, '& .MuiChip-label': { px: 0.6 } }}
+      />
+    </Tooltip>
+  )
+})
+
+/**
+ * `out of era` — the wiki's verdict on a spell's page, as the item card's own label and colour
+ * (`PlannerChips.EraChip`'s warning outline).
+ *
+ * Drawn on the rows that are DRAWN rather than folded: every search result, and the level rows once
+ * the disclosure has been opened. Null where the sidecar said nothing, because silence is not a
+ * verdict (law 1).
+ *
+ * EXPORTED for the best-spells search next door (JOS-450), which shows out-of-era results in place
+ * for exactly this list's reason — a search answers the question the player typed. One component so
+ * the two surfaces cannot end up with two wordings, the `outOfEraLabel` arrangement one further.
+ */
+export function OutOfEraChip({ outOfEra }: { outOfEra: boolean | undefined }): JSX.Element | null {
+  if (outOfEra !== true) return null
+  return (
+    <Tooltip title="The wiki marks this spell's page out of era: it belongs to an expansion this server has not opened.">
+      <Chip
+        size="small"
+        label="out of era"
+        data-testid="unlock-out-of-era"
+        color="warning"
         variant="outlined"
         sx={{ height: 17, fontSize: 10, '& .MuiChip-label': { px: 0.6 } }}
       />
@@ -274,7 +307,7 @@ function MemorizedNote({ row, sets }: { row: UnlockRow; sets: SpellSetsSnap }): 
  * gem (shared/spellSets.ts rule 1: presence only, never a claim of absence), so a fresh log says
  * nothing here rather than telling a player their bar is empty.
  */
-function RowDetail({
+const RowDetail = memo(function RowDetail({
   row,
   resolved,
   sets
@@ -305,9 +338,26 @@ function RowDetail({
       {memorized}
     </Stack>
   )
-}
+})
 
-function Row({
+/**
+ * ONE ROW, MEMOIZED (JOS-511 item 3, and the sequence in that ticket is the point: the props were
+ * stabilized FIRST, in `NewAtLevelPanel`, or this would be a memo that never hits).
+ *
+ * Every prop it takes is now stable across a render that did not change it: `row` comes out of the
+ * memoized unlock join, `resolved` is one `Set` per combo snapshot, and `sets`/`ranks` are module
+ * snapshots that move only when their module pushes. So a keystroke in the search box, a level
+ * step, a pointer drag on the charts two columns over — none of them re-render a row any more.
+ *
+ * The KEY is untouched (`kind:name`, the ticket's instruction): a memo is about re-render cost,
+ * and changing identity would be about reconciliation, which was never the complaint.
+ *
+ * `ClassChips`, `RankChip` and `RowDetail` are memoized separately because they measure separately:
+ * when this row DOES re-render it is usually because one module pushed, and only the child reading
+ * that module has to follow it — a `ranks` push must reach `RankChip` and has nothing to say to the
+ * class chips or the detail line beside it.
+ */
+const Row = memo(function Row({
   row,
   resolved,
   sets,
@@ -366,27 +416,14 @@ function Row({
           />
         </Tooltip>
       )}
-      {/* THE ERA CHIP — the item card's own label and colour (`PlannerChips.EraChip`'s warning
-          outline), on the rows that are drawn rather than folded: every search result, and the
-          level rows once the disclosure has been opened. */}
-      {row.spell?.outOfEra === true && (
-        <Tooltip title="The wiki marks this spell's page out of era: it belongs to an expansion this server has not opened.">
-          <Chip
-            size="small"
-            label="out of era"
-            data-testid="unlock-out-of-era"
-            color="warning"
-            variant="outlined"
-            sx={{ height: 17, fontSize: 10, '& .MuiChip-label': { px: 0.6 } }}
-          />
-        </Tooltip>
-      )}
+      {/* THE ERA CHIP, its own component since JOS-450 so the readout next door draws the same one. */}
+      <OutOfEraChip outOfEra={row.spell?.outOfEra} />
       <ClassChips row={row} resolved={resolved} />
     </Stack>
       <RowDetail row={row} resolved={resolved} sets={sets} />
     </Box>
   )
-}
+})
 
 /**
  * THE DISCLOSURE (JOS-393) — `+N out of era`, and the rows behind it.

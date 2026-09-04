@@ -248,10 +248,12 @@ test('the four tabs PARTITION each side: a DoT is never in DD, a HoT never in He
   assert.equal(best.tabs.heal.outOfEra.length, 1, 'and the fold is on the tab its side put it in')
 })
 
-test('the two damage tabs open on dps and the two healing tabs on hps', () => {
-  assert.deepEqual([...TAB_ORDER], ['dd', 'dot', 'heal', 'hot'])
-  assert.deepEqual(TAB_ORDER.map((t) => TAB_LABEL[t]), ['DD', 'DoT', 'Heal', 'HoT'])
-  assert.deepEqual(TAB_ORDER.map((t) => defaultSort(t).column), ['dps', 'dps', 'hps', 'hps'])
+test('the three damage tabs open on dps and the two healing tabs on hps', () => {
+  // AOE (JOS-449) sits with the other damage tabs and last of the three, so the two single-target
+  // answers stay adjacent. `tests/bestSpellsAoe.test.mts` is where the tab's own rules are pinned.
+  assert.deepEqual([...TAB_ORDER], ['dd', 'dot', 'aoe', 'heal', 'hot'])
+  assert.deepEqual(TAB_ORDER.map((t) => TAB_LABEL[t]), ['DD', 'DoT', 'AOE', 'Heal', 'HoT'])
+  assert.deepEqual(TAB_ORDER.map((t) => defaultSort(t).column), ['dps', 'dps', 'dps', 'hps', 'hps'])
   for (const tab of TAB_ORDER) assert.equal(defaultSort(tab).desc, true)
   const sorts = defaultSorts()
   assert.deepEqual(TAB_ORDER.map((t) => sorts[t]), TAB_ORDER.map((t) => defaultSort(t)))
@@ -315,8 +317,11 @@ test('each side offers the four columns that mean something for it, and mana in 
   // All seven of the owner's columns are reachable, and no column is on a side it cannot answer.
   const all = new Set([...SIDE_COLUMNS.damage, ...SIDE_COLUMNS.heal])
   assert.equal(all.size, 7)
-  // The two tabs of a side draw the SAME four: the tab separates them, the columns do not need to.
+  // The single-target tabs of a side draw the SAME four: the tab separates them, the columns do
+  // not need to. The AOE tab alone adds `hits` (owner ask 2026-08-23), beside `dmg` because it is
+  // the number `dmg` was multiplied by.
   assert.deepEqual([...tabColumns('dd')], [...tabColumns('dot')])
+  assert.deepEqual([...tabColumns('aoe')], ['dps', 'damage', 'hits', 'mana', 'damagePerMana'])
   assert.deepEqual([...tabColumns('heal')], [...tabColumns('hot')])
   assert.deepEqual([...tabColumns('dd')], [...SIDE_COLUMNS.damage])
   assert.deepEqual([...tabColumns('hot')], [...SIDE_COLUMNS.heal])

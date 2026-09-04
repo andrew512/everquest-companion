@@ -42,6 +42,24 @@
 // ERA: `outOfEraLabel`, IMPORTED from the mob page the way `UnlockList` imports it — a second copy
 // would be a second wording. Positive verdicts fold; silence is not a verdict and stays in place.
 //
+// AND A FIFTH TAB POINTS AT A PACK (JOS-449, owner ask 2026-08-23: "lets also have a separate AOE
+// tab that assumes max target count"). The model builds it as a SECOND fold at each spell's max
+// target count (`shared/bestSpells.ts` says why that is not a filter), so nothing here changes but
+// the tab list and ONE marker: the assumption is drawn beside `directional`, on the AOE tab only,
+// in the model's own words. The panel never computes the number it prints - a table that mixed a
+// four-target cap with an eight-target one would otherwise be captioned with a number it did not
+// use.
+//
+// AND IT SEARCHES THE WHOLE GAME NOW (JOS-450, owner ask 2026-08-23: "want search, same as the
+// level spells" and "i want to be able to search for things outside my class to compare"). One box
+// under the tabs, and while there is anything in it the ranked table gives way to RESULTS - the
+// same headers, the same widths, the same two-line rows, so a druid heal can be held beside a
+// wizard's own and read straight down one column. The rows and the matcher are both somebody else's
+// (`BestSpellsRows.tsx`, `shared/bestSpellsSearch.ts` over `shared/spellSearch.ts`'s grammar); what
+// this file decides is only that the box sits under the tabs and that the query is what switches
+// the body. Rows outside the loadout are never added to the ranked tabs - they exist only under a
+// query, because a tab answers "what should I cast" and a spell you cannot cast is not an answer.
+//
 // AND THE ROWS ARE AT THEIR MOTE RANK (JOS-447). Every figure here is read at
 // `max(observed rank, simulated rank)`: the observed half is JOS-446's map, already subscribed for
 // the `yours: VIII` chip that marks those rows, and the simulated half is `SpellRankSlider` under
@@ -49,7 +67,7 @@
 // today, and what it would do if a candidate were levelled - which is the owner's ask read
 // literally. The arithmetic is `shared/spellScale.ts`'s, fitted to his own log.
 
-import { type JSX, useMemo, useState } from 'react'
+import { type JSX, useState } from 'react'
 import {
   Box,
   Chip,
@@ -61,72 +79,46 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  TableSortLabel,
   Tabs,
   Typography
 } from '@mui/material'
 import {
-  COLUMN_LABEL,
-  COLUMN_TITLE,
   TAB_LABEL,
   TAB_ORDER,
-  bestSpellsAt,
-  columnValue,
-  defaultSorts,
-  tabColumns,
   type BestSpellColumn,
   type BestSpellRow,
   type BestSpellSort,
+  type BestSpells,
   type BestSpellTab,
   type BestSpellsTable
 } from '@shared/bestSpells'
+import { AOE_ASSUMPTION_TITLE } from '@shared/aoeSpells'
+import { WORN_FOCUS_TITLE } from '@shared/wornFocus'
 import { Tooltip } from '../../lib/Tooltip'
-import { SpellTooltip } from '../../lib/SpellCard'
 import { outOfEraLabel } from '../mobs/dropEra'
-import { NONE } from './rangeStatsRows'
-import { useCurrentComboClasses, useLevelUnlocks } from './useLevelUnlocks'
+import { useCurrentComboClasses } from './useLevelUnlocks'
 import { comboClassSet } from '@shared/levelUnlocks'
-// The `yours: III` chip (JOS-446), the SAME component the unlock list draws — one wording, one
-// tooltip (the outOfEraLabel arrangement, one component further). Subscribed once for the panel.
-import { RankChip } from './UnlockList'
-import { useObservedSpellRanks } from '../../lib/useObservedSpellRanks'
+// The table primitives, shared with the search results next door (JOS-450) so a result and a
+// ranked row are the same row — and, one component further in, the `yours: III` chip the unlock
+// list draws (JOS-446): one wording, one tooltip.
+import { CELL_SX, HeadCell, SpellRow, widthOf } from './BestSpellsRows'
+import { BestSpellsResults, BestSpellsSearchField } from './BestSpellsSearch'
+// SEARCH BY TYPE (JOS-507) — a THIRD body, engaged only by the type control. See that file's header
+// for why the categories are served rather than joined in this window (ruling 4), and the panel's
+// own 260px measurement below for why they are chips rather than columns.
+import { BestSpellsCatalogue, SpellTypeFilter } from './BestSpellsCatalogue'
 import type { ObservedSpellRanksSnap } from '@shared/spellRanks'
+import { LevelStepper } from './LevelStepper'
+import type { ViewedLevel } from './viewedLevel'
 import SpellRankSlider from './SpellRankSlider'
+// The state and the three folds behind this panel — its own file since JOS-511 (that header says
+// why the seam is there). `TOP_N` travels with it: the catalogue's page size is derived from it.
+import { TOP_N, useReadout } from './useBestSpellsReadout'
 
-/** How many rows are drawn before the disclosure. The owner's suggestion, and it fits the column. */
-const TOP_N = 10
-
-const CELL_SX = { py: 0.25, px: 0.6, fontSize: 11, borderBottom: 'none' } as const
-const HEAD_SX = { ...CELL_SX, fontWeight: 700, whiteSpace: 'nowrap', color: 'text.secondary' } as const
-
-/**
- * A figure, formatted the way `spellMetricsParts` formats the same figure on an unlock row.
- *
- * Totals and rates are whole numbers (nobody buys a spell on a tenth of a point); the per-mana
- * ratios keep the one decimal `spellMetricsAt` rounded them to, because there the tenth is most of
- * the difference between two spells. An ABSENT figure is the app's null cell, never a zero.
- */
-function cellText(row: BestSpellRow, column: BestSpellColumn): string {
-  const v = columnValue(row, column)
-  if (v === null) return NONE
-  return column === 'damagePerMana' || column === 'healPerMana' ? String(v) : String(Math.round(v))
-}
-
-/**
- * The share of the table each column takes, and it is MEASURED rather than left to `fixed`'s equal
- * split: `dmg/mana` is twice the header text of `dps` and an equal quarter clipped its last letters
- * off the right edge of the panel. The four add to 100, so the table never overflows its column.
- */
-const COLUMN_WIDTH: Record<BestSpellColumn, string> = {
-  dps: '22%',
-  hps: '22%',
-  damage: '23%',
-  heal: '23%',
-  mana: '22%',
-  damagePerMana: '33%',
-  healPerMana: '33%'
-}
-
+// THE COLUMN WIDTHS AND THE TWO-LINE ROW moved to `BestSpellsRows.tsx` with JOS-450, unchanged and
+// with their measurements attached; the paragraph below is the measurement they came out of and it
+// stays here, where the 260px floor is the panel's own problem.
+//
 // THE `over Ns` COLUMN IS NOT DRAWN, AND THE MEASUREMENT IS WHY (JOS-448, the ticket's one design
 // note: a fifth narrow column on the DoT/HoT tabs "if it fits the 260px floor").
 //
@@ -144,91 +136,6 @@ const COLUMN_WIDTH: Record<BestSpellColumn, string> = {
 // itself already says that every row in the table ticks. Widening the panel is not a fix available
 // here: the 260px floor is the app's own minimum, and a readout that only reads at `lg` is wrong on
 // exactly the machine it is wrong on.
-
-/** One sortable header. Clicking the active column flips it; clicking another takes it descending. */
-function HeadCell({
-  column,
-  sort,
-  onSort
-}: {
-  column: BestSpellColumn
-  sort: BestSpellSort
-  onSort: (s: BestSpellSort) => void
-}): JSX.Element {
-  const active = sort.column === column
-  return (
-    <TableCell
-      align="right"
-      sx={{ ...HEAD_SX, width: COLUMN_WIDTH[column] }}
-      sortDirection={active ? (sort.desc ? 'desc' : 'asc') : false}
-    >
-      <Tooltip title={COLUMN_TITLE[column]}>
-        <TableSortLabel
-          active={active}
-          direction={active && !sort.desc ? 'asc' : 'desc'}
-          data-testid="best-spells-sort"
-          data-column={column}
-          data-active={active ? 'true' : 'false'}
-          onClick={() => onSort({ column, desc: active ? !sort.desc : true })}
-        >
-          {COLUMN_LABEL[column]}
-        </TableSortLabel>
-      </Tooltip>
-    </TableCell>
-  )
-}
-
-/**
- * One spell, as TWO rows: its name across the whole width, then the side's four figures under it.
- *
- * MEASURED, and it is why the shape is not the obvious one. The first build put the name in a fifth
- * column; at the panel's real width (330px in the e2e's window, 260px at the app minimum) five
- * columns share out to ~62px each and every name in the table renders as `Disco…`, with the last
- * header clipped off the right edge for good measure. A spell you cannot read is not a
- * recommendation. Spending a LINE instead of a COLUMN gives the name the full width and the four
- * figures ~76px each — enough for the numbers, their headers and a sort arrow — and vertical space
- * is the axis this tab has to spare since JOS-289 made the page the scroller.
- *
- * The gain level rides beside the name because it is the whole point of the readout: `Garrison's
- * Mighty Mana Shock` sitting second at level 35 with an `L18` on it is the owner's own question,
- * answered.
- */
-function SpellRow({
-  row,
-  columns,
-  ranks
-}: {
-  row: BestSpellRow
-  columns: readonly BestSpellColumn[]
-  ranks: ObservedSpellRanksSnap | null
-}): JSX.Element {
-  return (
-    <>
-      <TableRow data-testid="best-spells-name-row" data-name={row.name}>
-        <TableCell colSpan={columns.length} sx={{ ...CELL_SX, pt: 0.5, pb: 0 }}>
-          <Stack direction="row" spacing={0.5} alignItems="baseline" sx={{ minWidth: 0 }}>
-            <SpellTooltip name={row.name}>
-              <Typography variant="caption" sx={{ fontSize: 11, fontWeight: 600 }} noWrap>
-                {row.name}
-              </Typography>
-            </SpellTooltip>
-            <Typography variant="caption" color="text.disabled" sx={{ fontSize: 9.5 }} noWrap>
-              L{row.gainedAt}
-            </Typography>
-            <RankChip name={row.name} ranks={ranks} />
-          </Stack>
-        </TableCell>
-      </TableRow>
-      <TableRow hover data-testid="best-spells-row" data-name={row.name}>
-        {columns.map((c) => (
-          <TableCell key={c} align="right" sx={CELL_SX} data-testid="best-spells-cell" data-column={c}>
-            {cellText(row, c)}
-          </TableCell>
-        ))}
-      </TableRow>
-    </>
-  )
-}
 
 /** A one-click disclosure over rows the section is not showing by default. */
 function RowDisclosure({
@@ -281,18 +188,21 @@ function RowDisclosure({
  */
 function TabTable({
   tab,
+  columns,
   data,
   sort,
   onSort,
   ranks
 }: {
   tab: BestSpellTab
+  /** The tab's columns, MEMOIZED BY THE PANEL (JOS-511 item 2) — see its call site for why the
+   *  array is passed rather than re-derived here: it is a prop on every row of the table. */
+  columns: readonly BestSpellColumn[]
   data: BestSpellsTable
   sort: BestSpellSort
   onSort: (s: BestSpellSort) => void
   ranks: ObservedSpellRanksSnap | null
 }): JSX.Element {
-  const columns = tabColumns(tab)
   const top = data.shown.slice(0, TOP_N)
   const rest = data.shown.slice(TOP_N)
   return (
@@ -312,7 +222,7 @@ function TabTable({
           <TableHead>
             <TableRow>
               {columns.map((c) => (
-                <HeadCell key={c} column={c} sort={sort} onSort={onSort} />
+                <HeadCell key={c} column={c} width={widthOf(tab, c)} sort={sort} onSort={onSort} />
               ))}
             </TableRow>
           </TableHead>
@@ -341,9 +251,153 @@ function TabTable({
   )
 }
 
-export interface BestSpellsPanelProps {
-  /** The level the TAB is showing — the same number the unlock stepper displays. */
+/**
+ * ONE QUIET WORD BESIDE `directional`, with the long sentence behind it (the caveat diet).
+ *
+ * Two markers wear this shape now - the AOE tab's target assumption (JOS-449) and the worn-focus
+ * percentage (JOS-452) - and a third would too. Null text draws nothing at all, which is how a
+ * marker stays off a tab it has nothing to say about.
+ */
+function QuietMarker({
+  testid,
+  title,
+  text
+}: {
+  testid: string
+  title: string
+  text: string | null
+}): JSX.Element | null {
+  if (text === null) return null
+  return (
+    <Tooltip title={title}>
+      <Typography
+        variant="caption"
+        color="text.disabled"
+        data-testid={testid}
+        sx={{ textDecoration: 'underline dotted', cursor: 'help' }}
+      >
+        {text}
+      </Typography>
+    </Tooltip>
+  )
+}
+
+/**
+ * THE HEADER LINE: what the readout is, which level it is reading, and the markers it wears.
+ *
+ * Its own component only for the line budget (AGENTS.md's ceiling is split, never ratcheted) — the
+ * panel below grew a search box and a second body with JOS-450. Nothing here is re-decided.
+ */
+function ReadoutHeader({
+  best,
+  tab,
+  level,
+  onLevel
+}: {
+  best: BestSpells
+  tab: BestSpellTab
   level: number
+  onLevel: (next: number | null) => void
+}): JSX.Element {
+  return (
+    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.5 }}>
+      <Typography variant="subtitle2">Best at</Typography>
+      {/* THE SAME ARROWS THE UNLOCK PANEL HAS (owner ask 2026-08-23) — a second handle on the ONE
+          lifted level, so stepping here re-ranks this table and moves the panel next door in the
+          same click. The stepper's own value line replaces the level the title used to state. */}
+      <LevelStepper level={level} onChange={onLevel} testidPrefix="best-spells-level" />
+      {/* THE SAME ONE QUIET WORD the panel below says, for the same reason: these are base
+          figures with no crits, AA or resist in them (recast IS in them since JOS-444, and worn
+          FOCUS since JOS-452, which draws its own marker beside this one when it applied).
+          Said once per surface, never on a row (AGENTS.md, the caveat diet). */}
+      <Typography variant="caption" color="text.disabled" data-testid="best-spells-directional">
+        directional
+      </Typography>
+      {/* THE AOE TAB'S ASSUMPTION, MADE VISIBLE (JOS-449, owner ruling: the figures assume max
+          target count and the surface must say so). It is drawn only on the tab it governs, so
+          the other four keep the one-caveat diet the line above holds them to, and the words are
+          the model's (`aoeAssumptionLabel`) so a mixed table cannot be captioned with a number it
+          did not use. */}
+      {tab === 'aoe' && (
+        <QuietMarker testid="best-spells-aoe-assumption" title={AOE_ASSUMPTION_TITLE} text={best.aoeTargets} />
+      )}
+      {/* THE WORN FOCUS, MADE VISIBLE (JOS-452, owner ask: the multiply must be visible). Drawn
+          only when the tab in front of you really used one, and in the MODEL's own words
+          (`wornFocusLabel`) so a table where two rows were focused by different amounts is
+          captioned with the range it used rather than one row's number. */}
+      <QuietMarker
+        testid="best-spells-worn-focus"
+        title={WORN_FOCUS_TITLE}
+        text={best.tabs[tab].wornFocus}
+      />
+      <Box sx={{ flexGrow: 1 }} />
+      {best.ambiguous && (
+        <Tooltip title="Covers every class your loadout could still be.">
+          <Chip
+            size="small"
+            label="~ambiguous"
+            data-testid="best-spells-ambiguous"
+            variant="outlined"
+            sx={{ height: 18, fontSize: 10 }}
+          />
+        </Tooltip>
+      )}
+    </Stack>
+  )
+}
+
+/**
+ * THE FIVE TABS. `fullWidth` rather than `scrollable`: labels this short divide 260px without a
+ * scroller, and a scroller would put an answer behind a gesture nobody expects in a panel this
+ * small. The label carries its count so an empty tab says so before it is opened.
+ *
+ * JOS-449 made it FIVE, so the horizontal padding comes off (`px: 0.25`) and the font drops a
+ * notch: at the 260px floor five labels of the shape `DoT (6)` need every pixel, and the `no inner
+ * scroller` check in the leveling e2e is what holds the trade honest.
+ *
+ * THE COUNTS STAY THE RANKED TABLES' (JOS-450), even while a search is live. They are a claim about
+ * what this loadout owns, which does not change because somebody typed a question — and a tab is
+ * still what a result is READ as, so the labels have to keep saying what each tab is about.
+ */
+function TabBar({
+  best,
+  tab,
+  onPick
+}: {
+  best: BestSpells
+  tab: BestSpellTab
+  onPick: (next: BestSpellTab) => void
+}): JSX.Element {
+  return (
+    <Tabs
+      value={tab}
+      onChange={(_e, next: BestSpellTab) => onPick(next)}
+      variant="fullWidth"
+      data-testid="best-spells-tabs"
+      sx={{ minHeight: 28, mb: 0.5, '& .MuiTabs-indicator': { height: 2 } }}
+    >
+      {TAB_ORDER.map((t) => (
+        <Tab
+          key={t}
+          value={t}
+          data-testid="best-spells-tab"
+          data-tab={t}
+          data-count={String(best.tabs[t].shown.length)}
+          label={`${TAB_LABEL[t]} (${String(best.tabs[t].shown.length)})`}
+          sx={{ minHeight: 28, minWidth: 0, px: 0.25, py: 0.25, fontSize: 10, textTransform: 'none' }}
+        />
+      ))}
+    </Tabs>
+  )
+}
+
+export interface BestSpellsPanelProps {
+  /**
+   * The tab's viewed level, WHOLE — the same lifted state the unlock panel steps (viewedLevel.ts).
+   * The owner asked for the arrows on this table too (2026-08-23), so the panel needs the setter
+   * and not just the number; both steppers are handles on the one state and can never disagree.
+   */
+  viewed: ViewedLevel
 }
 
 /**
@@ -366,29 +420,9 @@ export function useBestSpellsVisible(): boolean {
  * panel below already teaches the two ways to fix that (a `/who`, or a Profile correction), so
  * repeating the sentence in the column beside it would be the same instruction twice.
  */
-export function BestSpellsPanel({ level }: BestSpellsPanelProps): JSX.Element | null {
-  const data = useLevelUnlocks()
-  const combo = useCurrentComboClasses()
-  // JOS-446's observed ranks, one subscription for the whole panel (the NewAtLevelPanel arrangement).
-  const ranks = useObservedSpellRanks()
-  const [sorts, setSorts] = useState(defaultSorts)
-  const [picked, setPicked] = useState<BestSpellTab | null>(null)
-  // THE SIMULATE SLIDER'S STATE, session-only and owned here (JOS-447 — SpellRankSlider's header
-  // says why it is not persisted). 0 is base, which is where every mount opens.
-  const [simulate, setSimulate] = useState(0)
-  // Re-ranked by the LEVEL, the SORT and the RANKS, and by nothing else — the whole readout is one
-  // pure call over an already-cached dataset, so stepping the level or the slider costs one fold of
-  // ~1,450 rows. All four tables are built every time on purpose: the tab labels carry counts, so
-  // the tabs you are not looking at are part of what the panel says.
-  const best = useMemo(
-    () => bestSpellsAt(data, combo, level, { sorts, observed: ranks, simulate }),
-    [data, combo, level, sorts, ranks, simulate]
-  )
-  // UNTIL SOMEBODY PICKS, THE PANEL PICKS THE FIRST TAB THAT HAS ANYTHING IN IT. `dd` is the owner's
-  // first-named tab and the right default for the caster this readout was written for, but a cleric
-  // has no DD table at all and opening him on an empty one would be the panel failing to answer a
-  // question it can answer. Derived at render rather than in an effect, so it follows the level.
-  const tab = picked ?? TAB_ORDER.find((t) => best.tabs[t].shown.length > 0) ?? 'dd'
+export function BestSpellsPanel({ viewed }: BestSpellsPanelProps): JSX.Element | null {
+  const r = useReadout(viewed)
+  const { best, tab, level, columns, ranks, searching, filtering, simulate } = r
   if (best.classes.length === 0) return null
   return (
     <Paper
@@ -397,61 +431,52 @@ export function BestSpellsPanel({ level }: BestSpellsPanelProps): JSX.Element | 
       data-testid="best-spells"
       data-level={String(level)}
       data-simulate={String(simulate)}
+      data-searching={String(searching)}
+      data-filtering={String(filtering)}
     >
-      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.5 }}>
-        <Typography variant="subtitle2">Best at level {level}</Typography>
-        {/* THE SAME ONE QUIET WORD the panel below says, for the same reason: these are base
-            figures with no crits, focus, AA or resist in them (recast IS in them since JOS-444).
-            Said once per surface, never on a row (AGENTS.md, the caveat diet). */}
-        <Typography variant="caption" color="text.disabled" data-testid="best-spells-directional">
-          directional
-        </Typography>
-        <Box sx={{ flexGrow: 1 }} />
-        {best.ambiguous && (
-          <Tooltip title="Covers every class your loadout could still be.">
-            <Chip
-              size="small"
-              label="~ambiguous"
-              data-testid="best-spells-ambiguous"
-              variant="outlined"
-              sx={{ height: 18, fontSize: 10 }}
-            />
-          </Tooltip>
-        )}
-      </Stack>
-      {/* `fullWidth` rather than `scrollable`: four labels this short divide 260px without a
-          scroller, and a scroller would put the fourth answer behind a gesture nobody expects in a
-          panel this small. The label carries its count so an empty tab says so before it is opened. */}
-      <Tabs
-        value={tab}
-        onChange={(_e, next: BestSpellTab) => setPicked(next)}
-        variant="fullWidth"
-        data-testid="best-spells-tabs"
-        sx={{ minHeight: 28, mb: 0.5, '& .MuiTabs-indicator': { height: 2 } }}
-      >
-        {TAB_ORDER.map((t) => (
-          <Tab
-            key={t}
-            value={t}
-            data-testid="best-spells-tab"
-            data-tab={t}
-            data-count={String(best.tabs[t].shown.length)}
-            label={`${TAB_LABEL[t]} (${String(best.tabs[t].shown.length)})`}
-            sx={{ minHeight: 28, minWidth: 0, px: 0.5, py: 0.25, fontSize: 10.5, textTransform: 'none' }}
-          />
-        ))}
-      </Tabs>
-      <SpellRankSlider rank={simulate} onChange={setSimulate} />
+      <ReadoutHeader best={best} tab={tab} level={level} onLevel={r.onLevel} />
+      <TabBar best={best} tab={tab} onPick={r.setPicked} />
+      {/* THE BOX SITS UNDER THE TABS AND OVER THE SLIDER (JOS-450). Under the tabs because the tab
+          is what a result is read AS - the reader picks the question first and then types the
+          spell; over the slider because the slider governs both bodies equally and reads as part of
+          the table either way. */}
+      <BestSpellsSearchField query={r.query} onChange={r.setQuery} />
+      {/* THE TYPE CONTROL SITS UNDER THE BOX IT NARROWS (JOS-507). Under rather than beside: the
+          band has a 260px floor and two controls on one line would leave the placeholder as two
+          visible words. Its options are the ENGINE's — the vocabulary is the player's own file's,
+          so there is no list this app could ship. */}
+      <SpellTypeFilter
+        category={r.category}
+        state={r.catalogue}
+        onChange={r.setCategory}
+        onOpen={r.onOpenTypes}
+      />
+      <SpellRankSlider rank={simulate} onChange={r.setSimulate} />
       {/* KEYED BY THE TAB so the two disclosures inside reset when the table changes: `+7 more` left
           open on the DD table is not a statement about the DoT table underneath it. */}
-      <TabTable
-        key={tab}
-        tab={tab}
-        data={best.tabs[tab]}
-        sort={sorts[tab]}
-        onSort={(next) => setSorts((prev) => ({ ...prev, [tab]: next }))}
-        ranks={ranks}
-      />
+      {filtering ? (
+        <BestSpellsCatalogue state={r.catalogue} scoped={r.scoped} onScoped={r.setScoped} />
+      ) : searching ? (
+        <BestSpellsResults
+          results={r.results}
+          tab={tab}
+          columns={columns}
+          sort={r.sort}
+          onSort={r.onSort}
+          ranks={ranks}
+          loadout={r.loadout}
+        />
+      ) : (
+        <TabTable
+          key={tab}
+          tab={tab}
+          columns={columns}
+          data={best.tabs[tab]}
+          sort={r.sort}
+          onSort={r.onSort}
+          ranks={ranks}
+        />
+      )}
     </Paper>
   )
 }

@@ -18,9 +18,9 @@
 // somebody asked it - the same rule the tab selection above it already follows.
 //
 // AND IT SAYS WHAT IT IS SIMULATING, PERMANENTLY (the gear-upgrade-label law). The label is drawn
-// at every position, including base, and it names the two limits that matter: the rank the table is
-// being lifted to, and the fact that only DAMAGE moves with it (shared/spellScale.ts fitted the
-// damage rate to the owner's log and scopes v1 there; mana, cast time and healing stay at base).
+// at every position, including base, and it names the rank the table is being lifted to. Damage
+// and healing both move with it at their own fitted rates (shared/spellScale.ts: six percent and
+// three percent a rank); mana and cast time stay at base, which the tooltip states.
 
 import type { JSX } from 'react'
 import { Slider, Stack, Typography } from '@mui/material'
@@ -33,7 +33,7 @@ const RANK_MARKS = Array.from({ length: SPELL_MAX_RANK + 1 }, (_, i) => ({ value
 
 /** What the label says at a position. Base is a real answer and gets words of its own. */
 export function rankSimulationLabel(rank: number): string {
-  return rank <= 0 ? 'base ranks' : `all at ${romanRank(rank)}+ · damage`
+  return rank <= 0 ? 'base ranks' : `all at ${romanRank(rank)}+`
 }
 
 export interface SpellRankSliderProps {
@@ -50,7 +50,7 @@ export default function SpellRankSlider({ rank, onChange }: SpellRankSliderProps
         <Typography variant="caption" color="text.secondary" sx={{ fontSize: 10, flexShrink: 0 }}>
           Simulate rank
         </Typography>
-        <Tooltip title="Every row is read at the higher of the rank you have been observed casting and this one, so a spell you already own at a better rank is never pulled down. Only damage moves with it: mana, cast time and healing are the base figures.">
+        <Tooltip title="Every row is read at the higher of the rank you have been observed casting and this one, so a spell you already own at a better rank is never pulled down. Damage and healing move with it; mana and cast time are the base figures.">
           <Typography
             variant="caption"
             data-testid="best-spells-rank-label"

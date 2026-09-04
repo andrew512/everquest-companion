@@ -49,9 +49,7 @@
 // level, and on no plain tab switch at all.
 
 import { type JSX, useMemo, useState } from 'react'
-import { Box, IconButton, Paper, Stack, Typography, Chip } from '@mui/material'
-import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
-import ChevronRightIcon from '@mui/icons-material/ChevronRight'
+import { Box, Paper, Stack, Typography, Chip } from '@mui/material'
 import { comboClassSet, unlocksAtLevel } from '@shared/levelUnlocks'
 import { tokenizeSpellQuery } from '@shared/spellSearch'
 import { EMPTY_UNLOCK_SEARCH, searchUnlockSpells } from '@shared/unlockSearch'
@@ -65,60 +63,10 @@ import { LANDING_PULSE_SX, useFocusLanding } from './useFocusLanding'
 import { useCurrentComboClasses, useLevelUnlocks } from './useLevelUnlocks'
 import { useSpellSets } from './useSpellSets'
 // THE LEVEL IS THE TAB'S SINCE JOS-445, not this panel's: the best-spells readout in the other
-// column reads the same number, and the stepper below is the one control for both. The band and the
-// clamp moved with it so there is still exactly one opinion about what level 0 means.
-import { LEVEL_MAX, LEVEL_MIN, clampLevel, type ViewedLevel } from './viewedLevel'
-
-/**
- * −/+ around the level, with the character's own level as the default and the reset.
- *
- * IT GREYS WHILE A SEARCH IS RUNNING (JOS-392) rather than unmounting: the search results are about
- * the whole game and no level on screen governs them, but the stepper is where the reader came in
- * and a control that vanishes under a keystroke is a control they have to go looking for. Dimmed
- * and disabled says "not what you are looking at right now"; gone says "was that ever there".
- */
-function LevelStepper({
-  level,
-  onChange,
-  dimmed
-}: {
-  level: number
-  onChange: (n: number) => void
-  dimmed: boolean
-}): JSX.Element {
-  return (
-    <Stack
-      direction="row"
-      spacing={0.25}
-      alignItems="center"
-      data-testid="new-at-level-stepper"
-      data-dimmed={dimmed ? 'true' : 'false'}
-      sx={{ opacity: dimmed ? 0.4 : 1 }}
-    >
-      <IconButton
-        size="small"
-        aria-label="previous level"
-        data-testid="new-at-level-prev"
-        disabled={dimmed || level <= LEVEL_MIN}
-        onClick={() => onChange(clampLevel(level - 1))}
-      >
-        <ChevronLeftIcon fontSize="small" />
-      </IconButton>
-      <Typography variant="subtitle2" data-testid="new-at-level-value" sx={{ minWidth: 64, textAlign: 'center' }}>
-        Level {level}
-      </Typography>
-      <IconButton
-        size="small"
-        aria-label="next level"
-        data-testid="new-at-level-next"
-        disabled={dimmed || level >= LEVEL_MAX}
-        onClick={() => onChange(clampLevel(level + 1))}
-      >
-        <ChevronRightIcon fontSize="small" />
-      </IconButton>
-    </Stack>
-  )
-}
+// column reads the same number. The STEPPER became shared too (owner ask 2026-08-23) — one
+// component, two placements, both handles on the same lifted state (`LevelStepper.tsx`).
+import { clampLevel, type ViewedLevel } from './viewedLevel'
+import { LevelStepper } from './LevelStepper'
 
 /** The loadout the lists were computed over, as chips — the panel's whole provenance line. */
 function ComboChips({
@@ -210,11 +158,21 @@ export function NewAtLevelPanel({
     onFocusConsumed()
   })
 
-  const unlocks = unlocksAtLevel(data, combo, level)
+  // THE LEVEL JOIN, MEMOIZED (JOS-511 item 2). It folds the unlock dataset for the loadout at this
+  // level and it ran on every render of this panel — a keystroke in the search box below, a
+  // progression push two components up, a pointer move on the charts. Its three inputs are the
+  // dataset (a module-level cached pull), the combo (memoized by `useCurrentComboClasses`) and a
+  // number, so the fold now runs exactly when one of those moves. Its IDENTITY matters as much as
+  // its cost: `unlocks.spells` and `unlocks.skills` are the arrays the two lists take, and fresh
+  // arrays are what would defeat the row memo below them.
+  const unlocks = useMemo(() => unlocksAtLevel(data, combo, level), [data, combo, level])
   // Memoized for its IDENTITY as much as its cost: it is a dependency of the search below, and
   // `comboClassesOf` already hands back one object per combo snapshot.
   const classes = useMemo(() => comboClassSet(combo), [combo])
-  const resolved = new Set<string>(combo.resolved)
+  // The resolved set, ONCE PER COMBO. A fresh `Set` per render is a changed prop on every row of
+  // both lists and on every search result — the single loudest defeater of the row memo, because
+  // it is the prop every one of them takes.
+  const resolved = useMemo(() => new Set<string>(combo.resolved), [combo])
   const known = classes.length > 0
 
   // THE FILTER runs over the ~1,450 already-cached rows, so it is memoized on the query and the
@@ -244,7 +202,7 @@ export function NewAtLevelPanel({
       {landing.seq !== null && <Box key={landing.seq} aria-hidden sx={LANDING_PULSE_SX} />}
       <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.75 }}>
         <Typography variant="subtitle2">New at this level</Typography>
-        <LevelStepper level={level} onChange={(n) => onPick(n)} dimmed={searching} />
+        <LevelStepper level={level} onChange={(n) => onPick(n)} dimmed={searching} testidPrefix="new-at-level" />
         {/* ONE QUIET WORD, ONCE (JOS-391, AGENTS.md's caveat diet). The row figures are base
             values with no crits, focus or AA in them; that is a property of the whole panel,
             said here in a word rather than footnoted on twelve rows. The per-second figures DO

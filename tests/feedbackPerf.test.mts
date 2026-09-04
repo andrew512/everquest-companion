@@ -37,6 +37,8 @@ import {
   type PerfFoldInput
 } from '../src/shared/feedbackPerf'
 import { LIVE_TIMELINE_MS } from '../src/shared/perfLive'
+import { PERF_SEAMS } from '../src/shared/perfSeams'
+import { ENGINE_BUDGETS } from '../src/shared/feedbackPerfEngine'
 import { validateEnv, validateSubmit } from '../src/shared/feedback'
 
 const NOW = 1_800_000_000_000
@@ -235,7 +237,47 @@ function ceilingBlock(): FeedbackPerf {
       tailReopens: 999_999
     })),
     summary: { p95MainMs: 3_599_999, maxMainMs: 3_599_999, coincident: 999_999, over500: 999_999 },
-    state: { ...perf.state, freeMemMb: 999_999, workingSetMb: 999_999, cpuCount: 999_999 }
+    state: { ...perf.state, freeMemMb: 999_999, workingSetMb: 999_999, cpuCount: 999_999 },
+    // JOS-458's two groups at THEIR ceilings too: every seam present (the validator's own cap on
+    // the list) with every number at its bound, and the GC object likewise. Without these the size
+    // guard below would be measuring a block the wire can no longer produce.
+    seams: PERF_SEAMS.map((seam) => ({
+      seam,
+      lateCalls: 999_999,
+      maxMs: 3_599_999,
+      t: 590
+    })),
+    gc: {
+      pauses: 999_999,
+      majorPauses: 999_999,
+      maxMs: 3_599_999,
+      totalMs: 3_599_999,
+      t: 590,
+      // Every member of GC_KINDS is five characters, so any of them is the widest this can be.
+      worstKind: 'major' as const
+    },
+    // …and JOS-502's engine block at ITS ceiling: every optional field present and every number at
+    // its bound, both budgets named (the validator's own cap on that list), and the state member
+    // that spells longest. Same argument as the two groups above — without this the size guard
+    // would be measuring a block the wire can no longer produce.
+    engine: {
+      state: 'attaching' as const,
+      upMs: 31_536_000_000,
+      events: 999_999,
+      // `behindMs` takes the UPTIME ceiling, not the one-hour duration ceiling — a freshness lag
+      // is a distance from now, not a cost, and a log untouched for a fortnight has a real one.
+      behindMs: 31_536_000_000,
+      spellDbMs: 3_599_999,
+      scanMs: 3_599_999,
+      scanKb: 999_999_999,
+      frames: 999_999,
+      servedKb: 999_999_999,
+      worstServeUs: 3_599_999_999,
+      windows: 999_999,
+      busiestFrames: 999_999,
+      quietWindows: 999_999,
+      budgets: ENGINE_BUDGETS.map((id) => ({ id, verdict: 'unmeasured' as const }))
+    }
   }
 }
 
@@ -378,14 +420,22 @@ test('a quiet window draws a blank sparkline rather than a false floor', () => {
   assert.equal(perfSparkline(perf).trim(), '')
 })
 
-test('the summary line states the numbers and the block prints three lines', () => {
+test('the summary line states the numbers and the block prints five lines', () => {
   const perf = oneTick()
   const summary = formatPerfSummary(perf)
   assert.match(summary, /late p95 900ms/)
   assert.match(summary, /max 900ms/)
   assert.match(summary, /1 freeze \(>=500ms\)/)
   const block = formatPerfBlock(perf)
-  assert.equal(block.split('\n').length, 3)
+  // FOUR since JOS-458 and FIVE since JOS-502. The fourth is the CONCLUSION — which seam or which
+  // collection owned the spike the three above it establish — and the fifth is the ENGINE, the one
+  // process in this app that `app.getAppMetrics()` structurally cannot see. Both are printed even
+  // when they have nothing to report, because "nothing reached the threshold" / "no engine
+  // answered" and "this build never looked" are different reports and the reader must be able to
+  // tell them apart.
+  assert.equal(block.split('\n').length, 5)
   assert.match(block, /last 10 min, 10s rows/)
   assert.match(block, /nvidia\/hardware/)
+  assert.match(block, /owner: no instrumented seam and no gc pause reached/)
+  assert.match(block, /engine: no engine answered/)
 })

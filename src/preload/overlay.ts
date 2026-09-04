@@ -6,7 +6,7 @@ import type {
   CharacterRef,
   ItemKnowledge,
   MobKnowledge,
-  ModuleDelta,
+  ModuleChanged,
   ModuleSnapshot,
   OverlayConfig,
   OverlayDrill,
@@ -67,11 +67,20 @@ const overlayApi = {
   /** Hydrate a module's full state (`module:getSnapshot`). Null when the id is unknown. */
   getModuleSnapshot: <S>(id: string): Promise<ModuleSnapshot<S> | null> =>
     ipcRenderer.invoke(IPC.getModuleSnapshot, id),
-  /** Subscribe to `module:delta` pushes (all modules; the caller filters by moduleId). */
-  onModuleDelta: <D>(cb: (d: ModuleDelta<D>) => void): (() => void) => {
-    const listener = (_e: unknown, d: ModuleDelta<D>): void => cb(d)
-    ipcRenderer.on(IPC.onModuleDelta, listener)
-    return () => ipcRenderer.removeListener(IPC.onModuleDelta, listener)
+  /**
+   * Subscribe to `module:changed` pushes — the SERVED world's dirty bit (JOS-493); the caller
+   * filters by moduleId.
+   *
+   * THE SAME MEMBER, UNDER THE SAME NAME AND ON THE SAME CHANNEL as the main app's bridge, for the
+   * reason `onCharacter` below is duplicated: an overlay that folds a module hydrates through the
+   * very same `module:getSnapshot` handler the main window does, so under `EQC_ENGINE_SERVE=1` it
+   * holds an ENGINE snapshot and has exactly the main window's two-numbering-space problem. A
+   * second name for one signal is how the two windows end up folding two different worlds.
+   */
+  onModuleChanged: (cb: (c: ModuleChanged) => void): (() => void) => {
+    const listener = (_e: unknown, c: ModuleChanged): void => cb(c)
+    ipcRenderer.on(IPC.onModuleChanged, listener)
+    return () => ipcRenderer.removeListener(IPC.onModuleChanged, listener)
   },
   /**
    * THE OTHER HALF OF THAT TRANSPORT (JOS-172): "the world for this character was rebuilt in
@@ -258,6 +267,32 @@ const overlayApi = {
     const listener = (): void => cb()
     ipcRenderer.on(IPC.onOverlayPointerExit, listener)
     return () => ipcRenderer.removeListener(IPC.onOverlayPointerExit, listener)
+  },
+
+  /**
+   * "THE CURSOR IS (NOT) OVER SOMETHING OF YOURS THAT WANTS IT" (JOS-370) — what a locked overlay
+   * has instead of forwarded mouse moves.
+   *
+   * A pinned window used to receive mouse MOVES because main asked Windows to forward them, and
+   * that forwarding is a low-level mouse hook (WH_MOUSE_LL) in OUR process: every mouse event on
+   * the machine then waited on main's message loop, so any stall of ours became a freeze of the
+   * user's cursor and of in-game mouselook. Nothing of ours sits in that path any more. The
+   * presence worker reads the cursor on its own thread, hit-tests it against the rectangles this
+   * window still wants (the header strip, the scroll grip — or the whole window, for the list
+   * kinds), and main pushes the ENTER/LEAVE edges here.
+   *
+   * Receive-only and kind-filtered, like `onConfig`: a window can only ever be told about ITSELF,
+   * and the renderer's answer is the ordinary named-reason capture it already performs for a real
+   * `mouseenter` (renderer/overlay/useOverlayChrome.ts). Once the capture is taken, real mouse
+   * events reach the page again and every existing sensor — selector, popup, scroll grip — works
+   * exactly as it did.
+   */
+  onHover: (cb: (inside: boolean) => void): (() => void) => {
+    const listener = (_e: unknown, payload: { kind: OverlayKind; inside: boolean }): void => {
+      if (payload?.kind === KIND) cb(payload.inside)
+    }
+    ipcRenderer.on(IPC.onOverlayHover, listener)
+    return () => ipcRenderer.removeListener(IPC.onOverlayHover, listener)
   },
 
   /**

@@ -47,7 +47,8 @@ import {
   SPELL_MAX_RANK,
   effectiveSpellRank,
   normalizeSpellRank,
-  scaleSpellDamage
+  scaleSpellDamage,
+  scaleSpellHeal
 } from '../src/shared/spellScale'
 
 // ---- the mined table -------------------------------------------------------------------------
@@ -168,19 +169,19 @@ test('acceptance: the owner`s Garrisons at VIII is 492 base damage, which is his
   assert.notEqual(Math.floor(599 * WORN), LOGGED_MAX, 'which does not reproduce the log at all')
 })
 
-// ---- the healing measurement, RECORDED AND NOT SHIPPED ---------------------------------------
+// ---- the healing measurement, SHIPPED one merge after the damage rule -------------------------
 
 /**
  * THE HEALING RATE IS THREE PERCENT, HALF THE DAMAGE RATE — measured the same way, over
- * `You healed <target> for N hit points by <Spell>.` lines, and deliberately NOT shipped in v1.
+ * `You healed <target> for N hit points by <Spell>.` lines. Recorded here first as evidence-only
+ * (a second stat class is a second modelling decision), then shipped on the owner's ruling of
+ * 2026-08-23 ("we are fine with healing estimates for now") as `scaleSpellHeal`.
  *
- * The ticket scopes this build to the damage axis (the owner's ask was about comparing nukes), and
- * a second stat class is a second modelling decision for him to take rather than one a worker slips
- * in. It is recorded here because the measurement exists and losing it would mean mining 197 MB
- * again: Slugs Healing at level 50 reads 204 at base and 222 / 228 / 235 / 241 at III / IV / V / VI
- * (435, 380, 8 and 645 hits), and Superior Healing at level 50 reads 892 / 943 / 968 at II / IV / V
- * (754, 330 and 50 hits) off a base of 842. Heals are not resisted, so these need no worn
- * correction at all beyond the target's missing hitpoints capping a heal from above.
+ * The measurement, so losing it never means mining 197 MB again: Slugs Healing at level 50 reads
+ * 204 at base and 222 / 228 / 235 / 241 at III / IV / V / VI (435, 380, 8 and 645 hits), and
+ * Superior Healing at level 50 reads 892 / 943 / 968 at II / IV / V (754, 330 and 50 hits) off a
+ * base of 842. Heals are not resisted, so these need no worn correction at all beyond the
+ * target's missing hitpoints capping a heal from above.
  */
 const HEAL_ROWS: readonly { spell: string; rank: number; observed: number; base: number }[] = [
   { spell: 'Slugs Healing', rank: 3, observed: 222, base: 204 },
@@ -190,12 +191,16 @@ const HEAL_ROWS: readonly { spell: string; rank: number; observed: number; base:
   { spell: 'Superior Healing', rank: 5, observed: 968, base: 842 }
 ]
 
-test('the measured HEALING rate is three percent a rank, and this engine deliberately does not apply it', () => {
+test('the measured HEALING rate is three percent a rank, and scaleSpellHeal applies exactly it', () => {
   for (const r of HEAL_ROWS) {
     assert.equal(candidate(r.base, r.rank, 3, Math.floor), r.observed, `${r.spell} +${String(r.rank)}`)
+    assert.equal(scaleSpellHeal(r.base, r.rank), r.observed, `${r.spell} +${String(r.rank)} via the engine`)
     // The damage rate would be twice as far out, which is why one rule for both would be wrong.
     assert.notEqual(candidate(r.base, r.rank, SPELL_DAMAGE_RANK_PERCENT, Math.floor), r.observed, r.spell)
   }
+  // The same guards the damage rule carries: base at rank nothing, nothing out of nothing.
+  assert.equal(scaleSpellHeal(842, 1), 842)
+  assert.equal(scaleSpellHeal(0, 5), 0)
 })
 
 // ---- the plain arithmetic --------------------------------------------------------------------

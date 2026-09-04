@@ -22,8 +22,15 @@
 // gear multiplies it. Measured on BASE-RANK casts against the client's own magnitude formula, the
 // factor is 1.0 in some windows and ~1.2216 in others (Shock of Lightning, Lightning Bolt, Spirit
 // Tap and base-rank Garrison's all read 1.219..1.222 of their computed base in the August windows;
-// Chaos Flux and Anarchy read 1.017 in July). A worn multiplier this app models nowhere and the
-// figures here deliberately exclude (spellMetrics.ts's header: no crits, focus, AA or resist).
+// Chaos Flux and Anarchy read 1.017 in July).
+//
+// MOST OF THAT FACTOR IS NOW EXPLAINED, AND IT IS A WORN FOCUS (JOS-452). The owner looted a
+// Polished Mithril Mask - Improved Damage II, `Increase Spell Damage by 1% to 20%` - on Jul 31,
+// between the July windows and the August ones, and the step is exactly it:
+// `1.2216 = 1.20 x 1.017`. The 1.017 residual is present in the July windows where no damage focus
+// was worn, so it is NOT focus and this app still models it nowhere. `shared/wornFocus.ts` carries
+// the focus half and the histogram proving the bonus rolls per cast rather than applying flat; the
+// numbers in THIS file are unchanged, because the fit is on ratios where the whole factor cancels.
 //
 // So the rank rule is read off RATIOS BETWEEN TWO RANKS OF ONE SPELL, where the worn factor
 // cancels. The owner cast Garrison's at base on 2026-08-06 (levels 19..24) and at VIII on
@@ -60,18 +67,24 @@
 // worn factor happens to be 1.22.
 //
 // ============================================================================
-// WHAT IS NOT SCALED IN V1, AND THE DIRECTION OF THE ERROR
+// HEALING IS THREE PERCENT A RANK — HALF THE DAMAGE RATE, SAME METHOD
 // ============================================================================
-// HEALING, MANA AND CAST TIME STAY AT BASE. The owner states that a levelled spell "casts faster,
-// has better mana costs, and does more damage", and the log carries no mana or cast-time readings
-// at all, so two of the three axes have no evidence to fit. Healing does: the same method over the
-// owner's `You healed X for N hit points by <Spell>.` lines puts Slugs Healing at 204 / 222 / 228 /
-// 235 / 241 for base / III / IV / V / VI and Superior Healing at 892 / 943 / 968 for II / IV / V,
-// both of which are THREE percent a rank rather than six. That is a second rule for a second stat
-// class and the ticket scopes v1 to damage, so it is recorded in the tests and not shipped.
+// The same ratio method over the owner's `You healed X for N hit points by <Spell>.` lines puts
+// Slugs Healing at 204 / 222 / 228 / 235 / 241 for base / III / IV / V / VI and Superior Healing at
+// 892 / 943 / 968 for II / IV / V — three percent of base per rank, floored, on every pair. It
+// shipped one merge after the damage rule (owner ruling 2026-08-23: "we are fine with healing
+// estimates for now"); the evidence fixtures are in tests/spellScale.test.mts beside the damage
+// ones.
+//
+// ============================================================================
+// WHAT IS NOT SCALED, AND THE DIRECTION OF THE ERROR
+// ============================================================================
+// MANA AND CAST TIME STAY AT BASE. The owner states that a levelled spell "casts faster, has
+// better mana costs, and does more damage", but the log carries no mana or cast-time readings at
+// all, so neither axis has evidence to fit (the spellbook readings remain the standing ask).
 // Consequence, stated once so no surface has to caveat it: for a spell above base rank, sustained
-// dps UNDERSTATES slightly (the real cast is faster), damage-per-mana UNDERSTATES (the real mana is
-// lower), and every healing figure is the base one.
+// dps and hps UNDERSTATE slightly (the real cast is faster), and the per-mana ratios UNDERSTATE
+// (the real mana is lower).
 
 /** The highest mote upgrade level a spell line is known to reach. Ten, like the item engine's tiers. */
 export const SPELL_MAX_RANK = 10
@@ -81,6 +94,9 @@ export const SPELL_MAX_RANK = 10
  * It is a whole number so the arithmetic below stays in integers until one division.
  */
 export const SPELL_DAMAGE_RANK_PERCENT = 6
+
+/** Percent ONE rank adds to a healing line: half the damage rate, measured the same way. */
+export const SPELL_HEAL_RANK_PERCENT = 3
 
 /**
  * A rank as this file will read it: an integer 0..10, where 0 is "no upgrade".
@@ -114,6 +130,13 @@ export function scaleSpellDamage(amount: number, rank: number | null | undefined
   const n = normalizeSpellRank(rank)
   if (n === 0 || amount <= 0) return amount
   return amount + Math.floor((amount * SPELL_DAMAGE_RANK_PERCENT * n) / 100)
+}
+
+/** ONE HEALING MAGNITUDE AT A RANK: the damage rule at half the rate (see the header's evidence). */
+export function scaleSpellHeal(amount: number, rank: number | null | undefined): number {
+  const n = normalizeSpellRank(rank)
+  if (n === 0 || amount <= 0) return amount
+  return amount + Math.floor((amount * SPELL_HEAL_RANK_PERCENT * n) / 100)
 }
 
 /**

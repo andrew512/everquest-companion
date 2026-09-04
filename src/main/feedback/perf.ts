@@ -30,11 +30,18 @@ import {
   type FeedbackPerf,
   type FeedbackPerfState
 } from '../../shared/feedbackPerf'
+import type { EngineFoldInput } from '../../shared/feedbackPerfEngine'
 import { presenceNeeded } from '../../shared/presencePrefs'
 import type { RawProcessMetric } from '../../shared/perf'
 import { OVERLAY_KINDS } from '../../shared/types'
+import {
+  enginePerfBudgets,
+  enginePerfSnapshot,
+  enginePerfTimeline
+} from '../dataServer/engineClientHost'
 import { eqWindowMode } from '../eqWindowMode'
 import { peekLiveTimeline } from '../livePerfProbe'
+import { peekAttributionTimeline } from '../perfAttribution'
 import { peekTailIoTimeline } from '../log/tailIoStats'
 import { getCursorRing, getOverlayAutoHide, getOverlayConfig } from '../store'
 import { gpuCompositingOf, gpuVendorOf } from '../telemetry/setupFacts'
@@ -130,6 +137,41 @@ async function perfState(): Promise<FeedbackPerfState> {
 }
 
 /**
+ * THE ENGINE'S THREE ANSWERS (owner ruling 19, JOS-502) — the asking half, which is all this file
+ * ever owns. `shared/feedbackPerfEngine.ts` turns them into the block and argues the bright line.
+ *
+ * NOTHING HERE IS REQUIRED, AND EACH ANSWER COSTS ONLY ITSELF — this file's standing rule, applied
+ * to three round trips instead of a driver call. All three accessors already resolve to `null`
+ * rather than throwing (`engineClientHost.ts` calls that posture out explicitly: a diagnostic that
+ * can break the thing it measures is worse than no diagnostic), and the `catch` is the backstop for
+ * the case nobody thought of.
+ *
+ * THE SNAPSHOT IS ASKED FIRST AND ITS ABSENCE ENDS THE QUESTION. There is no engine to ask, so
+ * there is nothing for the other two to be about — and skipping them saves a report composed on a
+ * build with no engine two pointless round trips. It is the same ordering law the rings get below:
+ * check the cheap thing that decides the answer before paying for the rest.
+ *
+ * IT ASKS RATHER THAN READING THE PANEL'S LAST SAMPLE, deliberately. `enginePerfWatch.ts` polls
+ * only while the performance panel is open, so its newest sample is usually minutes old or absent
+ * — and a bug report is composed at the moment something went wrong, which is exactly when a stale
+ * reading would be worst.
+ */
+async function engineReadings(now: number): Promise<EngineFoldInput | undefined> {
+  try {
+    const snapshot = await enginePerfSnapshot()
+    if (snapshot === null) return { snapshot: null, budgets: null, timeline: null, now }
+    return {
+      snapshot,
+      budgets: await enginePerfBudgets(),
+      timeline: await enginePerfTimeline(),
+      now
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * The block for the report being composed, or `null`.
  *
  * `null` in three cases, all of them normal and none of them an error: the rings are empty (a
@@ -157,8 +199,23 @@ export async function feedbackPerfBlock(now = Date.now()): Promise<FeedbackPerf 
     // timeout to find that out. `foldFeedbackPerf` would answer `null` anyway — this is the same
     // decision made one step earlier, where it is still free.
     if (timeline.main.length === 0 && timeline.worker.length === 0 && tail.length === 0) return null
+    // THE ATTRIBUTION RINGS ARE PEEKED, NEVER DRAINED (JOS-458) — `peekLiveTimeline`'s posture one
+    // instrument over, and load-bearing: the telemetry seam drains the same instrument's
+    // ACCUMULATOR on its own schedule, and a bug report that consumed the ring would silently cost
+    // the next heartbeat its reading. They are read AFTER the empty check for the same reason the
+    // tail is: a report composed before `replayDone` has no attribution either, and must not pay
+    // for finding that out.
+    const attribution = safely(() => peekAttributionTimeline(now), { seams: [], gc: [] })
     const perf = foldFeedbackPerf(
-      { main: timeline.main, worker: timeline.worker, tail, state: await perfState() },
+      {
+        main: timeline.main,
+        worker: timeline.worker,
+        tail,
+        state: await perfState(),
+        seams: attribution.seams,
+        gc: attribution.gc,
+        engine: await engineReadings(now)
+      },
       now
     )
     return perf !== null && perfBytes(perf) <= MAX_PERF_BYTES ? perf : null

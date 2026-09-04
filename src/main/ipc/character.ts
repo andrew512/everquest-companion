@@ -7,6 +7,9 @@ import { existsSync } from 'fs'
 import { IPC } from '../../shared/ipc'
 import type { EqConfigResult } from '../../shared/types'
 import { listCharacters, parseLogName, resolveEqDir } from '../log/config'
+// THE SERVED ARM (JOS-498, owner ruling 21): the engine scans the directory the app named and serves
+// the character list. `listCharacters()` is the arm that answers when it cannot — see serveLogs.ts.
+import { serveCharacterList } from '../dataServer/serveLogs'
 import { loadInventory } from '../inventory/parseInventory'
 import {
   activeCharId,
@@ -22,11 +25,29 @@ import { getMainWindow, sendToMain } from '../windows'
 
 export function registerCharacterIpc(): void {
   ipcMain.handle(IPC.getCharacter, () => getActiveCharacter())
-  ipcMain.handle(IPC.listCharacters, () => listCharacters())
+  // THE PICKER'S ROWS, SERVED (JOS-498). The handler was synchronous and is now a promise, which
+  // costs this channel nothing: `ipcMain.handle` has always awaited what it is given, and the one
+  // renderer consumer is App.tsx's fire-and-forget `listCharacters().then(setCharacters)`. What it
+  // buys is ruling 21 — the process that owns log files is the one that stats them.
+  ipcMain.handle(IPC.listCharacters, () => serveCharacterList(() => listCharacters()))
   ipcMain.handle(IPC.setCharacter, async (_e, logPath: string) => {
+    // DELIBERATELY THE LOCAL READ, and serveLogs.ts's header carries the list of such exceptions.
+    // This is a path→ref lookup on the SWITCH hot path — the caller is holding the path already and
+    // `parseLogName` answers without any list at all — so a round trip here would put the socket
+    // between a dropdown click and the attach, for a row nobody is choosing between.
     const ref = listCharacters().find((c) => c.logPath === logPath) ?? parseLogName(logPath)
     if (!ref) return { ok: false as const, error: 'Character log not found.' }
-    await tailCharacter(ref)
+    // A PICK THAT WAS OVERTAKEN MOVED NOTHING, AND SAYS SO (JOS-457). `tailCharacter` answers null
+    // when a newer selection preempted this one — the owner's rule is that the last pick wins and
+    // the intermediate ones are dropped, never stacked — and `ok:false` is exactly what the title
+    // bar's selector wants: App.tsx's `selectCharacter` writes its state ONLY when main actually
+    // moved, so a dropped pick leaves the selector and the live dot where the surviving pick will
+    // put them a moment later (through `log:character`, which the winner sends).
+    //
+    // NO `error`, deliberately: nothing went wrong. Text here would be a message about the most
+    // ordinary thing a person can do with a dropdown, and the two callers of this channel (the
+    // selector and the quiet-switch nudge) would have to learn to suppress it.
+    if (!(await tailCharacter(ref))) return { ok: false as const }
     return { ok: true as const, character: ref }
   })
 

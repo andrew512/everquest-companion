@@ -50,15 +50,18 @@
 //   * The validators are TOTAL and side-effect free: every failure is a typed value, nothing
 //     throws, and the same call on the same input always returns the same answer.
 //
-// THE LIVE-SESSION RIDERS LIVE NEXT DOOR TOO, in `./telemetryLive.ts` (JOS-367) — the three
-// optional groups `sessionHeartbeat` / `sessionEnd` carry about a RUNNING session (how late our
-// clocks ran, what the tail's reads cost, what was switched on) plus their three ladders. Split
-// for the same factoring reason the validators were, and reached DIRECTLY by its importers rather
-// than re-exported from here, so every one of those names is spelled in exactly one place. The
-// import below is TYPE-ONLY: this file still emits no runtime import, which is the property the
-// Lambda bundle and `storeMigrations.ts`'s module-scope read both depend on.
+// THE LIVE-SESSION RIDERS LIVE NEXT DOOR TOO, in `./telemetryLive.ts` (JOS-367, extended by
+// JOS-458) — the FIVE optional groups `sessionHeartbeat` / `sessionEnd` carry about a RUNNING
+// session (how late our clocks ran, what the tail's reads cost, what was switched on, what V8
+// spent, and which of our own seams ran) plus their ladders, gathered into one `SessionRiders`
+// carrier the two events EXTEND. Split for the same factoring reason the validators were — this
+// file is at its 400-code-line ceiling and ten lines of rider declaration spelled twice is what
+// took it past — and reached DIRECTLY by its importers rather than re-exported from here, so every
+// one of those names is spelled in exactly one place. The import below is TYPE-ONLY: this file
+// still emits no runtime import, which is the property the Lambda bundle and
+// `storeMigrations.ts`'s module-scope read both depend on.
 
-import type { LiveStallStats, SessionStateStats, TailReadStats } from './telemetryLive'
+import type { SessionRiders } from './telemetryLive'
 
 /** Bumped only for a BREAKING wire change; the server rejects anything else outright. */
 export const TELEMETRY_API_VERSION = 1
@@ -337,6 +340,23 @@ export type TelemetryErrorView = (typeof TELEMETRY_ERROR_VIEWS)[number]
  * A KIND IS NOT CONTENT. `damage` says a damage line was parsed; it does not say who hit what
  * for how much. That distinction is the entire reason breadcrumbs are allowed to exist.
  */
+/**
+ * EVERY FIXED KIND A BREADCRUMB MAY CARRY. Two families, and the FIRST IS NOW HISTORICAL.
+ *
+ * The parser kinds are what this ring recorded until JOS-499 moved the fold into the engine; no
+ * producer in this process emits one any more. They are kept for the reason `mode: 'replay'` is
+ * kept — reports from every build before the deletion are in the error store and on the backend,
+ * and a vocabulary that could not represent them would misread its own history.
+ *
+ * The `engine:*` five are the live ones (JOS-501, JOS-519), and they are what a BOOT-WINDOW crash
+ * has instead of nothing. `breadcrumbs.ts noteEngineEdge` types its parameter as the same five
+ * literals, so the closed-vocabulary property is enforced at both ends rather than only here.
+ *
+ * ADDING ONE IS A DEPLOY ORDER, not a free edit: `telemetryValidateError.ts` refuses a report
+ * carrying a kind this list does not hold, and the ingest lambda runs this same file. The server
+ * must be redeployed with a new member before a client that emits it ships, or the whole report is
+ * rejected rather than the crumb dropped. (`engine:cycled` is the JOS-519 addition.)
+ */
 export const TELEMETRY_BREADCRUMB_KINDS = [
   'zone', 'loot', 'offer', 'trade', 'level', 'aaGain', 'aaSpend', 'aaPotion', 'aaActivate',
   'death', 'playerDeath', 'damage', 'heal', 'healUnstated', 'mitigation', 'miss', 'resist',
@@ -344,9 +364,45 @@ export const TELEMETRY_BREADCRUMB_KINDS = [
   'buffApply', 'buffFade', 'buffWearOff', 'illusionFade', 'buffExpired', 'spellEmote',
   'stanceChange', 'invocationChange', 'spellMemorize', 'spellForget', 'spellSet',
   'consider', 'poisonProc', 'poisonCoat', 'poisonDry',
-  'epoch', 'unknown'
+  'epoch', 'unknown',
+  'engine:spawned', 'engine:ready', 'engine:live', 'engine:gone', 'engine:cycled'
 ] as const
 export type TelemetryBreadcrumbKind = (typeof TELEMETRY_BREADCRUMB_KINDS)[number]
+
+/**
+ * MODULE MOVEMENT — the one PATTERN-BOUND breadcrumb kind (JOS-501).
+ *
+ * ── THE DEFECT THIS FIXES, WHICH SHIPPED AND WAS INVISIBLE ────────────────────────────────────
+ *
+ * JOS-499 took the parser out of the main process and gave the breadcrumb ring a new producer off
+ * the engine's CURSORS, writing `module:<id>` (`dataServer/serveDeltas.ts`). Its comment reasoned —
+ * correctly — that a module id is a closed vocabulary carrying no log content. What it did not do
+ * was give this file any way to SAY so, and `errorReports.ts wireCrumbs` is a real FILTER: it drops
+ * every kind the contract does not admit. So each crumb that producer wrote was discarded on the
+ * way to the wire, and every error report shipped after the deletion release carried
+ * `breadcrumbs: []`. Not a late ring — a dead one.
+ *
+ * It was invisible precisely because that filter is fail-safe by design (drop a crumb, never fail a
+ * report), which is the right trade and is exactly why this needs a pattern rather than vigilance.
+ *
+ * ── WHY A PATTERN AND NOT A LIST ──────────────────────────────────────────────────────────────
+ *
+ * This file's second law admits either: every string field is "a member of a CLOSED enum declared
+ * in this file or PATTERN-BOUND by a regex declared in this file". A list of twenty module ids
+ * would be a fourth copy of the engine's module registry, maintained by hand, whose failure mode is
+ * SILENCE — a new module's crumbs vanishing with nothing red. The pattern cannot rot that way.
+ *
+ * IT STILL CANNOT CARRY A NAME. Letters only, no separators, no digits, and 24 characters — which
+ * admits `observedSpellRanks` (18) and admits nothing with a space, a path separator, an
+ * apostrophe or a number in it. A character, zone, mob, spell or item has nowhere to go, which is
+ * the property this file exists to guarantee. The bound is deliberately tighter than the ids need.
+ */
+export const MODULE_CRUMB_RE = /^module:[a-zA-Z]{1,24}$/
+
+/** Does this string name a breadcrumb kind the wire admits — fixed member or module movement? */
+export function isBreadcrumbKind(kind: string): boolean {
+  return (TELEMETRY_BREADCRUMB_KINDS as readonly string[]).includes(kind) || MODULE_CRUMB_RE.test(kind)
+}
 
 /** How old the session was when it threw. 1 min / 5 min / 30 min / 2 h ⇒ five buckets. A raw
  *  uptime beside a timestamp is more identifying than the fact "it broke early". */
@@ -694,21 +750,17 @@ export interface EvSessionStart {
   t: 'sessionStart'
   coldStartMsBucket: number
 }
-export interface EvSessionHeartbeat {
+/** …plus the five OPTIONAL RIDERS both session reports carry, declared once in
+ *  `./telemetryLive.ts SessionRiders` so the two events cannot drift apart. */
+export interface EvSessionHeartbeat extends SessionRiders {
   t: 'sessionHeartbeat'
   uptimeMs: number
   /** Log lines parsed since the previous report. OPTIONAL — see THE ADDITIVE-FIELD RULE below. */
   linesParsed?: number
   /** This launch's startup replay, if it has not been reported yet. Optional, same rule. */
   startup?: StartupReplayStats
-  /** How late our own two clocks ran since the previous report (JOS-367). Optional, same rule. */
-  live?: LiveStallStats
-  /** What the live tail's reads cost over the same interval. Absent when nothing is attached. */
-  tail?: TailReadStats
-  /** What the app was doing while the two above were measured. */
-  state?: SessionStateStats
 }
-export interface EvSessionEnd {
+export interface EvSessionEnd extends SessionRiders {
   t: 'sessionEnd'
   durationMs: number
   viewsVisited: number
@@ -716,10 +768,6 @@ export interface EvSessionEnd {
   linesParsed?: number
   /** This launch's startup replay, if no heartbeat carried it first. Optional, same rule. */
   startup?: StartupReplayStats
-  /** The tail of the live readings, on the same terms as `linesParsed` beside them (JOS-367). */
-  live?: LiveStallStats
-  tail?: TailReadStats
-  state?: SessionStateStats
 }
 
 export interface EvViewDwell {

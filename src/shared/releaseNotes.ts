@@ -62,6 +62,17 @@
 //
 // A bullet NEVER restates its neighbour, never names a file, a module or a wave, and never
 // explains how the app works internally (state, never process — the UI conventions).
+//
+// A BULLET IS SHORT (owner, 2026-09-03: "that's an incredibly long paragraph"). The shape is
+// three sentences at most and it is enforced by `tests/releaseNotes.test.mts`:
+//
+//   1. WHAT THE PLAYER SEES NOW — the fix or the feature, stated as the outcome. This sentence is
+//      the whole bullet for a small change.
+//   2. (optional) WHY IT WAS WRONG, in one sentence of cause and effect in the player's terms.
+//   3. (optional) WHAT CHANGED, in one clause. Never the layers of the fix, never the diagnostics
+//      that went in beside it — a second thing the player can see is a second bullet.
+//
+// If the sentence needs a comma-spliced tour of the mechanism, it is a ticket comment, not a note.
 
 /** Which sub-header an entry sits under. Absent ⇒ the entry is a bullet under no sub-header. */
 export type ReleaseEntryKind = 'new' | 'fixed' | 'changed'
@@ -124,6 +135,206 @@ export interface ReleaseNote {
  * still sees exactly the releases above it.
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
+  {
+    version: '1.16.0',
+    date: '2026-09-03',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Fights no longer end after one second, and buff and debuff timers no longer run on the wrong clock. On some machines, most often under Wine, the engine could not learn your time zone and quietly assumed UTC, so it read every log line as hours old. The app now tells it the zone.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The performance panel shows which clock the engine is on and how far it sits from your machine\'s. Seconds are normal; whole hours mean a wrong time zone, and the panel says so.'
+      }
+    ]
+  },
+  {
+    version: '1.15.0',
+    date: '2026-09-02',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'The endless catch-up loop is fixed. A rare pattern in a log - a wear-off or death landing in the same second as a crowd of same-named applications - crashed the engine at the same spot on every re-read, so the app re-read your log over and over while the Combat tab kept resetting mid-fight and the Leveling tab blanked.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The engine is no longer restarted for things that were never its fault: a slow answer to a routine health check now gets a second ask before any restart, waking your machine from sleep no longer counts against it, and your PC briefly running short of network connections is waited out instead of blamed. Each of those used to cost you a full catch-up read.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Timers for upgraded spells now start from your rank\'s real duration. The spell database only knows the base ranks, so an upgraded buff or debuff counted down from the wrong number until the app had watched enough casts - now the upgrade tier\'s duration growth is applied from your first cast.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Debuff timers no longer show roughly double the real duration. When a slowed mob died unseen, a later kill of a same-named mob could be misread as the debuff still running, and the timer believed the longer claim. A mob\'s death can no longer outrank the durations the log has actually watched end.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Vengeance of the Wild counts as a DoT again in Best Spells, with its damage totalled per tick instead of once.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Swift Like The Wind no longer shows up twice for enchanters - it is level 47 only, and the phantom level-49 card is gone.',
+        fromReport: true
+      }
+    ]
+  },
+  {
+    version: '1.14.0',
+    date: '2026-08-27',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Your meters no longer vanish mid-session to an engine restart. A routine health check could mistake the engine\'s own status broadcasts for a fault and restart it - most often during the catch-up read, which then started over. The check now knows those messages are normal.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Kills in a base-difficulty raid or personal instance now count toward the weekly ladder. The game prints the same zone line for a base instance as for the open world, so those clears were filed as open-world kills - the app now reads the creating-instance notice and files them right, including your past clears.',
+        fromReport: true
+      }
+    ]
+  },
+  {
+    version: '1.13.0',
+    date: '2026-08-27',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'The catch-up bar can no longer get stuck at 100%. The app used to stop waiting after two minutes on a big log or a slow disk - it now waits as long as your log takes, and it can tell catching up from live play, so the bar always finishes.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'An engine that stops answering or keeps restarting mid-session now shows up in diagnostics, so a report about "it never finishes loading" arrives with its cause.'
+      }
+    ]
+  },
+  {
+    version: '1.12.0',
+    date: '2026-08-26',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Scrolling no longer stutters during combat. The app was quietly redrawing almost every panel ten times a second whenever your log was busy - it now redraws only what actually changed, batched to the display’s own rhythm, and the busiest page went from a fifth of the machine’s attention to under three percent. Hover cards also stopped piling up while you scroll: sweeping the pointer across a list opens at most one.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Search your spells by type, just like the game’s own window - type “tap” and get every tap you can cast, by level, with category and subcategory shown, scoped to your class combo.'
+      },
+      {
+        kind: 'new',
+        text: 'Every spell name in the app is now a link. Click one and get its page: the upgrade line it belongs to, the level YOUR combo gets each step, and every class that learns it.'
+      }
+    ]
+  },
+  {
+    version: '1.11.0',
+    date: '2026-08-26',
+    entries: [
+      {
+        kind: 'changed',
+        text: 'The app rebuilt its log reader from the ground up as a dedicated high-speed engine. The old reader deliberately ran at six-tenths speed on the app’s busiest thread so it wouldn’t stutter your game, and a long-running log still took over a minute to load - the new engine reads flat out in its own process, several times faster, and nothing it does can be felt in the app or in the game.'
+      },
+      {
+        kind: 'changed',
+        text: 'Right after launch or a character switch, a progress bar now shows the catch-up honestly - percent done, how much of your log is read, and about how long is left - and panels fill in all at once the moment it finishes. And if the engine ever cannot start (an overzealous antivirus, a broken install), the app says exactly that in plain words, with a retry button and a one-click bug report - instead of sitting silently empty.'
+      },
+      {
+        kind: 'new',
+        text: 'The performance panel shows the engine’s own numbers - how fast it read your log, how quickly it serves the screen, and whether it is inside its budgets - and a bug report carries the same numbers, so a report about slowness arrives with its diagnosis attached.'
+      }
+    ]
+  },
+  {
+    version: '1.10.0',
+    date: '2026-08-24',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Switching characters quickly no longer ties the app in knots. Each new pick now cancels the load already in progress - the last one wins, within a blink - and a character mid-load can no longer flash another character’s fights on screen or fire alert sounds out of months-old history.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The app has removed itself from Windows’ mouse path entirely. A locked overlay used to route every mouse movement on the machine through the app, so a busy moment for the app was a stutter for your camera - now nothing the app does can touch your mouse. The hover-to-unpin button still appears, watched by a tiny background sampler instead, and it now works with any window focused, not just the game.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The app stopped doing slow disk chores on its busiest thread: error logging, periodic saves, and the item and mob knowledge caches all moved off it. Two of those caches also got crash-proof writes - a badly timed shutdown could silently empty everything they had learned.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'When something does hitch, the app can now name it. A bug report carries which internal step owned each stall - and whether it was a memory-cleanup pause - so a report about stutter arrives with its own diagnosis attached.',
+        fromReport: true
+      }
+    ]
+  },
+  {
+    version: '1.9.0',
+    date: '2026-08-23',
+    entries: [
+      {
+        kind: 'new',
+        text: 'The Leveling tab has a new right-hand readout: of every spell you own, what is worth casting at the level you are looking at. Five tabs - DD, DoT, AOE, Heal, HoT - each a table you can sort by dps, total, mana, or per-mana efficiency, with the same level arrows the panel beside it has.'
+      },
+      {
+        kind: 'new',
+        text: 'It answers the question the spell list never could: a spell gained at 18 is read at YOUR level, so a ramping nuke shows what it hits for now, not what it hit for when you bought it. The per-second figures include each spell’s re-use timer, so a slow-recast bomb and a spammable nuke are finally on one honest scale.'
+      },
+      {
+        kind: 'new',
+        text: 'It knows which spells you have leveled with motes - your log already says so - and shows yours: VIII on those rows with the damage read at that rank. A simulate slider lifts the whole table to any rank, so you can ask whether leveling a different spell would beat the one you have. The scaling was measured from real combat logs, not guessed.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Rain spells finally count all three waves - Frost Storm is 1,536 damage on one target, not the 512 the wiki line says - and the AOE tab prices every area spell at its real max target count from your own game files, with a hits column so the arithmetic is visible. Searching the readout reaches every class, so you can window-shop outside your own.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'If your gear carries a damage or healing focus - including one socketed as an exaltation - the readout and the spell card now apply it to every spell inside its level range, and name the item doing it.'
+      },
+      {
+        kind: 'new',
+        text: 'The August 18 Mistmoore rework is in the data: the new loot with its effects, Princess Cherista’s real drop list, and the reworked named spawns - Cherista’s Fangs and its Lifebite proc included.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Healing-over-time spells read their real numbers now. The wiki wrote the base of a level curve and dropped the curve on a handful of pages - Ethereal Cleansing showed 40 total healing where the game heals about 400 - and your game’s own spell file settles it.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The Gear tab’s Owned column no longer claims items you auto-sold at the corpse. Looted-and-sold in one line means you never held it.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A summoned pet’s kills are credited from the moment your first buff lands on it, not from the first time it happens to speak. Four of a necromancer’s kills in one Hate session were going uncounted.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Dragging a selection on the Level-over-time chart now clips to where your log actually ends, and when the stats panel is showing only one instance tier of a zone it says so - 6m of 1h 42m selected, this tier only - instead of quietly reading a farming session as fifteen idle minutes.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Sky data caught up with the wiki’s restructure: quest givers are back on every test, the Bard reward is spelled Spear of Harmony everywhere, and Wind Rune Ozah’s real dropper - Protector of Sky - is on its card.'
+      }
+    ]
+  },
   {
     version: '1.8.0',
     date: '2026-08-21',

@@ -4,8 +4,19 @@ export const IPC = {
   // ---- module transport (the one pattern for loot/turnins/kills/leveling/character) ----
   // renderer -> main
   getModuleSnapshot: 'module:getSnapshot',
-  // main -> renderer
-  onModuleDelta: 'module:delta',
+  // main -> renderer: A MODULE'S CURSOR MOVED (JOS-493).
+  //
+  // Not an increment and never a payload — `{ moduleId, seq }`, the dirty bit the data-server
+  // protocol already defines (`ModuleChangedMessage`), forwarded to every window that folds a
+  // module. The answer to it is `module:getSnapshot` above.
+  //
+  // `onModuleDelta: 'module:delta'` STOOD HERE AND IS GONE (JOS-499). It carried INCREMENTS out
+  // of this process's own TypeScript fold, numbered in that fold's sequence space, and the
+  // whole reason this channel exists is that the two spaces were unrelated: a window holding an
+  // ENGINE snapshot dropped every app delta as a dupe (the JOS-490 defect). The fold is deleted,
+  // so there is one producer, one numbering space, and one channel — which is what that ticket
+  // was working towards rather than around.
+  onModuleChanged: 'module:changed',
 
   // ---- progress / inventory (per-character persisted state) ----
   getProgress: 'progress:get',
@@ -71,6 +82,22 @@ export const IPC = {
   // renderer reports an 'app'-triggered fire (e.g. bossDefeat) so the module's
   // history stays the single source of truth (Task #22). Payload {alertId, context}.
   appFired: 'alerts:appFired',
+  /**
+   * main -> renderer(main app): ONE ALERT THAT FIRED, to be played (JOS-499 item 7).
+   *
+   * THE CHANNEL THE AUDIO CUTOVER ALWAYS NEEDED AND DID NOT HAVE. JOS-491 delivered an engine fire
+   * to the player by pushing it THROUGH this process's own alerts module — `playEngineFire` called
+   * `alertsModule.engineFired()` and `registry.flushNow()`, and the renderer heard it as a
+   * `module:delta` like any main-side fire. That was the right call while the TS fold existed (no
+   * second audio path, one lane, the delta everything downstream already read). The deletion
+   * release removes the module in the middle, so the fire needs its own door or every alert in the
+   * product goes silent.
+   *
+   * Payload: `FiredAlert` (shared/alertTypes.ts) — the same record the delta's `fired[]` carried,
+   * so `AlertPlayer` reads exactly what it always read and the `origin: 'app'` echo rule is
+   * unchanged.
+   */
+  onAlertFired: 'alerts:fired',
   getAlertPrefs: 'alertPrefs:get',
   setAlertPrefs: 'alertPrefs:set',
   // sound packs (discovery + audio bytes)
@@ -207,6 +234,17 @@ export const IPC = {
   // — but ONLY while a locked overlay is actually capturing (src/main/pointerWatch.ts states the
   // whole performance contract). The renderer treats it exactly like a real leave.
   onOverlayPointerExit: 'overlay:pointerExit',
+  // main -> renderer(overlay): "the cursor is (not) in one of your hot zones" (JOS-370). Payload:
+  // {kind, inside}. ONE-WAY, and it is what a locked overlay has INSTEAD of forwarded mouse moves.
+  //
+  // A locked overlay used to be `setIgnoreMouseEvents(true, {forward:true})`, and that `forward`
+  // installs a system-wide WH_MOUSE_LL hook owned by MAIN — so every mouse event on the machine
+  // waited on our message loop and a stall of ours froze the user's cursor and their mouselook. The
+  // hook is gone. The presence WORKER hit-tests the cursor against the rectangles a pinned window
+  // still wants (src/main/overlayHotZone.ts) and reports only the ENTER/LEAVE edges; main flips the
+  // window's capture and pushes this. The renderer treats it as one more NAMED CAPTURE REASON, so
+  // everything downstream of it — the pin reveal, the selector, the scroll grip — is unchanged.
+  onOverlayHover: 'overlay:hover',
 
   // ---- GLOBAL FIGHT SELECTION (docs/plans/combat-overlay-parity.md P4/P5/P6) ----
   // ONE fight is selected app-wide: picking one in the Combat tab's picker or in ANY
@@ -723,6 +761,26 @@ export const IPC = {
   // startup phase, which only the renderer can observe. Sent once per window lifetime; a
   // repeat is refused by the phase accounting itself (shared/perf.ts `addMark`).
   perfRendererHydrated: 'perf:rendererHydrated',
+  // ---- the ENGINE's row in that panel (JOS-483, owner ruling 19) ------------------------
+  //
+  // > "i want to see the server in the cpu/performance overlay in app."
+  //
+  // TWO CHANNELS, AND THE WATCH ONE IS THE INTERESTING HALF. The engine's numbers cost a
+  // loopback round trip (`perf.snapshot`) plus a native per-pid read, and the ENGINE section
+  // is a few hundred pixels inside a popover that is open for seconds at a time. So main
+  // polls ONLY while the renderer says the panel is open: a perf surface that cost a round
+  // trip a second while nobody was looking at it would be the bug it exists to find.
+  //
+  // renderer -> main: "the performance panel is open" / "it is closed". Starts and stops the
+  // engine poll in the SAME call, so the panel and this session's timers can never disagree —
+  // the `perf:setEnabled` discipline. A non-boolean is ignored. Arg: boolean. Returns void.
+  perfEngineWatch: 'perf:engineWatch',
+  // main -> renderer, PUSH: one `EnginePerfSample` every 2 s while the panel is being watched
+  // AND an engine exists — or `null`, which is the honest "there is nothing to draw here":
+  // the flag is off, this build has no engine binary, or the watch just stopped. The section
+  // hides on it rather than freezing on the last numbers it saw.
+  onEnginePerf: 'perf:engine',
+
   // renderer -> main: the persisted "yield CPU to the game" pref ({yieldToGame}). ON by default.
   // Returns ProcessPriorityPrefs.
   processPriorityGet: 'processPriority:get',
@@ -937,6 +995,40 @@ export const IPC = {
   // Reads usage_daily + usage_funnel_daily + analytics_install; `available:false` means the
   // tables are missing (a cluster that predates the A2 migration), NOT that they are empty.
   triageAnalytics: 'triage:analytics',
+
+  // ---- the data server's renderer brokerage (JOS-484, docs/plans/data-server.md ruling 7) ----
+  //
+  // TWO CHANNELS FOR ONE HANDSHAKE, because a MessagePort is TRANSFERRED and never returned: an
+  // `invoke` reply is structured-cloned and a port cannot survive that, so the port travels on the
+  // push below and the invoke only says whether one was sent.
+  //
+  // renderer -> main: open this window's ONE connection to the engine. Arg: a numeric nonce the
+  // renderer minted, echoed on the push so a window that asked twice can tell the answers apart.
+  // Answers `{ok:false, reason}` when no engine is running on this launch — since JOS-495 that is
+  // `EQC_ENGINE=0` or a checkout carrying no binary, not the default it used to be. Main's whole
+  // gate for the feature is one function (src/main/dataServer/engineHost.ts).
+  engineConnect: 'engine:connect',
+  // main -> renderer: the port, with the launch's token beside it. `event.ports[0]` is one end of a
+  // `MessageChannelMain` whose other end main is pumping RAW SOCKET BYTES through — main never
+  // parses a frame (src/main/dataServer/rendererBroker.ts states why that is the whole design).
+  // The token stays in the preload's closure and in the client it serves; it is never persisted,
+  // never put in the DOM, and dies with the renderer.
+  onEnginePort: 'engine:port',
+  // main -> renderer, PUSH: one `EngineLaunchSay` whenever the engine's LAUNCH state changes
+  // (JOS-503) — the historical fold's progress while one is running, and the reason it will not
+  // start when it will not. Never null: there is always a launch state, and `starting` is the
+  // honest one before anything has happened. Pushed on change only, never polled; during a fold
+  // that is the engine's own ~4 Hz progress cadence and nothing at all once it is live.
+  onEngineLaunch: 'engine:launch',
+  // renderer -> main: what `onEngineLaunch` last pushed. Not a poll — the ONE read a window makes
+  // on mount, because a push-only channel leaves a renderer that started (or reloaded) after the
+  // engine failed with no way to learn about a state that will never change again.
+  // Returns: EngineLaunchSay.
+  engineLaunchState: 'engine:launchState',
+  // renderer -> main: the failure card's RETRY button. Forgives the crash-loop trail, cancels any
+  // pending backoff and launches now (src/main/dataServer/supervisor.ts `restart`). A respawn is a
+  // launch (spawn contract rule 5), so this is a fresh token, port and epoch world. Returns void.
+  engineRetry: 'engine:retry',
 
   // ---- misc pushes ----
   onLine: 'log:line',

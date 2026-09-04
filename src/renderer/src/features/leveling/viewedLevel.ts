@@ -2,8 +2,9 @@
 //
 // It lived inside `NewAtLevelPanel` while that panel was the only thing that had a level to show.
 // The best-spells readout is the second, it sits in the OTHER column, and the owner's ask is that
-// stepping the level re-ranks it — so the state has to be above both of them. The alternative was a
-// second stepper, which is two levels on one screen with no way to tell which one a table is about.
+// stepping the level re-ranks it — so the state has to be above both of them. Both panels draw a
+// stepper now (owner ask 2026-08-23), and that is safe for exactly this reason: two handles on ONE
+// state always show one number, where two states would have been two levels on one screen.
 //
 // `null` MEANS "FOLLOW THE CHARACTER", not "level 1". That distinction is what keeps the tab
 // tracking dings until the reader steps it, and what makes the `back to N` chip a return to the
@@ -12,7 +13,7 @@
 // The band is the DB's (1..63) with a ceiling that leaves room to grow, and clamping is done in one
 // place so a deep link, a keypress and a stepper click cannot disagree about what level 0 means.
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 export const LEVEL_MIN = 1
 export const LEVEL_MAX = 65
@@ -33,8 +34,15 @@ export interface ViewedLevel {
 /**
  * The tab's viewed level. `currentLevel` is the character's own (JOS-192's stated level), which is
  * where the tab sits until somebody steps it.
+ *
+ * IT HANDS BACK ONE OBJECT PER ANSWER (JOS-511 item 2), not one per render. The three fields only
+ * mean anything together, which is why they travel as an object — and that object is a PROP on both
+ * panels that read the level, so a fresh literal per render changed both of their inputs whatever
+ * moved on the tab. `setPicked` is React's own setter and never changes identity, so this memo
+ * moves exactly when the level or the pick does.
  */
 export function useViewedLevel(currentLevel: number | null): ViewedLevel {
   const [picked, setPicked] = useState<number | null>(null)
-  return { level: clampLevel(picked ?? currentLevel ?? LEVEL_MIN), picked, pick: setPicked }
+  const level = clampLevel(picked ?? currentLevel ?? LEVEL_MIN)
+  return useMemo(() => ({ level, picked, pick: setPicked }), [level, picked])
 }
